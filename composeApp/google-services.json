@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "463430945853",
+    "project_id": "formulagen-5029a",
+    "storage_bucket": "formulagen-5029a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:463430945853:android:55d7c5bf3fbdb1223d6e54",
+        "android_client_info": {
+          "package_name": "org.formulagen.wrapper"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBjlYwHr9v-JBeL4_hkyOX0jhLPbcRDJJA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
