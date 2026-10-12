@@ -45,6 +45,7 @@ private class DesktopResources : AutoCloseable {
         if (System.getProperty("os.name").contains("Mac")) {
             // This dedicated WebView client has no other keyboard handler.
             keyboardClient = target.client.also { it.addKeyboardHandler(keyboard) }
+            println("GAMERO_EDIT_HANDLER: registrationRequested=true")
         }
         browser.set(target)
     }

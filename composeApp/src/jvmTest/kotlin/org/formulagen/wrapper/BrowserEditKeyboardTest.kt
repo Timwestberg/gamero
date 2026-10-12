@@ -115,4 +115,31 @@ class BrowserEditKeyboardTest {
         assertFalse(handler.onPreKeyEvent(native, event(), null))
         assertTrue(calls.isEmpty())
     }
+
+    @Test fun `unmatched events expose bounded structural metadata without editing`() {
+        val shapes = mutableListOf<BrowserKeyShape>()
+        val diagnosticHandler = BrowserEditKeyboard({ target }, { active }, { _, _ -> }, BrowserKeyDiagnostics(shapes::add))
+        val unexpected = CefKeyEvent(EventType.KEYEVENT_KEYDOWN, EVENTFLAG_COMMAND_DOWN, 12345, 54321,
+            false, '\u1234', '\u5678', true)
+        repeat(5) { assertFalse(diagnosticHandler.onPreKeyEvent(native, unexpected, null)) }
+        assertFalse(diagnosticHandler.onKeyEvent(native, unexpected))
+        assertEquals(listOf(BrowserKeyPhase.PRE, BrowserKeyPhase.POST), shapes.map { it.phase })
+        assertTrue(shapes.all { it.command && !it.editKey && it.editable })
+        for (secret in listOf("12345", "54321", "\u1234", "\u5678")) assertFalse(shapes.toString().contains(secret))
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test fun `diagnostics are capped with reserved space for Command events`() {
+        val shapes = mutableListOf<BrowserKeyShape>()
+        val diagnostics = BrowserKeyDiagnostics(shapes::add)
+        for (command in listOf(0, EVENTFLAG_COMMAND_DOWN)) {
+            for (type in EventType.entries) {
+                for (flags in listOf(0, EVENTFLAG_SHIFT_DOWN, EVENTFLAG_CONTROL_DOWN, EVENTFLAG_ALT_DOWN)) {
+                    for (phase in BrowserKeyPhase.entries) diagnostics.observe(phase, event(modifiers = command or flags, type = type))
+                }
+            }
+        }
+        assertEquals(16, shapes.count { !it.command })
+        assertEquals(16, shapes.count { it.command })
+    }
 }
