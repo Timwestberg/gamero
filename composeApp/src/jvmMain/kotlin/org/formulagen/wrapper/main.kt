@@ -18,6 +18,15 @@ import kotlinx.coroutines.*
 import java.io.File
 import java.net.URI
 import kotlin.system.exitProcess
+import org.formulagen.wrapper.companion.NativeBridge
+import org.formulagen.wrapper.hovel.HovelCompanion
+import java.nio.file.Path
+
+private class DesktopResources : AutoCloseable {
+    var bridge: NativeBridge? = null
+    var companion: HovelCompanion? = null
+    override fun close() { try { bridge?.close() } finally { companion?.close() } }
+}
 
 /** App-independent desktop configuration; product adapters supply the trusted URL. */
 internal fun desktopWebUrl(args: Array<String>, environment: String?): String? {
@@ -30,6 +39,7 @@ internal fun desktopWebUrl(args: Array<String>, environment: String?): String? {
 }
 
 fun main(args: Array<String>) {
+    val resources = DesktopResources()
     val lifecycle = BrowserLifecycle(
         dispose = { CefApp.getInstanceIfAny()?.dispose(); KCEF.dispose() },
         awaitTermination = {
@@ -43,18 +53,22 @@ fun main(args: Array<String>) {
                 if (url == null) {
                     Text("Set GAMERO_WEB_URL to an HTTPS app URL (or HTTP localhost for development).", Modifier.padding(24.dp))
                 } else {
-                    DesktopBrowser(url, lifecycle)
+                    DesktopBrowser(url, lifecycle, resources)
                 }
             }
         }
     }
-    val cleanShutdown = runBlocking { lifecycle.shutdown() }
+    val cleanShutdown = runBlocking {
+        val resourcesClosed = runCatching { withContext(Dispatchers.IO) { resources.close() } }.isSuccess
+        val browserClosed = lifecycle.shutdown()
+        resourcesClosed && browserClosed
+    }
     exitProcess(if (cleanShutdown) 0 else 1)
 }
 
 @OptIn(KCEFAcknowledge::class)
 @Composable
-private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle) {
+private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: DesktopResources) {
     var start by remember { mutableStateOf(false) }
     var initialized by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
@@ -62,6 +76,16 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle) {
         val home = File(System.getProperty("user.home"))
         if (System.getProperty("os.name").contains("Mac")) File(home, "Library/Application Support/Gamero")
         else File(home, ".local/share/gamero")
+    }
+    val companion = remember {
+        if (System.getenv("GAMERO_PRODUCT") == "hovel" && System.getProperty("os.name").contains("Mac")) {
+            val executable = System.getenv("GAMERO_CODEX_PATH")?.let(Path::of)
+            val workspace = System.getenv("GAMERO_WORKSPACE")?.let(Path::of)
+            if (executable != null && workspace != null) {
+                HovelCompanion(url, support.toPath().resolve("hovel-${HovelCompanion.sha256(url)}"), executable, workspace)
+                    .also { resources.companion = it }
+            } else null
+        } else null
     }
     LaunchedEffect(start) {
         if (!start) return@LaunchedEffect
@@ -85,7 +109,24 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle) {
     }
     when {
         failure != null -> Text("Browser initialization failed: $failure. Close Gamero and retry setup.", Modifier.padding(24.dp))
-        initialized -> App(url, enableLegacyBridge = false)
+        initialized -> Column {
+            if (companion != null) {
+                Text(companion.status, Modifier.padding(8.dp))
+                companion.approval?.let { approval ->
+                    Text("Connect account ${approval.ownerId} at $url to this Mac? This stores a host credential in Keychain and allows read-only Codex tasks in ${System.getenv("GAMERO_WORKSPACE")} while Gamero is open. Codex uses your own ChatGPT subscription.", Modifier.padding(8.dp))
+                    Button(onClick = { approval.answer.complete(true) }) { Text("Approve computer connection") }
+                    Button(onClick = { approval.answer.complete(false) }) { Text("Cancel") }
+                }
+            } else if (System.getenv("GAMERO_PRODUCT") == "hovel") {
+                Text("Set GAMERO_CODEX_PATH and GAMERO_WORKSPACE to enable this Mac's optional Codex connection.", Modifier.padding(8.dp))
+            }
+            App(url, enableLegacyBridge = false, onWebViewCreated = { browser ->
+                if (companion != null) {
+                    resources.bridge?.close()
+                    resources.bridge = NativeBridge(browser, url, companion::invalidatePending, companion::dispatch)
+                }
+            })
+        }
         start -> Text("Preparing browser…", Modifier.padding(24.dp))
         else -> Column(Modifier.padding(24.dp)) {
             Text("Open $url")
