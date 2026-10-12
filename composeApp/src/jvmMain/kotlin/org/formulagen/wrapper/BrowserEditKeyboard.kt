@@ -70,6 +70,17 @@ internal class BrowserEditKeyboard(
 ) : CefKeyboardHandlerAdapter() {
     override fun onPreKeyEvent(source: CefBrowser?, event: CefKeyEvent?, isKeyboardShortcut: BoolRef?): Boolean {
         event?.let { diagnostics.observe(BrowserKeyPhase.PRE, it) }
+        if (event?.let(::browserEditShortcut) == null) return false
+        val target = browser() ?: return false
+        if (target.isClosing || target.isClosed || !windowActive() || !isHostedBrowser(source, target)) return false
+        // Public JCEF contract: mark the shortcut and return false to handle it in onKeyEvent.
+        // Never edit in PRE: a backend delivering both callbacks must still execute once.
+        isKeyboardShortcut?.set(true)
+        return false
+    }
+
+    override fun onKeyEvent(source: CefBrowser?, event: CefKeyEvent?): Boolean {
+        event?.let { diagnostics.observe(BrowserKeyPhase.POST, it) }
         val action = event?.let(::browserEditShortcut) ?: return false
         fun finish(outcome: BrowserEditOutcome): Boolean {
             report(action, outcome)
@@ -80,7 +91,7 @@ internal class BrowserEditKeyboard(
         if (!windowActive()) return finish(BrowserEditOutcome.WINDOW_INACTIVE)
         // KCEFBrowser wraps the native callback browser: reference equality would reject it.
         // Require both native identity and the exact hosted component, excluding other views/popups.
-        if (source == null || source.identifier != target.identifier || source.uiComponent !== target.uiComponent) {
+        if (!isHostedBrowser(source, target)) {
             return finish(BrowserEditOutcome.FOCUS_OUTSIDE_BROWSER)
         }
         val frame = target.focusedFrame ?: return finish(BrowserEditOutcome.NO_FRAME)
@@ -90,8 +101,6 @@ internal class BrowserEditKeyboard(
         return finish(BrowserEditOutcome.DISPATCHED)
     }
 
-    override fun onKeyEvent(source: CefBrowser?, event: CefKeyEvent?): Boolean {
-        event?.let { diagnostics.observe(BrowserKeyPhase.POST, it) }
-        return false
-    }
+    private fun isHostedBrowser(source: CefBrowser?, target: CefBrowser): Boolean =
+        source != null && source.identifier == target.identifier && source.uiComponent === target.uiComponent
 }
