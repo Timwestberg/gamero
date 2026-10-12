@@ -11,6 +11,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import com.multiplatform.webview.jsbridge.WebViewJsBridge
 import com.multiplatform.webview.web.NativeWebView
+import com.multiplatform.webview.web.WebViewFactoryParam
+import com.multiplatform.webview.web.defaultWebViewFactory
 import com.multiplatform.webview.web.WebView
 import com.multiplatform.webview.web.rememberWebViewNavigator
 import com.multiplatform.webview.web.rememberWebViewState
@@ -41,6 +43,7 @@ fun WebViewManager(
     hideStatusBar: Boolean = false,
     enableLegacyBridge: Boolean = true,
     onWebViewCreated: (NativeWebView) -> Unit = {},
+    webViewFactory: (WebViewFactoryParam) -> NativeWebView = ::defaultWebViewFactory,
 ) {
     val tag = "WebViewManager"
     val webViewNavigator = rememberWebViewNavigator()
@@ -76,7 +79,8 @@ fun WebViewManager(
             captureBackPresses = false,
             modifier = modifier.fillMaxSize(),
             webViewJsBridge = if (enableLegacyBridge) jsBridge else null,
-            onCreated = { ref -> webViewRef = ref; onWebViewCreated(ref) }
+            onCreated = { ref -> webViewRef = ref; onWebViewCreated(ref) },
+            factory = webViewFactory
         )
     }
     
