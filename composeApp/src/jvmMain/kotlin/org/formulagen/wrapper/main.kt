@@ -6,6 +6,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyShortcut
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -28,9 +30,10 @@ import java.awt.EventQueue
 import java.util.concurrent.atomic.AtomicReference
 
 private class DesktopResources : AutoCloseable {
+    val browser = AtomicReference<org.cef.browser.CefBrowser?>(null)
     var bridge: NativeBridge? = null
     var companion: HovelCompanion? = null
-    override fun close() { try { bridge?.close() } finally { companion?.close() } }
+    override fun close() { browser.set(null); try { bridge?.close() } finally { companion?.close() } }
 }
 
 /** App-independent desktop configuration; product adapters supply the trusted URL. */
@@ -49,6 +52,7 @@ fun main(args: Array<String>) {
     val failure = DesktopFailure { EventQueue.invokeLater { exitAction.get()?.invoke() } }
     Thread.setDefaultUncaughtExceptionHandler(failure)
     val resources = DesktopResources()
+    val editActions = BrowserEditActions(resources.browser::get)
     val lifecycle = BrowserLifecycle(
         dispose = { CefApp.getInstanceIfAny()?.dispose(); KCEF.dispose() },
         awaitTermination = {
@@ -63,6 +67,19 @@ fun main(args: Array<String>) {
                 override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler = failure
             }) {
                 Window(onCloseRequest = ::exitApplication, title = "Gamero") {
+                    if (System.getProperty("os.name").contains("Mac")) {
+                        MenuBar {
+                            Menu("Edit") {
+                                Item("Undo", shortcut = KeyShortcut(Key.Z, meta = true), onClick = { editActions.perform(BrowserEditAction.UNDO) })
+                                Item("Redo", shortcut = KeyShortcut(Key.Z, meta = true, shift = true), onClick = { editActions.perform(BrowserEditAction.REDO) })
+                                Separator()
+                                Item("Cut", shortcut = KeyShortcut(Key.X, meta = true), onClick = { editActions.perform(BrowserEditAction.CUT) })
+                                Item("Copy", shortcut = KeyShortcut(Key.C, meta = true), onClick = { editActions.perform(BrowserEditAction.COPY) })
+                                Item("Paste", shortcut = KeyShortcut(Key.V, meta = true), onClick = { editActions.perform(BrowserEditAction.PASTE) })
+                                Item("Select All", shortcut = KeyShortcut(Key.A, meta = true), onClick = { editActions.perform(BrowserEditAction.SELECT_ALL) })
+                            }
+                        }
+                    }
                     MaterialTheme {
                         if (url == null) {
                             Text("Set GAMERO_WEB_URL to an HTTPS app URL (or HTTP localhost for development).", Modifier.padding(24.dp))
@@ -146,6 +163,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                 Text("Set GAMERO_CODEX_PATH and GAMERO_WORKSPACE to enable this Mac's optional Codex connection.", Modifier.padding(8.dp))
             }
             App(url, enableLegacyBridge = false, onWebViewCreated = { browser ->
+                resources.browser.set(browser)
                 if (companion != null) {
                     resources.bridge?.close()
                     resources.bridge = NativeBridge(browser, url, companion::invalidatePending, companion::dispatch)

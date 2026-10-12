@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Gamero native editing check</title>
+<style>body{font:18px system-ui;max-width:800px;margin:48px auto}textarea,input{display:block;width:100%;font:inherit;margin:16px 0;padding:12px}output{display:block}</style>
+<h1>Native text editing</h1>
+<p>Copy a harmless multiline sample in another app. Focus this field, then paste once with Command-V. Repeat in the second field using Edit → Paste. Each action should insert exactly one copy.</p>
+<label>Shortcut test<textarea rows="5"></textarea></label>
+<label>Menu test<textarea rows="5"></textarea></label>
+<p>Check Command-A, Command-C, Command-X, Undo and Redo. Switch to another app and confirm its shortcuts do not change these fields. Reload and repeat to check browser lifecycle.</p>
+<output>No input events yet.</output>
+<script>
+let events = 0;
+document.addEventListener('input', (event) => {
+  events += 1;
+  document.querySelector('output').textContent = `Input events: ${events}; last operation: ${event.inputType ?? 'unknown'}`;
+});
+</script>
+</html>
