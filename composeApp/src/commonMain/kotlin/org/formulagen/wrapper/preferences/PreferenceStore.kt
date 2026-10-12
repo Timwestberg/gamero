@@ -122,12 +122,12 @@ class SettingsPreferenceStore(
 
     override fun addGameFpsEntry(gameName: String, averageFps: Double) {
         settings[Keys.LAST_GAME_FPS_NAME] = gameName
-        settings[Keys.LAST_GAME_FPS_VALUE] = java.lang.Double.doubleToRawLongBits(averageFps)
+        settings[Keys.LAST_GAME_FPS_VALUE] = averageFps.toRawBits()
     }
     override fun getLastGameFpsEntry(): Pair<String, Double>? {
         val name = settings.getStringOrNull(Keys.LAST_GAME_FPS_NAME) ?: return null
         val bits = settings.getLongOrNull(Keys.LAST_GAME_FPS_VALUE) ?: return null
-        return name to java.lang.Double.longBitsToDouble(bits)
+        return name to Double.fromBits(bits)
     }
 
     override fun setFpsTrackCount(count: Int) { settings[Keys.FPS_TRACK_COUNT] = count }

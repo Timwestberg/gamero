@@ -4,15 +4,22 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
-    alias(libs.plugins.androidApplication)
+    alias(libs.plugins.androidApplication) apply false
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.composeHotReload)
     alias(libs.plugins.serialization)
-    alias(libs.plugins.google.gms.service)
+    alias(libs.plugins.google.gms.service) apply false
     }
 
+val mobileTargets = providers.gradleProperty("gamero.mobileTargets").orNull == "true"
+if (mobileTargets) {
+    apply(plugin = "com.android.application")
+    apply(plugin = "com.google.gms.google-services")
+}
+
 kotlin {
+    if (mobileTargets) {
     androidTarget {
         @OptIn(ExperimentalKotlinGradlePluginApi::class)
         compilerOptions {
@@ -31,19 +38,20 @@ kotlin {
         }
     }
     
+    }
     jvm()
     
     sourceSets {
-        androidMain.dependencies {
+        if (mobileTargets) getByName("androidMain").dependencies {
             implementation(compose.preview)
             implementation(libs.androidx.activity.compose)
             implementation(libs.google.firebase.config)
         }
         commonMain.dependencies {
-            implementation(compose.runtime)
-            implementation(compose.foundation)
-            implementation(compose.material3)
-            implementation(compose.ui)
+            implementation("org.jetbrains.compose.runtime:runtime:1.12.1")
+            implementation("org.jetbrains.compose.foundation:foundation:1.12.1")
+            implementation("org.jetbrains.compose.material3:material3:1.9.0")
+            implementation("org.jetbrains.compose.ui:ui:1.12.1")
             implementation(compose.components.resources)
             implementation(compose.components.uiToolingPreview)
             implementation(libs.androidx.lifecycle.viewmodelCompose)
@@ -67,18 +75,18 @@ kotlin {
     }
 }
 
-android {
+if (mobileTargets) extensions.configure<com.android.build.gradle.AppExtension> {
     namespace = "org.formulagen.wrapper"
-    compileSdk = libs.versions.android.compileSdk.get().toInt()
+    compileSdkVersion(libs.versions.android.compileSdk.get().toInt())
 
     defaultConfig {
         applicationId = "org.formulagen.wrapper"
-        minSdk = libs.versions.android.minSdk.get().toInt()
-        targetSdk = libs.versions.android.targetSdk.get().toInt()
+        minSdkVersion(libs.versions.android.minSdk.get().toInt())
+        targetSdkVersion(libs.versions.android.targetSdk.get().toInt())
         versionCode = 1
         versionName = "1.0"
     }
-    packaging {
+    packagingOptions {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
@@ -94,8 +102,8 @@ android {
     }
 }
 
-dependencies {
-    debugImplementation(compose.uiTooling)
+if (mobileTargets) dependencies {
+    add("debugImplementation", compose.uiTooling)
 }
 
 compose.desktop {
@@ -107,5 +115,13 @@ compose.desktop {
             packageName = "org.formulagen.wrapper"
             packageVersion = "1.0.0"
         }
+    }
+}
+
+// Required by the existing KCEF desktop WebView implementation.
+tasks.withType<JavaExec>().configureEach {
+    jvmArgs("--add-opens=java.desktop/sun.awt=ALL-UNNAMED", "--add-opens=java.desktop/java.awt.peer=ALL-UNNAMED")
+    if (System.getProperty("os.name").contains("Mac")) {
+        jvmArgs("--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED", "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
     }
 }
