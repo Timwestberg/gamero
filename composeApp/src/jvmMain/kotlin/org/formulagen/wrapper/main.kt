@@ -202,7 +202,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
             } else if (System.getenv("GAMERO_PRODUCT") == "hovel") {
                 Text("Set GAMERO_CODEX_PATH and GAMERO_WORKSPACE to enable this Mac's optional Codex connection.", Modifier.padding(8.dp))
             }
-            App(url, enableLegacyBridge = false, onWebViewCreated = { browser ->
+            App(url, enableLegacyBridge = false, webViewFactory = ::persistentDesktopBrowser, onWebViewCreated = { browser ->
                 resources.attachBrowser(browser)
                 if (companion != null) {
                     resources.bridge?.close()
