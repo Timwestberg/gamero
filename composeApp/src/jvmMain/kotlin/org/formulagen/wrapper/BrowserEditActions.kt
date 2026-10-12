@@ -20,6 +20,18 @@ internal enum class BrowserEditOutcome {
 private fun inside(owner: Component?, component: Component): Boolean =
     owner != null && (owner === component || SwingUtilities.isDescendingFrom(owner, component))
 
+internal enum class BrowserFocusRelation { NONE, BROWSER, DESCENDANT, ANCESTOR, MENU, OTHER }
+
+/** Describe structural focus only; never stringify controls or their contents. */
+internal fun browserFocusRelation(component: Component, owner: Component?): BrowserFocusRelation = when {
+    owner == null -> BrowserFocusRelation.NONE
+    owner === component -> BrowserFocusRelation.BROWSER
+    SwingUtilities.isDescendingFrom(owner, component) -> BrowserFocusRelation.DESCENDANT
+    SwingUtilities.isDescendingFrom(component, owner) -> BrowserFocusRelation.ANCESTOR
+    owner is JMenuItem || owner is JPopupMenu -> BrowserFocusRelation.MENU
+    else -> BrowserFocusRelation.OTHER
+}
+
 /** A native menu may temporarily take focus; never use historical focus over another text control. */
 internal fun browserOwnsEditingFocus(component: Component, current: Component?, permanent: Component?): Boolean {
     if (inside(current, component)) return true
@@ -46,7 +58,12 @@ internal class BrowserEditActions(
         if (target.isClosing || target.isClosed) return finish(BrowserEditOutcome.BROWSER_CLOSED)
         val component = target.uiComponent
         if (!windowActive(component)) return finish(BrowserEditOutcome.WINDOW_INACTIVE)
-        if (!browserOwnsEditingFocus(component, focusOwner(), permanentFocusOwner())) {
+        val current = focusOwner()
+        val permanent = permanentFocusOwner()
+        if (!browserOwnsEditingFocus(component, current, permanent)) {
+            println("GAMERO_EDIT_FOCUS: current=${browserFocusRelation(component, current)} permanent=${browserFocusRelation(component, permanent)} " +
+                "currentClass=${current?.javaClass?.name} permanentClass=${permanent?.javaClass?.name} " +
+                "sameWindow=${current != null && SwingUtilities.getWindowAncestor(current) === SwingUtilities.getWindowAncestor(component)}")
             return finish(BrowserEditOutcome.FOCUS_OUTSIDE_BROWSER)
         }
         val frame = target.focusedFrame ?: return finish(BrowserEditOutcome.NO_FRAME)

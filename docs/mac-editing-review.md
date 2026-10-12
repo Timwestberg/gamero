@@ -41,3 +41,19 @@ inserted value. Other outcomes identify the rejecting guard.
 This is a source-level correction of temporary-focus handling, not a confirmed
 explanation of the observed Mac failure. Repeat shortcut and top-menu actions
 separately, confirm exactly one edit, and capture only these bounded diagnostics.
+
+### Follow-up: rejected AWT focus ownership
+
+Mac testing of the temporary-menu change still rejected accelerator callbacks with
+`FOCUS_OUTSIDE_BROWSER`; context-menu paste works. That narrows the failure to
+our app menu guard, but does not identify which native/AWT ownership relationship
+is present. The next diagnostic build retains the guard and emits
+`GAMERO_EDIT_FOCUS` only for that rejection: current/permanent relation enums,
+Java class names and a same-window boolean. It never stringifies components or
+reads clipboard/field contents. This is diagnostic evidence, not a paste fix.
+
+Capture this marker for one shortcut attempt in the harmless two-field fixture.
+No provider task is needed. Keep the PR draft until a correction passes actual
+Mac editing and unrelated-control/inactive-window checks. Do not replace the
+AWT check with frame.isFocused: CEF's frame focus flag identifies a frame and
+cannot independently prove native OS focus.
