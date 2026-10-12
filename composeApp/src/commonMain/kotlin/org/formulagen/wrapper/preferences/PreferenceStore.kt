@@ -139,9 +139,3 @@ class SettingsPreferenceStore(
     override fun clear() { settings.clear() }
 }
 
-private fun Settings.getBooleanOrNull(key: String): Boolean? = if (hasKey(key)) this[key] else null
-private fun Settings.getStringOrNull(key: String): String? = if (hasKey(key)) this[key] else null
-private fun Settings.getIntOrNull(key: String): Int? = if (hasKey(key)) this[key] else null
-private fun Settings.getLongOrNull(key: String): Long? = if (hasKey(key)) this[key] else null
-
-

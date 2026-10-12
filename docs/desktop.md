@@ -17,14 +17,19 @@ From the repository root:
 GAMERO_WEB_URL=http://localhost:5173/hovel.html ./gradlew :composeApp:run
 ```
 
-The window first shows the destination and a Continue button. Continue initializes
-KCEF, using a bundled compatible runtime where available or downloading its
-browser runtime from the pinned official JetBrains release
-`jbr-release-25.0.4.1b635.72`. The resolved wrapper uses KCEF/JCEF API
-`2024.04.20.4`; runtime compatibility and the actual Chromium version must be
-recorded during Mac validation before agent operations are enabled. On Mac, browser files and web cache live beneath
-`~/Library/Application Support/Gamero`. Setup failures and restart requirements
-are visible. After initialization, the configured web page must be visible.
+For launch, set `GAMERO_BROWSER_JAVA_HOME` to an independently installed and
+verified JetBrains Runtime with JCEF (`Contents/Home` on Mac). Keep Gradle's
+`JAVA_HOME` on JDK21. The current official JBR/JCEF release inspected for validation
+is `jbr-release-25.0.4.1b635.72`; the Mac validator must verify its provenance and
+record the actual Chromium user agent. Gamero does not download native browser
+binaries, remove quarantine, or bypass macOS security prompts.
+
+The window first shows the destination and Continue. Continue initializes the
+installed browser. Setup failures remain visible. Browser cache lives beneath
+`~/Library/Application Support/Gamero/web-cache`. The wrapper resolves KCEF/JCEF
+API `2024.04.20.4`; compatibility with the selected installed runtime remains a
+Mac validation gate. Closing waits off the UI thread for up to 15 seconds, then
+explicitly exits with failure if native initialization/shutdown stalled.
 
 The app does not sign in to Codex, register a computer, or run tasks in this step.
 Do not use native launch alone as Hovel task/result/reconnect acceptance.

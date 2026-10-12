@@ -114,6 +114,7 @@ if (mobileTargets) dependencies {
 compose.desktop {
     application {
         mainClass = "org.formulagen.wrapper.MainKt"
+        providers.environmentVariable("GAMERO_BROWSER_JAVA_HOME").orNull?.let { javaHome = it }
         jvmArgs += listOf("--add-opens=java.desktop/sun.awt=ALL-UNNAMED", "--add-opens=java.desktop/java.awt.peer=ALL-UNNAMED")
         if (System.getProperty("os.name").contains("Mac")) {
             jvmArgs += listOf("--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED", "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
