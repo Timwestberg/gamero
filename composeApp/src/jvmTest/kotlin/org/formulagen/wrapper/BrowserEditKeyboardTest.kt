@@ -47,32 +47,68 @@ class BrowserEditKeyboardTest {
                       type: EventType = EventType.KEYEVENT_RAWKEYDOWN) =
         CefKeyEvent(type, modifiers, code, 0, false, '\u0000', '\u0000', true)
 
-    @Test fun `native wrapper identity dispatches all standard shortcuts once`() {
-        val shortcut = BoolRef(false)
-        for (code in listOf(90, 88, 67, 86, 65)) assertTrue(handler.onPreKeyEvent(native, event(code), shortcut))
-        assertTrue(handler.onPreKeyEvent(native, event(90, EVENTFLAG_COMMAND_DOWN or EVENTFLAG_SHIFT_DOWN), shortcut))
+    @Test fun `POST-only native events dispatch all standard shortcuts once`() {
+        for (code in listOf(90, 88, 67, 86, 65)) assertTrue(handler.onKeyEvent(native, event(code)))
+        assertTrue(handler.onKeyEvent(native, event(90, EVENTFLAG_COMMAND_DOWN or EVENTFLAG_SHIFT_DOWN)))
         assertEquals(listOf("undo", "cut", "copy", "paste", "selectAll", "redo"), calls)
-        assertFalse(shortcut.get())
     }
 
     @Test fun `one press sequence edits once and a subsequent or repeating raw press edits again`() {
-        for (type in EventType.entries) handler.onPreKeyEvent(native, event(type = type), BoolRef(false))
+        for (type in EventType.entries) handler.onKeyEvent(native, event(type = type))
         assertEquals(listOf("paste"), calls)
-        assertTrue(handler.onPreKeyEvent(native, event(), BoolRef(false)))
-        assertTrue(handler.onPreKeyEvent(native, event(), BoolRef(false)))
+        assertTrue(handler.onKeyEvent(native, event()))
+        assertTrue(handler.onKeyEvent(native, event()))
         assertEquals(listOf("paste", "paste", "paste"), calls)
     }
 
-    @Test fun `post renderer callback never repeats prehandled edit`() {
-        assertTrue(handler.onPreKeyEvent(native, event(), BoolRef(false)))
+    @Test fun `PRE marks a shortcut without editing and POST executes once`() {
+        repeat(3) {
+            val shortcut = BoolRef(false)
+            assertFalse(handler.onPreKeyEvent(native, event(), shortcut))
+            assertTrue(shortcut.get())
+            assertEquals(it, calls.size, "PRE never invokes an edit")
+            assertTrue(handler.onKeyEvent(native, event()))
+            for (type in listOf(EventType.KEYEVENT_KEYDOWN, EventType.KEYEVENT_CHAR, EventType.KEYEVENT_KEYUP)) {
+                assertFalse(handler.onPreKeyEvent(native, event(type = type), BoolRef(false)))
+                assertFalse(handler.onKeyEvent(native, event(type = type)))
+            }
+            assertEquals(it + 1, calls.size)
+        }
+        assertEquals(listOf("paste", "paste", "paste"), calls)
+    }
+
+    @Test fun `POST rechecks activation and current browser after PRE`() {
+        assertFalse(handler.onPreKeyEvent(native, event(), BoolRef(false)))
+        active = false
         assertFalse(handler.onKeyEvent(native, event()))
-        assertEquals(listOf("paste"), calls)
+        active = true
+        assertFalse(handler.onPreKeyEvent(native, event(), BoolRef(false)))
+        target = browser(id = 8)
+        assertFalse(handler.onKeyEvent(native, event()))
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test fun `PRE cannot mark shortcuts from another browser or inactive window`() {
+        for (source in listOf(null, browser(id = 8), browser(view = Panel()))) {
+            val shortcut = BoolRef(false)
+            assertFalse(handler.onPreKeyEvent(source, event(), shortcut))
+            assertFalse(shortcut.get())
+        }
+        active = false
+        val shortcut = BoolRef(false)
+        assertFalse(handler.onPreKeyEvent(native, event(), shortcut))
+        assertFalse(shortcut.get())
+        assertTrue(calls.isEmpty())
     }
 
     @Test fun `unsupported modifiers and keys remain browser owned`() {
         for (modifiers in listOf(0, EVENTFLAG_CONTROL_DOWN, EVENTFLAG_COMMAND_DOWN or EVENTFLAG_CONTROL_DOWN,
             EVENTFLAG_COMMAND_DOWN or EVENTFLAG_ALT_DOWN, EVENTFLAG_COMMAND_DOWN or EVENTFLAG_SHIFT_DOWN)) {
             assertNull(browserEditShortcut(event(modifiers = modifiers)))
+            val shortcut = BoolRef(false)
+            assertFalse(handler.onPreKeyEvent(native, event(modifiers = modifiers), shortcut))
+            assertFalse(shortcut.get())
+            assertFalse(handler.onKeyEvent(native, event(modifiers = modifiers)))
         }
         assertNull(browserEditShortcut(event(code = 66)))
         assertEquals(BrowserEditAction.PASTE, browserEditShortcut(event(modifiers = EVENTFLAG_COMMAND_DOWN or EVENTFLAG_CAPS_LOCK_ON)))
@@ -82,37 +118,37 @@ class BrowserEditKeyboardTest {
 
     @Test fun `other browser or component cannot target the hosted frame`() {
         for (source in listOf(null, browser(id = 8), browser(view = Panel()))) {
-            assertFalse(handler.onPreKeyEvent(source, event(), null))
+            assertFalse(handler.onKeyEvent(source, event()))
         }
         assertTrue(calls.isEmpty())
     }
 
     @Test fun `deactivation blocks immediately and reactivation allows a new press`() {
         active = false
-        assertFalse(handler.onPreKeyEvent(native, event(), null))
+        assertFalse(handler.onKeyEvent(native, event()))
         assertTrue(calls.isEmpty())
         active = true
-        assertTrue(handler.onPreKeyEvent(native, event(), null))
+        assertTrue(handler.onKeyEvent(native, event()))
         assertEquals(listOf("paste"), calls)
     }
 
     @Test fun `closed closing and detached browser cannot edit`() {
         closed = true
-        assertFalse(handler.onPreKeyEvent(native, event(), null))
+        assertFalse(handler.onKeyEvent(native, event()))
         closed = false
         closing = true
-        assertFalse(handler.onPreKeyEvent(native, event(), null))
+        assertFalse(handler.onKeyEvent(native, event()))
         closing = false
         target = null
-        assertFalse(handler.onPreKeyEvent(native, event(), null))
+        assertFalse(handler.onKeyEvent(native, event()))
         assertTrue(calls.isEmpty())
     }
 
     @Test fun `invalid and missing focused frames cannot edit`() {
         valid = false
-        assertFalse(handler.onPreKeyEvent(native, event(), null))
+        assertFalse(handler.onKeyEvent(native, event()))
         selectedFrame = null
-        assertFalse(handler.onPreKeyEvent(native, event(), null))
+        assertFalse(handler.onKeyEvent(native, event()))
         assertTrue(calls.isEmpty())
     }
 
