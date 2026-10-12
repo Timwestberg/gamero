@@ -40,6 +40,7 @@ fun WebViewManager(
     jsBridgeName: String = "FormulaGen",
     hideStatusBar: Boolean = false,
     enableLegacyBridge: Boolean = true,
+    onWebViewCreated: (NativeWebView) -> Unit = {},
 ) {
     val tag = "WebViewManager"
     val webViewNavigator = rememberWebViewNavigator()
@@ -75,7 +76,7 @@ fun WebViewManager(
             captureBackPresses = false,
             modifier = modifier.fillMaxSize(),
             webViewJsBridge = if (enableLegacyBridge) jsBridge else null,
-            onCreated = { ref -> webViewRef = ref }
+            onCreated = { ref -> webViewRef = ref; onWebViewCreated(ref) }
         )
     }
     
