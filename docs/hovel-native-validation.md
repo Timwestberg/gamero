@@ -27,6 +27,17 @@ bridge: expect version1, connectComputer true, cloud false, sandbox read-only.
 Reload and repeat: expect a new context ID. Close; confirm JVM/browser termination.
 This fixture does not register a host, store credentials, sign in or execute Codex.
 
+Require `GAMERO_JCEF_INITIALIZED` in the launch log before the browser appears.
+JCEF startup is asynchronous: Gamero now waits up to30seconds for its native
+initialization callback before exposing WebView. A runtime initialization timeout,
+Compose window exception or uncaught background exception logs
+`GAMERO_RUNTIME_FAILED`, closes the app and exits nonzero after bounded cleanup.
+Treat any such marker, JNI/linkage error, exception dialog, missing visible HTML
+or failed bridge check as failed acceptance even if an outer launcher reports
+success. A Gradle success line alone is never rendering/bridge evidence.
+Keep the existing verified signed JBR/JCEF installation; this fix does not replace
+runtime binaries, change quarantine or broaden access.
+
 The bridge uses public JCEF persistent queries. Native browser/main-frame/origin
 facts and a per-context UUID gate every operation. Context release cancels the
 persistent query and invalidates pending authorization. Actual injection and
