@@ -1,59 +1,44 @@
 # Mac WebView editing — FOR-79
 
-Actual Mac validation found that Command-V did not paste into a web text field.
-The desktop window had no Edit menu. The host now supplies standard Mac menu
-accelerators and invokes public JCEF focused-frame editing operations. This is
-shared desktop behavior, independent of Hovel and the native capability bridge.
+Mac testing of the application's Compose Edit accelerators reached their callbacks
+but rejected every edit with `FOCUS_OUTSIDE_BROWSER`. Field context-menu paste
+works. Diagnostic-only commit `11672f3` did not correct shortcut routing.
 
-Commands require a live browser, current AWT focus inside its component, and a
-valid focused frame. The browser reference is cleared during resource shutdown.
-The host does not read or poll the clipboard, inject script, or add dependencies.
+The candidate removes global Compose accelerators and installs a public JCEF
+`CefKeyboardHandler.onPreKeyEvent` on the dedicated WebView client. Browser-origin
+Command-X/C/V/A/Z and Command-Shift-Z invoke the valid focused frame synchronously
+on CEF's UI thread. Native browser ID plus exact hosted component identify the
+wrapped browser. AWT window activation is cached on the event thread; closed,
+missing, inactive, unrelated-browser and invalid-frame cases remain rejected.
 
-Independent source review found no blockers. Six regression tests cover all six
-commands, descendant focus, unrelated/missing focus, lifecycle closure, invalid
-frames and absence of a browser. JVM validation is recorded in the PR.
+Only RAWKEYDOWN is handled. CHAR, KEYDOWN, KEYUP and the post-renderer callback do
+not repeat edits. Repeated physical key-down events retain normal repeat behavior.
+Other modifier combinations remain browser-owned. The shortcut BoolRef stays
+untouched; returning true consumes a dispatched native command. The existing
+focus-guarded top-menu click path is unchanged and remains separately unaccepted.
+No clipboard reads, scripts, provider tasks, credentials or dependencies are added.
 
-Actual Mac validation is still required. Serve `tools/native-edit-smoke.html`
-through the existing local fixture server, then open it with the existing verified
-JBR launch flow. With harmless sample text, check Command-V and Edit → Paste each
-insert once, then copy/select-all/cut/undo/redo, focus in another app, and reload.
-Repeat normal paste into the Hovel Task field without submitting another task.
-Unit tests do not establish native accelerator consumption or Mac focus ownership.
+Source evidence:
 
-No merge or deployment is authorized by this review.
+- [JCEF public keyboard handler](https://github.com/JetBrains/jcef/blob/master/java/org/cef/handler/CefKeyboardHandler.java)
+  defines browser origin, UI-thread callbacks and consume-on-true semantics.
+- [Chromium 124 Mac event builder](https://github.com/chromium/chromium/blob/124.0.6367.60/content/common/input/web_input_event_builders_mac.mm)
+  and the [current builder](https://github.com/chromium/chromium/blob/main/components/input/web_input_event_builders_mac.mm)
+  construct RAWKEYDOWN for native key-down events.
+- [CEF conversion](https://github.com/chromiumembedded/cef/blob/master/libcef/browser/browser_event_util.cc)
+  preserves this event type. Installed JCEF/KCEF 2024.04.20.4 bytecode confirms the
+  public APIs and wrapper delegation; WebView 2.0.3 installs no keyboard handler.
 
-## Mac retest and focus correction
+Validation: JVM tests and JAR build pass (50 tests, zero failures/errors/skips).
+Independent source review found no blockers. Regression cases cover all six
+commands, wrapper/native identity, event sequences/repeats, unsupported modifiers,
+other browsers/components, deactivation/reactivation, shutdown and invalid frames.
+Existing top-menu focus-guard tests remain intact.
 
-The first menu implementation failed the actual Mac shortcut check: Command-V
-and Command-C did not edit, while the top Edit menu reacted. A different paste
-method was reported to work; top-menu Paste versus context-menu Paste was not
-established. A successful fixture HTTP load does not prove editing success.
-
-The revised guard permits AWT's permanent browser focus when current focus is
-null or temporarily in a menu, and requires the browser's window to remain active.
-It never falls back over another native control. The valid focused frame returned
-by JCEF remains the editing target during temporary menu focus. Bounded
-`GAMERO_EDIT_ACTION` diagnostics report only action/outcome enums, never clipboard,
-field, URL or credential contents. If no line appears for a shortcut, menu callback
-routing is still failing; `DISPATCHED` proves only the native command call, not an
-inserted value. Other outcomes identify the rejecting guard.
-
-This is a source-level correction of temporary-focus handling, not a confirmed
-explanation of the observed Mac failure. Repeat shortcut and top-menu actions
-separately, confirm exactly one edit, and capture only these bounded diagnostics.
-
-### Follow-up: rejected AWT focus ownership
-
-Mac testing of the temporary-menu change still rejected accelerator callbacks with
-`FOCUS_OUTSIDE_BROWSER`; context-menu paste works. That narrows the failure to
-our app menu guard, but does not identify which native/AWT ownership relationship
-is present. The next diagnostic build retains the guard and emits
-`GAMERO_EDIT_FOCUS` only for that rejection: current/permanent relation enums,
-Java class names and a same-window boolean. It never stringifies components or
-reads clipboard/field contents. This is diagnostic evidence, not a paste fix.
-
-Capture this marker for one shortcut attempt in the harmless two-field fixture.
-No provider task is needed. Keep the PR draft until a correction passes actual
-Mac editing and unrelated-control/inactive-window checks. Do not replace the
-AWT check with frame.isFocused: CEF's frame focus flag identifies a frame and
-cannot independently prove native OS focus.
+Actual Mac delivery and exactly-once editing remain unverified. Keep PR #4 draft.
+When the coordinator approves a candidate retest, use `tools/native-edit-smoke.html`
+with harmless sample text: shortcut paste inserts once; copy/select-all/cut/undo/
+redo work; unrelated native controls and inactive windows cannot edit the browser;
+repeat after reload. Test top-menu clicks separately. `GAMERO_EDIT_KEY` contains
+only action/outcome enums; DISPATCHED proves a native call, not a changed field.
+No app launch, merge or deployment is part of this source validation.

@@ -6,8 +6,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyShortcut
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -29,12 +27,37 @@ import org.formulagen.wrapper.hovel.HovelCompanion
 import java.nio.file.Path
 import java.awt.EventQueue
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicBoolean
+import java.awt.event.WindowAdapter
+import java.awt.event.WindowEvent
+import org.cef.CefClient
 
 private class DesktopResources : AutoCloseable {
     val browser = AtomicReference<org.cef.browser.CefBrowser?>(null)
+    val windowActive = AtomicBoolean(false)
+    private var keyboardClient: CefClient? = null
+    private val keyboard = BrowserEditKeyboard(browser::get, windowActive::get)
+
+    fun attachBrowser(target: org.cef.browser.CefBrowser) {
+        browser.set(null)
+        keyboardClient?.removeKeyboardHandler()
+        keyboardClient = null
+        if (System.getProperty("os.name").contains("Mac")) {
+            // This dedicated WebView client has no other keyboard handler.
+            keyboardClient = target.client.also { it.addKeyboardHandler(keyboard) }
+        }
+        browser.set(target)
+    }
+
     var bridge: NativeBridge? = null
     var companion: HovelCompanion? = null
-    override fun close() { browser.set(null); try { bridge?.close() } finally { companion?.close() } }
+    override fun close() {
+        windowActive.set(false)
+        browser.set(null)
+        keyboardClient?.removeKeyboardHandler()
+        keyboardClient = null
+        try { bridge?.close() } finally { companion?.close() }
+    }
 }
 
 /** App-independent desktop configuration; product adapters supply the trusted URL. */
@@ -68,16 +91,31 @@ fun main(args: Array<String>) {
                 override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler = failure
             }) {
                 Window(onCloseRequest = ::exitApplication, title = "Gamero") {
+                    DisposableEffect(window) {
+                        // Read AWT state on its event thread, never from the CEF callback thread.
+                        val listener = object : WindowAdapter() {
+                            override fun windowActivated(event: WindowEvent) { resources.windowActive.set(true) }
+                            override fun windowDeactivated(event: WindowEvent) { resources.windowActive.set(false) }
+                            override fun windowClosing(event: WindowEvent) { resources.windowActive.set(false) }
+                            override fun windowClosed(event: WindowEvent) { resources.windowActive.set(false) }
+                        }
+                        window.addWindowListener(listener)
+                        resources.windowActive.set(window.isActive)
+                        onDispose {
+                            resources.windowActive.set(false)
+                            window.removeWindowListener(listener)
+                        }
+                    }
                     if (System.getProperty("os.name").contains("Mac")) {
                         MenuBar {
                             Menu("Edit") {
-                                Item("Undo", shortcut = KeyShortcut(Key.Z, meta = true), onClick = { editActions.perform(BrowserEditAction.UNDO) })
-                                Item("Redo", shortcut = KeyShortcut(Key.Z, meta = true, shift = true), onClick = { editActions.perform(BrowserEditAction.REDO) })
+                                Item("Undo", onClick = { editActions.perform(BrowserEditAction.UNDO) })
+                                Item("Redo", onClick = { editActions.perform(BrowserEditAction.REDO) })
                                 Separator()
-                                Item("Cut", shortcut = KeyShortcut(Key.X, meta = true), onClick = { editActions.perform(BrowserEditAction.CUT) })
-                                Item("Copy", shortcut = KeyShortcut(Key.C, meta = true), onClick = { editActions.perform(BrowserEditAction.COPY) })
-                                Item("Paste", shortcut = KeyShortcut(Key.V, meta = true), onClick = { editActions.perform(BrowserEditAction.PASTE) })
-                                Item("Select All", shortcut = KeyShortcut(Key.A, meta = true), onClick = { editActions.perform(BrowserEditAction.SELECT_ALL) })
+                                Item("Cut", onClick = { editActions.perform(BrowserEditAction.CUT) })
+                                Item("Copy", onClick = { editActions.perform(BrowserEditAction.COPY) })
+                                Item("Paste", onClick = { editActions.perform(BrowserEditAction.PASTE) })
+                                Item("Select All", onClick = { editActions.perform(BrowserEditAction.SELECT_ALL) })
                             }
                         }
                     }
@@ -164,7 +202,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                 Text("Set GAMERO_CODEX_PATH and GAMERO_WORKSPACE to enable this Mac's optional Codex connection.", Modifier.padding(8.dp))
             }
             App(url, enableLegacyBridge = false, onWebViewCreated = { browser ->
-                resources.browser.set(browser)
+                resources.attachBrowser(browser)
                 if (companion != null) {
                     resources.bridge?.close()
                     resources.bridge = NativeBridge(browser, url, companion::invalidatePending, companion::dispatch)
