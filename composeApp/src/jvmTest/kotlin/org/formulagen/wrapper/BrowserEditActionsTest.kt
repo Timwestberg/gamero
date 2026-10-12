@@ -104,6 +104,16 @@ class BrowserEditActionsTest {
             BrowserEditAction.COPY to BrowserEditOutcome.BROWSER_CLOSED), outcomes)
     }
 
+    @Test fun `focus diagnostics distinguish ancestry and menus without reading controls`() {
+        val ancestor = Panel().also { it.add(component) }
+        assertEquals(BrowserFocusRelation.NONE, browserFocusRelation(component, null))
+        assertEquals(BrowserFocusRelation.BROWSER, browserFocusRelation(component, component))
+        assertEquals(BrowserFocusRelation.DESCENDANT, browserFocusRelation(component, child))
+        assertEquals(BrowserFocusRelation.ANCESTOR, browserFocusRelation(component, ancestor))
+        assertEquals(BrowserFocusRelation.MENU, browserFocusRelation(component, JMenuItem("private text")))
+        assertEquals(BrowserFocusRelation.OTHER, browserFocusRelation(component, Panel()))
+    }
+
     @Test fun `before browser creation and after resource release actions are inert`() {
         assertFalse(BrowserEditActions({ null }, { component }).perform(BrowserEditAction.PASTE))
         assertTrue(calls.isEmpty())
