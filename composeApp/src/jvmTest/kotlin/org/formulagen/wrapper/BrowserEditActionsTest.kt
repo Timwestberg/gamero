@@ -2,6 +2,7 @@ package org.formulagen.wrapper
 
 import java.awt.Panel
 import java.lang.reflect.Proxy
+import javax.swing.JMenuItem
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -35,26 +36,29 @@ class BrowserEditActionsTest {
         }
     } as CefBrowser
 
+    private fun actions(owner: java.awt.Component? = component, permanent: java.awt.Component? = owner, active: Boolean = true) =
+        BrowserEditActions({ browser }, { owner }, { permanent }, { active }, { _, _ -> })
+
     @Test fun `each explicit action calls its native operation exactly once`() {
-        val actions = BrowserEditActions({ browser }, { component })
+        val actions = actions()
         BrowserEditAction.entries.forEach { assertTrue(actions.perform(it)) }
         assertEquals(listOf("undo", "redo", "cut", "copy", "paste", "selectAll"), calls)
     }
 
     @Test fun `a focused browser child accepts paste`() {
-        assertTrue(BrowserEditActions({ browser }, { child }).perform(BrowserEditAction.PASTE))
+        assertTrue(actions(child).perform(BrowserEditAction.PASTE))
         assertEquals(listOf("paste"), calls)
     }
 
     @Test fun `unrelated or missing focus cannot paste into a stale browser frame`() {
         for (owner in listOf(Panel(), null)) {
-            assertFalse(BrowserEditActions({ browser }, { owner }).perform(BrowserEditAction.PASTE))
+            assertFalse(actions(owner).perform(BrowserEditAction.PASTE))
         }
         assertTrue(calls.isEmpty())
     }
 
     @Test fun `closed and closing browsers receive no editing command`() {
-        val actions = BrowserEditActions({ browser }, { component })
+        val actions = actions()
         closing = true
         assertFalse(actions.perform(BrowserEditAction.PASTE))
         closing = false
@@ -63,16 +67,41 @@ class BrowserEditActionsTest {
         assertTrue(calls.isEmpty())
     }
 
-    @Test fun `missing invalid and unfocused frames receive no editing command`() {
-        val actions = BrowserEditActions({ browser }, { component })
+    @Test fun `missing and invalid frames receive no editing command`() {
+        val actions = actions()
         valid = false
         assertFalse(actions.perform(BrowserEditAction.PASTE))
         valid = true
-        focused = false
-        assertFalse(actions.perform(BrowserEditAction.PASTE))
         availableFrame = null
         assertFalse(actions.perform(BrowserEditAction.PASTE))
         assertTrue(calls.isEmpty())
+    }
+
+    @Test fun `native menu temporary focus retains the browser editing target`() {
+        focused = false
+        for (owner in listOf(JMenuItem("Paste"), null)) {
+            assertTrue(actions(owner, child).perform(BrowserEditAction.PASTE))
+        }
+        assertEquals(listOf("paste", "paste"), calls)
+    }
+
+    @Test fun `permanent browser focus cannot override another control or inactive window`() {
+        assertFalse(actions(Panel(), child).perform(BrowserEditAction.PASTE))
+        assertFalse(actions(null, child, active = false).perform(BrowserEditAction.PASTE))
+        assertFalse(actions(JMenuItem("Paste"), null).perform(BrowserEditAction.PASTE))
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test fun `diagnostics report bounded action and outcome only`() {
+        val outcomes = mutableListOf<Pair<BrowserEditAction, BrowserEditOutcome>>()
+        val actions = BrowserEditActions({ browser }, { component }, { component }, { true }) { action, outcome ->
+            outcomes.add(action to outcome)
+        }
+        assertTrue(actions.perform(BrowserEditAction.PASTE))
+        closing = true
+        assertFalse(actions.perform(BrowserEditAction.COPY))
+        assertEquals(listOf(BrowserEditAction.PASTE to BrowserEditOutcome.DISPATCHED,
+            BrowserEditAction.COPY to BrowserEditOutcome.BROWSER_CLOSED), outcomes)
     }
 
     @Test fun `before browser creation and after resource release actions are inert`() {
