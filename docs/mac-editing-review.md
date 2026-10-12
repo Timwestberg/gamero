@@ -1,5 +1,11 @@
 # Mac WebView editing — FOR-79
 
+Current acceptance: **failed** on native-keyboard candidate `b9b93db`. Command-C/V
+still fail while field context-menu paste works. The running app is initialized
+and displaying the sign-in form. No edit-key/action/focus marker appeared, so the
+evidence does not distinguish absent callbacks from events rejected by the early
+shortcut filter. The follow-up below is diagnostic only, not another claimed fix.
+
 Mac testing of the application's Compose Edit accelerators reached their callbacks
 but rejected every edit with `FOCUS_OUTSIDE_BROWSER`. Field context-menu paste
 works. Diagnostic-only commit `11672f3` did not correct shortcut routing.
@@ -42,3 +48,36 @@ redo work; unrelated native controls and inactive windows cannot edit the browse
 repeat after reload. Test top-menu clicks separately. `GAMERO_EDIT_KEY` contains
 only action/outcome enums; DISPATCHED proves a native call, not a changed field.
 No app launch, merge or deployment is part of this source validation.
+
+## Bounded callback diagnostics
+
+`GAMERO_EDIT_HANDLER: registrationRequested=true` records the attempt to register
+on the browser client; it deliberately does not claim installation was verified.
+`GAMERO_EDIT_EVENT` runs before shortcut filtering in both PRE and POST callbacks.
+It records only event-type enum, modifier booleans, whether the normalized key is
+in the edit-command family, and CEF's editable-field boolean. It never records
+characters, raw key codes, field/clipboard content, URLs, component contents, or
+an event's `toString()`. Identical shapes are suppressed. Each handler allows at
+most 16 Command and 16 non-Command shapes, reserving Command evidence even after
+normal typing. There are no per-keypress counts or timestamps.
+
+Interpretation for the coordinator's next authorized native investigation:
+
+- Registration marker absent: check the browser-creation/attachment path.
+- Registration present but no PRE/POST: callback delivery/installation remains
+  unproven; do not relax focus or modifier guards.
+- PRE/POST present without matching shortcut: compare type, modifier and edit-key
+  family metadata with the matcher. No input characters are needed.
+- `GAMERO_EDIT_KEY` present: its outcome identifies the dispatch guard; DISPATCHED
+  still requires a field mutation to establish success.
+
+No native restart or additional user attempt is requested by this patch. This
+Linux workspace has no native JCEF runtime and cannot reproduce AppKit event
+routing. A real Mac/JCEF callback trace or coordinator-run native fixture is the
+remaining prerequisite for selecting a correction. JVM tests validate diagnostic
+bounds and unchanged dispatch semantics only; they cannot establish native input
+delivery. Keep this PR draft and do not describe this follow-up as a solution.
+
+Diagnostic validation: 52 JVM tests pass with zero failures/errors/skips; JAR
+build passes. Independent source review found no blockers. No native runtime
+collection has been performed for this instrumentation.
