@@ -103,6 +103,23 @@ class ExecutionCoordinatorTest {
         ExecutionJournal(dir, host).use { assertEquals(text, it.read(task.id)?.result) }
     }
 
+    @Test fun closedJournalCannotCompeteWithNewOwner() {
+        val dir = Files.createTempDirectory("journal")
+        val task = request()
+        val old = ExecutionJournal(dir, host)
+        val prepared = old.prepare(task)
+        old.close()
+        old.close()
+        ExecutionJournal(dir, host).use { current ->
+            assertFails { ExecutionCoordinator(old, { error("stale launch") }, Remote()).accept(task) }
+            assertFails { old.read(task.id) }
+            assertFails { old.begin(prepared) }
+            assertEquals(prepared, current.read(task.id))
+            assertEquals(ExecutionPhase.SUCCEEDED,
+                ExecutionCoordinator(current, { ProviderResult(true, "once") }, Remote()).accept(task).phase)
+        }
+    }
+
     @Test fun oversizedEncodedOutputPreservesLaunchReceipt() {
         ExecutionJournal(Files.createTempDirectory("journal"), host).use { journal ->
             val record = journal.begin(journal.prepare(request()))

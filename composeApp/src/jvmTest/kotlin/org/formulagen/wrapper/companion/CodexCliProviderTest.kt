@@ -25,7 +25,7 @@ class CodexCliProviderTest {
             exit $exit
         """.trimIndent())
         Files.setPosixFilePermissions(executable, PosixFilePermissions.fromString("rwx------"))
-        return CodexCliProvider(executable, directory, directory.resolve("output")) to directory
+        return CodexCliProvider(executable, directory, java.nio.file.Path.of("").toAbsolutePath().relativize(directory.resolve("output"))) to directory
     }
 
     @Test fun supportedCliUsesStdinAndRetainsOutputWithoutShellInterpolation() {
@@ -49,6 +49,18 @@ class CodexCliProviderTest {
         assertFails { provider.execute(ExecutionRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(), "hello")) }
         assertFalse(Files.exists(directory.resolve("arguments.txt")))
         assertFalse(provider.builder(listOf("login", "status")).environment().keys.any { it.startsWith("OPENAI_") || it == "CODEX_API_KEY" })
+    }
+
+    @Test fun cleanupForceKillsObservedChildAfterParentExit() {
+        val child = ProcessBuilder("sh", "-c", "trap '' TERM; exec sleep 60").start()
+        val parent = ProcessBuilder("sh", "-c", "exit 0").start()
+        try {
+            parent.waitFor()
+            // Allow the fixture to install its ignored TERM disposition before cleanup.
+            Thread.sleep(100)
+            terminateProcessTree(parent, setOf(child.toHandle()))
+            assertTrue(child.waitFor(2, java.util.concurrent.TimeUnit.SECONDS))
+        } finally { child.destroyForcibly(); parent.destroyForcibly() }
     }
 
     @Test fun nonzeroProviderExitRemainsFailed() {
