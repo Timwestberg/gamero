@@ -25,9 +25,7 @@ dependencyResolutionManagement {
             }
         }
         mavenCentral()
-        maven("https://jogamp.org/deployment/maven") {
-            content { includeGroupByRegex("org\\.jogamp.*") }
-        }
+
     }
 }
 

@@ -13,13 +13,16 @@ foundation. The legacy mobile bridge is disabled on desktop.
 From the repository root:
 
 ```sh
-./gradlew :composeApp:jvmTest :composeApp:desktopJar --console=plain
+./gradlew :composeApp:jvmTest :composeApp:jvmJar --console=plain
 GAMERO_WEB_URL=http://localhost:5173/hovel.html ./gradlew :composeApp:run
 ```
 
 The window first shows the destination and a Continue button. Continue initializes
 KCEF, using a bundled compatible runtime where available or downloading its
-browser runtime. On Mac, browser files and web cache live beneath
+browser runtime from the pinned official JetBrains release
+`jbr-release-25.0.4.1b635.72`. The resolved wrapper uses KCEF/JCEF API
+`2024.04.20.4`; runtime compatibility and the actual Chromium version must be
+recorded during Mac validation before agent operations are enabled. On Mac, browser files and web cache live beneath
 `~/Library/Application Support/Gamero`. Setup failures and restart requirements
 are visible. After initialization, the configured web page must be visible.
 

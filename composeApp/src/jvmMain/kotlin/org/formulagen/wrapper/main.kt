@@ -17,6 +17,7 @@ import java.net.URI
 
 /** App-independent desktop configuration; product adapters supply the trusted URL. */
 internal fun desktopWebUrl(args: Array<String>, environment: String?): String? {
+    if (args.size > 1) return null
     val raw = args.singleOrNull()?.removePrefix("--url=") ?: environment ?: return null
     val uri = runCatching { URI(raw) }.getOrNull() ?: return null
     if (uri.userInfo != null || uri.host == null || uri.fragment != null) return null
@@ -55,7 +56,8 @@ private fun DesktopBrowser(url: String) {
         if (!start) return@LaunchedEffect
         initialization = browserScope.launch {
             KCEF.init(builder = {
-                installDir(File(support, "browser"))
+                installDir(File(support, "browser-jbr-25.0.4.1-b635.72"))
+                download { github { release("jbr-release-25.0.4.1b635.72") } }
                 progress {
                     onDownloading { progress = it.coerceAtLeast(0F) }
                     onInitialized { initialized = true }

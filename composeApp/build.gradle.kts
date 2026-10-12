@@ -19,6 +19,7 @@ if (mobileTargets) {
 }
 
 kotlin {
+    jvmToolchain(21)
     if (mobileTargets) {
     androidTarget {
         @OptIn(ExperimentalKotlinGradlePluginApi::class)
@@ -68,7 +69,11 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }
+        jvmTest.dependencies { implementation(libs.kotlin.testJunit) }
         jvmMain.dependencies {
+            // Upgrade the WebView's old 2.5.0 transitive dependencies to the stable Maven Central release.
+            implementation("org.jogamp.gluegen:gluegen-rt:2.6.0")
+            implementation("org.jogamp.jogl:jogl-all:2.6.0")
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutinesSwing)
         }
@@ -109,6 +114,10 @@ if (mobileTargets) dependencies {
 compose.desktop {
     application {
         mainClass = "org.formulagen.wrapper.MainKt"
+        jvmArgs += listOf("--add-opens=java.desktop/sun.awt=ALL-UNNAMED", "--add-opens=java.desktop/java.awt.peer=ALL-UNNAMED")
+        if (System.getProperty("os.name").contains("Mac")) {
+            jvmArgs += listOf("--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED", "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
+        }
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
