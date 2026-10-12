@@ -24,6 +24,7 @@ class HapticManager {
                 .filterIsInstance<AppEvent.Haptic>()
                 .collect { evt ->
                     when(evt) {
+                        is AppEvent.Haptic.OnCustomHaptic -> log(LogLevel.Warn, TAG, "Custom haptic sequences are unavailable")
                         is AppEvent.Haptic.OnHapticFeedback -> play(AppEvent.HapticFeedbackEffect.fromType(evt.effect))
                         is AppEvent.Haptic.OnUserReadyEvent -> platformOnUserReady(event = evt)
                         is AppEvent.Haptic.OnSetHapticFeedbackSettingEvent -> platformOnSetHapticFeedbackSetting(evt)

@@ -36,7 +36,7 @@ actual fun platformBrazeOnUserLogout(event: AppEvent.Braze.OnUserLogoutEvent) { 
 actual fun platformBrazeOnPushNotificationChange(event: AppEvent.Braze.OnPushNotificationStateChangeEvent) { unsupportedDesktop("platformBrazeOnPushNotificationChange") }
 actual fun platformOnNewIntent(event: AppEvent.DeepLink.OnNewIntentEvent) { unsupportedDesktop("platformOnNewIntent") }
 actual fun platformFetchDeviceInfo() { unsupportedDesktop("platformFetchDeviceInfo") }
-actual fun platformStoreDeviceInfo(info: AppEvent.Device.DeviceInfo) { unsupportedDesktop("platformStoreDeviceInfo") }
+actual fun platformStoreDeviceInfo(info: AppEvent.DeviceInfo) { unsupportedDesktop("platformStoreDeviceInfo") }
 actual fun platformOpenExternalLink(event: AppEvent.ExternalLink.OnOpenExternalLink) { unsupportedDesktop("platformOpenExternalLink") }
 actual fun platformLoadGame() { unsupportedDesktop("platformLoadGame") }
 actual fun platformStartGame() { unsupportedDesktop("platformStartGame") }
