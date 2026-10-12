@@ -27,6 +27,9 @@ class GameManager {
                         is AppEvent.Game.OnLoadGame -> platformLoadGame()
                         is AppEvent.Game.OnManagerStart -> log(LogLevel.Info, TAG, "Manager: ${evt.name} has been verified on ${evt.platform}")
                         is AppEvent.Game.OnStartGame -> platformStartGame()
+                        AppEvent.Game.OnPauseGame -> platformPauseGame()
+                        AppEvent.Game.OnResumeGame -> platformResumeGame()
+                        AppEvent.Game.OnQuitGame -> platformQuitGame()
                     }
                 }
         }
@@ -36,3 +39,6 @@ class GameManager {
 expect fun platformLoadGame()
 expect fun platformStartGame()
 expect fun platformCompleteGame()
+expect fun platformPauseGame()
+expect fun platformResumeGame()
+expect fun platformQuitGame()

@@ -9,6 +9,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.google.firebase.Firebase
 import com.google.firebase.initialize
 import org.formulagen.wrapper.di.initializationKoin
+import org.formulagen.wrapper.platform.AppContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -17,6 +18,7 @@ class MainActivity : ComponentActivity() {
 
         Firebase.initialize(context = this)
         initializationKoin()
+        AppContext.init(this)
         setContent {
             App()
         }

@@ -7,6 +7,8 @@ import UIKit
 
 final class FullScreenHostViewController: UIViewController {
     private let root: UIViewController
+    static var current: FullScreenHostViewController?
+    static var orientationMask: UIInterfaceOrientationMask = .portrait
     
     init(root: UIViewController) {
         self.root = root
@@ -19,6 +21,7 @@ final class FullScreenHostViewController: UIViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
+        FullScreenHostViewController.current = self
         addChild(root)
         root.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(root.view)
@@ -29,5 +32,14 @@ final class FullScreenHostViewController: UIViewController {
             root.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
         root.didMove(toParent: self)
+    }
+
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
+        return FullScreenHostViewController.orientationMask
+    }
+
+    func applyOrientation(_ mask: UIInterfaceOrientationMask) {
+        FullScreenHostViewController.orientationMask = mask
+        setNeedsUpdateOfSupportedInterfaceOrientations()
     }
 }

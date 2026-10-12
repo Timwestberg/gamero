@@ -25,6 +25,9 @@ class HapticManager {
                 .collect { evt ->
                     when(evt) {
                         is AppEvent.Haptic.OnHapticFeedback -> play(AppEvent.HapticFeedbackEffect.fromType(evt.effect))
+                        is AppEvent.Haptic.OnUserReadyEvent -> platformOnUserReady(event = evt)
+                        is AppEvent.Haptic.OnSetHapticFeedbackSettingEvent -> platformOnSetHapticFeedbackSetting(evt)
+                        is AppEvent.Haptic.OnPlayHapticEffectEvent -> platformOnPlayHapticEffect(evt)
                         is AppEvent.Haptic.OnManagerStart -> log(LogLevel.Info, AppManager.TAG, "Manager: ${evt.name} has been verified on ${evt.platform}")
                     }
                 }
@@ -37,3 +40,6 @@ class HapticManager {
 }
 
 expect fun platformPlayHapticFeedbackEffect(effect: AppEvent.HapticFeedbackEffect)
+expect fun platformOnUserReady(event: AppEvent.Haptic.OnUserReadyEvent)
+expect fun platformOnSetHapticFeedbackSetting(event: AppEvent.Haptic.OnSetHapticFeedbackSettingEvent)
+expect fun platformOnPlayHapticEffect(event: AppEvent.Haptic.OnPlayHapticEffectEvent)

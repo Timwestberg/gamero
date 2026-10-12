@@ -21,10 +21,13 @@ class PermissionManager {
                 .filterIsInstance<AppEvent.Permission>()
                 .collect { evt ->
                     when(evt) {
-                        AppEvent.Permission.OnPermissionRequest -> TODO()
-                        is AppEvent.Permission.OnManagerStart -> TODO()
+                        AppEvent.Permission.OnPermissionRequest -> platformRequestPermissions()
+                        is AppEvent.Permission.OnManagerStart -> platformVerifyPermissions()
                     }
                 }
         }
     }
 }
+
+expect fun platformRequestPermissions()
+expect fun platformVerifyPermissions()

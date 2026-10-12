@@ -19,6 +19,7 @@ compose-webview-multiplatform = "2.0.2"
 google-gms = "4.4.2"
 firebase-config = "22.1.1"
 koin = "4.1.0"
+multiplatform-settings = "1.1.1"
 
 [libraries]
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
@@ -36,6 +37,7 @@ kotlinx-serialization-json = {module = "org.jetbrains.kotlinx:kotlinx-serializat
 compose-webview-multiplatform = { module = "io.github.kevinnzou:compose-webview-multiplatform", version.ref = "compose-webview-multiplatform" }
 google-firebase-config = { module = "com.google.firebase:firebase-config", version.ref = "firebase-config"}
 koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin"}
+multiplatform-settings = { module = "com.russhwolf:multiplatform-settings", version.ref = "multiplatform-settings" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
