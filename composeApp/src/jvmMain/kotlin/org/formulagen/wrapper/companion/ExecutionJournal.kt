@@ -31,6 +31,7 @@ class ExecutionJournal(private val directory: Path, private val hostId: String) 
     private val json = Json { encodeDefaults = true }
     private val lockChannel: FileChannel
     private val processLock: java.nio.channels.FileLock
+    private var closed = false
 
     init {
         UUID.fromString(hostId)
@@ -47,6 +48,7 @@ class ExecutionJournal(private val directory: Path, private val hostId: String) 
 
     @Synchronized
     fun prepare(request: ExecutionRequest): ExecutionRecord {
+        checkOpen()
         require(request.hostId == hostId) { "Task belongs to another computer" }
         UUID.fromString(request.id)
         require(request.prompt.isNotBlank() && request.prompt.length <= 16_384 && request.context.length <= 16_384)
@@ -59,6 +61,7 @@ class ExecutionJournal(private val directory: Path, private val hostId: String) 
 
     @Synchronized
     fun read(id: String): ExecutionRecord? {
+        checkOpen()
         val path = path(id)
         if (!Files.exists(path)) return null
         require(Files.size(path) <= 32L * 1024 * 1024) { "Journal record is too large; preserve it for reconciliation" }
@@ -70,12 +73,14 @@ class ExecutionJournal(private val directory: Path, private val hostId: String) 
 
     @Synchronized
     fun begin(record: ExecutionRecord): ExecutionRecord {
+        checkOpen()
         require(read(record.request.id) == record && record.phase == ExecutionPhase.PREPARED)
         return record.copy(phase = ExecutionPhase.LAUNCHING).also(::write)
     }
 
     @Synchronized
     fun complete(record: ExecutionRecord, succeeded: Boolean, result: String): ExecutionRecord {
+        checkOpen()
         require(read(record.request.id) == record && record.phase == ExecutionPhase.LAUNCHING)
         require(result.length <= 8 * 1024 * 1024) { "Result exceeds the journal limit; launch remains ambiguous" }
         return record.copy(phase = if (succeeded) ExecutionPhase.SUCCEEDED else ExecutionPhase.FAILED, result = result).also(::write)
@@ -83,6 +88,7 @@ class ExecutionJournal(private val directory: Path, private val hostId: String) 
 
     @Synchronized
     fun reconcile(record: ExecutionRecord): ExecutionRecord {
+        checkOpen()
         require(read(record.request.id) == record && record.phase == ExecutionPhase.LAUNCHING)
         return record.copy(phase = ExecutionPhase.RECONCILIATION_REQUIRED,
             result = "Execution may have started. Inspect this computer before resolving; automatic retry is disabled.").also(::write)
@@ -119,8 +125,14 @@ class ExecutionJournal(private val directory: Path, private val hostId: String) 
         } finally { Files.deleteIfExists(temporary) }
     }
 
+    private fun checkOpen() {
+        check(!closed && processLock.isValid) { "Execution journal is closed" }
+    }
+
+    @Synchronized
     override fun close() {
-        processLock.release()
-        lockChannel.close()
+        if (closed) return
+        closed = true
+        try { processLock.release() } finally { lockChannel.close() }
     }
 }

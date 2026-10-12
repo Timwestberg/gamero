@@ -5,40 +5,45 @@ import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 
 /** Provider authentication remains wholly in supported, user-installed Codex tooling. */
-class CodexCliProvider(private val executable: Path, workspace: Path, private val outputDirectory: Path) : TaskProvider {
+class CodexCliProvider(private val executable: Path, workspace: Path, outputDirectory: Path) : TaskProvider {
+    private val outputDirectory = outputDirectory.toAbsolutePath().normalize()
     private val workspace = workspace.toRealPath()
     init {
         require(Files.isExecutable(executable) && executable.isAbsolute)
         require(Files.isDirectory(this.workspace))
-        Files.createDirectories(outputDirectory)
-        Files.setPosixFilePermissions(outputDirectory, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"))
+        Files.createDirectories(this.outputDirectory)
+        Files.setPosixFilePermissions(this.outputDirectory, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"))
     }
 
     enum class Readiness { UNAVAILABLE, AUTH_REQUIRED, READY }
 
-    fun readiness(): Readiness = try {
-        val process = builder(listOf("login", "status")).redirectErrorStream(true).start()
-        val text = StringBuilder()
-        val reader = Thread.ofPlatform().daemon().start {
-            process.inputStream.bufferedReader().use { input ->
-                val buffer = CharArray(512)
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    if (text.length + count <= 4096) text.append(buffer, 0, count)
+    fun readiness(): Readiness {
+        var process: Process? = null
+        return try {
+            val probe = builder(listOf("login", "status")).redirectErrorStream(true).start()
+            process = probe
+            val text = StringBuilder()
+            val reader = Thread.ofPlatform().daemon().start {
+                probe.inputStream.bufferedReader().use { input ->
+                    val buffer = CharArray(512)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        if (text.length + count <= 4096) text.append(buffer, 0, count)
+                    }
                 }
             }
-        }
-        if (!process.waitFor(10, TimeUnit.SECONDS)) {
-            process.destroyForcibly()
-            Readiness.UNAVAILABLE
-        } else {
-            reader.join(1000)
-            if (reader.isAlive) Readiness.UNAVAILABLE
-            else if (process.exitValue() == 0 && text.contains("Logged in using ChatGPT")) Readiness.READY
-            else Readiness.AUTH_REQUIRED
-        }
-    } catch (_: Exception) { Readiness.UNAVAILABLE }
+            if (!probe.waitFor(10, TimeUnit.SECONDS)) {
+                Readiness.UNAVAILABLE
+            } else {
+                reader.join(1000)
+                if (reader.isAlive) Readiness.UNAVAILABLE
+                else if (probe.exitValue() == 0 && text.contains("Logged in using ChatGPT")) Readiness.READY
+                else Readiness.AUTH_REQUIRED
+            }
+        } catch (_: Exception) { Readiness.UNAVAILABLE }
+        finally { process?.let { terminateProcessTree(it) } }
+    }
 
     override fun execute(request: ExecutionRequest): ProviderResult {
         check(readiness() == Readiness.READY) { "Codex ChatGPT sign-in is required" }
@@ -53,6 +58,7 @@ class CodexCliProvider(private val executable: Path, workspace: Path, private va
                 "--output-last-message", output.toString(), "-")
             val process = builder(command).redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .redirectError(ProcessBuilder.Redirect.DISCARD).start()
+            val descendants = mutableSetOf<ProcessHandle>()
             try {
                 val inputFailure = java.util.concurrent.atomic.AtomicReference<Exception?>()
                 val writer = Thread.ofPlatform().daemon().start {
@@ -64,6 +70,7 @@ class CodexCliProvider(private val executable: Path, workspace: Path, private va
                 }
                 val deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(10)
                 while (!process.waitFor(100, TimeUnit.MILLISECONDS)) {
+                    process.descendants().use { handles -> handles.forEach { descendants.add(it) } }
                     check(System.nanoTime() < deadline) { "Provider execution timed out; reconcile on this computer" }
                     check(Files.size(output) <= 8L * 1024 * 1024) { "Provider output exceeds local journal limit" }
                 }
@@ -74,11 +81,7 @@ class CodexCliProvider(private val executable: Path, workspace: Path, private va
                 return ProviderResult(process.exitValue() == 0,
                     text.ifEmpty { if (process.exitValue() == 0) "" else "Codex exited with code ${process.exitValue()}" })
             } finally {
-                if (process.isAlive) {
-                    process.descendants().forEach { it.destroy() }
-                    process.destroy()
-                    if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly()
-                }
+                terminateProcessTree(process, descendants)
             }
         } // Retain output even on ambiguous failure for explicit local reconciliation.
     }
@@ -88,4 +91,19 @@ class CodexCliProvider(private val executable: Path, workspace: Path, private va
             // Do not route the user's invocation to an API-key billing path.
             environment().keys.removeIf { it.startsWith("OPENAI_") || it == "CODEX_API_KEY" }
         }
+}
+
+/** Retain observed handles so parent exit cannot hide a still-running child. */
+internal fun terminateProcessTree(process: Process, observed: Set<ProcessHandle> = emptySet()) {
+    val descendants = observed.toMutableSet()
+    process.descendants().use { handles -> handles.forEach { descendants.add(it) } }
+    descendants.forEach { if (it.isAlive) it.destroy() }
+    if (process.isAlive) process.destroy()
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+    try {
+        while ((process.isAlive || descendants.any { it.isAlive }) && System.nanoTime() < deadline) Thread.sleep(20)
+    } finally {
+        descendants.forEach { if (it.isAlive) it.destroyForcibly() }
+        if (process.isAlive) process.destroyForcibly()
+    }
 }
