@@ -12,7 +12,7 @@ import java.util.UUID
 fun interface HovelTransport { fun post(route: String, body: JsonObject): JsonObject }
 
 /** Host bearer stays in native memory and is sent only to the configured server. */
-class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val token: String, private val timeoutMillis: Long = 15_000) : HovelTransport {
+class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val token: String, private val timeoutMillis: Long = 15_000, private val brainEnabled: Boolean = false) : HovelTransport {
     private val endpoint: String
     private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
         .followRedirects(HttpClient.Redirect.NEVER).build()
@@ -24,7 +24,8 @@ class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val
         endpoint = base.toASCIIString().trimEnd('/') + "/native/$ownerId/$hostId/"
     }
     override fun post(route: String, body: JsonObject): JsonObject {
-        require(route in setOf("heartbeat", "claim", "progress"))
+        require(route in setOf("heartbeat", "claim", "progress") || (brainEnabled && route in setOf(
+            "brain/admit", "brain/authorize", "brain/outcome", "brain/presentation-claim", "brain/presentation")))
         val request = HttpRequest.newBuilder(URI(endpoint + route)).timeout(Duration.ofSeconds(15))
             .header("Content-Type", "application/json").header("X-Hovel-Host-Token", token)
             .POST(HttpRequest.BodyPublishers.ofString(body.toString())).build()

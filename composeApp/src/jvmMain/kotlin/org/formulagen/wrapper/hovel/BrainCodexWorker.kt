@@ -67,7 +67,7 @@ class BrainCodexWorker(
     private val choreographer: TaskProvider,
     private val remote: BrainWorkerRemote,
     private val verifyLocalAccount: (JsonObject) -> Unit,
-    private val authorizeLaunch: (BrainCodexAssignment, String) -> Unit,
+    private val authorizeLaunch: (BrainCodexAssignment, String, ExecutionRecord) -> Unit,
 ) {
     init { require(executionJournal !== presentationJournal) { "Roles require separate journals" } }
 
@@ -80,7 +80,7 @@ class BrainCodexWorker(
         var ticket: BrainPresentationTicket? = null
         val execution = ExecutionCoordinator(executionJournal, executor, object : ExecutionRemote {
             override fun claim(record: ExecutionRecord) {
-                authorizeLaunch(assignment, "execution")
+                authorizeLaunch(assignment, "execution", record)
                 verifyLocalAccount(assignment.accountSelections.getValue("execution").jsonObject)
                 remote.admit(assignment, record)
             }
@@ -111,7 +111,7 @@ class BrainCodexWorker(
         val request = ExecutionRequest(ticket.attemptId, assignment.request.hostId, prompt, assignment.request.context)
         return ExecutionCoordinator(presentationJournal, choreographer, object : ExecutionRemote {
             override fun claim(record: ExecutionRecord) {
-                authorizeLaunch(assignment, "choreographer")
+                authorizeLaunch(assignment, "choreographer", record)
                 verifyLocalAccount(assignment.accountSelections.getValue("choreographer").jsonObject)
                 remote.claimPresentation(assignment, ticket, record.claimId)
             }
