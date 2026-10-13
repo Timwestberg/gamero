@@ -11,11 +11,18 @@ class BrainHostWork(
     private val presentationJournal: ExecutionJournal,
     provider: TaskProvider,
     private val remote: BrainHovelRemote,
+    private val observe: (() -> Unit)? = null,
     verifyLocalAccount: (JsonObject) -> Unit,
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
     private val worker = BrainCodexWorker(executionJournal, presentationJournal, provider, provider,
         remote, verifyLocalAccount, remote::authorizeLaunch)
+
+    /** Evidence acquisition is supplied by trusted native composition, never by a task or model. */
+    fun publishObservation() {
+        check(!closed.get())
+        observe?.invoke()
+    }
 
     /** The session's single execution thread serializes both roles and reconnect delivery. */
     fun pollOnce(reconcile: (String?, Exception) -> Unit) {

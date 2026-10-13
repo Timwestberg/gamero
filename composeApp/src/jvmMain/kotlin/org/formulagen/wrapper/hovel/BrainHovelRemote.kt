@@ -10,6 +10,12 @@ import java.util.UUID
  * Server ingress must authenticate its existing host credential and bind task/claim ownership before enabling them.
  */
 class BrainHovelRemote(private val transport: HovelTransport) : BrainWorkerRemote {
+    /** The existing host-authenticated transport supplies owner/host; neither is accepted in the payload. */
+    fun publishObservation(input: JsonObject) {
+        val response = transport.post("brain/observation", input)
+        check(response.getValue("status").jsonPrimitive.content in setOf("accepted", "duplicate"))
+    }
+
     /** Authenticated discovery is not admission or authorization. Decode each item independently. */
     fun work(): JsonArray = transport.post("brain/work", buildJsonObject {}).getValue("assignments").jsonArray
 

@@ -27,6 +27,7 @@ class HovelCompanion(
     private val executable: Path,
     private val workspace: Path,
     private val credentials: HostCredentials = MacHostCredentials(),
+    private val brainOptions: BrainSessionOptions = BrainSessionOptions(),
 ) : AutoCloseable {
     var status by mutableStateOf("Connect this Mac from Hovel. Sign in with your ChatGPT subscription in the configured Codex CLI.")
         private set
@@ -89,11 +90,15 @@ class HovelCompanion(
                         context.ensureActive()
                         check(!closed && generation == authorizedGeneration && registration == registered) { "Native authorization expired" }
                         if (session == null) {
-                            val transport = HovelHttpTransport(URI("$origin/api/hovel/v1/hovel"), registered.ownerId, registered.id, token)
+                            val transport = HovelHttpTransport(URI("$origin/api/hovel/v1/hovel"), registered.ownerId, registered.id, token,
+                                brainEnabled = brainOptions.enabled)
                             val journal = ExecutionJournal(directory.resolve("journal-${registered.id}"), registered.id)
                             try {
                                 val provider = CodexCliProvider(executable, workspace, directory.resolve("output-${registered.id}"))
-                                session = HovelHostSession(registered.id, journal, provider, transport) { status = it }.also { it.start() }
+                                val brain = brainOptions.attach(registered.id, directory, journal, provider, transport)
+                                val created = HovelHostSession(registered.id, journal, provider, transport, brain) { status = it }
+                                try { created.start(); session = created }
+                                catch (error: Exception) { created.close(); throw error }
                             } catch (error: Exception) { journal.close(); throw error }
                         }
                     }

@@ -46,10 +46,15 @@ object BrainServerFixture {
             fun runSession(transport: HovelTransport, finished: CountDownLatch, expectReconciliation: Boolean = false) {
                 val unexpected = java.util.concurrent.atomic.AtomicReference<String?>()
                 val execution = ExecutionJournal(directory.resolve("execution"), host)
-                val presentation = ExecutionJournal(directory.resolve("presentation"), host)
-                val brain = BrainHostWork(host, execution, presentation, provider, BrainHovelRemote(transport)) {
-                    check(it == manifest.getValue("local").jsonObject) { "Account generation differs" }
-                }
+                val local = manifest.getValue("local").jsonObject
+                // This test-only source stands in for an approved native adapter, never a production server pin.
+                val source = BrainLocalAccountSource { BrainLocalObservation(
+                    local.getValue("localAccountRef").jsonPrimitive.content,
+                    local.getValue("accountGeneration").jsonPrimitive.long, 2, true,
+                    manifest.getValue("observedAtMillis").jsonPrimitive.long,
+                ) }
+                val brain = BrainSessionOptions(enabled = true, accountSource = source)
+                    .attach(host, directory, execution, provider, transport)
                 HovelHostSession(host, execution, provider, transport, brain) { message ->
                     if (message.startsWith("Task needs reconciliation")) {
                         if (!expectReconciliation) unexpected.set(message)

@@ -36,6 +36,8 @@ class HovelHostSession(
             })
         })
         status(if (readiness == CodexCliProvider.Readiness.READY) "Connected · Codex ready" else "Connected · Sign in to Codex using ChatGPT")
+        // Missing observations fence launches, but must not prevent delivery of already-durable outcomes.
+        brain?.let { worker -> runCatching { worker.publishObservation() } }
         if (working.get()) return
         if (brain != null) {
             if (!working.compareAndSet(false, true)) return

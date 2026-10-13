@@ -225,18 +225,9 @@ class BrainCodexWorkerTest {
                 JsonObject(value.jsonObject + ("accountGeneration" to JsonPrimitive(2)))
             }), configuration = if (!unsupported) a.configuration else JsonObject(a.configuration +
                 ("execution" to JsonObject(a.configuration.getValue("execution").jsonObject + ("modelId" to JsonPrimitive("unsupported"))))))
-        fun wire(value: BrainCodexAssignment) = buildJsonObject {
-            put("characterId", value.characterId); put("configurationRevision", value.configurationRevision)
-            put("configuration", value.configuration); put("accountSelections", value.accountSelections)
-            put("context", value.request.context)
-            put("request", buildJsonObject {
-                put("id", value.request.id); put("hostId", value.request.hostId); put("characterId", value.characterId)
-                put("mode", "local"); put("prompt", value.request.prompt)
-            })
-        }
         val rejectedBackend = Backend(rejected)
         val remote = BrainHovelRemote(HovelTransport { route, body ->
-            if (route == "brain/work") buildJsonObject { put("assignments", JsonArray(listOf(wire(rejected), wire(a)))) }
+            if (route == "brain/work") buildJsonObject { put("assignments", JsonArray(listOf(wireAssignment(rejected), wireAssignment(a)))) }
             else if (body.getValue("input").jsonObject.getValue("taskId").jsonPrimitive.content == rejected.request.id)
                 rejectedBackend.post(route, body)
             else backend.post(route, body)
@@ -253,6 +244,44 @@ class BrainCodexWorkerTest {
         assertEquals(2, launches)
         assertEquals(ExecutionPhase.SUCCEEDED, execution.read(a.request.id)!!.phase)
         assertTrue(execution.read(rejected.request.id)?.phase in setOf(null, ExecutionPhase.PREPARED))
+    }
+
+    private fun wireAssignment(value: BrainCodexAssignment) = buildJsonObject {
+        put("characterId", value.characterId); put("configurationRevision", value.configurationRevision)
+        put("configuration", value.configuration); put("accountSelections", value.accountSelections)
+        put("context", value.request.context)
+        put("request", buildJsonObject {
+            put("id", value.request.id); put("hostId", value.request.hostId); put("characterId", value.characterId)
+            put("mode", "local"); put("prompt", value.request.prompt)
+        })
+    }
+
+    @Test fun composedWorkerRejectsMissingStaleAndChangedIdentityAfterServerAuthorization() = fixture { a, backend, execution, _ ->
+        val account = a.accountSelections.getValue("execution").jsonObject.getValue("localAccountRef").jsonPrimitive.content
+        val now = System.currentTimeMillis()
+        val current = BrainLocalObservation(account, 1, 1, true, now)
+        val cases = listOf(null, current.copy(observedAtMillis = now - 60_000),
+            current.copy(accountGeneration = 2), current.copy(available = false))
+        val directory = Files.createTempDirectory("brain-source-composition-")
+        try {
+            var launches = 0
+            val transport = HovelTransport { route, body ->
+                if (route == "brain/work") buildJsonObject { put("assignments", JsonArray(listOf(wireAssignment(a)))) }
+                else backend.post(route, body)
+            }
+            for (observation in cases) {
+                val rejected = mutableListOf<String?>()
+                BrainSessionOptions(enabled = true, accountSource = BrainLocalAccountSource { observation })
+                    .attach(a.request.hostId, directory, execution,
+                        TaskProvider { launches++; ProviderResult(true, "Must not run") }, transport)!!.use { brain ->
+                        brain.pollOnce { task, _ -> rejected += task }
+                    }
+                assertEquals(listOf<String?>(a.request.id), rejected)
+                assertEquals(0, launches)
+                assertEquals(ExecutionPhase.PREPARED, execution.read(a.request.id)!!.phase)
+            }
+            assertEquals(cases.size, backend.calls.count { it.first == "brain/authorize" })
+        } finally { directory.toFile().deleteRecursively() }
     }
 
 }
