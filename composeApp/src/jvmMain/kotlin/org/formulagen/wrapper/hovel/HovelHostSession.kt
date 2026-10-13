@@ -12,6 +12,7 @@ class HovelHostSession(
     private val journal: ExecutionJournal,
     private val provider: CodexCliProvider,
     private val transport: HovelTransport,
+    private val brain: BrainHostWork? = null,
     private val status: (String) -> Unit,
 ) : AutoCloseable {
     private val polling = Executors.newSingleThreadScheduledExecutor()
@@ -36,6 +37,17 @@ class HovelHostSession(
         })
         status(if (readiness == CodexCliProvider.Readiness.READY) "Connected · Codex ready" else "Connected · Sign in to Codex using ChatGPT")
         if (working.get()) return
+        if (brain != null) {
+            if (!working.compareAndSet(false, true)) return
+            execution.execute {
+                try { brain.pollOnce { taskId, _ ->
+                    status("Task needs reconciliation on this computer: ${taskId ?: "invalid assignment"}")
+                } }
+                catch (_: Exception) { status("Task needs reconciliation on this computer; no automatic host change") }
+                finally { working.set(false) }
+            }
+            return
+        }
         val task = response.getValue("tasks").jsonArray.map { it.jsonObject }.firstOrNull {
             val state = it.getValue("progress").jsonObject.getValue("state").jsonPrimitive.content
             // Outcomes already delivered need no repeated network requests. A durable local
@@ -59,6 +71,7 @@ class HovelHostSession(
         execution.shutdownNow()
         // Closing the journal prevents stale workers from acquiring a new launch boundary.
         journal.close()
+        brain?.close()
         polling.awaitTermination(3, TimeUnit.SECONDS)
         execution.awaitTermination(5, TimeUnit.SECONDS)
     }

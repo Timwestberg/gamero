@@ -56,7 +56,7 @@ interface BrainWorkerRemote {
 data class BrainWorkerResult(val execution: ExecutionRecord, val presentation: ExecutionRecord?)
 
 /**
- * Two independent durable journals reuse the existing coordinator. This is not installed in HovelHostSession yet.
+ * Two independent durable journals reuse the existing coordinator through the optional BrainHostWork session port.
  * Executor and choreographer providers are fixed, supported Codex defaults supplied by the authorized native owner.
  * A remote admission must commit before launch. Lost delivery retries reuse IDs; uncertain launches never rerun.
  */

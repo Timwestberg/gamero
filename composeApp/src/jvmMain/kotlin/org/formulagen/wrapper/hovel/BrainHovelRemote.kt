@@ -10,6 +10,9 @@ import java.util.UUID
  * Server ingress must authenticate its existing host credential and bind task/claim ownership before enabling them.
  */
 class BrainHovelRemote(private val transport: HovelTransport) : BrainWorkerRemote {
+    /** Authenticated discovery is not admission or authorization. Decode each item independently. */
+    fun work(): JsonArray = transport.post("brain/work", buildJsonObject {}).getValue("assignments").jsonArray
+
     private fun post(route: String, claimId: String, input: JsonObject) = transport.post(route, buildJsonObject {
         put("claimId", claimId); put("input", input)
     })
@@ -120,4 +123,21 @@ class BrainHovelRemote(private val transport: HovelTransport) : BrainWorkerRemot
 private fun operationId(claimId: String, kind: String): String {
     require(UUID.fromString(claimId).toString() == claimId)
     return UUID.nameUUIDFromBytes("hovel-brain:$kind:$claimId".toByteArray(Charsets.UTF_8)).toString()
+}
+
+/** Never infer account bindings from a task or from local provider defaults. */
+internal fun brainAssignment(value: JsonElement, hostId: String): BrainCodexAssignment {
+    val assignment = value.jsonObject
+    val request = assignment.getValue("request").jsonObject
+    require(request.getValue("hostId").jsonPrimitive.content == hostId)
+    require(request.getValue("mode").jsonPrimitive.content == "local")
+    require(request.getValue("characterId") == assignment.getValue("characterId"))
+    return BrainCodexAssignment(
+        assignment.getValue("characterId").jsonPrimitive.content,
+        assignment.getValue("configurationRevision").jsonPrimitive.long,
+        ExecutionRequest(request.getValue("id").jsonPrimitive.content, hostId,
+            request.getValue("prompt").jsonPrimitive.content, assignment.getValue("context").jsonPrimitive.content),
+        assignment.getValue("configuration").jsonObject,
+        assignment.getValue("accountSelections").jsonObject,
+    ).also { it.validate() }
 }

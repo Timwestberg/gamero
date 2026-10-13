@@ -215,4 +215,44 @@ class BrainCodexWorkerTest {
         assertFails { worker.execute(changed) }
         assertTrue(backend.calls.isEmpty())
     }
+    @Test fun staleGenerationDoesNotStarveLaterWork() = rejectedWorkDoesNotStarve(false)
+
+    @Test fun unsupportedAssignmentDoesNotStarveLaterWork() = rejectedWorkDoesNotStarve(true)
+
+    private fun rejectedWorkDoesNotStarve(unsupported: Boolean) = fixture { a, backend, execution, presentation ->
+        val rejected = a.copy(request = a.request.copy(id = id(), prompt = "Rejected task"),
+            accountSelections = JsonObject(a.accountSelections.mapValues { (_, value) ->
+                JsonObject(value.jsonObject + ("accountGeneration" to JsonPrimitive(2)))
+            }), configuration = if (!unsupported) a.configuration else JsonObject(a.configuration +
+                ("execution" to JsonObject(a.configuration.getValue("execution").jsonObject + ("modelId" to JsonPrimitive("unsupported"))))))
+        fun wire(value: BrainCodexAssignment) = buildJsonObject {
+            put("characterId", value.characterId); put("configurationRevision", value.configurationRevision)
+            put("configuration", value.configuration); put("accountSelections", value.accountSelections)
+            put("context", value.request.context)
+            put("request", buildJsonObject {
+                put("id", value.request.id); put("hostId", value.request.hostId); put("characterId", value.characterId)
+                put("mode", "local"); put("prompt", value.request.prompt)
+            })
+        }
+        val rejectedBackend = Backend(rejected)
+        val remote = BrainHovelRemote(HovelTransport { route, body ->
+            if (route == "brain/work") buildJsonObject { put("assignments", JsonArray(listOf(wire(rejected), wire(a)))) }
+            else if (body.getValue("input").jsonObject.getValue("taskId").jsonPrimitive.content == rejected.request.id)
+                rejectedBackend.post(route, body)
+            else backend.post(route, body)
+        })
+        var launches = 0
+        val host = BrainHostWork(a.request.hostId, execution, presentation,
+            TaskProvider { launches++; assertNotEquals("Rejected task", it.prompt); ProviderResult(true, "Fixture reply") }, remote) {
+            check(it.getValue("accountGeneration").jsonPrimitive.int == 1) { "Local generation differs" }
+        }
+        val failed = mutableListOf<String?>()
+        host.pollOnce { task, _ -> failed += task }
+        host.pollOnce { task, _ -> failed += task }
+        assertEquals(listOf<String?>(rejected.request.id, rejected.request.id), failed)
+        assertEquals(2, launches)
+        assertEquals(ExecutionPhase.SUCCEEDED, execution.read(a.request.id)!!.phase)
+        assertTrue(execution.read(rejected.request.id)?.phase in setOf(null, ExecutionPhase.PREPARED))
+    }
+
 }

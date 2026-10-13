@@ -25,7 +25,7 @@ class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val
     }
     override fun post(route: String, body: JsonObject): JsonObject {
         require(route in setOf("heartbeat", "claim", "progress") || (brainEnabled && route in setOf(
-            "brain/admit", "brain/authorize", "brain/outcome", "brain/presentation-claim", "brain/presentation")))
+            "brain/work", "brain/admit", "brain/authorize", "brain/outcome", "brain/presentation-claim", "brain/presentation")))
         val request = HttpRequest.newBuilder(URI(endpoint + route)).timeout(Duration.ofSeconds(15))
             .header("Content-Type", "application/json").header("X-Hovel-Host-Token", token)
             .POST(HttpRequest.BodyPublishers.ofString(body.toString())).build()
