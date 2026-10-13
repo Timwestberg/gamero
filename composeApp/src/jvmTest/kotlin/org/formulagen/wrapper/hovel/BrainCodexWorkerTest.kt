@@ -123,14 +123,27 @@ class BrainCodexWorkerTest {
         assertEquals(ExecutionPhase.FAILED, execution.read(a.request.id)!!.phase)
     }
 
-    @Test fun uncertainLaunchAndAccountChangeFailClosed() = fixture { a, backend, execution, presentation ->
-        var executions = 0
+    @Test fun uncertainLaunchIsNeverRerun() = fixture { a, backend, execution, presentation ->
+        var executions = 0; var presentations = 0
         val worker = BrainCodexWorker(execution, presentation,
-            TaskProvider { executions++; error("Process lost") }, TaskProvider { ProviderResult(true, "Uncertain") },
+            TaskProvider { executions++; error("Process lost") }, TaskProvider { presentations++; ProviderResult(true, "Uncertain") },
             BrainHovelRemote(backend), {}, { _, _ -> })
         assertEquals(ExecutionPhase.RECONCILIATION_REQUIRED, worker.execute(a).execution.phase)
         worker.execute(a)
-        assertEquals(1, executions)
+        assertEquals(1, executions); assertEquals(1, presentations)
+    }
+
+    @Test fun localAccountChangeAfterUncertainLaunchPreventsPresentation() = fixture { a, backend, execution, presentation ->
+        var executions = 0; var presentations = 0; var accountChanged = false
+        val worker = BrainCodexWorker(execution, presentation,
+            TaskProvider { executions++; accountChanged = true; error("Process lost") },
+            TaskProvider { presentations++; ProviderResult(true, "must not present") }, BrainHovelRemote(backend),
+            { check(!accountChanged) { "Account generation changed" } }, { _, _ -> })
+        assertFails { worker.execute(a) }
+        assertFails { worker.execute(a) }
+        assertEquals(1, executions); assertEquals(0, presentations)
+        assertNull(backend.claim)
+        assertEquals(ExecutionPhase.RECONCILIATION_REQUIRED, execution.read(a.request.id)!!.phase)
     }
 
     @Test fun localAccountVerificationPreventsProviderInvocation() = fixture { a, backend, execution, presentation ->
