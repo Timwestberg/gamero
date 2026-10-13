@@ -28,10 +28,11 @@ class HovelCompanion(
     private val workspace: Path,
     private val credentials: HostCredentials = MacHostCredentials(),
     private val brainOptions: BrainSessionOptions = BrainSessionOptions(),
-) : AutoCloseable {
-    var status by mutableStateOf("Connect this Mac from Hovel. Sign in with your ChatGPT subscription in the configured Codex CLI.")
+) : HovelNativeCompanion {
+    init { check(ProviderLaunchMode.current() == ProviderLaunchMode.CODEX) { "Live companion is disabled in simulated mode" } }
+    override var status by mutableStateOf("Connect this Mac from Hovel. Sign in with your ChatGPT subscription in the configured Codex CLI.")
         private set
-    var approval by mutableStateOf<ConnectionApproval?>(null)
+    override var approval by mutableStateOf<ConnectionApproval?>(null)
         private set
     private val lifecycle = Any()
     private var closed = false
@@ -42,7 +43,7 @@ class HovelCompanion(
     private val origin = URI(appUrl).let { URI(it.scheme, null, it.host, it.port, null, null, null).toASCIIString() }
     private val json = Json
 
-    suspend fun dispatch(method: String, args: JsonObject): JsonObject {
+    override suspend fun dispatch(method: String, args: JsonObject): JsonObject {
         if (method == "capabilities") {
             require(args.isEmpty())
             return buildJsonObject { put("version", 1); put("connectComputer", true); put("cloud", false); put("sandbox", "read-only") }
@@ -146,10 +147,11 @@ class HovelCompanion(
         return created
     }
 
-    fun invalidatePending() = synchronized(lifecycle) {
+    override fun invalidatePending() = synchronized(lifecycle) {
         generation++
         registration = null
         approval?.answer?.cancel()
+        Unit
     }
 
     override fun close() {

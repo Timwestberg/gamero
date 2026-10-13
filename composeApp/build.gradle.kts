@@ -1,4 +1,8 @@
+import java.io.File
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask
+import org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask
+import org.jetbrains.compose.desktop.application.tasks.AbstractCheckNativeDistributionRuntime
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -111,10 +115,33 @@ if (mobileTargets) dependencies {
     add("debugImplementation", compose.uiTooling)
 }
 
+val browserJavaHome = providers.environmentVariable("GAMERO_BROWSER_JAVA_HOME")
+val packagingJavaHome = providers.environmentVariable("GAMERO_PACKAGING_JAVA_HOME")
+    .orElse(providers.systemProperty("java.home"))
+val simulatedSmoke = providers.gradleProperty("gamero.simulatedSmoke").map {
+    require(it == "true" || it == "false") { "gamero.simulatedSmoke must be true or false" }
+    it == "true"
+}.getOrElse(false)
+
+// Compiled into the artifact: inherited JVM flags cannot turn a smoke build into a live one.
+val generateProviderMode = tasks.register("generateProviderMode") {
+    val output = layout.buildDirectory.dir("generated/providerMode")
+    inputs.property("simulatedSmoke", simulatedSmoke)
+    outputs.dir(output)
+    val fixedSimulation = simulatedSmoke
+    doLast {
+        val source = output.get().file("org/formulagen/wrapper/companion/PackagedProviderMode.kt").asFile
+        source.parentFile.mkdirs()
+        source.writeText("package org.formulagen.wrapper.companion\ninternal object PackagedProviderMode { const val simulated = $fixedSimulation }\n")
+    }
+}
+kotlin.sourceSets.getByName("jvmMain").kotlin.srcDir(generateProviderMode)
+
 compose.desktop {
     application {
         mainClass = "org.formulagen.wrapper.MainKt"
-        providers.environmentVariable("GAMERO_BROWSER_JAVA_HOME").orNull?.let { javaHome = it }
+        javaHome = packagingJavaHome.get()
+        if (simulatedSmoke) jvmArgs += "-Dgamero.provider.mode=simulated"
         jvmArgs += listOf("--add-opens=java.desktop/sun.awt=ALL-UNNAMED", "--add-opens=java.desktop/java.awt.peer=ALL-UNNAMED")
         if (System.getProperty("os.name").contains("Mac")) {
             jvmArgs += listOf("--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED", "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
@@ -122,7 +149,7 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "org.formulagen.wrapper"
+            packageName = if (simulatedSmoke) "GameroSimulatedSmoke" else "org.formulagen.wrapper"
             packageVersion = "1.0.0"
         }
     }
@@ -133,5 +160,67 @@ tasks.withType<JavaExec>().configureEach {
     jvmArgs("--add-opens=java.desktop/sun.awt=ALL-UNNAMED", "--add-opens=java.desktop/java.awt.peer=ALL-UNNAMED")
     if (System.getProperty("os.name").contains("Mac")) {
         jvmArgs("--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED", "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
+    }
+}
+
+// Launch with JBR/JCEF while Gradle and packaging tools remain on a complete approved JDK.
+tasks.withType<JavaExec>().configureEach {
+    if (name == "run" || name == "runRelease") {
+        browserJavaHome.orNull?.let { executable = file(it).resolve("bin/java").absolutePath }
+    }
+}
+
+if (System.getProperty("os.name").contains("Mac")) {
+    val runtimeHome = browserJavaHome.orNull?.let(::file)
+    val runtimeBundle = runtimeHome?.parentFile?.parentFile
+    val packagingHome = file(packagingJavaHome.get())
+    tasks.withType<AbstractCheckNativeDistributionRuntime>().configureEach {
+        runtimeHome?.let { jdkHome.set(it.absolutePath) }
+    }
+    tasks.withType<AbstractJLinkTask>().configureEach {
+        // Never trim the approved JBR or require its missing jlink executable.
+        enabled = false
+    }
+    tasks.withType<AbstractJPackageTask>().configureEach {
+        javaHome.set(packagingHome.absolutePath)
+        runtimeHome?.let { runtimeImage.set(it) }
+        doFirst {
+            require(runtimeHome != null && runtimeHome.name == "Home" && runtimeHome.parentFile.name == "Contents") {
+                "GAMERO_BROWSER_JAVA_HOME must identify the verified JBR bundle's Contents/Home"
+            }
+            require(runtimeHome.resolve("bin/java").canExecute() && runtimeHome.resolve("lib/libjcef.dylib").isFile)
+            require(runtimeBundle!!.resolve("Contents/Frameworks").isDirectory) { "Complete JBR/JCEF Frameworks are required" }
+            require(packagingHome.resolve("bin/jpackage").canExecute() && packagingHome.resolve("bin/jlink").canExecute()) {
+                "GAMERO_PACKAGING_JAVA_HOME must provide approved jpackage and jlink tools"
+            }
+            require(File("/usr/bin/ditto").canExecute()) { "macOS ditto is required to preserve the runtime bundle" }
+        }
+        if (targetFormat == TargetFormat.AppImage) {
+            runtimeBundle?.let { inputs.dir(it) }
+            doLast {
+                val app = destinationDir.get().asFile.listFiles().orEmpty().single { it.extension == "app" }
+                val runtime = app.resolve("Contents/runtime")
+                require(runtime.isDirectory) { "Packaged runtime directory is missing" }
+                // Replace only this task's generated runtime; merging would retain files outside the source signature.
+                check(runtime.deleteRecursively()) { "Could not remove generated Home-only runtime" }
+                // jpackage copies only Home. Restore the complete verified bundle, preserving framework links and metadata.
+                val copy = ProcessBuilder("/usr/bin/ditto", "--rsrc", "--extattr", "--acl",
+                    runtimeBundle!!.absolutePath, runtime.absolutePath).inheritIO().start()
+                check(copy.waitFor() == 0) { "Could not preserve the complete JBR/JCEF runtime" }
+                check(runtime.resolve("Contents/Frameworks").isDirectory)
+                check(runtime.resolve("Contents/Home/lib/libjcef.dylib").isFile)
+                // Verification only: never strip signatures, change quarantine or access signing identities.
+                for (bundle in listOf(runtimeBundle, runtime, app)) {
+                    val verify = ProcessBuilder("/usr/bin/codesign", "--verify", "--deep", "--strict", bundle!!.absolutePath)
+                        .inheritIO().start()
+                    check(verify.waitFor() == 0) { "Runtime/app signature verification failed; stop before launch" }
+                }
+            }
+        } else {
+            // Installers must consume the already-completed app image, not repackage a Home-only runtime.
+            val imageName = if (name.contains("Release")) "createReleaseDistributable" else "createDistributable"
+            val image = tasks.named<AbstractJPackageTask>(imageName)
+            appImage.set(image.flatMap { it.destinationDir })
+        }
     }
 }

@@ -24,6 +24,9 @@ import java.net.URI
 import kotlin.system.exitProcess
 import org.formulagen.wrapper.companion.NativeBridge
 import org.formulagen.wrapper.hovel.HovelCompanion
+import org.formulagen.wrapper.hovel.HovelNativeCompanion
+import org.formulagen.wrapper.hovel.SimulatedHovelCompanion
+import org.formulagen.wrapper.companion.ProviderLaunchMode
 import java.nio.file.Path
 import java.awt.EventQueue
 import java.util.concurrent.atomic.AtomicReference
@@ -51,7 +54,7 @@ private class DesktopResources : AutoCloseable {
     }
 
     var bridge: NativeBridge? = null
-    var companion: HovelCompanion? = null
+    var companion: HovelNativeCompanion? = null
     override fun close() {
         windowActive.set(false)
         browser.set(null)
@@ -73,6 +76,14 @@ internal fun desktopWebUrl(args: Array<String>, environment: String?): String? {
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 fun main(args: Array<String>) {
+    val launchMode = ProviderLaunchMode.current() // Reject ambiguous/invalid configuration before startup.
+    if (launchMode == ProviderLaunchMode.SIMULATED) {
+        val fixture = desktopWebUrl(args, System.getenv("GAMERO_WEB_URL"))?.let(::URI)
+        require(fixture != null && fixture.scheme == "http" && fixture.host == "127.0.0.1" &&
+            fixture.path == "/native-bridge-smoke.html" && fixture.query == null) {
+            "Simulated smoke requires the repository fixture at http://127.0.0.1:<port>/native-bridge-smoke.html"
+        }
+    }
     val exitAction = AtomicReference<(() -> Unit)?>(null)
     val failure = DesktopFailure { EventQueue.invokeLater { exitAction.get()?.invoke() } }
     Thread.setDefaultUncaughtExceptionHandler(failure)
@@ -151,7 +162,10 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
         else File(home, ".local/share/gamero")
     }
     val companion = remember {
-        if (System.getenv("GAMERO_PRODUCT") == "hovel" && System.getProperty("os.name").contains("Mac")) {
+        if (ProviderLaunchMode.current() == ProviderLaunchMode.SIMULATED) {
+            SimulatedHovelCompanion(support.toPath().resolve("simulated-smoke"))
+                .also { resources.companion = it }
+        } else if (System.getenv("GAMERO_PRODUCT") == "hovel" && System.getProperty("os.name").contains("Mac")) {
             val executable = System.getenv("GAMERO_CODEX_PATH")?.let(Path::of)
             val workspace = System.getenv("GAMERO_WORKSPACE")?.let(Path::of)
             if (executable != null && workspace != null) {

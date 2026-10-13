@@ -88,6 +88,7 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
 
     internal fun builder(arguments: List<String>): ProcessBuilder = ProcessBuilder(listOf(executable.toString()) + arguments)
         .directory(workspace.toFile()).apply {
+            check(ProviderLaunchMode.current() == ProviderLaunchMode.CODEX) { "Real CLI processes are disabled in simulated mode" }
             // Do not route the user's invocation to an API-key billing path.
             environment().keys.removeIf { it.startsWith("OPENAI_") || it == "CODEX_API_KEY" }
         }
