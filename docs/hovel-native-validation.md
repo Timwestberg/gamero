@@ -26,14 +26,18 @@ export PATH="$JAVA_HOME/bin:$PATH"
 "$GAMERO_BROWSER_JAVA_HOME/bin/java" --list-modules | grep '^jcef@'
 ./gradlew --offline -Porg.gradle.java.installations.auto-download=false javaToolchains
 ./gradlew --offline -Porg.gradle.java.installations.auto-download=false :composeApp:jvmTest :composeApp:jvmJar --console=plain
-./gradlew --offline -Porg.gradle.java.installations.auto-download=false -Pgamero.simulatedSmoke=true :composeApp:verifyDesktopRuntimeWiring --console=plain
+./gradlew --offline -Porg.gradle.java.installations.auto-download=false -Pgamero.simulatedSmoke=true :composeApp:verifyDesktopRuntimeWiring :composeApp:verifyInstalledBrowserRuntime --console=plain
 ./gradlew --offline -Porg.gradle.java.installations.auto-download=false -Pgamero.simulatedSmoke=true :composeApp:jvmTest --tests '*Simulated*Test' :composeApp:jvmJar :composeApp:createDistributable --console=plain
 ```
 
 The wiring check prints the effective runtime path for every packaging task; each
 must resolve to the installed JBR Home above, never `build/compose/tmp/.../runtime`.
-It also verifies the packaging JDK and disabled jlink tasks without packaging or
-launching. Compose defaults are overridden after its task registration actions,
+It also checks `checkRuntime.jdkHome`, all jpackage/jlink/ProGuard/module-discovery
+`javaHome` values, tool-metadata producers/consumers and validation dependencies.
+These must use Corretto; `run`/`runRelease` executables and `runtimeImage` must use
+JBR. The separate browser validator probes JBR's modules and full bundle layout,
+requiring Java21/JCEF but never requiring jlink/jpackage in JBR. Neither check
+packages or launches the application. Compose defaults are overridden after its task registration actions,
 and the installed runtime properties are frozen against later replacement.
 
 Corretto supplies packaging tools. The app uses the verified JBR/JCEF at launch
@@ -41,9 +45,15 @@ and bundles its entire containing runtime bundle, including `Contents/Frameworks
 and symlinks. Packaging replaces only its generated Home-only runtime copy and
 runs read-only `codesign --verify --deep --strict` checks against the source JBR,
 packaged runtime and outer app. If any check fails, **stop before launch** and
-return the exact error. No signing, signature removal, installation, download,
-quarantine modification or signing-identity access is performed. Mac packaging,
-architecture compatibility and signatures require validation on that Mac.
+return the exact error. Compose1.12.1 itself removes/replaces signatures on
+**generated copies** during Mac app-image packaging (its no-certificate signer
+uses ad-hoc signing on Arm64). Those operations target generated output, not the
+installed JBR. After Compose finishes, this build restores the complete source
+bundle and verifies source/runtime/outer signatures. Restoration may invalidate
+the outer signature: report that failure without launching or adding a bypass.
+No custom re-signing, installation, download, quarantine modification or
+signing-identity access is added here. Mac packaging, architecture compatibility
+and signatures require validation on that Mac.
 
 Only after the package checks pass, use two terminals from the repository root:
 

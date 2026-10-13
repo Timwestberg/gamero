@@ -1,6 +1,9 @@
 import java.io.File
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask
+import org.jetbrains.compose.desktop.application.tasks.AbstractJvmToolOperationTask
+import org.jetbrains.compose.desktop.application.tasks.AbstractProguardTask
+import org.jetbrains.compose.desktop.application.tasks.AbstractSuggestModulesTask
 import org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask
 import org.jetbrains.compose.desktop.application.tasks.AbstractCheckNativeDistributionRuntime
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
@@ -185,16 +188,50 @@ afterEvaluate {
         if (it.name == "run" || it.name == "runRelease") it.executable = runtimeHome.resolve("bin/java").absolutePath
     }
     tasks.withType<AbstractCheckNativeDistributionRuntime>().forEach {
-        it.jdkHome.set(runtimeHome.absolutePath)
+        // Despite its name this task validates java, jlink and jpackage and emits tool-JDK metadata.
+        it.jdkHome.set(packagingHome.absolutePath)
         it.jdkHome.disallowChanges()
+    }
+    tasks.withType<AbstractJvmToolOperationTask>().forEach {
+        it.javaHome.set(packagingHome.absolutePath)
+        it.javaHome.disallowChanges()
+    }
+    tasks.withType<AbstractProguardTask>().forEach {
+        it.javaHome.set(packagingHome.absolutePath)
+        it.javaHome.disallowChanges()
+    }
+    tasks.withType<AbstractSuggestModulesTask>().forEach {
+        it.javaHome.set(packagingHome.absolutePath)
+        it.javaHome.disallowChanges()
+    }
+    val verifyBrowserRuntime = tasks.register("verifyInstalledBrowserRuntime") {
+        group = "verification"
+        description = "Validate the installed browser runtime without requiring packaging tools in it."
+        inputs.property("runtimeHome", runtimeHome.absolutePath)
+        inputs.property("macBundleRequired", isMac)
+        doLast {
+            val java = runtimeHome.resolve("bin/java")
+            require(java.canExecute()) { "Installed browser runtime is missing executable bin/java" }
+            // Only the approved runtime's read-only module probe; never launch the app or provision a JDK.
+            val probe = ProcessBuilder(java.absolutePath, "--list-modules").redirectErrorStream(true).start()
+            val modules = probe.inputStream.bufferedReader().use { it.readText() }
+            check(probe.waitFor() == 0) { "Installed browser module probe failed: $modules" }
+            check(modules.lineSequence().any { it.startsWith("java.base@21.") }) { "Browser runtime must be JDK21" }
+            if (isMac) {
+                require(runtimeHome.name == "Home" && runtimeHome.parentFile.name == "Contents")
+                require(runtimeHome.resolve("lib/libjcef.dylib").isFile)
+                require(runtimeBundle!!.resolve("Contents/Frameworks").isDirectory) { "Complete JBR/JCEF Frameworks are required" }
+                check(modules.lineSequence().any { it.startsWith("jcef@") || it == "jcef" }) { "Installed JBR is missing the jcef module" }
+            }
+            println("GAMERO_BROWSER_RUNTIME_VERIFIED runtimeHome=${runtimeHome.absolutePath}")
+        }
     }
     tasks.withType<AbstractJLinkTask>().forEach {
         // Never trim the installed runtime or require its missing jlink executable.
         it.enabled = false
     }
     tasks.withType<AbstractJPackageTask>().forEach { task -> task.apply {
-        javaHome.set(packagingHome.absolutePath)
-        javaHome.disallowChanges()
+        dependsOn(verifyBrowserRuntime)
         runtimeImage.set(runtimeHome)
         runtimeImage.disallowChanges()
         if (isMac) doFirst {
@@ -239,7 +276,24 @@ afterEvaluate {
     } }
     // These final properties are frozen after Compose's registration actions have run.
     val effectiveImages = tasks.withType<AbstractJPackageTask>().associate { it.name to it.runtimeImage.get().asFile.absolutePath }
-    val effectiveTools = tasks.withType<AbstractJPackageTask>().associate { it.name to it.javaHome.get() }
+    val effectiveTools = linkedMapOf<String, String>().apply {
+        tasks.withType<AbstractCheckNativeDistributionRuntime>().forEach { put("${it.name}.jdkHome", it.jdkHome.get()) }
+        tasks.withType<AbstractJvmToolOperationTask>().forEach { put("${it.name}.javaHome", it.javaHome.get()) }
+        tasks.withType<AbstractProguardTask>().forEach { put("${it.name}.javaHome", it.javaHome.get()) }
+        tasks.withType<AbstractSuggestModulesTask>().forEach { put("${it.name}.javaHome", it.javaHome.get()) }
+    }
+    val effectiveLaunchers = tasks.withType<JavaExec>().filter { it.name == "run" || it.name == "runRelease" }
+        .associate { it.name to it.executable }
+    val checkedMetadata = tasks.withType<AbstractCheckNativeDistributionRuntime>()
+        .map { it.javaRuntimePropertiesFile.get().asFile.absolutePath }.toSet()
+    val consumedMetadata = linkedMapOf<String, String>().apply {
+        tasks.withType<AbstractJPackageTask>().forEach { put(it.name, it.javaRuntimePropertiesFile.get().asFile.absolutePath) }
+        tasks.withType<AbstractJLinkTask>().forEach { put(it.name, it.javaRuntimePropertiesFile.get().asFile.absolutePath) }
+    }
+    val packageDependencies = tasks.withType<AbstractJPackageTask>().toList().associate { task ->
+        task.name to task.taskDependencies.getDependencies(task).map { it.name }.sorted()
+    }
+    val checkNames = tasks.withType<AbstractCheckNativeDistributionRuntime>().map { it.name }.toSet()
     val enabledLinkTasks = tasks.withType<AbstractJLinkTask>().filter { it.enabled }.map { it.name }
     tasks.register("verifyDesktopRuntimeWiring") {
         group = "verification"
@@ -249,12 +303,34 @@ afterEvaluate {
         inputs.property("effectiveRuntimeImages", effectiveImages)
         inputs.property("effectivePackagingJdks", effectiveTools)
         inputs.property("enabledLinkTasks", enabledLinkTasks)
+        inputs.property("effectiveLaunchers", effectiveLaunchers)
+        inputs.property("checkedMetadata", checkedMetadata)
+        inputs.property("consumedMetadata", consumedMetadata)
+        inputs.property("packageDependencies", packageDependencies)
+        inputs.property("toolCheckTasks", checkNames)
         doLast {
+            for (tool in listOf("java", "jlink", "jpackage", "jdeps")) {
+                check(packagingHome.resolve("bin/$tool").canExecute()) { "Packaging JDK is missing $tool" }
+            }
+            check(packagingHome.resolve("jmods").isDirectory) { "Packaging JDK needs jmods for release processing" }
             check(effectiveImages.isNotEmpty()) { "Compose packaging tasks are missing" }
             check(effectiveImages.values.all { it == runtimeHome.absolutePath }) { "Compose replaced the installed runtime: $effectiveImages" }
             check(effectiveTools.values.all { it == packagingHome.absolutePath }) { "Wrong packaging JDK: $effectiveTools" }
+            check(effectiveLaunchers.isNotEmpty() && effectiveLaunchers.values.all { it == runtimeHome.resolve("bin/java").absolutePath }) {
+                "Wrong browser launch executable: $effectiveLaunchers"
+            }
+            check(checkedMetadata.isNotEmpty() && consumedMetadata.values.all { it in checkedMetadata }) {
+                "Packaging metadata must come from the packaging JDK check: $consumedMetadata"
+            }
+            check(packageDependencies.values.all { dependencies ->
+                "verifyInstalledBrowserRuntime" in dependencies && dependencies.any { it in checkNames }
+            }) { "Packaging must depend on both tool and browser validation: $packageDependencies" }
             check(enabledLinkTasks.isEmpty()) { "Installed runtime must not depend on enabled jlink tasks" }
             effectiveImages.forEach { (name, path) -> println("$name runtimeImage=$path") }
+            effectiveTools.forEach { (property, path) -> println("$property=$path") }
+            effectiveLaunchers.forEach { (name, path) -> println("$name executable=$path") }
+            consumedMetadata.forEach { (name, path) -> println("$name toolMetadata=$path") }
+            packageDependencies.forEach { (name, dependencies) -> println("$name dependencies=$dependencies") }
             println("GAMERO_RUNTIME_WIRING_VERIFIED packagingJdk=${packagingHome.absolutePath}")
         }
     }
