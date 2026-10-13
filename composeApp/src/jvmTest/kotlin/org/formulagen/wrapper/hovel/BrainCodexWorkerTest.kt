@@ -32,6 +32,7 @@ class BrainCodexWorkerTest {
         var outcome: JsonObject? = null
         var record: JsonObject? = null
         var claim: String? = null
+        var executionClaim: String? = null
         var loseOnce: String? = null
         fun retry() {
             val old = record!!
@@ -44,7 +45,18 @@ class BrainCodexWorkerTest {
             claim = null
         }
         override fun post(route: String, envelope: JsonObject): JsonObject {
+            // Mirror PR #112's native envelope checks so a wrong claim ID fails here as it would on the server.
+            require(envelope.keys == setOf("claimId", "input"))
+            val claimId = envelope.getValue("claimId").jsonPrimitive.content
+            require(UUID.fromString(claimId).toString() == claimId)
             val body = envelope.getValue("input").jsonObject
+            if (route in setOf("brain/authorize", "brain/presentation-claim", "brain/presentation")) {
+                require(body.getValue("claimId").jsonPrimitive.content == claimId)
+            }
+            if (route == "brain/authorize" && body.getValue("role").jsonPrimitive.content == "execution") {
+                require(executionClaim == null || executionClaim == claimId); executionClaim = claimId
+            }
+            if (route == "brain/outcome") require(executionClaim == null || executionClaim == claimId)
             calls += route to body
             val response = when (route) {
                 "brain/admit" -> {
@@ -197,16 +209,21 @@ class BrainCodexWorkerTest {
         val a = assignment()
         val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
         var calls = 0
+        var status = 200; var authorized = true; var echoedClaim: String? = null
         val token = "a".repeat(64)
         server.createContext("/") { exchange ->
             calls++
             assertEquals(token, exchange.requestHeaders.getFirst("X-Hovel-Host-Token"))
             assertEquals("/native/${a.characterId}/${a.request.hostId}/brain/authorize", exchange.requestURI.path)
-            val input = Json.parseToJsonElement(exchange.requestBody.bufferedReader().readText()).jsonObject.getValue("input").jsonObject
+            val envelope = Json.parseToJsonElement(exchange.requestBody.bufferedReader().readText()).jsonObject
+            val input = envelope.getValue("input").jsonObject
+            assertEquals(setOf("claimId", "input"), envelope.keys)
+            assertEquals(input.getValue("claimId"), envelope.getValue("claimId"))
             val response = buildJsonObject { put("data", buildJsonObject {
-                put("authorized", true); put("taskId", input.getValue("taskId")); put("role", input.getValue("role")); put("claimId", input.getValue("claimId"))
+                put("authorized", authorized); put("taskId", input.getValue("taskId")); put("role", input.getValue("role"))
+                put("claimId", echoedClaim?.let(::JsonPrimitive) ?: input.getValue("claimId"))
             }) }.toString().toByteArray()
-            exchange.sendResponseHeaders(200, response.size.toLong())
+            exchange.sendResponseHeaders(status, response.size.toLong())
             exchange.responseBody.use { it.write(response) }
         }
         server.start()
@@ -215,8 +232,14 @@ class BrainCodexWorkerTest {
             val record = ExecutionRecord(a.request, id())
             assertFails { BrainHovelRemote(HovelHttpTransport(base, a.characterId, a.request.hostId, token)).authorizeLaunch(a, "execution", record) }
             assertEquals(0, calls)
-            BrainHovelRemote(HovelHttpTransport(base, a.characterId, a.request.hostId, token, brainEnabled = true)).authorizeLaunch(a, "execution", record)
+            val enabled = BrainHovelRemote(HovelHttpTransport(base, a.characterId, a.request.hostId, token, brainEnabled = true))
+            enabled.authorizeLaunch(a, "execution", record)
             assertEquals(1, calls)
+            // A rejection never counts as authorization, even when the body otherwise looks like a grant.
+            status = 409; assertFails { enabled.authorizeLaunch(a, "execution", record) }; status = 200
+            authorized = false; assertFails { enabled.authorizeLaunch(a, "execution", record) }; authorized = true
+            echoedClaim = id(); assertFails { enabled.authorizeLaunch(a, "execution", record) }
+            assertEquals(4, calls)
         } finally { server.stop(0) }
     }
 
