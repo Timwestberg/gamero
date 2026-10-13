@@ -17,9 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,7 +27,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
@@ -38,16 +35,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.toComposeImageBitmap
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.platform.Font
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -57,8 +48,8 @@ import org.jetbrains.skia.Image
 
 /**
  * Design exploration for the Hovel desktop start screen, drawn with the game's own art
- * (see resources/hovel/start/PROVENANCE.md). Not wired into main.kt yet: each variant
- * renders the same three states the current start screen has.
+ * (see resources/hovel/start/PROVENANCE.md). Not wired into main.kt yet: it renders the
+ * same three states the current start screen has.
  */
 sealed interface HovelStartState {
     data class Ready(val url: String) : HovelStartState
@@ -70,10 +61,8 @@ private const val RuntimeNote = "Hovel runs in a verified JetBrains Runtime with
 
 /** Hovel palette: the environment art brief plus the web host's `--hv-*` tokens. */
 private object HovelPalette {
-    val plaster = Color(0xFFE9DCC1)
     val oak = Color(0xFFBD8649)
     val plum = Color(0xFF443C55)
-    val amber = Color(0xFFE7B16B)
     val margin = Color(0xFF3B3342)
     val ground = Color(0xFF17141F)
     val surface = Color(0xFF1E1A28)
@@ -83,12 +72,6 @@ private object HovelPalette {
     val ochre = Color(0xFFE8A95A)
     val ochreInk = Color(0xFF2A1708)
     val error = Color(0xFFFF9C8A)
-    // Godot room HUD: label shadow and the "Bubble"/"BubbleFocus" style boxes in room.tscn.
-    val labelShadow = Color(0.12f, 0.10f, 0.09f)
-    val bubble = Color(0.12f, 0.20f, 0.22f, 0.97f)
-    val bubbleBorder = Color(0.55f, 0.69f, 0.63f)
-    val bubbleFocus = Color(0.18f, 0.29f, 0.30f)
-    val bubbleFocusBorder = Color(0.90f, 0.76f, 0.46f)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -163,97 +146,6 @@ private fun DrawScope.drawStarterRoom(art: HovelArt, frame: RoomFrame, keeperSca
     }
 }
 
-private fun hudText(art: HovelArt, size: Float, color: Color = HovelPalette.text) = TextStyle(
-    color = color, fontFamily = art.display, fontSize = size.sp,
-    shadow = Shadow(HovelPalette.labelShadow, Offset(1f, 2f), 0f),
-)
-
-// ---------------------------------------------------------------------------------------------
-// Variant A: In the room. The start screen is the game's own room, with the HUD bubble as the button.
-// ---------------------------------------------------------------------------------------------
-
-@Composable
-fun RoomStartScreen(state: HovelStartState, onContinue: () -> Unit, art: HovelArt = rememberHovelArt(), modifier: Modifier = Modifier) {
-    BoxWithConstraints(modifier.fillMaxSize().background(HovelPalette.margin)) {
-        val density = LocalDensity.current.density
-        val widthPx = constraints.maxWidth.toFloat()
-        val heightPx = constraints.maxHeight.toFloat()
-        // Leave a plum band above the room for the title, like the art preview's header margin.
-        val scale = minOf(widthPx / RoomWidth, heightPx * 0.8f / RoomHeight)
-        val frame = RoomFrame(scale, Offset((widthPx - RoomWidth * scale) / 2, heightPx - RoomHeight * scale - heightPx * 0.04f))
-        fun roomDp(x: Float, y: Float): Pair<Dp, Dp> = frame.toScreen(Offset(x, y)).let { (it.x / density).dp to (it.y / density).dp }
-
-        Canvas(Modifier.fillMaxSize()) {
-            drawStarterRoom(art, frame)
-            // Dim the room so the HUD reads, keeping the window glow at the center.
-            drawRect(Brush.radialGradient(
-                listOf(Color.Transparent, HovelPalette.ground.copy(alpha = 0.55f)),
-                center = frame.toScreen(Offset(384f, 250f)), radius = RoomWidth * frame.scale * 0.7f,
-            ))
-        }
-
-        Column(Modifier.fillMaxWidth().height((frame.origin.y / density).dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Text("HOVEL", style = hudText(art, 44f, HovelPalette.amber), letterSpacing = 6.sp)
-        }
-
-        // The game's response bubble sits at (264, 116)-(524, 194) in room space; the button lives there.
-        val (bubbleX, bubbleY) = roomDp(264f, 112f)
-        val bubbleWidth = (260f * frame.scale / density).dp
-        Box(Modifier.offset(bubbleX, bubbleY).width(bubbleWidth)) {
-            when (state) {
-                is HovelStartState.Ready -> HudBubble(focused = true, onClick = onContinue) {
-                    Text("Step inside", style = hudText(art, 22f), textAlign = TextAlign.Center)
-                }
-                HovelStartState.Preparing -> HudBubble(focused = false) {
-                    Text("Lighting the lamps…", style = hudText(art, 18f))
-                    Spacer(Modifier.height(8.dp))
-                    PixelProgress()
-                }
-                is HovelStartState.Failed -> HudBubble(focused = true, onClick = onContinue) {
-                    Text("The door is stuck", style = hudText(art, 18f, HovelPalette.error))
-                    Text(state.reason, style = hudText(art, 12f, HovelPalette.muted), textAlign = TextAlign.Center)
-                    Spacer(Modifier.height(6.dp))
-                    Text("Try again", style = hudText(art, 16f, HovelPalette.amber))
-                }
-            }
-        }
-
-        // CharacterName and TaskState labels, placed under the keeper as in room.tscn.
-        val (labelX, labelY) = roomDp(104f, 341f)
-        Column(Modifier.offset(labelX, labelY).width((560f * frame.scale / density).dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("Your keeper", style = hudText(art, 18f))
-            Text(
-                when (state) {
-                    is HovelStartState.Ready -> "Waiting at ${state.url}"
-                    HovelStartState.Preparing -> "Getting ready"
-                    is HovelStartState.Failed -> "Locked out"
-                },
-                style = hudText(art, 13f, HovelPalette.plaster),
-            )
-        }
-
-        Text(
-            RuntimeNote, style = hudText(art, 11f, HovelPalette.muted), textAlign = TextAlign.Center,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp),
-        )
-    }
-}
-
-@Composable
-private fun HudBubble(focused: Boolean, onClick: (() -> Unit)? = null, content: @Composable () -> Unit) {
-    val shape = RoundedCornerShape(12.dp)
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(if (focused) HovelPalette.bubbleFocus else HovelPalette.bubble)
-            .border(if (focused) 2.dp else 1.dp, if (focused) HovelPalette.bubbleFocusBorder else HovelPalette.bubbleBorder, shape)
-            .let { if (onClick != null) it.clickable(onClick = onClick) else it }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) { content() }
-}
-
 /** Twelve chunky honey-oak cells that fill and loop, matching the art's chunky pixel clusters. */
 @Composable
 private fun PixelProgress(cells: Int = 12) {
@@ -269,7 +161,7 @@ private fun PixelProgress(cells: Int = 12) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Variant B: Keeper card. The web host's dark plum panel beside a close-up of the room.
+// Keeper card: the web host's dark plum panel beside a close-up of the room.
 // ---------------------------------------------------------------------------------------------
 
 @Composable
@@ -287,11 +179,9 @@ fun KeeperStartScreen(state: HovelStartState, onContinue: () -> Unit, art: Hovel
                     .border(1.dp, HovelPalette.line, RoundedCornerShape(16.dp))
                     .padding(32.dp),
             ) {
-                Text("YOUR HOVEL", color = HovelPalette.ochre, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                Spacer(Modifier.height(6.dp))
-                Text("Welcome home", color = HovelPalette.text, fontFamily = art.display, fontSize = 40.sp)
-                Spacer(Modifier.height(8.dp))
-                Text("Your room is just as you left it. Rearrange the furniture, change your keeper's look, and pick up your tasks.", color = HovelPalette.muted, fontSize = 15.sp, lineHeight = 22.sp)
+                Text("Hovel", color = HovelPalette.text, fontFamily = art.display, fontSize = 56.sp)
+                Spacer(Modifier.height(4.dp))
+                Text("Make yourself at home.", color = HovelPalette.muted, fontSize = 17.sp)
                 Spacer(Modifier.height(28.dp))
                 when (state) {
                     is HovelStartState.Ready -> {
@@ -348,9 +238,6 @@ private fun PanelButton(art: HovelArt, label: String, onClick: () -> Unit) {
 private val previewReady = HovelStartState.Ready("http://localhost:5173/hovel.html")
 private val previewFailed = HovelStartState.Failed("A verified JetBrains Runtime with JCEF is required")
 
-@Preview @Composable fun RoomReadyPreview() = RoomStartScreen(previewReady, {})
-@Preview @Composable fun RoomPreparingPreview() = RoomStartScreen(HovelStartState.Preparing, {})
-@Preview @Composable fun RoomFailedPreview() = RoomStartScreen(previewFailed, {})
 @Preview @Composable fun KeeperReadyPreview() = KeeperStartScreen(previewReady, {})
 @Preview @Composable fun KeeperPreparingPreview() = KeeperStartScreen(HovelStartState.Preparing, {})
 @Preview @Composable fun KeeperFailedPreview() = KeeperStartScreen(previewFailed, {})
