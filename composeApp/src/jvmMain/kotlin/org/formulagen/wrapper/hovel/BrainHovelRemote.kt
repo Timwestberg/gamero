@@ -6,18 +6,41 @@ import java.util.UUID
 
 /**
  * Concrete JSON adapter for fixture-backed Brain service ports. Inject a transport scoped to the approved host.
- * Production HovelHttpTransport deliberately rejects these unmounted routes; no capability/activation is advertised.
+ * Production HovelHttpTransport rejects these routes by default; no capability/activation is advertised.
  * Server ingress must authenticate its existing host credential and bind task/claim ownership before enabling them.
  */
 class BrainHovelRemote(private val transport: HovelTransport) : BrainWorkerRemote {
+    private fun post(route: String, claimId: String, input: JsonObject) = transport.post(route, buildJsonObject {
+        put("claimId", claimId); put("input", input)
+    })
+
+    /** Called before the durable launch boundary, separately from immutable admission replay. */
+    fun authorizeLaunch(assignment: BrainCodexAssignment, role: String, record: ExecutionRecord) {
+        require(role in setOf("execution", "choreographer"))
+        val response = post("brain/authorize", record.claimId, buildJsonObject {
+            put("taskId", assignment.request.id); put("configurationRevision", assignment.configurationRevision)
+            put("role", role); put("claimId", record.claimId)
+        })
+        require(response.getValue("authorized").jsonPrimitive.boolean)
+        require(response.getValue("taskId").jsonPrimitive.content == assignment.request.id)
+        require(response.getValue("role").jsonPrimitive.content == role)
+        require(response.getValue("claimId").jsonPrimitive.content == record.claimId)
+    }
+
     override fun admit(assignment: BrainCodexAssignment, execution: ExecutionRecord) {
-        val response = transport.post("brain/admit", buildJsonObject {
+        val response = post("brain/admit", execution.claimId, buildJsonObject {
             put("requestId", operationId(execution.claimId, "admit"))
             put("characterId", assignment.characterId)
             put("configurationRevision", assignment.configurationRevision)
             put("taskId", assignment.request.id)
             put("dispatchId", assignment.request.id)
         })
+        val request = response.getValue("request").jsonObject
+        require(request.getValue("id").jsonPrimitive.content == assignment.request.id)
+        require(request.getValue("hostId").jsonPrimitive.content == assignment.request.hostId)
+        require(request.getValue("mode").jsonPrimitive.content == "local")
+        require(request.getValue("prompt").jsonPrimitive.content == assignment.request.prompt)
+        require(response.getValue("context").jsonPrimitive.content == assignment.request.context)
         require(response.getValue("taskId").jsonPrimitive.content == assignment.request.id)
         require(response.getValue("characterId").jsonPrimitive.content == assignment.characterId)
         require(response.getValue("configurationRevision").jsonPrimitive.long == assignment.configurationRevision)
@@ -33,7 +56,7 @@ class BrainHovelRemote(private val transport: HovelTransport) : BrainWorkerRemot
             ExecutionPhase.RECONCILIATION_REQUIRED -> "uncertain"
             else -> error("Only durable execution outcomes can be published")
         }
-        val response = transport.post("brain/outcome", buildJsonObject {
+        val response = post("brain/outcome", execution.claimId, buildJsonObject {
             put("requestId", operationId(execution.claimId, "outcome"))
             put("characterId", assignment.characterId)
             put("configurationRevision", assignment.configurationRevision)
@@ -54,7 +77,7 @@ class BrainHovelRemote(private val transport: HovelTransport) : BrainWorkerRemot
     }
 
     override fun claimPresentation(assignment: BrainCodexAssignment, ticket: BrainPresentationTicket, claimId: String) {
-        val response = transport.post("brain/presentation-claim", buildJsonObject {
+        val response = post("brain/presentation-claim", claimId, buildJsonObject {
             put("taskId", ticket.taskId); put("attemptId", ticket.attemptId)
             put("expectedRevision", ticket.revision); put("claimId", claimId)
         })
@@ -82,7 +105,7 @@ class BrainHovelRemote(private val transport: HovelTransport) : BrainWorkerRemot
                 }) }
             else -> error("Only durable presentation outcomes can be published")
         }
-        val response = transport.post("brain/presentation", buildJsonObject {
+        val response = post("brain/presentation", presentation.claimId, buildJsonObject {
             put("requestId", operationId(presentation.claimId, "presentation")); put("taskId", ticket.taskId)
             put("attemptId", ticket.attemptId); put("expectedRevision", ticket.revision)
             put("claimId", presentation.claimId); put("result", result)

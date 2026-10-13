@@ -32,6 +32,7 @@ class BrainCodexWorkerTest {
         var outcome: JsonObject? = null
         var record: JsonObject? = null
         var claim: String? = null
+        var executionClaim: String? = null
         var loseOnce: String? = null
         fun retry() {
             val old = record!!
@@ -43,12 +44,32 @@ class BrainCodexWorkerTest {
                 }))))
             claim = null
         }
-        override fun post(route: String, body: JsonObject): JsonObject {
+        override fun post(route: String, envelope: JsonObject): JsonObject {
+            // Mirror PR #112's native envelope checks so a wrong claim ID fails here as it would on the server.
+            require(envelope.keys == setOf("claimId", "input"))
+            val claimId = envelope.getValue("claimId").jsonPrimitive.content
+            require(UUID.fromString(claimId).toString() == claimId)
+            val body = envelope.getValue("input").jsonObject
+            if (route in setOf("brain/authorize", "brain/presentation-claim", "brain/presentation")) {
+                require(body.getValue("claimId").jsonPrimitive.content == claimId)
+            }
+            if (route == "brain/authorize" && body.getValue("role").jsonPrimitive.content == "execution") {
+                require(executionClaim == null || executionClaim == claimId); executionClaim = claimId
+            }
+            if (route == "brain/outcome") require(executionClaim == null || executionClaim == claimId)
             calls += route to body
             val response = when (route) {
                 "brain/admit" -> {
                     admission?.let { require(it == body) }; admission = body
-                    JsonObject(body + mapOf("configuration" to assignment.configuration, "accountSelections" to assignment.accountSelections))
+                    JsonObject(body + mapOf("configuration" to assignment.configuration, "accountSelections" to assignment.accountSelections,
+                        "context" to JsonPrimitive(assignment.request.context), "request" to buildJsonObject {
+                            put("id", assignment.request.id); put("hostId", assignment.request.hostId)
+                            put("mode", "local"); put("prompt", assignment.request.prompt)
+                        }))
+                }
+                "brain/authorize" -> buildJsonObject {
+                    put("authorized", true); put("taskId", body.getValue("taskId"))
+                    put("role", body.getValue("role")); put("claimId", body.getValue("claimId"))
                 }
                 "brain/outcome" -> {
                     outcome?.let { require(it == body) }; outcome = body
@@ -94,11 +115,11 @@ class BrainCodexWorkerTest {
     }
 
     @Test fun lostAcknowledgementsNeverDuplicateEitherLaunch() {
-        for (route in listOf("brain/admit", "brain/outcome", "brain/presentation-claim", "brain/presentation")) fixture { a, backend, execution, presentation ->
+        for (route in listOf("brain/admit", "brain/authorize", "brain/outcome", "brain/presentation-claim", "brain/presentation")) fixture { a, backend, execution, presentation ->
             var executions = 0; var presentations = 0
             val worker = BrainCodexWorker(execution, presentation,
                 TaskProvider { executions++; ProviderResult(true, "PRIVATE EXECUTOR OUTPUT") },
-                TaskProvider { presentations++; ProviderResult(true, "Final answer") }, BrainHovelRemote(backend), {}, { _, _ -> })
+                TaskProvider { presentations++; ProviderResult(true, "Final answer") }, BrainHovelRemote(backend), {}, BrainHovelRemote(backend)::authorizeLaunch)
             backend.loseOnce = route
             assertFails { worker.execute(a) }
             worker.execute(a)
@@ -114,7 +135,7 @@ class BrainCodexWorkerTest {
         var executions = 0; var presentations = 0
         val worker = BrainCodexWorker(execution, presentation,
             TaskProvider { executions++; ProviderResult(false, "Execution failed") },
-            TaskProvider { presentations++; ProviderResult(presentations > 1, "Explanation") }, BrainHovelRemote(backend), {}, { _, _ -> })
+            TaskProvider { presentations++; ProviderResult(presentations > 1, "Explanation") }, BrainHovelRemote(backend), {}, BrainHovelRemote(backend)::authorizeLaunch)
         assertEquals(ExecutionPhase.FAILED, worker.execute(a).execution.phase)
         backend.retry()
         val ticket = BrainHovelRemote(backend).outcome(a, execution.read(a.request.id)!!)
@@ -127,7 +148,7 @@ class BrainCodexWorkerTest {
         var executions = 0; var presentations = 0
         val worker = BrainCodexWorker(execution, presentation,
             TaskProvider { executions++; error("Process lost") }, TaskProvider { presentations++; ProviderResult(true, "Uncertain") },
-            BrainHovelRemote(backend), {}, { _, _ -> })
+            BrainHovelRemote(backend), {}, BrainHovelRemote(backend)::authorizeLaunch)
         assertEquals(ExecutionPhase.RECONCILIATION_REQUIRED, worker.execute(a).execution.phase)
         worker.execute(a)
         assertEquals(1, executions); assertEquals(1, presentations)
@@ -138,7 +159,7 @@ class BrainCodexWorkerTest {
         val worker = BrainCodexWorker(execution, presentation,
             TaskProvider { executions++; accountChanged = true; error("Process lost") },
             TaskProvider { presentations++; ProviderResult(true, "must not present") }, BrainHovelRemote(backend),
-            { check(!accountChanged) { "Account generation changed" } }, { _, _ -> })
+            { check(!accountChanged) { "Account generation changed" } }, BrainHovelRemote(backend)::authorizeLaunch)
         assertFails { worker.execute(a) }
         assertFails { worker.execute(a) }
         assertEquals(1, executions); assertEquals(0, presentations)
@@ -149,7 +170,7 @@ class BrainCodexWorkerTest {
     @Test fun localAccountVerificationPreventsProviderInvocation() = fixture { a, backend, execution, presentation ->
         var calls = 0
         val provider = TaskProvider { calls++; ProviderResult(true, "must not execute") }
-        val worker = BrainCodexWorker(execution, presentation, provider, provider, BrainHovelRemote(backend), { error("Account generation changed") }, { _, _ -> })
+        val worker = BrainCodexWorker(execution, presentation, provider, provider, BrainHovelRemote(backend), { error("Account generation changed") }, { _, _, _ -> })
         assertFails { worker.execute(a) }
         assertEquals(0, calls)
         assertEquals(ExecutionPhase.PREPARED, execution.read(a.request.id)!!.phase)
@@ -161,7 +182,7 @@ class BrainCodexWorkerTest {
             val worker = BrainCodexWorker(execution, presentation,
                 TaskProvider { executions++; ProviderResult(true, "Done") },
                 TaskProvider { presentations++; ProviderResult(true, "Reply") }, BrainHovelRemote(backend), {},
-                { _, _ -> check(!revoked) { "Host revoked" } })
+                { _, _, _ -> check(!revoked) { "Host revoked" } })
             backend.loseOnce = route
             assertFails { worker.execute(a) }
             val before = executions
@@ -175,7 +196,7 @@ class BrainCodexWorkerTest {
         var executions = 0; var presentations = 0
         val worker = BrainCodexWorker(execution, presentation,
             TaskProvider { executions++; ProviderResult(true, "Done") },
-            TaskProvider { presentations++; error("Presentation process lost") }, BrainHovelRemote(backend), {}, { _, _ -> })
+            TaskProvider { presentations++; error("Presentation process lost") }, BrainHovelRemote(backend), {}, BrainHovelRemote(backend)::authorizeLaunch)
         assertFails { worker.execute(a) }
         assertFails { worker.execute(a) }
         assertFails { backend.retry() }
@@ -184,11 +205,49 @@ class BrainCodexWorkerTest {
         assertFalse(backend.calls.any { it.first == "brain/presentation" })
     }
 
+    @Test fun transportDefaultsToDisabledAndOptInUsesExistingHostHeader() {
+        val a = assignment()
+        val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+        var calls = 0
+        var status = 200; var authorized = true; var echoedClaim: String? = null
+        val token = "a".repeat(64)
+        server.createContext("/") { exchange ->
+            calls++
+            assertEquals(token, exchange.requestHeaders.getFirst("X-Hovel-Host-Token"))
+            assertEquals("/native/${a.characterId}/${a.request.hostId}/brain/authorize", exchange.requestURI.path)
+            val envelope = Json.parseToJsonElement(exchange.requestBody.bufferedReader().readText()).jsonObject
+            val input = envelope.getValue("input").jsonObject
+            assertEquals(setOf("claimId", "input"), envelope.keys)
+            assertEquals(input.getValue("claimId"), envelope.getValue("claimId"))
+            val response = buildJsonObject { put("data", buildJsonObject {
+                put("authorized", authorized); put("taskId", input.getValue("taskId")); put("role", input.getValue("role"))
+                put("claimId", echoedClaim?.let(::JsonPrimitive) ?: input.getValue("claimId"))
+            }) }.toString().toByteArray()
+            exchange.sendResponseHeaders(status, response.size.toLong())
+            exchange.responseBody.use { it.write(response) }
+        }
+        server.start()
+        try {
+            val base = java.net.URI("http://127.0.0.1:${server.address.port}")
+            val record = ExecutionRecord(a.request, id())
+            assertFails { BrainHovelRemote(HovelHttpTransport(base, a.characterId, a.request.hostId, token)).authorizeLaunch(a, "execution", record) }
+            assertEquals(0, calls)
+            val enabled = BrainHovelRemote(HovelHttpTransport(base, a.characterId, a.request.hostId, token, brainEnabled = true))
+            enabled.authorizeLaunch(a, "execution", record)
+            assertEquals(1, calls)
+            // A rejection never counts as authorization, even when the body otherwise looks like a grant.
+            status = 409; assertFails { enabled.authorizeLaunch(a, "execution", record) }; status = 200
+            authorized = false; assertFails { enabled.authorizeLaunch(a, "execution", record) }; authorized = true
+            echoedClaim = id(); assertFails { enabled.authorizeLaunch(a, "execution", record) }
+            assertEquals(4, calls)
+        } finally { server.stop(0) }
+    }
+
     @Test fun unsupportedBindingFailsBeforeAdmission() = fixture { a, backend, execution, presentation ->
         val binding = JsonObject(a.configuration.getValue("execution").jsonObject + ("modelId" to JsonPrimitive("unsupported")))
         val changed = a.copy(configuration = JsonObject(a.configuration + ("execution" to binding)))
         val provider = TaskProvider { error("must not execute") }
-        val worker = BrainCodexWorker(execution, presentation, provider, provider, BrainHovelRemote(backend), {}, { _, _ -> })
+        val worker = BrainCodexWorker(execution, presentation, provider, provider, BrainHovelRemote(backend), {}, BrainHovelRemote(backend)::authorizeLaunch)
         assertFails { worker.execute(changed) }
         assertTrue(backend.calls.isEmpty())
     }
