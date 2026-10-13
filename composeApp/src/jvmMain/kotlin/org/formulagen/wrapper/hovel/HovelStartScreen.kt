@@ -179,7 +179,7 @@ fun KeeperStartScreen(state: HovelStartState, onContinue: () -> Unit, art: Hovel
                     .border(1.dp, HovelPalette.line, RoundedCornerShape(16.dp))
                     .padding(32.dp),
             ) {
-                Text("Hovel", color = HovelPalette.text, fontFamily = art.display, fontSize = 56.sp)
+                Text("Hovel", color = HovelPalette.ochre, fontFamily = art.display, fontSize = 56.sp)
                 Spacer(Modifier.height(4.dp))
                 Text("Make yourself at home.", color = HovelPalette.muted, fontSize = 17.sp)
                 Spacer(Modifier.height(28.dp))
