@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -27,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
@@ -166,54 +168,81 @@ private fun PixelProgress(cells: Int = 12) {
 
 @Composable
 fun KeeperStartScreen(state: HovelStartState, onContinue: () -> Unit, art: HovelArt = rememberHovelArt(), modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxSize().background(HovelPalette.ground)) {
-        Column(
-            Modifier.weight(0.9f).fillMaxHeight().padding(40.dp),
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Column(
-                Modifier
-                    .widthIn(max = 440.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(HovelPalette.surface)
-                    .border(1.dp, HovelPalette.line, RoundedCornerShape(16.dp))
-                    .padding(32.dp),
-            ) {
-                Text("Hovel", color = HovelPalette.ochre, fontFamily = art.display, fontSize = 56.sp)
-                Spacer(Modifier.height(4.dp))
-                Text("Make yourself at home.", color = HovelPalette.muted, fontSize = 17.sp)
-                Spacer(Modifier.height(28.dp))
-                when (state) {
-                    is HovelStartState.Ready -> {
-                        PanelButton(art, "Open the door", onContinue)
-                        Spacer(Modifier.height(10.dp))
-                        Text(state.url, color = HovelPalette.muted.copy(alpha = 0.8f), fontSize = 12.sp)
-                    }
-                    HovelStartState.Preparing -> {
-                        Text("Lighting the lamps…", color = HovelPalette.text, fontFamily = art.display, fontSize = 18.sp)
-                        Spacer(Modifier.height(10.dp))
-                        PixelProgress()
-                    }
-                    is HovelStartState.Failed -> {
-                        Text("The door is stuck", color = HovelPalette.error, fontFamily = art.display, fontSize = 18.sp)
-                        Text(state.reason, color = HovelPalette.muted, fontSize = 13.sp)
-                        Spacer(Modifier.height(14.dp))
-                        PanelButton(art, "Try again", onContinue)
-                    }
+    BoxWithConstraints(modifier.fillMaxSize().background(HovelPalette.ground)) {
+        if (maxWidth < 600.dp) {
+            // Phone portrait: the room on top, fading into the panel below.
+            Column(Modifier.fillMaxSize()) {
+                KeeperRoom(art, Modifier.weight(1f).fillMaxWidth(), fadeFromBottom = true)
+                KeeperPanel(state, onContinue, art, compact = true, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp))
+            }
+        } else {
+            Row(Modifier.fillMaxSize()) {
+                Column(Modifier.weight(0.9f).fillMaxHeight().padding(40.dp), verticalArrangement = Arrangement.Center) {
+                    KeeperPanel(
+                        state, onContinue, art, compact = false,
+                        modifier = Modifier
+                            .widthIn(max = 440.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(HovelPalette.surface)
+                            .border(1.dp, HovelPalette.line, RoundedCornerShape(16.dp))
+                            .padding(32.dp),
+                    )
                 }
-                Spacer(Modifier.height(24.dp))
-                Text(RuntimeNote, color = HovelPalette.muted.copy(alpha = 0.7f), fontSize = 11.sp, lineHeight = 15.sp)
+                KeeperRoom(art, Modifier.weight(1.1f).fillMaxHeight(), fadeFromBottom = false)
             }
         }
-        BoxWithConstraints(Modifier.weight(1.1f).fillMaxHeight().clipToBounds()) {
-            val widthPx = constraints.maxWidth.toFloat()
-            val heightPx = constraints.maxHeight.toFloat()
-            // Zoom on the keeper and the furniture behind them.
-            val scale = maxOf(widthPx / (RoomWidth * 0.62f), heightPx / (RoomHeight * 0.95f))
-            val focus = Offset(450f, 250f)
-            val frame = RoomFrame(scale, Offset(widthPx / 2, heightPx / 2) - focus * scale)
-            Canvas(Modifier.fillMaxSize()) {
-                drawStarterRoom(art, frame, keeperScale = 1.15f)
+    }
+}
+
+@Composable
+private fun KeeperPanel(state: HovelStartState, onContinue: () -> Unit, art: HovelArt, compact: Boolean, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text("Hovel", color = HovelPalette.ochre, fontFamily = art.display, fontSize = 56.sp)
+        Spacer(Modifier.height(4.dp))
+        Text("Make yourself at home.", color = HovelPalette.muted, fontSize = 17.sp)
+        Spacer(Modifier.height(if (compact) 24.dp else 28.dp))
+        val buttonModifier = if (compact) Modifier.fillMaxWidth() else Modifier
+        when (state) {
+            is HovelStartState.Ready -> {
+                PanelButton(art, "Open the door", onContinue, buttonModifier)
+                Spacer(Modifier.height(10.dp))
+                Text(state.url, color = HovelPalette.muted.copy(alpha = 0.8f), fontSize = 12.sp)
+            }
+            HovelStartState.Preparing -> {
+                Text("Lighting the lamps…", color = HovelPalette.text, fontFamily = art.display, fontSize = 18.sp)
+                Spacer(Modifier.height(10.dp))
+                PixelProgress()
+            }
+            is HovelStartState.Failed -> {
+                Text("The door is stuck", color = HovelPalette.error, fontFamily = art.display, fontSize = 18.sp)
+                Text(state.reason, color = HovelPalette.muted, fontSize = 13.sp)
+                Spacer(Modifier.height(14.dp))
+                PanelButton(art, "Try again", onContinue, buttonModifier)
+            }
+        }
+        // The JCEF note only applies to the desktop host.
+        if (!compact) {
+            Spacer(Modifier.height(24.dp))
+            Text(RuntimeNote, color = HovelPalette.muted.copy(alpha = 0.7f), fontSize = 11.sp, lineHeight = 15.sp)
+        }
+    }
+}
+
+/** A close-up of the starter room centered on the keeper, fading into the panel side. */
+@Composable
+private fun KeeperRoom(art: HovelArt, modifier: Modifier, fadeFromBottom: Boolean) {
+    BoxWithConstraints(modifier.clipToBounds()) {
+        val widthPx = constraints.maxWidth.toFloat()
+        val heightPx = constraints.maxHeight.toFloat()
+        val scale = if (fadeFromBottom) heightPx / (RoomHeight * 0.95f)
+        else maxOf(widthPx / (RoomWidth * 0.62f), heightPx / (RoomHeight * 0.95f))
+        val focus = if (fadeFromBottom) Offset(470f, 262f) else Offset(450f, 250f)
+        val frame = RoomFrame(scale, Offset(widthPx / 2, heightPx / 2) - focus * scale)
+        Canvas(Modifier.fillMaxSize()) {
+            drawStarterRoom(art, frame, keeperScale = 1.15f)
+            if (fadeFromBottom) {
+                drawRect(Brush.verticalGradient(listOf(Color.Transparent, HovelPalette.ground), startY = size.height * 0.7f, endY = size.height))
+            } else {
                 drawRect(Brush.horizontalGradient(listOf(HovelPalette.ground, Color.Transparent), endX = size.width * 0.25f))
             }
         }
@@ -221,13 +250,14 @@ fun KeeperStartScreen(state: HovelStartState, onContinue: () -> Unit, art: Hovel
 }
 
 @Composable
-private fun PanelButton(art: HovelArt, label: String, onClick: () -> Unit) {
+private fun PanelButton(art: HovelArt, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(
-        Modifier
+        modifier
             .clip(RoundedCornerShape(10.dp))
             .background(HovelPalette.ochre)
             .clickable(onClick = onClick)
             .padding(horizontal = 28.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center,
     ) { Text(label, color = HovelPalette.ochreInk, fontFamily = art.display, fontSize = 18.sp) }
 }
 
@@ -241,3 +271,4 @@ private val previewFailed = HovelStartState.Failed("A verified JetBrains Runtime
 @Preview @Composable fun KeeperReadyPreview() = KeeperStartScreen(previewReady, {})
 @Preview @Composable fun KeeperPreparingPreview() = KeeperStartScreen(HovelStartState.Preparing, {})
 @Preview @Composable fun KeeperFailedPreview() = KeeperStartScreen(previewFailed, {})
+@Preview @Composable fun KeeperPhoneReadyPreview() = Box(Modifier.size(390.dp, 844.dp)) { KeeperStartScreen(previewReady, {}) }
