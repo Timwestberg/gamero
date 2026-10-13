@@ -110,7 +110,7 @@ sealed interface AppEvent {
         data class OnAnalyticsQueueEvent(val eventName: String?, val eventObject: String?): Amplitude
 
         @Serializable
-        data class OnLogAmplitudeEvent(val eventName: String, val eventData: Map<String, Any>?): Amplitude
+        data class OnLogAmplitudeEvent(val eventName: String, val eventData: JsonObject?): Amplitude
     }
 
     // Analytics/Attribution: AppsFlyer
@@ -138,7 +138,7 @@ sealed interface AppEvent {
         data class OnUserLogoutEvent(val username: String?): AppsFlyer
 
         @Serializable
-        data class OnLogAFEvent(val eventName: String, val eventData: Map<String, Any>?): AppsFlyer
+        data class OnLogAFEvent(val eventName: String, val eventData: JsonObject?): AppsFlyer
 
         @Serializable
         data class OnGameStartedEvent(
@@ -212,7 +212,7 @@ sealed interface AppEvent {
             val error: String?,
             val stackTrace: String?,
             val version: String?
-        )
+        ): Analytic
         data class OnManagerStart(val name: String, val platform: String? = null): Analytic
 
     }

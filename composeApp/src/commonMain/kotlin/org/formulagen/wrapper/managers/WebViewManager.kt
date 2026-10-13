@@ -39,6 +39,7 @@ fun WebViewManager(
     modifier: Modifier = Modifier,
     jsBridgeName: String = "FormulaGen",
     hideStatusBar: Boolean = false,
+    enableLegacyBridge: Boolean = true,
 ) {
     val tag = "WebViewManager"
     val webViewNavigator = rememberWebViewNavigator()
@@ -46,7 +47,7 @@ fun WebViewManager(
     val webContent = remember(jsBridge, webViewNavigator) { WebContent(JsCaller(jsBridge, webViewNavigator)) }
     val webViewState = rememberWebViewState(url)
     var webViewRef: NativeWebView? by remember { mutableStateOf<NativeWebView?>(null) }
-    val isWebViewReady by remember { mutableStateOf(false)}
+
 
 
     webViewState.webSettings.apply {
@@ -72,8 +73,8 @@ fun WebViewManager(
             state = webViewState,
             navigator = webViewNavigator,
             captureBackPresses = false,
-            modifier = modifier.fillMaxSize().alpha(if (isWebViewReady) 1f else 0f),
-            webViewJsBridge = jsBridge,
+            modifier = modifier.fillMaxSize(),
+            webViewJsBridge = if (enableLegacyBridge) jsBridge else null,
             onCreated = { ref -> webViewRef = ref }
         )
     }
@@ -100,7 +101,7 @@ fun WebViewManager(
                     parameters: String?,
                     dispatcher: JSBridgeDispatcher
                 ) {
-                    log(LogLevel.Info,tag, "[JSBridgeListener]: eventType: $eventName parameters: $parameters")
+                    log(LogLevel.Info,tag, "[JSBridgeListener]: eventType: $eventName")
 
                     dispatcher.register(
                         eventName = "onSplashAnimationStart",

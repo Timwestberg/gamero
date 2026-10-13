@@ -122,12 +122,12 @@ class SettingsPreferenceStore(
 
     override fun addGameFpsEntry(gameName: String, averageFps: Double) {
         settings[Keys.LAST_GAME_FPS_NAME] = gameName
-        settings[Keys.LAST_GAME_FPS_VALUE] = java.lang.Double.doubleToRawLongBits(averageFps)
+        settings[Keys.LAST_GAME_FPS_VALUE] = averageFps.toRawBits()
     }
     override fun getLastGameFpsEntry(): Pair<String, Double>? {
         val name = settings.getStringOrNull(Keys.LAST_GAME_FPS_NAME) ?: return null
         val bits = settings.getLongOrNull(Keys.LAST_GAME_FPS_VALUE) ?: return null
-        return name to java.lang.Double.longBitsToDouble(bits)
+        return name to Double.fromBits(bits)
     }
 
     override fun setFpsTrackCount(count: Int) { settings[Keys.FPS_TRACK_COUNT] = count }
@@ -138,10 +138,4 @@ class SettingsPreferenceStore(
 
     override fun clear() { settings.clear() }
 }
-
-private fun Settings.getBooleanOrNull(key: String): Boolean? = if (hasKey(key)) this[key] else null
-private fun Settings.getStringOrNull(key: String): String? = if (hasKey(key)) this[key] else null
-private fun Settings.getIntOrNull(key: String): Int? = if (hasKey(key)) this[key] else null
-private fun Settings.getLongOrNull(key: String): Long? = if (hasKey(key)) this[key] else null
-
 

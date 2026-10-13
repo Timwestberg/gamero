@@ -9,8 +9,8 @@ import org.jetbrains.compose.ui.tooling.preview.Preview
 
 @Composable
 @Preview
-fun App() {
+fun App(url: String = "https://web.worldwinner.com", enableLegacyBridge: Boolean = true) {
     MaterialTheme {
-        WebViewManager(url = "https://web.worldwinner.com")
+        WebViewManager(url = url, enableLegacyBridge = enableLegacyBridge)
     }
 }

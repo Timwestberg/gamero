@@ -30,6 +30,6 @@ class DeviceManager {
 }
 
 expect fun platformFetchDeviceInfo()
-expect fun platformStoreDeviceInfo(info: AppEvent.Device.DeviceInfo)
+expect fun platformStoreDeviceInfo(info: AppEvent.DeviceInfo)
 
 
