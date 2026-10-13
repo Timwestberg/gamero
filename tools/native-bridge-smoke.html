@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Gamero native bridge smoke</title>
+<body><h1>Gamero embedded interface</h1><p id="agent"></p>
+<button id="probe">Check native bridge</button><button id="navigate">Reload this page</button>
+<pre id="result">No native request made.</pre>
+<iframe title="Untrusted child" sandbox="allow-scripts" srcdoc="<p>Opaque child frame</p>"></iframe>
+<script>
+document.querySelector('#agent').textContent = navigator.userAgent;
+const output = document.querySelector('#result');
+function query(method, args, contextId, persistent = false) {
+  return new Promise((resolve, reject) => {
+    if (typeof window.gameroQuery !== 'function') return reject(new Error('Native router unavailable'));
+    const request = {version: 1, method, args};
+    if (contextId) request.contextId = contextId;
+    window.gameroQuery({request: JSON.stringify(request), persistent,
+      onSuccess: value => resolve(JSON.parse(value)), onFailure: (code, message) => reject(new Error(code + ': ' + message))});
+  });
+}
+document.querySelector('#probe').onclick = async () => {
+  try {
+    const context = await query('watchContext', {}, null, true);
+    const capabilities = await query('capabilities', {}, context.contextId);
+    output.textContent = JSON.stringify({context, capabilities}, null, 2);
+  } catch (error) { output.textContent = String(error); }
+};
+document.querySelector('#navigate').onclick = () => location.reload();
+</script></body></html>
