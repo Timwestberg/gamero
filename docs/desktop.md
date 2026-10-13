@@ -52,5 +52,5 @@ Sources: [Kotlin compatibility](https://kotlinlang.org/docs/multiplatform/multip
 
 ## Verification status
 
-Compilation and JVM tests are in progress. Mac launch is assigned to the
+Foundation compilation and seven JVM tests passed. Mac launch is assigned to the
 coordinator's separate validation task. No native success is claimed yet.
