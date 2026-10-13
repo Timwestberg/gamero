@@ -26,8 +26,15 @@ export PATH="$JAVA_HOME/bin:$PATH"
 "$GAMERO_BROWSER_JAVA_HOME/bin/java" --list-modules | grep '^jcef@'
 ./gradlew --offline -Porg.gradle.java.installations.auto-download=false javaToolchains
 ./gradlew --offline -Porg.gradle.java.installations.auto-download=false :composeApp:jvmTest :composeApp:jvmJar --console=plain
+./gradlew --offline -Porg.gradle.java.installations.auto-download=false -Pgamero.simulatedSmoke=true :composeApp:verifyDesktopRuntimeWiring --console=plain
 ./gradlew --offline -Porg.gradle.java.installations.auto-download=false -Pgamero.simulatedSmoke=true :composeApp:jvmTest --tests '*Simulated*Test' :composeApp:jvmJar :composeApp:createDistributable --console=plain
 ```
+
+The wiring check prints the effective runtime path for every packaging task; each
+must resolve to the installed JBR Home above, never `build/compose/tmp/.../runtime`.
+It also verifies the packaging JDK and disabled jlink tasks without packaging or
+launching. Compose defaults are overridden after its task registration actions,
+and the installed runtime properties are frozen against later replacement.
 
 Corretto supplies packaging tools. The app uses the verified JBR/JCEF at launch
 and bundles its entire containing runtime bundle, including `Contents/Frameworks`

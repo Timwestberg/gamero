@@ -163,29 +163,42 @@ tasks.withType<JavaExec>().configureEach {
     }
 }
 
-// Launch with JBR/JCEF while Gradle and packaging tools remain on a complete approved JDK.
-tasks.withType<JavaExec>().configureEach {
-    if (name == "run" || name == "runRelease") {
-        browserJavaHome.orNull?.let { executable = file(it).resolve("bin/java").absolutePath }
-    }
-}
-
-if (System.getProperty("os.name").contains("Mac")) {
+// Compose registers and configures these tasks after project evaluation. Realize those
+// registration actions first; an earlier configureEach is overwritten by Compose's defaults.
+afterEvaluate {
+    val isMac = System.getProperty("os.name").contains("Mac")
     val runtimeHome = browserJavaHome.orNull?.let(::file)
-    val runtimeBundle = runtimeHome?.parentFile?.parentFile
+    if (runtimeHome == null) {
+        if (isMac) {
+            val requireInstalledRuntime = tasks.register("requireInstalledBrowserRuntime") {
+                doLast { error("GAMERO_BROWSER_JAVA_HOME must identify the verified installed JBR bundle's Contents/Home") }
+            }
+            // Fail before packaging/input validation or jlink; unrelated JVM tasks remain available.
+            tasks.withType<AbstractJPackageTask>().forEach { it.dependsOn(requireInstalledRuntime) }
+            tasks.withType<AbstractJLinkTask>().forEach { it.dependsOn(requireInstalledRuntime) }
+        }
+        return@afterEvaluate
+    }
+    val runtimeBundle = runtimeHome.parentFile?.parentFile
     val packagingHome = file(packagingJavaHome.get())
-    tasks.withType<AbstractCheckNativeDistributionRuntime>().configureEach {
-        runtimeHome?.let { jdkHome.set(it.absolutePath) }
+    tasks.withType<JavaExec>().forEach {
+        if (it.name == "run" || it.name == "runRelease") it.executable = runtimeHome.resolve("bin/java").absolutePath
     }
-    tasks.withType<AbstractJLinkTask>().configureEach {
-        // Never trim the approved JBR or require its missing jlink executable.
-        enabled = false
+    tasks.withType<AbstractCheckNativeDistributionRuntime>().forEach {
+        it.jdkHome.set(runtimeHome.absolutePath)
+        it.jdkHome.disallowChanges()
     }
-    tasks.withType<AbstractJPackageTask>().configureEach {
+    tasks.withType<AbstractJLinkTask>().forEach {
+        // Never trim the installed runtime or require its missing jlink executable.
+        it.enabled = false
+    }
+    tasks.withType<AbstractJPackageTask>().forEach { task -> task.apply {
         javaHome.set(packagingHome.absolutePath)
-        runtimeHome?.let { runtimeImage.set(it) }
-        doFirst {
-            require(runtimeHome != null && runtimeHome.name == "Home" && runtimeHome.parentFile.name == "Contents") {
+        javaHome.disallowChanges()
+        runtimeImage.set(runtimeHome)
+        runtimeImage.disallowChanges()
+        if (isMac) doFirst {
+            require(runtimeHome.name == "Home" && runtimeHome.parentFile.name == "Contents") {
                 "GAMERO_BROWSER_JAVA_HOME must identify the verified JBR bundle's Contents/Home"
             }
             require(runtimeHome.resolve("bin/java").canExecute() && runtimeHome.resolve("lib/libjcef.dylib").isFile)
@@ -195,7 +208,7 @@ if (System.getProperty("os.name").contains("Mac")) {
             }
             require(File("/usr/bin/ditto").canExecute()) { "macOS ditto is required to preserve the runtime bundle" }
         }
-        if (targetFormat == TargetFormat.AppImage) {
+        if (isMac && targetFormat == TargetFormat.AppImage) {
             runtimeBundle?.let { inputs.dir(it) }
             doLast {
                 val app = destinationDir.get().asFile.listFiles().orEmpty().single { it.extension == "app" }
@@ -216,11 +229,33 @@ if (System.getProperty("os.name").contains("Mac")) {
                     check(verify.waitFor() == 0) { "Runtime/app signature verification failed; stop before launch" }
                 }
             }
-        } else {
+        } else if (isMac && targetFormat != TargetFormat.AppImage) {
             // Installers must consume the already-completed app image, not repackage a Home-only runtime.
             val imageName = if (name.contains("Release")) "createReleaseDistributable" else "createDistributable"
             val image = tasks.named<AbstractJPackageTask>(imageName)
             appImage.set(image.flatMap { it.destinationDir })
+            appImage.disallowChanges()
+        }
+    } }
+    // These final properties are frozen after Compose's registration actions have run.
+    val effectiveImages = tasks.withType<AbstractJPackageTask>().associate { it.name to it.runtimeImage.get().asFile.absolutePath }
+    val effectiveTools = tasks.withType<AbstractJPackageTask>().associate { it.name to it.javaHome.get() }
+    val enabledLinkTasks = tasks.withType<AbstractJLinkTask>().filter { it.enabled }.map { it.name }
+    tasks.register("verifyDesktopRuntimeWiring") {
+        group = "verification"
+        description = "Check the effective installed-runtime wiring without packaging or launching."
+        inputs.property("expectedRuntime", runtimeHome.absolutePath)
+        inputs.property("expectedPackagingJdk", packagingHome.absolutePath)
+        inputs.property("effectiveRuntimeImages", effectiveImages)
+        inputs.property("effectivePackagingJdks", effectiveTools)
+        inputs.property("enabledLinkTasks", enabledLinkTasks)
+        doLast {
+            check(effectiveImages.isNotEmpty()) { "Compose packaging tasks are missing" }
+            check(effectiveImages.values.all { it == runtimeHome.absolutePath }) { "Compose replaced the installed runtime: $effectiveImages" }
+            check(effectiveTools.values.all { it == packagingHome.absolutePath }) { "Wrong packaging JDK: $effectiveTools" }
+            check(enabledLinkTasks.isEmpty()) { "Installed runtime must not depend on enabled jlink tasks" }
+            effectiveImages.forEach { (name, path) -> println("$name runtimeImage=$path") }
+            println("GAMERO_RUNTIME_WIRING_VERIFIED packagingJdk=${packagingHome.absolutePath}")
         }
     }
 }
