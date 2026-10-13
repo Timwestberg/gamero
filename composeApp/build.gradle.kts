@@ -2,6 +2,7 @@ import java.io.File
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask
 import org.jetbrains.compose.desktop.application.tasks.AbstractJvmToolOperationTask
+import org.jetbrains.compose.desktop.application.tasks.AbstractRunDistributableTask
 import org.jetbrains.compose.desktop.application.tasks.AbstractProguardTask
 import org.jetbrains.compose.desktop.application.tasks.AbstractSuggestModulesTask
 import org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask
@@ -230,7 +231,7 @@ afterEvaluate {
         // Never trim the installed runtime or require its missing jlink executable.
         it.enabled = false
     }
-    tasks.withType<AbstractJPackageTask>().forEach { task -> task.apply {
+    tasks.withType<AbstractJPackageTask>().toList().forEach { task -> task.apply {
         dependsOn(verifyBrowserRuntime)
         runtimeImage.set(runtimeHome)
         runtimeImage.disallowChanges()
@@ -247,33 +248,49 @@ afterEvaluate {
         }
         if (isMac && targetFormat == TargetFormat.AppImage) {
             runtimeBundle?.let { inputs.dir(it) }
+            val finalizer = rootProject.file("tools/finalize_mac_app.py")
+            val app = destinationDir.get().asFile.resolve("${packageName.get()}.app")
+            val outputRoot = destinationDir.get().asFile
+            val manifest = layout.buildDirectory.file("compose/seals/${name}.json").get().asFile
+            val entitlements = macEntitlementsFile.orNull?.asFile
+            val arguments = listOf("--app", app.absolutePath, "--source-runtime", runtimeBundle!!.absolutePath,
+                "--output-root", outputRoot.absolutePath, "--manifest", manifest.absolutePath)
+            inputs.file(finalizer)
+            outputs.file(manifest)
             doLast {
-                val app = destinationDir.get().asFile.listFiles().orEmpty().single { it.extension == "app" }
-                val runtime = app.resolve("Contents/runtime")
-                require(runtime.isDirectory) { "Packaged runtime directory is missing" }
-                // Replace only this task's generated runtime; merging would retain files outside the source signature.
-                check(runtime.deleteRecursively()) { "Could not remove generated Home-only runtime" }
-                // jpackage copies only Home. Restore the complete verified bundle, preserving framework links and metadata.
-                val copy = ProcessBuilder("/usr/bin/ditto", "--rsrc", "--extattr", "--acl",
-                    runtimeBundle!!.absolutePath, runtime.absolutePath).inheritIO().start()
-                check(copy.waitFor() == 0) { "Could not preserve the complete JBR/JCEF runtime" }
-                check(runtime.resolve("Contents/Frameworks").isDirectory)
-                check(runtime.resolve("Contents/Home/lib/libjcef.dylib").isFile)
-                // Verification only: never strip signatures, change quarantine or access signing identities.
-                for (bundle in listOf(runtimeBundle, runtime, app)) {
-                    val verify = ProcessBuilder("/usr/bin/codesign", "--verify", "--deep", "--strict", bundle!!.absolutePath)
-                        .inheritIO().start()
-                    check(verify.waitFor() == 0) { "Runtime/app signature verification failed; stop before launch" }
+                // Compose's staged image is complete. Restore vendor runtime, then seal ONLY our outer app.
+                val command = mutableListOf("python3", finalizer.absolutePath, "finalize")
+                command.addAll(arguments)
+                entitlements?.let { command.addAll(listOf("--entitlements", it.absolutePath)) }
+                val finalize = ProcessBuilder(command).inheritIO().start()
+                check(finalize.waitFor() == 0) { "Final app signing/verification failed; stop before launch" }
+            }
+            val verificationName = if (name.contains("Release")) "verifyFinalizedReleaseDistributable" else "verifyFinalizedDistributable"
+            tasks.register(verificationName) {
+                group = "verification"
+                description = "Reject changes after final signing before consuming the app image."
+                dependsOn(task)
+                inputs.file(finalizer)
+                inputs.file(manifest)
+                inputs.dir(app)
+                doLast {
+                    val command = listOf("python3", finalizer.absolutePath, "verify") + arguments
+                    val verify = ProcessBuilder(command).inheritIO().start()
+                    check(verify.waitFor() == 0) { "Finalized app changed or signature verification failed; stop before launch" }
                 }
             }
         } else if (isMac && targetFormat != TargetFormat.AppImage) {
             // Installers must consume the already-completed app image, not repackage a Home-only runtime.
             val imageName = if (name.contains("Release")) "createReleaseDistributable" else "createDistributable"
+            dependsOn(if (name.contains("Release")) "verifyFinalizedReleaseDistributable" else "verifyFinalizedDistributable")
             val image = tasks.named<AbstractJPackageTask>(imageName)
             appImage.set(image.flatMap { it.destinationDir })
             appImage.disallowChanges()
         }
     } }
+    if (isMac) tasks.withType<AbstractRunDistributableTask>().forEach {
+        it.dependsOn(if (it.name.contains("Release")) "verifyFinalizedReleaseDistributable" else "verifyFinalizedDistributable")
+    }
     // These final properties are frozen after Compose's registration actions have run.
     val effectiveImages = tasks.withType<AbstractJPackageTask>().associate { it.name to it.runtimeImage.get().asFile.absolutePath }
     val effectiveTools = linkedMapOf<String, String>().apply {
@@ -293,6 +310,15 @@ afterEvaluate {
     val packageDependencies = tasks.withType<AbstractJPackageTask>().toList().associate { task ->
         task.name to task.taskDependencies.getDependencies(task).map { it.name }.sorted()
     }
+    val finalizedConsumers = linkedMapOf<String, List<String>>()
+    if (isMac) {
+        tasks.withType<AbstractJPackageTask>().toList().filter { it.targetFormat != TargetFormat.AppImage }.forEach {
+            finalizedConsumers[it.name] = it.taskDependencies.getDependencies(it).map { dependency -> dependency.name }
+        }
+        tasks.withType<AbstractRunDistributableTask>().toList().forEach {
+            finalizedConsumers[it.name] = it.taskDependencies.getDependencies(it).map { dependency -> dependency.name }
+        }
+    }
     val checkNames = tasks.withType<AbstractCheckNativeDistributionRuntime>().map { it.name }.toSet()
     val enabledLinkTasks = tasks.withType<AbstractJLinkTask>().filter { it.enabled }.map { it.name }
     tasks.register("verifyDesktopRuntimeWiring") {
@@ -308,6 +334,7 @@ afterEvaluate {
         inputs.property("consumedMetadata", consumedMetadata)
         inputs.property("packageDependencies", packageDependencies)
         inputs.property("toolCheckTasks", checkNames)
+        inputs.property("finalizedConsumers", finalizedConsumers)
         doLast {
             for (tool in listOf("java", "jlink", "jpackage", "jdeps")) {
                 check(packagingHome.resolve("bin/$tool").canExecute()) { "Packaging JDK is missing $tool" }
@@ -325,6 +352,9 @@ afterEvaluate {
             check(packageDependencies.values.all { dependencies ->
                 "verifyInstalledBrowserRuntime" in dependencies && dependencies.any { it in checkNames }
             }) { "Packaging must depend on both tool and browser validation: $packageDependencies" }
+            check(finalizedConsumers.all { (name, dependencies) ->
+                (if (name.contains("Release")) "verifyFinalizedReleaseDistributable" else "verifyFinalizedDistributable") in dependencies
+            }) { "Installer/launcher must verify the final app seal: $finalizedConsumers" }
             check(enabledLinkTasks.isEmpty()) { "Installed runtime must not depend on enabled jlink tasks" }
             effectiveImages.forEach { (name, path) -> println("$name runtimeImage=$path") }
             effectiveTools.forEach { (property, path) -> println("$property=$path") }

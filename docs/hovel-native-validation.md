@@ -27,7 +27,7 @@ export PATH="$JAVA_HOME/bin:$PATH"
 ./gradlew --offline -Porg.gradle.java.installations.auto-download=false javaToolchains
 ./gradlew --offline -Porg.gradle.java.installations.auto-download=false :composeApp:jvmTest :composeApp:jvmJar --console=plain
 ./gradlew --offline -Porg.gradle.java.installations.auto-download=false -Pgamero.simulatedSmoke=true :composeApp:verifyDesktopRuntimeWiring :composeApp:verifyInstalledBrowserRuntime --console=plain
-./gradlew --offline -Porg.gradle.java.installations.auto-download=false -Pgamero.simulatedSmoke=true :composeApp:jvmTest --tests '*Simulated*Test' :composeApp:jvmJar :composeApp:createDistributable --console=plain
+./gradlew --offline -Porg.gradle.java.installations.auto-download=false -Pgamero.simulatedSmoke=true :composeApp:jvmTest --tests '*Simulated*Test' :composeApp:jvmJar :composeApp:verifyFinalizedDistributable --console=plain
 ```
 
 The wiring check prints the effective runtime path for every packaging task; each
@@ -42,18 +42,33 @@ and the installed runtime properties are frozen against later replacement.
 
 Corretto supplies packaging tools. The app uses the verified JBR/JCEF at launch
 and bundles its entire containing runtime bundle, including `Contents/Frameworks`
-and symlinks. Packaging replaces only its generated Home-only runtime copy and
-runs read-only `codesign --verify --deep --strict` checks against the source JBR,
-packaged runtime and outer app. If any check fails, **stop before launch** and
-return the exact error. Compose1.12.1 itself removes/replaces signatures on
-**generated copies** during Mac app-image packaging (its no-certificate signer
-uses ad-hoc signing on Arm64). Those operations target generated output, not the
-installed JBR. After Compose finishes, this build restores the complete source
-bundle and verifies source/runtime/outer signatures. Restoration may invalidate
-the outer signature: report that failure without launching or adding a bypass.
-No custom re-signing, installation, download, quarantine modification or
-signing-identity access is added here. Mac packaging, architecture compatibility
-and signatures require validation on that Mac.
+and symlinks. `verifyFinalizedDistributable` builds the app and performs a final
+consumer check; the release equivalent is `verifyFinalizedReleaseDistributable`.
+Python3 (also used below for the existing local fixture server) is required for
+the standard-library-only finalization helper.
+
+Compose1.12.1 first prepares its generated app/runtime copies, including its
+normal generated-copy signing. After all Compose resource processing completes,
+the build verifies the source JBR, restores the full vendor bundle and verifies
+its copied signature. It then applies the normal no-certificate build signature
+to **only the generated outer app**, using Compose's selected entitlements.
+Signing never uses `--deep`; the vendor runtime is not re-signed. Byte, path,
+symlink and permission digests must show the vendor tree is unchanged.
+
+The final step requires `codesign --verify --deep --strict` to pass for source
+JBR, copied runtime and outer app. Only then does it atomically publish a seal
+manifest outside the app under `composeApp/build/compose/seals`. The consumer
+check rejects any subsequent app/runtime changes and repeats all signature
+checks. Installer and Gradle packaged-launch tasks depend on that check. Do not
+edit the app after finalization; rebuild through this pipeline when inputs change.
+
+Any failed copy, signing, digest or signature check stops acceptance before
+launch. This signs our generated artifact as part of its build; it does not alter
+installed vendor binaries, access a signing identity, install anything, change
+quarantine or bypass OS prompts. Mac packaging/signature acceptance still requires
+execution on the approved Mac. Portable regression coverage runs with
+`python3 -m unittest discover -s tools -p 'test_finalize_mac_app.py' -v`; it tests
+pipeline ordering and mutation rejection with fake commands, not macOS signing.
 
 Only after the package checks pass, use two terminals from the repository root:
 
