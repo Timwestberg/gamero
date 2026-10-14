@@ -62,10 +62,9 @@ Sources: [Kotlin compatibility](https://kotlinlang.org/docs/multiplatform/multip
 
 ## Verification status
 
-Foundation compilation and seven JVM tests passed. Mac launch is assigned to the
-coordinator's separate validation task. No native success is claimed yet.
-
-On Gradle 9.3.1/AGP 9.1.1 the Android debug build passes and 63 JVM tests pass.
+On Gradle 9.3.1/AGP 9.1.1 the desktop build and Android debug build pass, and all
+63 JVM tests pass. Mac launch is assigned to the coordinator's separate validation
+task. No native desktop success is claimed yet.
 On a Pixel 8 Pro (API 34) emulator the Hovel launch animation plays and settles
 on the start screen, and the intro does not replay when the activity is recreated.
 `MainActivity` is portrait-only, so recreation was tested with a dark-mode toggle
