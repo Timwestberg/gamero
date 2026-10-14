@@ -47,14 +47,17 @@ class BridgeRouter(
     private var contextId: String? = null
     private var documentId: String? = null
     private val pending = mutableSetOf<Job>()
+    private val events = object : EventSink {
+        override fun <D> emit(event: BridgeEvent<D>, data: D) = this@BridgeRouter.emit(event, data)
+    }
     private var subscriptions: List<AutoCloseable> =
-        capabilities.bound.mapNotNull { capability -> capability.observe?.invoke(::emit) }
+        capabilities.bound.mapNotNull { capability -> capability.observe?.invoke(events) }
 
     /** Methods this host supports, in declaration order. `host.capabilities` returns this. */
     val supportedMethods: List<String> = handlers.filterValues { it != null }.keys.toList()
 
     /** Events this host can send. */
-    val supportedEvents: List<String> = capabilities.bound.filter { it.handlers != null }.flatMap { it.events }
+    val supportedEvents: List<String> = capabilities.bound.filter { it.handlers != null }.flatMap { capability -> capability.events.map { it.name } }
 
     /** Checks and answers one request. [reply] is called exactly once, from any thread. */
     fun handle(raw: String, frame: FrameFacts, reply: (String) -> Unit) {
@@ -88,11 +91,13 @@ class BridgeRouter(
     }
 
     /** Sends an event if a document has an open context. Events before `watchContext` are dropped. */
-    fun emit(event: String, data: JsonElement) {
+    fun <D> emit(event: BridgeEvent<D>, data: D) {
+        val encoded = bridgeJson.encodeToJsonElement(event.data, data)
         scope.launch(serial) {
-            if (contextId != null) transport.post(BridgeEnvelopes.event(event, data))
+            if (contextId != null) transport.post(BridgeEnvelopes.event(event.name, encoded))
         }
     }
+
 
     override fun close() {
         subscriptions.forEach { it.close() }
@@ -132,8 +137,8 @@ class BridgeRouter(
     /** The router's own methods, then each capability's, as [HostCapabilities] lists them. */
     private fun buildHandlers(): Map<String, MethodHandler?> {
         val own = listOf(
-            BridgeMethods.HOST_CAPABILITIES.handle { HostCapabilitiesResult(supportedMethods, supportedEvents) },
-            BridgeMethods.HOST_INFO.handle { HostInfoResult(capabilities.platform, capabilities.appVersion) },
+            BridgeMethods.HOST_CAPABILITIES.answer { HostCapabilitiesResult(supportedMethods, supportedEvents) },
+            BridgeMethods.HOST_INFO.answer { HostInfoResult(capabilities.platform, capabilities.appVersion) },
         ).map { it.method.name to it }
         val fromCapabilities = capabilities.bound.flatMap { capability ->
             capability.methods.mapIndexed { index, method -> method.name to capability.handlers?.get(index) }

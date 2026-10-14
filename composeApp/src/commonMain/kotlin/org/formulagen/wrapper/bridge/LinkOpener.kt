@@ -13,7 +13,7 @@ data class LinkOpenArgs(val url: String)
 object LinkMethods {
     val OPEN = BridgeMethod("link.open", LinkOpenArgs.serializer(), NoResult.serializer()) { isSafeHttpsUrl(it.url) }
 
-    internal val binder = CapabilityBinder<LinkOpener>(listOf(OPEN), handlers = { links ->
-        listOf(OPEN.handle { args -> links.open(args.url); NoResult })
-    })
+    internal val binder = CapabilityBinder(
+        listOf(OPEN.handle { links: LinkOpener, args -> links.open(args.url); NoResult }),
+    )
 }

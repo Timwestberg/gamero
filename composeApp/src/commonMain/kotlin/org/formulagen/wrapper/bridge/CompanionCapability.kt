@@ -33,11 +33,11 @@ object CompanionMethods {
         BridgeProtocol.UUID_PATTERN.matches(it.ownerId) && BridgeProtocol.UUID_PATTERN.matches(it.hostId)
     }
 
-    internal val binder = CapabilityBinder<CompanionCapability>(listOf(CAPABILITIES, PREPARE, ACTIVATE), handlers = { companion ->
-        listOf(
-            CAPABILITIES.handle { CompanionCapabilitiesResult() },
-            PREPARE.handle { args -> companion.prepareConnection(args.ownerId) },
-            ACTIVATE.handle { args -> companion.activateConnection(args.ownerId, args.hostId) },
-        )
-    })
+    internal val binder = CapabilityBinder(
+        listOf<CapabilityHandler<CompanionCapability>>(
+            CAPABILITIES.handle { _, _ -> CompanionCapabilitiesResult() },
+            PREPARE.handle { companion, args -> companion.prepareConnection(args.ownerId) },
+            ACTIVATE.handle { companion, args -> companion.activateConnection(args.ownerId, args.hostId) },
+        ),
+    )
 }

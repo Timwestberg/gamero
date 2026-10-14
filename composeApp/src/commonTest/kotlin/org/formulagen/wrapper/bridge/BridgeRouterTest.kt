@@ -143,7 +143,7 @@ class BridgeRouterTest {
             fixture("failure-unsupported.json"),
             Json.parseToJsonElement(BridgeEnvelopes.failure(BridgeErrorCode.UNSUPPORTED, "Haptics are not available on this host")),
         )
-        assertEquals(fixture("event-pause.json"), Json.parseToJsonElement(BridgeEnvelopes.event("lifecycle.pause", JsonObject(emptyMap()))))
+        assertEquals(fixture("event-pause.json"), Json.parseToJsonElement(BridgeEnvelopes.event(LifecycleEvents.PAUSE.name, bridgeJson.encodeToJsonElement(NoData.serializer(), NoData))))
         assertEquals(fixture("watch-context-reply.json"), Json.parseToJsonElement(BridgeEnvelopes.watchContextReply(HostBridgeFixtures.CONTEXT_ID)))
     }
 
