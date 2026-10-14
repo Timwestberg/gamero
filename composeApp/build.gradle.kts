@@ -152,8 +152,11 @@ compose.desktop {
         releaseWebUrl?.let { jvmArgs += "-Dgamero.webUrl=$it" }
 
         buildTypes.release.proguard {
-            // Shrink and optimize, but keep names: KCEF, JCEF and the WebView bridge use reflection.
+            // Shrink only, and keep names: KCEF, JCEF and the WebView bridge use reflection.
+            // ProGuard's optimizer needs a complete class hierarchy, and dev.datlag:jcef and JOGL
+            // extend Thrift, JavaFX and SWT classes the app never loads or ships.
             obfuscate.set(false)
+            optimize.set(false)
             configurationFiles.from(project.file("proguard-desktop.pro"))
         }
 
