@@ -1,0 +1,13 @@
+# Status
+
+**Feature:** host-bridge (spec `specs/2026-10-14-host-bridge-design.md`, ADR-001)
+**Phase:** Planning drafted. Design waits for Tim's approval (2026-10-14).
+
+- [x] Discovery of the gamero bridge code
+- [x] Spec and ADR-001 (Proposed)
+- [x] Strategy, architecture, standards, security, QA and delivery notes
+- [ ] Tim approves the design and answers the open questions
+- [ ] Phase A: shared core on desktop (A1–A4)
+- [ ] Phase B: Android and iOS transports, web client (B1–B4)
+- [ ] Phase C: proof capabilities and parity (C1–C5)
+- [ ] Phase D: legacy decision (ADR-002)
