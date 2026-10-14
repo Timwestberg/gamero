@@ -79,10 +79,10 @@ When two choices conflict, use this order:
 
 | Goal | Where the design meets it | Gap and fix |
 |---|---|---|
-| Reusable | One router, one envelope, one web client. The recipe below. | The router has a hand-written binding for each capability (`BridgeRouter.buildHandlers`). Task A2b moves each binding next to its capability. |
+| Reusable | One router, one envelope, one web client. The recipe below. | Fixed in A2b: each capability file declares its methods and a `CapabilityBinder`; the router holds no capability code. |
 | Extensible: new capability | Web callers ask `host.capabilities` and do not change. Old methods do not change. | A new `HostCapabilities` parameter makes each platform's factory add one line. This is intended: a forgotten platform is a compile error, not a runtime surprise. |
 | Extensible: new platform | A new transport and a new `HostCapabilities` factory. The router and the capabilities do not change. | None. |
-| Consistent | The router does all checks, all error mapping and all context rules. Shared fixtures run on every target. The parity test checks the parity table. | Haptics has a non-suspend method; the other capabilities suspend. Task A2b makes every capability method `suspend`. |
+| Consistent | The router does all checks, all error mapping and all context rules. Shared fixtures run on every target. The parity test checks the parity table. | Fixed in A2b: every capability method is `suspend`. |
 | Safe by default | Frame facts come from the platform API. The router checks them first. | None. |
 
 ## Not in scope
@@ -194,11 +194,14 @@ rules in the first column; a capability or a transport must obey the rest.
 1. **Contract.** In `server-platform/event-contracts/src/host-bridge`, add the
    methods (zod arguments and result) to `capabilities.ts`, add the row to
    `HOST_BRIDGE_PARITY`, and add the fixtures. Run the contract tests.
-2. **Interface.** In gamero `commonMain/.../bridge/`, add a file with the
-   interface (`suspend` methods), its `BridgeMethod` values and its binding.
+2. **Interface.** In gamero `commonMain/.../bridge/`, add one file with the
+   interface (`suspend` methods), the argument and result types, and an object
+   with the `BridgeMethod` values and a `CapabilityBinder`. `Haptics.kt` is the
+   smallest example.
 3. **Host parameter.** Add one `Capability<YourInterface>` parameter to
-   `HostCapabilities`. The compiler then names every platform factory that
-   must choose `Supported(impl)` or `Unsupported`.
+   `HostCapabilities`, and its binder to the `bound` list beside it. The
+   compiler then names every platform factory that must choose
+   `Supported(impl)` or `Unsupported`.
 4. **Platforms.** Write the implementation in each platform source set that
    supports it. Pass `Capability.Unsupported` in the others.
 5. **Fixtures.** Run `tools/sync-host-bridge-fixtures.py` and the router tests.

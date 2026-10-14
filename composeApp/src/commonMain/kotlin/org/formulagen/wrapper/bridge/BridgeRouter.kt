@@ -43,27 +43,18 @@ class BridgeRouter(
 ) : AutoCloseable {
     private val serial = ((scope.coroutineContext[ContinuationInterceptor] as? CoroutineDispatcher) ?: Dispatchers.Default)
         .limitedParallelism(1)
-    private val handlers: Map<String, Handler?> = buildHandlers()
+    private val handlers: Map<String, MethodHandler?> = buildHandlers()
     private var contextId: String? = null
     private var documentId: String? = null
     private val pending = mutableSetOf<Job>()
-    private var lifecycleSubscription: AutoCloseable? = null
+    private var subscriptions: List<AutoCloseable> =
+        capabilities.bound.mapNotNull { capability -> capability.observe?.invoke(::emit) }
 
-    init {
-        (capabilities.lifecycle as? Capability.Supported)?.let { supported ->
-            lifecycleSubscription = supported.impl.observe(
-                onPause = { emit(BridgeEvents.LIFECYCLE_PAUSE, JsonObject(emptyMap())) },
-                onResume = { emit(BridgeEvents.LIFECYCLE_RESUME, JsonObject(emptyMap())) },
-            )
-        }
-    }
-
-    /** Methods this host supports, in registry order. `host.capabilities` returns this. */
-    val supportedMethods: List<String> = BridgeMethods.ALL.map { it.name }.filter { handlers[it] != null }
+    /** Methods this host supports, in declaration order. `host.capabilities` returns this. */
+    val supportedMethods: List<String> = handlers.filterValues { it != null }.keys.toList()
 
     /** Events this host can send. */
-    val supportedEvents: List<String> =
-        if (capabilities.lifecycle is Capability.Supported) BridgeEvents.ALL else emptyList()
+    val supportedEvents: List<String> = capabilities.bound.filter { it.handlers != null }.flatMap { it.events }
 
     /** Checks and answers one request. [reply] is called exactly once, from any thread. */
     fun handle(raw: String, frame: FrameFacts, reply: (String) -> Unit) {
@@ -104,8 +95,8 @@ class BridgeRouter(
     }
 
     override fun close() {
-        lifecycleSubscription?.close()
-        lifecycleSubscription = null
+        subscriptions.forEach { it.close() }
+        subscriptions = emptyList()
         endContext()
     }
 
@@ -138,41 +129,19 @@ class BridgeRouter(
         pending.clear()
     }
 
-    private class Handler(val accepts: (JsonObject) -> Boolean, val invoke: suspend (JsonObject) -> JsonElement)
-
-    private fun <A, R> bind(method: BridgeMethod<A, R>, body: suspend (A) -> R): Pair<String, Handler> =
-        method.name to Handler(
-            accepts = { args -> method.decodeArgs(args) != null },
-            invoke = { args -> method.encodeResult(body(method.decodeArgs(args)!!)) },
-        )
-
-    private fun <T> Capability<T>.bindAll(vararg methods: BridgeMethod<*, *>, binder: (T) -> List<Pair<String, Handler>>): List<Pair<String, Handler?>> =
-        when (this) {
-            is Capability.Supported -> binder(impl)
-            Capability.Unsupported -> methods.map { it.name to null }
+    /** The router's own methods, then each capability's, as [HostCapabilities] lists them. */
+    private fun buildHandlers(): Map<String, MethodHandler?> {
+        val own = listOf(
+            BridgeMethods.HOST_CAPABILITIES.handle { HostCapabilitiesResult(supportedMethods, supportedEvents) },
+            BridgeMethods.HOST_INFO.handle { HostInfoResult(capabilities.platform, capabilities.appVersion) },
+        ).map { it.method.name to it }
+        val fromCapabilities = capabilities.bound.flatMap { capability ->
+            capability.methods.mapIndexed { index, method -> method.name to capability.handlers?.get(index) }
         }
-
-    private fun buildHandlers(): Map<String, Handler?> {
-        val bound = listOf(
-            bind(BridgeMethods.HOST_CAPABILITIES) { HostCapabilitiesResult(supportedMethods, supportedEvents) },
-            bind(BridgeMethods.HOST_INFO) { HostInfoResult(capabilities.platform, capabilities.appVersion) },
-        ) + capabilities.links.bindAll(BridgeMethods.LINK_OPEN) { links ->
-            listOf(bind(BridgeMethods.LINK_OPEN) { args -> links.open(args.url); NoResult })
-        } + capabilities.haptics.bindAll(BridgeMethods.HAPTIC_PLAY) { haptics ->
-            listOf(bind(BridgeMethods.HAPTIC_PLAY) { args -> haptics.play(args.effect); NoResult })
-        } + capabilities.companion.bindAll(
-            BridgeMethods.COMPANION_CAPABILITIES, BridgeMethods.COMPANION_PREPARE, BridgeMethods.COMPANION_ACTIVATE,
-        ) { companion ->
-            listOf(
-                bind(BridgeMethods.COMPANION_CAPABILITIES) { CompanionCapabilitiesResult() },
-                bind(BridgeMethods.COMPANION_PREPARE) { args -> companion.prepareConnection(args.ownerId) },
-                bind(BridgeMethods.COMPANION_ACTIVATE) { args -> companion.activateConnection(args.ownerId, args.hostId) },
-            )
-        }
-        val map = bound.toMap()
-        val missing = BridgeMethods.ALL.map { it.name } - map.keys
-        check(missing.isEmpty()) { "Methods without a binding: $missing" }
-        return map
+        val all = own + fromCapabilities
+        val duplicates = all.groupBy { it.first }.filterValues { it.size > 1 }.keys
+        check(duplicates.isEmpty()) { "Methods declared twice: $duplicates" }
+        return all.toMap()
     }
 }
 
