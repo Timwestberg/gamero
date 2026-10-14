@@ -22,7 +22,9 @@ awk -F, -v want="$runs" '
   NR == 1 { next }
   {
     key = $3 ":" $4
-    if (!($1 in seen)) { seen[$1] = 1; order[++n] = $1; commit[$1] = $7 }
+    if (!($1 in seen)) { seen[$1] = 1; order[++n] = $1 }
+    # The header shows gamero'"'"'s commit; build-web rows carry game-platform'"'"'s.
+    if ($3 == "build-release" || !($1 in commit)) commit[$1] = $7
     if (!(key in known)) { known[key] = 1; keys[++k] = key }
     secs[$1, key] = $5
     if (!(key in best) || $5 + 0 < best[key] + 0) best[key] = $5

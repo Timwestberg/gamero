@@ -33,7 +33,7 @@
 # in the background (log: build/release/web/build.log) while Android and desktop
 # share one Gradle run, then iOS archives. Every step's duration is appended to
 # BUILD_TIMINGS_FILE, down to Gradle tasks (from --profile) and Xcode build phases
-# (from -showBuildTimingSummary); tools/build-timings.sh compares recent runs.
+# (from the archive's result bundle); tools/build-timings.sh compares recent runs.
 #
 # Outputs land in build/release/<platform>/. Exits non-zero at the first failure.
 set -euo pipefail
@@ -62,8 +62,9 @@ record() {
   [[ -s "$timings_file" ]] || echo "run_id,finished_at,script,step,seconds,detail,commit,host" >"$timings_file"
   printf '%s,%s,build-release,%s,%s,%s,%s,%s\n' "$run_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "${3//,/;}" "$commit" "$host" >>"$timings_file"
 }
+# timed <step> <start> [detail] [end]: end defaults to now, in $SECONDS.
 timed() {
-  local took=$((SECONDS - $2))
+  local took=$((${4:-$SECONDS} - $2))
   timings+=("$(printf '%-16s %5ss' "$1" "$took")")
   step "$1 took ${took}s"
   record "$1" "$took" "${3:-}"
@@ -122,8 +123,14 @@ start_web() {
     finish_web
   else
     step "web: building $game_platform in the background (log: $out/web/build.log)"
-    BUILD_TIMINGS_FILE="$timings_file" BUILD_RUN_ID="$run_id" \
-      bash "$game_platform/scripts/build-web.sh" >"$out/web/build.log" 2>&1 &
+    # The job notes when it ended, so the web row is its own duration, not the wait for iOS.
+    (
+      BUILD_TIMINGS_FILE="$timings_file" BUILD_RUN_ID="$run_id" \
+        bash "$game_platform/scripts/build-web.sh" >"$out/web/build.log" 2>&1
+      rc=$?
+      echo "$SECONDS" >"$out/web/.finished"
+      exit "$rc"
+    ) &
     web_pid=$!
   fi
 }
@@ -134,10 +141,11 @@ finish_web() {
     web_pid=""
     wait "$pid" || { tail -30 "$out/web/build.log" >&2; fail "web: build failed (log: $out/web/build.log)"; }
   fi
-  local dist
+  local dist finished=$SECONDS
+  [[ ! -f "$out/web/.finished" ]] || finished="$(cat "$out/web/.finished")"
   dist="$(web_dir)/apps/game-bridge-host/dist"
   printf '%s\n' "$dist" >"$out/web/DIST_PATH"
-  timed web "$web_started"
+  timed web "$web_started" "" "$finished"
   step "web: done -> $dist"
 }
 
@@ -246,12 +254,14 @@ build_ios() {
     -destination 'generic/platform=iOS' -archivePath "$archive" \
     GAMERO_WEB_URL="$url" MARKETING_VERSION="$version" CURRENT_PROJECT_VERSION="$build_number" \
     COMPILER_INDEX_STORE_ENABLE=NO "${signing[@]}" ${team:+-allowProvisioningUpdates} \
-    -showBuildTimingSummary archive \
+    -resultBundlePath "$out/ios/Gamero.xcresult" archive \
     >"$out/ios/xcodebuild.log" 2>&1 || { grep -E "error:" "$out/ios/xcodebuild.log" | head -20 >&2; fail "ios: archive failed"; }
 
-  # "PhaseScriptExecution (1 task) | 95.123 seconds": the Kotlin framework is that script phase.
-  sed -nE 's/^([A-Za-z]+) \(([0-9]+) tasks?\) \| ([0-9.]+) seconds$/\1 \3 \2/p' "$out/ios/xcodebuild.log" \
-    | while read -r phase secs count; do record "ios:$phase" "${secs%.*}" "${secs}s; $count tasks"; done || true
+  # Per-phase task time, the same totals as Xcode's build timing summary, which `archive`
+  # does not print. The Kotlin framework is the PhaseScriptExecution phase.
+  xcrun xcresulttool get log --path "$out/ios/Gamero.xcresult" --type build --compact 2>/dev/null \
+    | python3 "$root/tools/xcresult-steps.py" 1 \
+    | while IFS=, read -r phase secs count; do record "ios:$phase" "${secs%.*}" "${secs}s; $count tasks"; done || true
 
   if [[ -z "$team" ]]; then
     step "ios: GAMERO_IOS_TEAM_ID is not set, so $archive is unsigned and no IPA was exported"

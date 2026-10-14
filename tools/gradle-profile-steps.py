@@ -23,8 +23,9 @@ def seconds(text):
 def main():
     page = open(sys.argv[1], encoding="utf-8", errors="replace").read()
     floor = float(sys.argv[2]) if len(sys.argv) > 2 else 1.0
-    # Task rows look like <tr><td>:composeApp:minifyReleaseWithR8</td><td class="numeric">1m2.345s</td>...
-    for path, duration in re.findall(r"<td>(:[^<]+)</td>\s*<td class=\"numeric\">([^<]+)</td>", page):
+    # Task rows look like <td class="indentPath">:composeApp:minifyReleaseWithR8</td><td class="numeric">1m2.345s</td>.
+    # Plain <td>:composeApp</td> rows are per-project totals, not tasks.
+    for path, duration in re.findall(r"<td class=\"indentPath\">(:[^<]+)</td>\s*<td class=\"numeric\">([^<]+)</td>", page):
         value = seconds(duration)
         if value is not None and value >= floor:
             print(f"{html.unescape(path)},{value:.1f}")

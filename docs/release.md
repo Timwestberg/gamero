@@ -33,8 +33,11 @@ commit and host:
 - `build-release:gradle:<task>`: every Gradle task that took a second or more,
   from Gradle's `--profile` report (also saved as
   `build/release/reports/gradle-profile.html`).
-- `build-release:ios:<phase>`: Xcode's build timing summary. The Kotlin framework
-  build is `ios:PhaseScriptExecution`.
+- `build-release:ios:<phase>`: task time per Xcode build rule that took a second or
+  more, summed over parallel tasks: the totals of Xcode's build timing summary, which
+  `archive` does not print, read from the archive's result bundle
+  (`build/release/ios/Gamero.xcresult`). The Kotlin framework build is
+  `ios:PhaseScriptExecution`.
 
 `tools/build-timings.sh [runs]` prints one row per step and one column per recent
 run, plus the best time seen, to show whether a change made a step faster.
