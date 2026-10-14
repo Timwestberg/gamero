@@ -83,7 +83,11 @@ fun WebViewManager(
             captureBackPresses = false,
             modifier = modifier.fillMaxSize(),
             webViewJsBridge = if (enableLegacyBridge) jsBridge else null,
-            onCreated = { ref -> webViewRef = ref; onWebViewCreated(ref) },
+            onCreated = { ref ->
+                webViewUserAgent(ref)?.let { webViewState.webSettings.customUserAgentString = it }
+                webViewRef = ref
+                onWebViewCreated(ref)
+            },
             factory = webViewFactory
         )
     }
