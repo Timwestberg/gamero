@@ -34,6 +34,7 @@ class BrainCodexWorkerTest {
         var claim: String? = null
         var executionClaim: String? = null
         var loseOnce: String? = null
+        var fenced = false
         fun retry() {
             val old = record!!
             val result = old.getValue("result").jsonObject
@@ -83,6 +84,8 @@ class BrainCodexWorkerTest {
                     record!!
                 }
                 "brain/presentation-claim" -> {
+                    // A current-configuration fence refuses before storing anything, even for the held claim ID.
+                    if (fenced) throw HovelRejectedException()
                     require(record!!.getValue("result").jsonObject.getValue("presentation").jsonObject.getValue("state").jsonPrimitive.content == "pending")
                     val proposed = body.getValue("claimId").jsonPrimitive.content
                     require(claim == null || claim == proposed); claim = proposed; record!!
@@ -192,17 +195,46 @@ class BrainCodexWorkerTest {
         }
     }
 
-    @Test fun ambiguousPresentationRetainsClaimAndForbidsRetry() = fixture { a, backend, execution, presentation ->
+    @Test fun ambiguousPresentationIsPublishedAsReconciliationFailure() = fixture { a, backend, execution, presentation ->
         var executions = 0; var presentations = 0
         val worker = BrainCodexWorker(execution, presentation,
             TaskProvider { executions++; ProviderResult(true, "Done") },
             TaskProvider { presentations++; error("Presentation process lost") }, BrainHovelRemote(backend), {}, BrainHovelRemote(backend)::authorizeLaunch)
-        assertFails { worker.execute(a) }
-        assertFails { worker.execute(a) }
-        assertFails { backend.retry() }
+        assertEquals(ExecutionPhase.RECONCILIATION_REQUIRED, worker.execute(a).presentation!!.phase)
+        worker.execute(a)
         assertEquals(1, executions); assertEquals(1, presentations)
-        assertNotNull(backend.claim)
-        assertFalse(backend.calls.any { it.first == "brain/presentation" })
+        val completion = backend.calls.single { it.first == "brain/presentation" }.second
+        assertEquals(backend.claim, completion.getValue("claimId").jsonPrimitive.content)
+        assertEquals(buildJsonObject { put("state", "failed"); put("errorCode", "presentation-reconciliation-required") },
+            completion.getValue("result"))
+        // Published as failed, the owner can queue a new attempt; the uncertain one is never relaunched.
+        backend.retry()
+    }
+
+    @Test fun fencedReclaimCancelsTheHeldClaim() = fixture { a, backend, execution, presentation ->
+        var presentations = 0
+        val worker = BrainCodexWorker(execution, presentation, TaskProvider { ProviderResult(true, "Done") },
+            TaskProvider { presentations++; ProviderResult(true, "must not present") }, BrainHovelRemote(backend), {}, BrainHovelRemote(backend)::authorizeLaunch)
+        backend.loseOnce = "brain/presentation-claim"
+        assertFails { worker.execute(a) }
+        val held = assertNotNull(backend.claim)
+        backend.fenced = true
+        assertFailsWith<HovelRejectedException> { worker.execute(a) }
+        assertEquals(0, presentations)
+        val completion = backend.calls.single { it.first == "brain/presentation" }.second
+        assertEquals(held, completion.getValue("claimId").jsonPrimitive.content)
+        assertEquals(buildJsonObject { put("state", "cancelled") }, completion.getValue("result"))
+        backend.retry()
+    }
+
+    @Test fun fencedFirstClaimHoldsNothingToCancel() = fixture { a, backend, execution, presentation ->
+        val worker = BrainCodexWorker(execution, presentation, TaskProvider { ProviderResult(true, "Done") },
+            TaskProvider { error("must not present") }, BrainHovelRemote(backend), {}, BrainHovelRemote(backend)::authorizeLaunch)
+        backend.fenced = true
+        val rejected = assertFailsWith<HovelRejectedException> { worker.execute(a) }
+        assertEquals(1, rejected.suppressed.size)
+        assertNull(backend.claim)
+        assertFails { backend.retry() }
     }
 
     @Test fun transportDefaultsToDisabledAndOptInUsesExistingHostHeader() {
@@ -236,10 +268,13 @@ class BrainCodexWorkerTest {
             enabled.authorizeLaunch(a, "execution", record)
             assertEquals(1, calls)
             // A rejection never counts as authorization, even when the body otherwise looks like a grant.
-            status = 409; assertFails { enabled.authorizeLaunch(a, "execution", record) }; status = 200
+            status = 409; assertFailsWith<HovelRejectedException> { enabled.authorizeLaunch(a, "execution", record) }
+            // Only a refusal is definitive; any other failure may hide a committed request.
+            status = 500; assertFalse(runCatching { enabled.authorizeLaunch(a, "execution", record) }.exceptionOrNull() is HovelRejectedException)
+            status = 200
             authorized = false; assertFails { enabled.authorizeLaunch(a, "execution", record) }; authorized = true
             echoedClaim = id(); assertFails { enabled.authorizeLaunch(a, "execution", record) }
-            assertEquals(4, calls)
+            assertEquals(5, calls)
         } finally { server.stop(0) }
     }
 

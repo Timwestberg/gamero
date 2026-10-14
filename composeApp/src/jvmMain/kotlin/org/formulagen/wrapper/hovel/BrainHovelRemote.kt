@@ -90,10 +90,9 @@ class BrainHovelRemote(private val transport: HovelTransport) : BrainWorkerRemot
     }
 
     override fun completePresentation(assignment: BrainCodexAssignment, ticket: BrainPresentationTicket, presentation: ExecutionRecord) {
-        require(presentation.request.id == ticket.attemptId && ticket.taskId == assignment.request.id)
-        check(presentation.phase != ExecutionPhase.RECONCILIATION_REQUIRED) {
-            "Presentation requires local reconciliation; retain its pending claim and forbid a new attempt"
-        }
+        require(presentation.request.id == ticket.attemptId)
+        // The server releases an unfinished claim after its lease, so an ambiguous launch is published as failed rather
+        // than left pending. Its local record still forbids relaunching this attempt; only an owner retry starts another.
         val result = when {
             presentation.phase == ExecutionPhase.SUCCEEDED && !presentation.result.isNullOrBlank() && presentation.result.length <= 8192 ->
                 buildJsonObject { put("state", "succeeded"); put("reply", presentation.result) }
@@ -105,10 +104,19 @@ class BrainHovelRemote(private val transport: HovelTransport) : BrainWorkerRemot
                 }) }
             else -> error("Only durable presentation outcomes can be published")
         }
-        val response = post("brain/presentation", presentation.claimId, buildJsonObject {
-            put("requestId", operationId(presentation.claimId, "presentation")); put("taskId", ticket.taskId)
+        complete(assignment, ticket, presentation.claimId, result)
+    }
+
+    override fun cancelPresentation(assignment: BrainCodexAssignment, ticket: BrainPresentationTicket, claimId: String) =
+        complete(assignment, ticket, claimId, buildJsonObject { put("state", "cancelled") })
+
+    /** One completion per claim: the request ID derives from the claim, so a cancel and a result for it conflict. */
+    private fun complete(assignment: BrainCodexAssignment, ticket: BrainPresentationTicket, claimId: String, result: JsonObject) {
+        require(ticket.taskId == assignment.request.id)
+        val response = post("brain/presentation", claimId, buildJsonObject {
+            put("requestId", operationId(claimId, "presentation")); put("taskId", ticket.taskId)
             put("attemptId", ticket.attemptId); put("expectedRevision", ticket.revision)
-            put("claimId", presentation.claimId); put("result", result)
+            put("claimId", claimId); put("result", result)
         })
         val saved = response.getValue("result").jsonObject
         require(saved.getValue("taskId").jsonPrimitive.content == assignment.request.id)
