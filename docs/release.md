@@ -41,8 +41,10 @@ Android release builds open HTTPS pages only (`HovelAndroid.kt`): with any other
 URL the app skips Hovel and starts the legacy WorldWinner page, so the script
 refuses to build `android` without an HTTPS `GAMERO_WEB_URL`. Until a live URL
 exists, an HTTPS placeholder such as `https://127.0.0.1/hovel.html` builds and
-shows the Hovel start screen, but the game page itself will not load. To play
-locally, use a debug build with the `GAMERO_WEB_URL` launch extra (README.md).
+shows the Hovel start screen, but the game page itself will not load. Local play
+uses debug builds, not release builds: the desktop and iOS simulator debug builds
+open the local edge, and an Android debug build takes the `GAMERO_WEB_URL` launch
+extra (README.md), which must also be an HTTPS page the device trusts.
 
 ## Web
 
