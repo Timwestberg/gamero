@@ -1,6 +1,8 @@
 # Gamero
 
-Mac desktop development: [build and launch guide](docs/desktop.md). Desktop is the default build target; mobile targets are opt-in and outside the current verification scope.
+Mac desktop development: [build and launch guide](docs/desktop.md). Desktop is the default build target; mobile targets are opt-in.
+
+iOS (simulator): [build and run guide](docs/ios.md). Smoke test: `tools/ios-smoke.sh` builds the app, loads Hovel on a throwaway simulator, and fails unless the page loads. Android remains outside the current verification scope.
 
 This is a Kotlin Multiplatform project targeting Android, iOS, Desktop (JVM).
 

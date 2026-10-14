@@ -36,8 +36,9 @@ Do not use native launch alone as Hovel task/result/reconnect acceptance.
 
 ## Build boundaries
 
-Desktop is the default target. Existing mobile source remains available using
-`-Pgamero.mobileTargets=true`, but mobile build/validation is outside this change.
+Desktop is the default target. `-Pgamero.iosTargets=true` adds only the iOS
+targets and needs no Android SDK; see [ios.md](ios.md). `-Pgamero.mobileTargets=true`
+adds both Android and iOS; Android build/validation is outside this change.
 Mobile-only package versions are retained. Unsupported legacy mobile functions
 fail explicitly on desktop and are not exposed through its WebView bridge.
 
