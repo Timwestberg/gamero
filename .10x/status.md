@@ -24,7 +24,7 @@ Spec `specs/2026-10-14-bridge-kit-design.md`, ADR-002 (Accepted). G5: product se
 - [x] K1 typed handlers and events (JVM tests pass)
 - [x] K2 method time limit (JVM tests pass)
 - [x] K3 platform set and product set (JVM tests pass)
-- [ ] K4 parity test per factory
+- [x] K4 parity test per factory (desktop; Android and iOS reuse assertMatchesParity in B1 and B2)
 - [ ] B1+K5 Android transport with HostBridge and TransportContractTest
 - [ ] B2 iOS transport on the kit, no kit change
 - [ ] C3+ haptic.play on mobile, legacy haptic path deleted

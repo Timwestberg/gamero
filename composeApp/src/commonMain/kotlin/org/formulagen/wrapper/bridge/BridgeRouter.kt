@@ -61,6 +61,12 @@ class BridgeRouter(
     /** Methods this host supports, in declaration order. `host.capabilities` returns this. */
     val supportedMethods: List<String> = handlers.filterValues { it != null }.keys.toList()
 
+    /** Every method this host knows, supported or not. The parity test reads it. */
+    internal val knownMethods: List<String> = handlers.keys.toList()
+
+    /** Every event this host knows, supported or not. */
+    internal val knownEvents: List<String> = bound.flatMap { capability -> capability.events.map { it.name } }
+
     /** Events this host can send. */
     val supportedEvents: List<String> = bound.filter { it.handlers != null }.flatMap { capability -> capability.events.map { it.name } }
 
