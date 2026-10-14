@@ -76,7 +76,7 @@ class BridgeRouter(
                 acceptsArgs = { method, args -> handlers[method]?.accepts(args) == true },
             )
             when (check) {
-                is BridgeCheck.Reject -> reply(BridgeEnvelopes.failure(check.code, messageFor(check.code)))
+                is BridgeCheck.Reject -> reply(bridgeFailureEnvelope(check.code))
                 BridgeCheck.WatchContext -> {
                     endContextNow()
                     val id = newContextId()
@@ -85,7 +85,7 @@ class BridgeRouter(
                     reply(BridgeEnvelopes.watchContextReply(id))
                 }
                 is BridgeCheck.Call ->
-                    if (frame.documentId != documentId) reply(BridgeEnvelopes.failure(BridgeErrorCode.EXPIRED, messageFor(BridgeErrorCode.EXPIRED)))
+                    if (frame.documentId != documentId) reply(bridgeFailureEnvelope(BridgeErrorCode.EXPIRED))
                     else run(check, reply)
             }
         }
@@ -117,10 +117,10 @@ class BridgeRouter(
             } catch (error: CancellationException) {
                 throw error
             } catch (_: BridgeBusyException) {
-                BridgeEnvelopes.failure(BridgeErrorCode.BUSY, messageFor(BridgeErrorCode.BUSY))
+                bridgeFailureEnvelope(BridgeErrorCode.BUSY)
             } catch (error: Throwable) {
                 onFailure(call.method, error)
-                BridgeEnvelopes.failure(BridgeErrorCode.FAILED, messageFor(BridgeErrorCode.FAILED))
+                bridgeFailureEnvelope(BridgeErrorCode.FAILED)
             }
             withContext(serial) {
                 ensureActive()
@@ -173,16 +173,6 @@ class BridgeRouter(
         val missing = BridgeMethods.ALL.map { it.name } - map.keys
         check(missing.isEmpty()) { "Methods without a binding: $missing" }
         return map
-    }
-
-    private fun messageFor(code: BridgeErrorCode): String = when (code) {
-        BridgeErrorCode.FORBIDDEN -> "This frame cannot call the host"
-        BridgeErrorCode.INVALID -> "The request does not match host-bridge.v2"
-        BridgeErrorCode.EXPIRED -> "The bridge context expired; open a new one"
-        BridgeErrorCode.UNKNOWN_METHOD -> "No host defines this method"
-        BridgeErrorCode.UNSUPPORTED -> "This host does not support this method"
-        BridgeErrorCode.BUSY -> "Another call to this capability is running"
-        BridgeErrorCode.FAILED -> "The host could not complete the call"
     }
 }
 

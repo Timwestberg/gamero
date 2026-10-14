@@ -29,14 +29,14 @@ object BridgeProtocol {
 }
 
 /** Failure codes, in the order the router checks for them. The page reads only the code. */
-enum class BridgeErrorCode(val wire: String) {
-    FORBIDDEN("forbidden"),
-    INVALID("invalid"),
-    EXPIRED("expired"),
-    UNKNOWN_METHOD("unknown-method"),
-    UNSUPPORTED("unsupported"),
-    BUSY("busy"),
-    FAILED("failed"),
+enum class BridgeErrorCode(val wire: String, val message: String) {
+    FORBIDDEN("forbidden", "This frame cannot call the host"),
+    INVALID("invalid", "The request does not match host-bridge.v2"),
+    EXPIRED("expired", "The bridge context expired; open a new one"),
+    UNKNOWN_METHOD("unknown-method", "No host defines this method"),
+    UNSUPPORTED("unsupported", "This host does not support this method"),
+    BUSY("busy", "Another call to this capability is running"),
+    FAILED("failed", "The host could not complete the call"),
 }
 
 /**
@@ -47,6 +47,9 @@ data class FrameFacts(val mainFrame: Boolean, val trustedOrigin: Boolean, val do
 
 /** Thrown by a single-flight capability that is already running a call. The router answers `busy`. */
 class BridgeBusyException : IllegalStateException("Another call to this capability is running")
+
+/** A failure reply with the code's standard message, for transports that reject before the router. */
+internal fun bridgeFailureEnvelope(code: BridgeErrorCode): String = BridgeEnvelopes.failure(code, code.message)
 
 internal object BridgeEnvelopes {
     fun watchContextReply(contextId: String): String = buildJsonObject {

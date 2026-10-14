@@ -22,6 +22,7 @@ import kotlinx.coroutines.*
 import java.io.File
 import java.net.URI
 import kotlin.system.exitProcess
+import org.formulagen.wrapper.bridge.desktopHostCapabilities
 import org.formulagen.wrapper.companion.NativeBridge
 import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.hovel.HovelLaunchScreen
@@ -220,10 +221,14 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
             }
             App(url, enableLegacyBridge = false, webViewFactory = ::persistentDesktopBrowser, onWebViewCreated = { browser ->
                 resources.attachBrowser(browser)
-                if (companion != null) {
-                    resources.bridge?.close()
-                    resources.bridge = NativeBridge(browser, url, companion::invalidatePending, companion::dispatch)
-                }
+                resources.bridge?.close()
+                resources.bridge = NativeBridge(
+                    browser = browser,
+                    trustedUrl = url,
+                    capabilities = desktopHostCapabilities(companion),
+                    onInvalidate = { companion?.invalidatePending() },
+                    dispatch = companion?.let { it::dispatch },
+                )
             })
         }
         start -> Text("Preparing browser…", Modifier.padding(24.dp))
