@@ -32,10 +32,54 @@ pnpm --filter @formulagen/game-bridge-host build
 APP=game-bridge-host STATIC_ROOT=apps/game-bridge-host/dist pnpm serve:edge
 ```
 
-Run `pnpm dev:results-stub` in another shell if realtime is not running. Page
-load needs neither the Godot export nor sign-in. Exporting the room
-(`godot --headless ... --export-release Web builds/web/hovel.html`, Godot 4.6.3)
-and server-platform's identity service are needed only to get past sign-in.
+Run `pnpm dev:results-stub` in another shell if realtime is not running. This
+HTTP setup is enough to load the page and run the smoke test. It is **not**
+enough to sign in; see the next section. The room itself also needs the Godot
+export (`godot --headless ... --export-release Web builds/web/hovel.html`,
+Godot 4.6.3).
+
+## Sign in (HTTPS)
+
+Sign-in needs HTTPS. Identity marks its session cookies `Secure`, and WKWebView
+drops them over `http://127.0.0.1`. The PIN is accepted, but the session is
+lost, and retrying shows "No active PIN challenge for this phone".
+
+1. Run server-platform's backends, including identity. On `main`, identity
+   already scopes the refresh cookie to the `/api/identity` path the web app
+   uses:
+   ```sh
+   docker compose --profile backends up -d --wait
+   ```
+2. In `game-platform`, start the HTTPS dev server on `https://localhost:8123`.
+   It proxies `/api/identity` to identity and starts a local results stub when
+   realtime is not running:
+   ```sh
+   pnpm dev
+   ```
+3. Trust its self-signed certificate in the simulator, once per simulator. The
+   certificate is generated on the dev server's first run, inside a PEM file
+   that also holds its key, so extract only the certificate:
+   ```sh
+   awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/' \
+     <game-platform>/apps/game-bridge-host/node_modules/.vite/basic-ssl/_cert.pem > /tmp/vite-dev-cert.pem
+   xcrun simctl keychain booted add-root-cert /tmp/vite-dev-cert.pem
+   ```
+4. Launch the app with the HTTPS URL:
+   ```sh
+   SIMCTL_CHILD_GAMERO_WEB_URL=https://localhost:8123/hovel.html \
+     xcrun simctl launch booted org.formulagen.wrapper.WestbergWrapper
+   ```
+   The URL applies only to that launch. Opening the app from the home screen
+   or from Xcode's Run uses the Info.plist default, which is HTTP. To make HTTPS
+   stick, set it in the scheme's environment variables or in `Config.xcconfig`
+   (`GAMERO_WEB_URL=https:/$()/localhost:8123/hovel.html`).
+5. Sign in with any E.164 phone number. With `PIN_PROVIDER=console`, no SMS is
+   sent; the PIN is logged by identity:
+   ```sh
+   docker logs --since 5m server-platform-identity 2>&1 | grep "DEV PIN" | tail -1
+   ```
+   A PIN works once and expires after 5 minutes. After "No active PIN
+   challenge", go back and request a new PIN.
 
 ## Build and run from Xcode
 
@@ -122,8 +166,8 @@ first line may show `title=null`.
   missing and runs Hovel as a remote UI. This is intentional.
 - **Physical devices cannot reach `127.0.0.1` on the Mac.** Point
   `GAMERO_WEB_URL` at an HTTPS origin the device can reach.
-- **Sign-in over HTTP loopback may fail** if the identity cookies are `Secure`.
-  See [TEST.md](../TEST.md) for the HTTPS fallback.
+- **Sign-in needs HTTPS.** Over HTTP loopback, WKWebView drops identity's
+  `Secure` cookies. See [Sign in (HTTPS)](#sign-in-https).
 - `iosApp/iosApp/GoogleService-Info.plist` must stay in place, because
   `FirebaseApp.configure()` runs at launch.
 

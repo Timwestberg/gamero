@@ -75,16 +75,40 @@ runtime. Unless a case says otherwise, Hovel is served at
   detects that. Nothing crashes and nothing asks to register this device as a
   computer. This is an intentional limitation.
 
-### Secure-cookie sign-in over HTTP loopback
+### Sign-in over HTTP loopback fails
 
 - **Steps:** With server-platform's identity service running, sign in through
   `http://127.0.0.1:8080/hovel.html`.
-- **Expected:** This may fail. If the identity service sets `Secure` cookies,
-  WKWebView can drop them over cleartext HTTP, so the session does not persist.
-  Fallback: serve over HTTPS (game-platform's Vite dev server on
-  `https://127.0.0.1:8123`), trust its root certificate in the simulator with
-  `xcrun simctl keychain booted add-root-cert <cert.pem>`, and launch with that
-  URL.
+- **Expected:** Sign-in fails, as observed with identity on `main`. Verify
+  returns 200, but the next `/auth/refresh` fails with "Missing refresh token",
+  because WKWebView drops identity's `Secure` cookies over HTTP. The app
+  returns to the PIN screen, and retrying shows "No active PIN challenge for
+  this phone" because the PIN was already used. Use the HTTPS path in
+  [docs/ios.md](docs/ios.md#sign-in-https) for anything that needs sign-in.
+
+### Sign-in over HTTPS
+
+- **Preconditions:** The setup in [docs/ios.md](docs/ios.md#sign-in-https):
+  identity running, `pnpm dev` on `https://localhost:8123`, and the dev
+  certificate trusted in this simulator.
+- **Steps:** Launch with
+  `SIMCTL_CHILD_GAMERO_WEB_URL=https://localhost:8123/hovel.html`, enter a phone
+  number, then enter the PIN from the identity log once.
+- **Expected:** The log shows `GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Hovel`.
+  After the PIN, Hovel leaves the sign-in card and stays signed in. Identity
+  logs `/auth/verify` and `/auth/refresh` with no errors. Without the trusted
+  certificate, the page does not load and no `GAMERO_PAGE_LOADED` line appears.
+- **Status:** Verified on an iOS 26.2 simulator. Identity logged
+  `/auth/verify` and `/auth/refresh` with no errors.
+
+### Relaunching drops the HTTPS URL
+
+- **Steps:** After an HTTPS launch through `simctl`, quit the app and open it
+  from the home screen.
+- **Expected:** It loads the Info.plist default
+  (`http://127.0.0.1:8080/hovel.html`), not the HTTPS URL, because
+  `SIMCTL_CHILD_*` applies to one launch. Relaunch through `simctl`, or set the
+  URL in the scheme or `Config.xcconfig`.
 
 ### Physical device
 
