@@ -69,7 +69,16 @@ timed() {
   step "$1 took ${took}s"
   record "$1" "$took" "${3:-}"
 }
-usage() { sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+# usage [status]: help goes to stdout and exits 0; a usage error goes to stderr and exits 2.
+usage() {
+  local status="${1:-2}"
+  if [[ "$status" == 0 ]]; then
+    sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  else
+    sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+  fi
+  exit "$status"
+}
 
 [[ $# -gt 0 ]] || usage
 platforms=()
@@ -77,7 +86,7 @@ for arg in "$@"; do
   case "$arg" in
     all) platforms+=(web android desktop ios) ;;
     android | desktop | ios | web) platforms+=("$arg") ;;
-    -h | --help) usage ;;
+    -h | --help) usage 0 ;;
     *) echo "build-release: unknown platform '$arg'" >&2; usage ;;
   esac
 done
@@ -177,6 +186,15 @@ collect_android() {
 
 check_desktop() {
   require_url
+  # Signing and notarization are macOS-only and fail late, inside Gradle, when half-configured.
+  if [[ -n "${GAMERO_MAC_SIGN_IDENTITY:-}" || -n "${GAMERO_NOTARIZE_APPLE_ID:-}" ]]; then
+    [[ "$(uname -s)" == Darwin ]] || fail "GAMERO_MAC_SIGN_IDENTITY and GAMERO_NOTARIZE_APPLE_ID apply to macOS builds only; unset them on $(uname -s)"
+  fi
+  if [[ -n "${GAMERO_NOTARIZE_APPLE_ID:-}" ]]; then
+    for name in GAMERO_MAC_SIGN_IDENTITY GAMERO_NOTARIZE_PASSWORD GAMERO_NOTARIZE_TEAM_ID; do
+      [[ -n "${!name:-}" ]] || fail "$name is required with GAMERO_NOTARIZE_APPLE_ID (notarization needs a signed DMG)"
+    done
+  fi
   local jbr="${GAMERO_BROWSER_JAVA_HOME:-}"
   [[ -n "$jbr" ]] || fail "set GAMERO_BROWSER_JAVA_HOME to a JetBrains Runtime SDK with JCEF; it is bundled into the app (docs/release.md)"
   for tool in java jlink jpackage; do
@@ -238,6 +256,14 @@ check_ios() {
     export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
   fi
   xcodebuild -version >/dev/null 2>&1 || fail "Xcode not found. Install it, or set DEVELOPER_DIR."
+  # Both go into ExportOptions.plist, so check them here rather than at export time.
+  local team="${GAMERO_IOS_TEAM_ID:-}" method="${GAMERO_IOS_EXPORT_METHOD:-app-store-connect}"
+  [[ -z "$team" || "$team" =~ ^[A-Z0-9]{10}$ ]] \
+    || fail "GAMERO_IOS_TEAM_ID must be a 10-character Apple team ID such as ABCDE12345, not '$team'"
+  case "$method" in
+    app-store-connect | release-testing | enterprise) ;;
+    *) fail "GAMERO_IOS_EXPORT_METHOD must be app-store-connect, release-testing or enterprise, not '$method'" ;;
+  esac
 }
 
 build_ios() {
@@ -294,8 +320,23 @@ EOF
 ! want desktop || check_desktop
 ! want ios || check_ios
 
-# If anything below fails, stop a web build still running in the background.
-trap '[[ -z "$web_pid" ]] || kill "$web_pid" 2>/dev/null || true' EXIT
+# Every process below pid, children first in the list after their parent.
+descendants() {
+  local child
+  for child in $(pgrep -P "$1" 2>/dev/null); do
+    echo "$child"
+    descendants "$child"
+  done
+}
+# If anything below fails, stop a web build still running in the background: the
+# subshell and everything it started (build-web.sh, Godot, tsc, Vite). The tree is
+# listed before any kill, since a killed parent's children are reparented.
+stop_web() {
+  [[ -n "$web_pid" ]] || return 0
+  # shellcheck disable=SC2046 # one pid per word
+  kill "$web_pid" $(descendants "$web_pid") 2>/dev/null || true
+}
+trap stop_web EXIT
 
 ! want web || start_web
 if want android || want desktop; then build_gradle; fi

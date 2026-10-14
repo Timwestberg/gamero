@@ -122,6 +122,9 @@ Optional signing and notarization for distribution outside the App Store:
 | `GAMERO_MAC_SIGN_IDENTITY` | Developer ID Application identity to sign the app and DMG. |
 | `GAMERO_NOTARIZE_APPLE_ID`, `GAMERO_NOTARIZE_PASSWORD`, `GAMERO_NOTARIZE_TEAM_ID` | Also run `notarizeReleaseDmg`. The password is an app-specific password. |
 
+These are macOS-only. The script refuses them on other systems, and refuses
+notarization unless the signing identity and all three notarization variables are set.
+
 ## iOS
 
 Mac only. Archives the `iosApp` scheme in Release, which also builds the Kotlin
@@ -131,7 +134,8 @@ override `Config.xcconfig`, including its Release URL.
 
 With `GAMERO_IOS_TEAM_ID`, the archive is signed automatically and exported as an
 IPA using `GAMERO_IOS_EXPORT_METHOD` (`app-store-connect` by default, or
-`release-testing` for ad hoc, or `enterprise`). The team goes in as
+`release-testing` for ad hoc, or `enterprise`). Both are checked before anything builds:
+the team must be a 10-character Apple team ID. The team goes in as
 `DEVELOPMENT_TEAM`, not `TEAM_ID`, because `Config.xcconfig` appends `TEAM_ID` to
 the bundle identifier. Without a team the archive is built unsigned, which checks
 that Release compiles but cannot be installed. The xcodebuild log is
