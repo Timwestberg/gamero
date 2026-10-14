@@ -33,8 +33,9 @@ runtime. Unless a case says otherwise, Hovel is served at
 - **Preconditions:** Hovel is served.
 - **Steps:** Open `iosApp/iosApp.xcodeproj`, pick the `iosApp` scheme and an
   iPhone simulator, then Run.
-- **Expected:** The build succeeds without an Android SDK. The app opens full
-  screen on Hovel's "Welcome" sign-in card. The Xcode console shows
+- **Expected:** The build succeeds without an Android SDK. The app plays the
+  Hovel launch and settles on the start screen. After you tap "Open the door",
+  it opens full screen on Hovel's "Welcome" sign-in card. The Xcode console shows
   `GAMERO_PAGE_LOADED origin=http://127.0.0.1:8080 title=Hovel`.
 
 ### 3. Launch environment overrides Info.plist
@@ -42,9 +43,21 @@ runtime. Unless a case says otherwise, Hovel is served at
 - **Preconditions:** A second page is served on loopback, e.g.
   `http://localhost:8080/index.html`.
 - **Steps:** Launch with
-  `SIMCTL_CHILD_GAMERO_WEB_URL=http://localhost:8080/index.html xcrun simctl launch --console-pty booted org.formulagen.wrapper.WestbergWrapper`.
+  `SIMCTL_CHILD_GAMERO_PRODUCT=gamero SIMCTL_CHILD_GAMERO_WEB_URL=http://localhost:8080/index.html xcrun simctl launch --console-pty booted org.formulagen.wrapper.WestbergWrapper`.
 - **Expected:** The app loads that page, not `hovel.html`. The log shows
   `origin=http://localhost:8080` with that page's title.
+
+### 3b. Product selects the Hovel start screen
+
+- **Preconditions:** Hovel is served. A simulator is booted with a Debug build installed.
+- **Steps:**
+  1. Launch with `xcrun simctl launch --console-pty booted org.formulagen.wrapper.WestbergWrapper`.
+     Rotate the simulator during the launch animation.
+  2. Launch again with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` before the command.
+- **Expected:** Step 1 shows the Hovel launch and start screen, because Debug
+  sets `GAMERO_PRODUCT=hovel`. Step 2 loads the web app directly, because the
+  launch environment wins over Info.plist. After the rotation, the start screen
+  stays. A Release build loads the web app directly.
 
 ### 4. HTTPS URL from the xcconfig
 

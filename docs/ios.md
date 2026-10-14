@@ -134,6 +134,22 @@ the next source. Instead the app shows a "Set GAMERO_WEB_URL" message and logs
 `Info.plist` sets `NSAppTransportSecurity` > `NSAllowsLocalNetworking`, which
 permits cleartext HTTP to loopback only.
 
+## Choose the product
+
+The app reads the product once at launch, in the same order as the URL:
+
+1. The `GAMERO_PRODUCT` launch environment variable (`SIMCTL_CHILD_GAMERO_PRODUCT`
+   from `simctl`).
+2. The `GameroProduct` Info.plist key, fed from `GAMERO_PRODUCT` in
+   `iosApp/Configuration/Config.xcconfig`. Debug sets `hovel`. Release leaves it
+   empty.
+
+The first non-blank value is used, trimmed. If it is `hovel`, the app plays the
+Hovel launch and start screen, as desktop and Android do. The web app opens
+after the player taps "Open the door", without the legacy native bridge. Any
+other value loads the web app directly. `tools/ios-smoke.sh` sets
+`GAMERO_PRODUCT=gamero`, because the start screen waits for a tap.
+
 ## Smoke test
 
 ```sh
