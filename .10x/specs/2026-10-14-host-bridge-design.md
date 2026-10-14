@@ -1,6 +1,6 @@
 # Host bridge: one reusable bridge for every platform
 
-**Status:** Proposed. Waiting for Tim's approval.
+**Status:** Approved by Tim on 2026-10-14.
 **Date:** 2026-10-14
 **Feature slug:** `host-bridge`
 **ADR:** [ADR-001](../adrs/001-one-host-bridge-protocol.md)

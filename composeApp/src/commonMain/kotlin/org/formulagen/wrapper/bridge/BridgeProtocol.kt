@@ -1,0 +1,83 @@
+package org.formulagen.wrapper.bridge
+
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.put
+
+/**
+ * `host-bridge.v2`. The contract and its fixtures live in
+ * server-platform `event-contracts/src/host-bridge`; this file must agree with them.
+ */
+object BridgeProtocol {
+    const val VERSION = 2
+
+    /** UTF-16 code units, the unit both JS and Kotlin `String.length` count. */
+    const val MAX_REQUEST_CHARS = 64 * 1024
+    const val MAX_ERROR_MESSAGE_CHARS = 256
+    const val WATCH_CONTEXT = "watchContext"
+
+    val METHOD_PATTERN = Regex("^[a-z][a-zA-Z0-9]{0,31}\\.[a-z][a-zA-Z0-9]{0,31}$")
+
+    /** The pattern zod 4 uses for `z.uuid()`. */
+    val UUID_PATTERN = Regex(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}" +
+            "|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    )
+}
+
+/** Failure codes, in the order the router checks for them. The page reads only the code. */
+enum class BridgeErrorCode(val wire: String) {
+    FORBIDDEN("forbidden"),
+    INVALID("invalid"),
+    EXPIRED("expired"),
+    UNKNOWN_METHOD("unknown-method"),
+    UNSUPPORTED("unsupported"),
+    BUSY("busy"),
+    FAILED("failed"),
+}
+
+/**
+ * Facts a transport reads from the platform API, never from the page.
+ * [documentId] changes on each navigation, so a context cannot outlive its document.
+ */
+data class FrameFacts(val mainFrame: Boolean, val trustedOrigin: Boolean, val documentId: String)
+
+/** Thrown by a single-flight capability that is already running a call. The router answers `busy`. */
+class BridgeBusyException : IllegalStateException("Another call to this capability is running")
+
+internal object BridgeEnvelopes {
+    fun watchContextReply(contextId: String): String = buildJsonObject {
+        put("version", BridgeProtocol.VERSION)
+        put("contextId", contextId)
+    }.toString()
+
+    fun success(result: JsonElement): String = buildJsonObject {
+        put("version", BridgeProtocol.VERSION)
+        put("ok", true)
+        put("result", result)
+    }.toString()
+
+    fun failure(code: BridgeErrorCode, message: String): String = buildJsonObject {
+        put("version", BridgeProtocol.VERSION)
+        put("ok", false)
+        put("error", buildJsonObject {
+            put("code", code.wire)
+            put("message", message.take(BridgeProtocol.MAX_ERROR_MESSAGE_CHARS))
+        })
+    }.toString()
+
+    fun event(name: String, data: JsonElement): String = buildJsonObject {
+        put("version", BridgeProtocol.VERSION)
+        put("event", name)
+        put("data", data)
+    }.toString()
+
+    /** True for the JSON number 2, as zod's `z.literal(2)` reads it; false for the string "2". */
+    fun isVersion(element: JsonElement?): Boolean =
+        element is JsonPrimitive && !element.isString && element.doubleOrNull == BridgeProtocol.VERSION.toDouble()
+
+    fun isEmptyObject(element: JsonElement?): Boolean = element is JsonObject && element.isEmpty()
+}

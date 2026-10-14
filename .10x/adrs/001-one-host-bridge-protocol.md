@@ -1,6 +1,6 @@
 # ADR-001: One host bridge with a shared router and thin platform transports
 
-**Status:** Proposed
+**Status:** Accepted (Tim, 2026-10-14)
 **Date:** 2026-10-14
 **Feature:** host-bridge
 **Author:** 10x-Team (Architect + Staff Engineer)
