@@ -9,7 +9,9 @@
 #   all       web, android, desktop, then ios
 #
 # Environment (see docs/release.md):
-#   GAMERO_WEB_URL          HTTPS page the apps open. Required for android, desktop and ios.
+#   GAMERO_WEB_URL          page the apps open: HTTPS, or http on loopback for local desktop and
+#                           iOS simulator testing (default: game-platform's local edge,
+#                           http://127.0.0.1:8080/hovel.html). Android needs HTTPS.
 #   GAMERO_PRODUCT          product the apps present (default hovel)
 #   GAMERO_VERSION          version name, MAJOR.MINOR.PATCH (default 1.0.0)
 #   GAMERO_BUILD_NUMBER     integer build number (default 1)
@@ -32,7 +34,9 @@ out="$root/build/release"
 product="${GAMERO_PRODUCT:-hovel}"
 version="${GAMERO_VERSION:-1.0.0}"
 build_number="${GAMERO_BUILD_NUMBER:-1}"
-url="${GAMERO_WEB_URL:-}"
+# game-platform serves the web build at /hovel.html on its edge, port 8080 (infra/edge/defaults.json).
+local_url="http://127.0.0.1:8080/hovel.html"
+url="${GAMERO_WEB_URL:-$local_url}"
 
 fail() { echo "build-release: FAIL: $*" >&2; exit 1; }
 step() { echo "build-release: $*"; }
@@ -52,10 +56,14 @@ done
 [[ "$version" =~ ^[1-9][0-9]*\.[0-9]+\.[0-9]+$ ]] || fail "GAMERO_VERSION must be MAJOR.MINOR.PATCH with MAJOR > 0 (macOS requires it), not '$version'"
 [[ "$build_number" =~ ^[1-9][0-9]*$ ]] || fail "GAMERO_BUILD_NUMBER must be a positive integer, not '$build_number'"
 
-# The same rule as WebUrlPolicy.kt for a release: HTTPS, a host, no userinfo or fragment.
+# The same rule as WebUrlPolicy.kt: HTTPS, or http on loopback; a host, no userinfo or fragment.
 require_url() {
-  [[ -n "$url" ]] || fail "set GAMERO_WEB_URL to the production HTTPS page, e.g. https://example.com/hovel.html"
-  [[ "$url" =~ ^[Hh][Tt][Tt][Pp][Ss]://[^/@#?]+(/[^#]*)?$ ]] || fail "GAMERO_WEB_URL must be https://host/... without userinfo or a fragment, not '$url'"
+  [[ "$url" =~ ^[Hh][Tt][Tt][Pp][Ss]://[^/@#?]+(/[^#]*)?$ \
+    || "$url" =~ ^[Hh][Tt][Tt][Pp]://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]+)?(/[^#]*)?$ ]] \
+    || fail "GAMERO_WEB_URL must be https://host/... or http on loopback, without userinfo or a fragment, not '$url'"
+  if [[ "$url" =~ ^[Hh][Tt][Tt][Pp]:// ]]; then
+    step "GAMERO_WEB_URL is $url, a loopback page: this build is for local testing, not for users"
+  fi
 }
 
 gradle() {
@@ -77,6 +85,9 @@ build_web() {
 
 build_android() {
   require_url
+  # HovelAndroid.kt opens HTTPS only; any other URL silently starts the legacy WorldWinner page instead.
+  [[ "$url" =~ ^[Hh][Tt][Tt][Pp][Ss]:// ]] \
+    || fail "android: the release app opens HTTPS pages only, so set GAMERO_WEB_URL to one (it is '$url')"
   if [[ -z "${GAMERO_ANDROID_KEYSTORE:-}" ]]; then
     step "android: GAMERO_ANDROID_KEYSTORE is not set, so the AAB and APK are unsigned"
   else
