@@ -3,7 +3,7 @@ package org.formulagen.wrapper.managers
 import org.formulagen.wrapper.postNotification
 
 actual fun platformOnUserReady(event: AudioEvent.OnUserReadyEvent) {
-    postNotification("onAudioUserReady", mapOf("userId" to event.data.userId))
+    postNotification("onAudioUserReady", mapOf("userId" to event.data.user.userId))
 }
 
 actual fun platformOnUserLogout(event: AudioEvent.OnUserLogoutEvent) {

@@ -22,3 +22,14 @@ actual fun platformLogAttributionEvent(event: AppEvent.Analytic.OnLogAnalyticEve
 }
 
 
+actual fun platformMonitorError(event: AppEvent.Analytic.OnMonitorError) {
+    val payload = mapOf(
+        "tag" to event.tag,
+        "message" to event.message,
+        "level" to event.level,
+        "error" to event.error,
+        "stackTrace" to event.stackTrace,
+        "version" to event.version
+    )
+    postNotification(name = "onMonitorError", userInfo = payload)
+}
