@@ -37,7 +37,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
@@ -106,7 +105,8 @@ fun rememberHovelArt(): HovelArt {
     val shell = imageResource(Res.drawable.hovel_room_shell)
     val furniture = imageResource(Res.drawable.hovel_furniture_sheet)
     val characters = imageResource(Res.drawable.hovel_traveler_atlas)
-    val display = FontFamily(Font(Res.font.pixelify_sans))
+    val font = Font(Res.font.pixelify_sans)
+    val display = remember(font) { FontFamily(font) }
     return remember(shell, furniture, characters, display) { HovelArt(shell, furniture, characters, display) }
 }
 
@@ -203,14 +203,15 @@ fun HovelLaunchScreen(
     art: HovelArt = rememberHovelArt(),
     modifier: Modifier = Modifier,
 ) {
-    // Saved so the launch plays once, not again when an Android activity is recreated.
+    // Saved as soon as the launch starts, so a recreated Android activity (even mid-intro) settles
+    // straight onto the start screen instead of replaying it.
     var played by rememberSaveable { mutableStateOf(false) }
     val intro = remember { Animatable(if (played) 1f else 0f) }
     LaunchedEffect(Unit) {
-        intro.animateTo(1f, tween(durationMillis, easing = LinearEasing))
         played = true
+        intro.animateTo(1f, tween(durationMillis, easing = LinearEasing))
     }
-    KeeperStartScreen(state, onContinue, footnote, art, modifier, intro = intro.value)
+    KeeperStartScreen(state, onContinue, footnote, art, modifier, intro = { intro.value })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -228,10 +229,17 @@ fun KeeperStartScreen(
     footnote: String? = null,
     art: HovelArt = rememberHovelArt(),
     modifier: Modifier = Modifier,
-    intro: Float = 1f,
+    intro: () -> Float = { 1f },
 ) {
-    val beat = LaunchBeat(intro)
-    val panelMotion = Modifier.alpha(beat.panel).graphicsLayer { translationY = (1 - beat.panel) * 24.dp.toPx() }
+    // intro is read only in draw and layer lambdas, so the launch redraws each frame without recomposing.
+    val panelMotion = Modifier.graphicsLayer {
+        val panel = LaunchBeat(intro()).panel
+        alpha = panel
+        translationY = (1 - panel) * 24.dp.toPx()
+    }
+    val titleReveal = { LaunchBeat(intro()).title }
+    // The panel is invisible early in the launch; ignore taps on its button until it has mostly arrived.
+    val continueWhenShown = { if (intro() >= 0.9f) onContinue() }
     var panelHeight by remember { mutableStateOf(0) }
     BoxWithConstraints(modifier.fillMaxSize().background(HovelPalette.ground)) {
         val phone = maxWidth < 600.dp
@@ -239,10 +247,10 @@ fun KeeperStartScreen(
         val h = constraints.maxHeight.toFloat()
         // The room fills the window during the launch, then settles into its pane.
         val settled = if (phone) Rect(0f, 0f, w, (h - panelHeight).coerceAtLeast(h * 0.5f)) else Rect(w * 0.9f / 2f, 0f, w, h)
-        Canvas(Modifier.fillMaxSize()) { drawKeeperRoom(art, beat, settled, fadeFromBottom = phone) }
+        Canvas(Modifier.fillMaxSize()) { drawKeeperRoom(art, LaunchBeat(intro()), settled, fadeFromBottom = phone) }
         if (phone) {
             KeeperPanel(
-                state, onContinue, art, footnote, compact = true, beat.title,
+                state, continueWhenShown, art, footnote, compact = true, titleReveal,
                 panelMotion.align(Alignment.BottomCenter).fillMaxWidth().onSizeChanged { panelHeight = it.height }
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(horizontal = 24.dp).padding(bottom = 32.dp),
@@ -250,7 +258,7 @@ fun KeeperStartScreen(
         } else {
             Column(Modifier.fillMaxWidth(0.45f).fillMaxHeight().padding(40.dp), verticalArrangement = Arrangement.Center) {
                 KeeperPanel(
-                    state, onContinue, art, footnote, compact = false, beat.title,
+                    state, continueWhenShown, art, footnote, compact = false, titleReveal,
                     modifier = panelMotion
                         .widthIn(max = 440.dp)
                         .clip(RoundedCornerShape(16.dp))
@@ -270,11 +278,11 @@ private fun KeeperPanel(
     art: HovelArt,
     footnote: String?,
     compact: Boolean,
-    titleReveal: Float,
+    titleReveal: () -> Float,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier) {
-        Text("Hovel", color = HovelPalette.ochre, fontFamily = art.display, fontSize = 56.sp, modifier = Modifier.alpha(titleReveal))
+        Text("Hovel", color = HovelPalette.ochre, fontFamily = art.display, fontSize = 56.sp, modifier = Modifier.graphicsLayer { alpha = titleReveal() })
         Spacer(Modifier.height(4.dp))
         Text("Make yourself at home.", color = HovelPalette.muted, fontSize = 17.sp)
         Spacer(Modifier.height(if (compact) 24.dp else 28.dp))
@@ -382,5 +390,5 @@ private const val previewFootnote = "Hovel runs in a verified JetBrains Runtime 
 @Preview @Composable fun KeeperPreparingPreview() = KeeperStartScreen(HovelStartState.Preparing, {}, previewFootnote)
 @Preview @Composable fun KeeperFailedPreview() = KeeperStartScreen(previewFailed, {}, previewFootnote)
 @Preview @Composable fun KeeperPhoneReadyPreview() = Box(Modifier.size(390.dp, 844.dp)) { KeeperStartScreen(previewReady, {}) }
-@Preview @Composable fun KeeperLaunchMidwayPreview() = KeeperStartScreen(previewReady, {}, previewFootnote, intro = 0.45f)
+@Preview @Composable fun KeeperLaunchMidwayPreview() = KeeperStartScreen(previewReady, {}, previewFootnote, intro = { 0.45f })
 @Preview @Composable fun HovelLaunchPreview() = HovelLaunchScreen(previewReady, {}, previewFootnote)

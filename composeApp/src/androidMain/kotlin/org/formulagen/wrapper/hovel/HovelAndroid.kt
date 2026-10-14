@@ -1,7 +1,8 @@
 package org.formulagen.wrapper.hovel
 
+import android.content.Context
 import android.content.Intent
-import android.content.res.Resources
+import android.content.pm.ApplicationInfo
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -18,30 +19,33 @@ internal const val PRODUCT_KEY = "GAMERO_PRODUCT"
 internal const val WEB_URL_KEY = "GAMERO_WEB_URL"
 
 /**
- * The Hovel web app URL when this launch is for Hovel, else null.
- * Launch extras win over the `gamero_product` and `gamero_web_url` string resources, so a debug
- * launch can pick them with `adb shell am start -e GAMERO_PRODUCT hovel -e GAMERO_WEB_URL …`.
+ * The Hovel web app URL when this launch is for Hovel, else null. Only HTTPS is accepted: the app
+ * doesn't allow cleartext traffic, and localhost on a device isn't the developer's machine.
  */
 internal fun hovelWebUrl(product: String?, webUrl: String?): String? {
-    if (product?.trim() != "hovel") return null
-    val uri = runCatching { URI(webUrl?.trim().orEmpty()) }.getOrNull() ?: return null
-    if (uri.host.isNullOrEmpty() || uri.userInfo != null || uri.fragment != null) return null
-    val loopback = uri.host.lowercase().removePrefix("[").removeSuffix("]") in setOf("localhost", "127.0.0.1", "::1")
-    return when (uri.scheme?.lowercase()) {
-        "https" -> uri.toASCIIString()
-        "http" -> if (loopback) uri.toASCIIString() else null
-        else -> null
-    }
+    if (product != "hovel") return null
+    val uri = runCatching { URI(webUrl.orEmpty()) }.getOrNull() ?: return null
+    if (uri.scheme != "https" || uri.host.isNullOrEmpty() || uri.userInfo != null || uri.fragment != null) return null
+    return uri.toASCIIString()
 }
 
-internal fun hovelWebUrl(intent: Intent?, resources: Resources): String? = hovelWebUrl(
-    product = intent?.getStringExtra(PRODUCT_KEY) ?: resources.getString(R.string.gamero_product),
-    webUrl = intent?.getStringExtra(WEB_URL_KEY) ?: resources.getString(R.string.gamero_web_url),
-)
+/**
+ * Reads the `gamero_product` and `gamero_web_url` string resources. The launcher activity is
+ * exported, so launch extras (`adb shell am start -e GAMERO_PRODUCT hovel -e GAMERO_WEB_URL …`)
+ * override them only in debuggable builds; otherwise any app could point Hovel at its own page.
+ */
+internal fun hovelWebUrl(intent: Intent?, context: Context): String? {
+    val extras = intent.takeIf { (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0 }
+    return hovelWebUrl(
+        product = extras?.getStringExtra(PRODUCT_KEY) ?: context.getString(R.string.gamero_product),
+        webUrl = extras?.getStringExtra(WEB_URL_KEY) ?: context.getString(R.string.gamero_web_url),
+    )
+}
 
 /** Plays the Hovel launch and start screen, then opens [url] once the player steps inside. */
 @Composable
 fun HovelAndroidApp(url: String) {
     var entered by rememberSaveable { mutableStateOf(false) }
-    if (entered) App(url) else HovelLaunchScreen(HovelStartState.Ready(url), onContinue = { entered = true })
+    // Like the desktop host, Hovel runs without the legacy native bridge.
+    if (entered) App(url, enableLegacyBridge = false) else HovelLaunchScreen(HovelStartState.Ready(url), onContinue = { entered = true })
 }

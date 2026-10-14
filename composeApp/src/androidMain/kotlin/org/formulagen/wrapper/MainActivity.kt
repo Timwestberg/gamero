@@ -19,7 +19,7 @@ class MainActivity : ComponentActivity() {
 
         Firebase.initialize(context = this)
         AppContext.init(this)
-        val hovelUrl = hovelWebUrl(intent, resources)
+        val hovelUrl = hovelWebUrl(intent, this)
         setContent {
             if (hovelUrl != null) HovelAndroidApp(hovelUrl) else App()
         }

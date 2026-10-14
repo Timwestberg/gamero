@@ -155,7 +155,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
         else File(home, ".local/share/gamero")
     }
     val companion = remember {
-        if (System.getenv("GAMERO_PRODUCT") == "hovel" && System.getProperty("os.name").contains("Mac")) {
+        if (isHovelProduct() && System.getProperty("os.name").contains("Mac")) {
             val executable = System.getenv("GAMERO_CODEX_PATH")?.let(Path::of)
             val workspace = System.getenv("GAMERO_WORKSPACE")?.let(Path::of)
             if (executable != null && workspace != null) {
@@ -209,7 +209,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                     Button(onClick = { approval.answer.complete(true) }) { Text("Approve computer connection") }
                     Button(onClick = { approval.answer.complete(false) }) { Text("Cancel") }
                 }
-            } else if (System.getenv("GAMERO_PRODUCT") == "hovel") {
+            } else if (isHovelProduct()) {
                 Text("Set GAMERO_CODEX_PATH and GAMERO_WORKSPACE to enable this Mac's optional Codex connection.", Modifier.padding(8.dp))
             }
             App(url, enableLegacyBridge = false, webViewFactory = ::persistentDesktopBrowser, onWebViewCreated = { browser ->
