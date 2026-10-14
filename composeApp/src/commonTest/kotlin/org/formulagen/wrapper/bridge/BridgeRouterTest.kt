@@ -52,7 +52,7 @@ class BridgeRouterTest {
                 fakes.resume = onResume
                 AutoCloseable { }
             }),
-            companion = when_("companion.capabilities", object : Companion {
+            companion = when_("companion.capabilities", object : CompanionCapability {
                 override suspend fun prepareConnection(ownerId: String) = fakes.prepare(ownerId)
                 override suspend fun activateConnection(ownerId: String, hostId: String) = JsonObject(emptyMap())
             }),

@@ -26,7 +26,7 @@ fun interface Lifecycle {
  * Hovel's Mac companion. A call while another runs throws [BridgeBusyException].
  * Credentials never cross this interface; only their hash does.
  */
-interface Companion {
+interface CompanionCapability {
     suspend fun prepareConnection(ownerId: String): CompanionRegistration
     suspend fun activateConnection(ownerId: String, hostId: String): JsonObject
 }
@@ -43,5 +43,5 @@ class HostCapabilities(
     val links: Capability<LinkOpener>,
     val haptics: Capability<Haptics>,
     val lifecycle: Capability<Lifecycle>,
-    val companion: Capability<Companion>,
+    val companion: Capability<CompanionCapability>,
 )
