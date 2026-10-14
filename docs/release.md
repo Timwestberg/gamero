@@ -70,8 +70,10 @@ with an upload key).
 ## Desktop
 
 `packageReleaseDistributionForCurrentOS`: a DMG on a Mac, MSI on Windows, DEB on
-Linux. ProGuard shrinks and optimizes the JVM code without renaming it
-(`composeApp/proguard-desktop.pro`), since KCEF and JCEF use reflection.
+Linux. ProGuard shrinks the JVM code without renaming it
+(`composeApp/proguard-desktop.pro`), since KCEF and JCEF use reflection. Its
+optimizer is off: it needs a complete class hierarchy, and dev.datlag:jcef and
+JOGL extend Thrift, JavaFX and SWT classes the app does not ship.
 A packaged app has no shell environment, so the URL and product are baked in as
 `-Dgamero.webUrl` and `-Dgamero.product`. `GAMERO_WEB_URL` and `GAMERO_PRODUCT` in
 the environment still override them at launch.
