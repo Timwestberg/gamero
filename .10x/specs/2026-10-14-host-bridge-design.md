@@ -160,9 +160,11 @@ frame facts. All rules live in the router. The capabilities hold the platform wo
        val links: Capability<LinkOpener>,
        val haptics: Capability<Haptics>,
        val lifecycle: Capability<Lifecycle>,
-       val companion: Capability<CompanionCapability>,
    )
    ```
+
+   A product capability, such as Hovel's companion, is not a parameter. The
+   product passes it to the router as a `CapabilityPack` (ADR-002).
 
    Each parameter is `Capability.Supported(impl)` or `Capability.Unsupported`.
    A platform that forgets a capability does not compile. The router then
@@ -198,10 +200,12 @@ rules in the first column; a capability or a transport must obey the rest.
    interface (`suspend` methods), the argument and result types, and an object
    with the `BridgeMethod` values and a `CapabilityBinder`. `Haptics.kt` is the
    smallest example.
-3. **Host parameter.** Add one `Capability<YourInterface>` parameter to
-   `HostCapabilities`, and its binder to the `bound` list beside it. The
-   compiler then names every platform factory that must choose
-   `Supported(impl)` or `Unsupported`.
+3. **Host parameter.** For a platform capability, add one
+   `Capability<YourInterface>` parameter to `HostCapabilities`, and its binder
+   to the `bound` list beside it. The compiler then names every platform
+   factory that must choose `Supported(impl)` or `Unsupported`. For a product
+   capability, add a `pack()` function beside the binder instead, and pass the
+   pack from the product's start code on every platform.
 4. **Platforms.** Write the implementation in each platform source set that
    supports it. Pass `Capability.Unsupported` in the others.
 5. **Fixtures.** Run `tools/sync-host-bridge-fixtures.py` and the router tests.

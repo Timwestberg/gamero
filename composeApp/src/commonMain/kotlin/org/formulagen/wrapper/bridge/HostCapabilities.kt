@@ -41,12 +41,25 @@ internal class BoundCapability(
 )
 
 /**
- * Every capability, as a constructor parameter without a default. A platform
- * that forgets one does not compile; a platform without one passes
- * [Capability.Unsupported]. The `HOST_BRIDGE_PARITY` table in event-contracts
- * says which is which, and the parity test checks it.
+ * One product's capability as this host has it, made by [CapabilityBinder.pack].
+ * A product passes its packs to the router when it starts the bridge, so the
+ * shared core never names a product. A product passes
+ * `pack(Capability.Unsupported)` on a platform where it has no such capability,
+ * so its methods answer `unsupported`, not `unknown-method`.
+ */
+class CapabilityPack internal constructor(internal val bound: BoundCapability)
+
+fun <T> CapabilityBinder<T>.pack(capability: Capability<T>): CapabilityPack = CapabilityPack(bind(capability))
+
+/**
+ * The platform set: every capability that each platform must decide on, as a
+ * constructor parameter without a default. A platform that forgets one does
+ * not compile; a platform without one passes [Capability.Unsupported].
+ * Product capabilities, such as Hovel's companion, are [CapabilityPack]s
+ * instead. The `HOST_BRIDGE_PARITY` table in event-contracts says which
+ * platform supports what, and the parity test checks both sets.
  *
- * To add a capability, add its parameter here and its binder to [bound].
+ * To add a platform capability, add its parameter here and its binder to [bound].
  */
 class HostCapabilities(
     val platform: HostPlatform,
@@ -54,12 +67,10 @@ class HostCapabilities(
     val links: Capability<LinkOpener>,
     val haptics: Capability<Haptics>,
     val lifecycle: Capability<Lifecycle>,
-    val companion: Capability<CompanionCapability>,
 ) {
     internal val bound: List<BoundCapability> = listOf(
         LinkMethods.binder.bind(links),
         HapticMethods.binder.bind(haptics),
         LifecycleEvents.binder.bind(lifecycle),
-        CompanionMethods.binder.bind(companion),
     )
 }

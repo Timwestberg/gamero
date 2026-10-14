@@ -7,6 +7,7 @@ import org.formulagen.wrapper.bridge.BridgeErrorCode
 import org.formulagen.wrapper.bridge.BridgeProtocol
 import org.formulagen.wrapper.bridge.BridgeRouter
 import org.formulagen.wrapper.bridge.BridgeTransport
+import org.formulagen.wrapper.bridge.CapabilityPack
 import org.formulagen.wrapper.bridge.FrameFacts
 import org.formulagen.wrapper.bridge.HostCapabilities
 import org.formulagen.wrapper.bridge.bridgeFailureEnvelope
@@ -62,6 +63,7 @@ class NativeBridge(
     private val browser: KCEFBrowser,
     trustedUrl: String,
     capabilities: HostCapabilities,
+    products: List<CapabilityPack>,
     private val onInvalidate: () -> Unit,
     private val dispatch: (suspend (String, JsonObject) -> JsonObject)?,
 ) : AutoCloseable {
@@ -72,6 +74,7 @@ class NativeBridge(
     private var watch: Pair<Long, CefQueryCallback>? = null
     private val hostRouter = BridgeRouter(
         capabilities = capabilities,
+        products = products,
         scope = scope,
         transport = BridgeTransport { json -> synchronized(gate) { watch?.second }?.success(json) },
         onFailure = { method, error -> log(LogLevel.Warn, "NativeBridge", "Host bridge call $method failed", error) },

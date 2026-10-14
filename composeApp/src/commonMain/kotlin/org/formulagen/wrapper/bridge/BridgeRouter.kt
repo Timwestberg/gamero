@@ -37,6 +37,8 @@ fun interface BridgeTransport {
 @OptIn(ExperimentalCoroutinesApi::class)
 class BridgeRouter(
     private val capabilities: HostCapabilities,
+    /** The product's own capabilities, such as Hovel's companion. */
+    products: List<CapabilityPack> = emptyList(),
     private val scope: CoroutineScope,
     private val transport: BridgeTransport,
     private val newContextId: () -> String = ::randomContextId,
@@ -45,6 +47,7 @@ class BridgeRouter(
 ) : AutoCloseable {
     private val serial = ((scope.coroutineContext[ContinuationInterceptor] as? CoroutineDispatcher) ?: Dispatchers.Default)
         .limitedParallelism(1)
+    private val bound: List<BoundCapability> = capabilities.bound + products.map { it.bound }
     private val handlers: Map<String, MethodHandler?> = buildHandlers()
     private var contextId: String? = null
     private var documentId: String? = null
@@ -53,13 +56,13 @@ class BridgeRouter(
         override fun <D> emit(event: BridgeEvent<D>, data: D) = this@BridgeRouter.emit(event, data)
     }
     private var subscriptions: List<AutoCloseable> =
-        capabilities.bound.mapNotNull { capability -> capability.observe?.invoke(events) }
+        bound.mapNotNull { capability -> capability.observe?.invoke(events) }
 
     /** Methods this host supports, in declaration order. `host.capabilities` returns this. */
     val supportedMethods: List<String> = handlers.filterValues { it != null }.keys.toList()
 
     /** Events this host can send. */
-    val supportedEvents: List<String> = capabilities.bound.filter { it.handlers != null }.flatMap { capability -> capability.events.map { it.name } }
+    val supportedEvents: List<String> = bound.filter { it.handlers != null }.flatMap { capability -> capability.events.map { it.name } }
 
     /** Checks and answers one request. [reply] is called exactly once, from any thread. */
     fun handle(raw: String, frame: FrameFacts, reply: (String) -> Unit) {
@@ -139,13 +142,13 @@ class BridgeRouter(
         pending.clear()
     }
 
-    /** The router's own methods, then each capability's, as [HostCapabilities] lists them. */
+    /** The router's own methods, then each platform capability's, then each product pack's. */
     private fun buildHandlers(): Map<String, MethodHandler?> {
         val own = listOf(
             BridgeMethods.HOST_CAPABILITIES.answer { HostCapabilitiesResult(supportedMethods, supportedEvents) },
             BridgeMethods.HOST_INFO.answer { HostInfoResult(capabilities.platform, capabilities.appVersion) },
         ).map { it.method.name to it }
-        val fromCapabilities = capabilities.bound.flatMap { capability ->
+        val fromCapabilities = bound.flatMap { capability ->
             capability.methods.mapIndexed { index, method -> method.name to capability.handlers?.get(index) }
         }
         val all = own + fromCapabilities
