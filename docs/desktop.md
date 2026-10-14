@@ -38,14 +38,24 @@ Do not use native launch alone as Hovel task/result/reconnect acceptance.
 
 Desktop is the default target. `-Pgamero.iosTargets=true` adds only the iOS
 targets and needs no Android SDK; see [ios.md](ios.md). `-Pgamero.mobileTargets=true`
-adds both Android and iOS; Android build/validation is outside this change.
+adds both Android and iOS; with it, the Android debug build
+(`:composeApp:assembleDebug`) compiles inside the shared `composeApp` module.
+There is no `iosX64` target: Compose 1.12 and androidx lifecycle 2.11 do not
+publish it.
 Mobile-only package versions are retained. Unsupported legacy mobile functions
 fail explicitly on desktop and are not exposed through its WebView bridge.
 
 The version catalog updates the desktop Kotlin/Compose/compiler, lifecycle,
 coroutines, serialization, WebView, Koin, settings and hot-reload dependencies.
 Material3 remains on its latest published stable 1.9.0; newer listed versions are
-prereleases. Gradle 8.14.4 avoids a mobile AGP9 migration in this Mac-only task.
+prereleases. Compose 1.12.1's Android artifacts require AGP 9.1+ and compileSdk 37,
+so the build uses Gradle 9.3.1 (the minimum for AGP 9.1.1), AGP 9.1.1 and
+compileSdk 37.
+
+AGP 9 rejects `com.android.application` inside a Kotlin Multiplatform module.
+`gradle.properties` sets `android.builtInKotlin=false` and `android.newDsl=false`
+to opt out temporarily. Remove both once the Android app moves to its own module
+that depends on `composeApp`.
 
 Sources: [Kotlin compatibility](https://kotlinlang.org/docs/multiplatform/multiplatform-compatibility-guide.html),
 [Compose compatibility](https://kotlinlang.org/docs/multiplatform/compose-compatibility-and-versioning.html),
@@ -53,5 +63,18 @@ Sources: [Kotlin compatibility](https://kotlinlang.org/docs/multiplatform/multip
 
 ## Verification status
 
-Foundation compilation and seven JVM tests passed. Mac launch is assigned to the
-coordinator's separate validation task. No native success is claimed yet.
+Verified on 9ad5c59 with Gradle 9.3.1/AGP 9.1.1: the desktop compile, all 63 JVM
+tests and the Android debug build pass. Mac launch is assigned to the
+coordinator's separate validation task. No native desktop success is claimed yet.
+
+On a Pixel 8 Pro (API 34) emulator, launched with the Hovel debug extras:
+
+- The launch animation plays and settles on the start screen.
+- A tap on the button area 0.5s into the launch does nothing.
+- Recreating the activity 1.2s into the launch shows the settled screen at once;
+  the intro does not replay.
+- Recreating it again after it settles does not crash.
+- "Open the door" loads the configured URL in the web view.
+
+`MainActivity` is portrait-only, so recreation was tested with a dark-mode toggle
+rather than rotation.
