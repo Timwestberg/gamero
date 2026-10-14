@@ -2,6 +2,13 @@
 
 Mac desktop development: [build and launch guide](docs/desktop.md). Desktop is the default build target; mobile targets are opt-in and outside the current verification scope.
 
+Android: build with `./gradlew -Pgamero.mobileTargets=true :composeApp:assembleDebug`
+(Gradle 9.3.1, AGP 9.1.1, compileSdk 37; Compose 1.12 requires them). Launch the Hovel
+start screen with `adb shell am start -n org.formulagen.wrapper/.MainActivity -e GAMERO_PRODUCT hovel -e GAMERO_WEB_URL <https url>` (debug builds only; release builds read the `gamero_product` and `gamero_web_url` string resources).
+`gradle.properties` sets `android.builtInKotlin=false` and `android.newDsl=false` only
+because AGP 9 rejects the Android app plugin inside this multiplatform module. They are
+temporary: remove them once the Android app moves to its own module.
+
 This is a Kotlin Multiplatform project targeting Android, iOS, Desktop (JVM).
 
 * [/composeApp](./composeApp/src) is for code that will be shared across your Compose Multiplatform applications.

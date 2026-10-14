@@ -16,3 +16,15 @@ actual fun platformCompleteGame() {
 }
 
 
+
+actual fun platformPauseGame() {
+    log(LogLevel.Info, GameManager.TAG, "Pause game")
+}
+
+actual fun platformResumeGame() {
+    log(LogLevel.Info, GameManager.TAG, "Resume game")
+}
+
+actual fun platformQuitGame() {
+    log(LogLevel.Info, GameManager.TAG, "Quit game")
+}

@@ -24,6 +24,8 @@ import java.net.URI
 import kotlin.system.exitProcess
 import org.formulagen.wrapper.companion.NativeBridge
 import org.formulagen.wrapper.hovel.HovelCompanion
+import org.formulagen.wrapper.hovel.HovelLaunchScreen
+import org.formulagen.wrapper.hovel.HovelStartState
 import java.nio.file.Path
 import java.awt.EventQueue
 import java.util.concurrent.atomic.AtomicReference
@@ -61,6 +63,8 @@ private class DesktopResources : AutoCloseable {
     }
 }
 
+private fun isHovelProduct() = System.getenv("GAMERO_PRODUCT") == "hovel"
+
 /** App-independent desktop configuration; product adapters supply the trusted URL. */
 internal fun desktopWebUrl(args: Array<String>, environment: String?): String? {
     if (args.size > 1) return null
@@ -91,7 +95,7 @@ fun main(args: Array<String>) {
             CompositionLocalProvider(LocalWindowExceptionHandlerFactory provides object : WindowExceptionHandlerFactory {
                 override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler = failure
             }) {
-                Window(onCloseRequest = ::exitApplication, title = "Gamero") {
+                Window(onCloseRequest = ::exitApplication, title = if (isHovelProduct()) "Hovel" else "Gamero") {
                     DisposableEffect(window) {
                         // Read AWT state on its event thread, never from the CEF callback thread.
                         val listener = object : WindowAdapter() {
@@ -151,7 +155,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
         else File(home, ".local/share/gamero")
     }
     val companion = remember {
-        if (System.getenv("GAMERO_PRODUCT") == "hovel" && System.getProperty("os.name").contains("Mac")) {
+        if (isHovelProduct() && System.getProperty("os.name").contains("Mac")) {
             val executable = System.getenv("GAMERO_CODEX_PATH")?.let(Path::of)
             val workspace = System.getenv("GAMERO_WORKSPACE")?.let(Path::of)
             if (executable != null && workspace != null) {
@@ -190,6 +194,12 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
         }
     }
     when {
+        isHovelProduct() && !initialized -> HovelLaunchScreen(
+            state = failure?.let { HovelStartState.Failed(it, canRetry = false) }
+                ?: if (start) HovelStartState.Preparing else HovelStartState.Ready(url),
+            onContinue = { start = true },
+            footnote = "Hovel runs in a verified JetBrains Runtime with JCEF. It never downloads or modifies browser binaries.",
+        )
         failure != null -> Text("Browser initialization failed: $failure. Close Gamero and retry setup.", Modifier.padding(24.dp))
         initialized -> Column {
             if (companion != null) {
@@ -199,7 +209,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                     Button(onClick = { approval.answer.complete(true) }) { Text("Approve computer connection") }
                     Button(onClick = { approval.answer.complete(false) }) { Text("Cancel") }
                 }
-            } else if (System.getenv("GAMERO_PRODUCT") == "hovel") {
+            } else if (isHovelProduct()) {
                 Text("Set GAMERO_CODEX_PATH and GAMERO_WORKSPACE to enable this Mac's optional Codex connection.", Modifier.padding(8.dp))
             }
             App(url, enableLegacyBridge = false, webViewFactory = ::persistentDesktopBrowser, onWebViewCreated = { browser ->
