@@ -11,6 +11,9 @@ import java.util.UUID
 
 fun interface HovelTransport { fun post(route: String, body: JsonObject): JsonObject }
 
+/** The server answered and refused the request (HTTP 409), so it committed nothing. Lost or failed delivery is not this. */
+class HovelRejectedException : IllegalStateException("Host server returned HTTP 409")
+
 /** Host bearer stays in native memory and is sent only to the configured server. */
 class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val token: String, private val timeoutMillis: Long = 15_000, private val brainEnabled: Boolean = false) : HovelTransport {
     private val endpoint: String
@@ -32,6 +35,7 @@ class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val
         val future = client.sendAsync(request, HttpResponse.BodyHandler { BoundedBodySubscriber(16 * 1024 * 1024) })
         try {
             val response = future.get(timeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
+            if (response.statusCode() == 409) throw HovelRejectedException()
             check(response.statusCode() in 200..299) { "Host server returned HTTP ${response.statusCode()}" }
             return Json.parseToJsonElement(response.body().toString(Charsets.UTF_8)).jsonObject.getValue("data").jsonObject
         } finally { if (!future.isDone) future.cancel(true) }

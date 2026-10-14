@@ -45,12 +45,17 @@ data class BrainCodexAssignment(
 
 data class BrainPresentationTicket(val taskId: String, val attemptId: String, val revision: Long, val state: String)
 
-/** Implemented through the established host-scoped transport. None of these methods creates credentials. */
+/**
+ * Implemented through the established host-scoped transport. None of these methods creates credentials.
+ * A server refusal, which commits nothing, must surface as [HovelRejectedException] (also from authorizeLaunch);
+ * any other failure may hide a committed request. The worker releases a held presentation claim only on a refusal.
+ */
 interface BrainWorkerRemote {
     fun admit(assignment: BrainCodexAssignment, execution: ExecutionRecord)
     fun outcome(assignment: BrainCodexAssignment, execution: ExecutionRecord): BrainPresentationTicket
     fun claimPresentation(assignment: BrainCodexAssignment, ticket: BrainPresentationTicket, claimId: String)
     fun completePresentation(assignment: BrainCodexAssignment, ticket: BrainPresentationTicket, presentation: ExecutionRecord)
+    fun cancelPresentation(assignment: BrainCodexAssignment, ticket: BrainPresentationTicket, claimId: String)
 }
 
 data class BrainWorkerResult(val execution: ExecutionRecord, val presentation: ExecutionRecord?)
@@ -111,9 +116,19 @@ class BrainCodexWorker(
         val request = ExecutionRequest(ticket.attemptId, assignment.request.hostId, prompt, assignment.request.context)
         return ExecutionCoordinator(presentationJournal, choreographer, object : ExecutionRemote {
             override fun claim(record: ExecutionRecord) {
-                authorizeLaunch(assignment, "choreographer", record)
-                verifyLocalAccount(assignment.accountSelections.getValue("choreographer").jsonObject)
-                remote.claimPresentation(assignment, ticket, record.claimId)
+                try {
+                    authorizeLaunch(assignment, "choreographer", record)
+                    verifyLocalAccount(assignment.accountSelections.getValue("choreographer").jsonObject)
+                    remote.claimPresentation(assignment, ticket, record.claimId)
+                } catch (rejected: HovelRejectedException) {
+                    // The server fences a re-claim on current configuration, host and account. An earlier delivery may
+                    // already hold this claim, so release it as cancelled instead of leaving it pending. The server
+                    // accepts that from the holder after a fence and refuses it when this ID holds nothing. The journal
+                    // cannot tell a first claim from a replay, so a refused first claim sends one cancel that fails.
+                    runCatching { remote.cancelPresentation(assignment, ticket, record.claimId) }
+                        .exceptionOrNull()?.let(rejected::addSuppressed)
+                    throw rejected
+                }
             }
             override fun running(record: ExecutionRecord) = Unit
             override fun publish(record: ExecutionRecord, preview: String) = remote.completePresentation(assignment, ticket, record)
