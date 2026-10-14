@@ -12,8 +12,8 @@ import org.jetbrains.compose.ui.tooling.preview.Preview
 
 @Composable
 @Preview
-fun App(url: String = "https://web.worldwinner.com", enableLegacyBridge: Boolean = true, onWebViewCreated: (NativeWebView) -> Unit = {}, webViewFactory: (WebViewFactoryParam) -> NativeWebView = ::defaultWebViewFactory) {
+fun App(url: String = "https://web.worldwinner.com", enableLegacyBridge: Boolean = true, onWebViewCreated: (NativeWebView) -> Unit = {}, webViewFactory: (WebViewFactoryParam) -> NativeWebView = ::defaultWebViewFactory, onPageLoaded: (url: String, title: String?) -> Unit = { _, _ -> }) {
     MaterialTheme {
-        WebViewManager(url = url, enableLegacyBridge = enableLegacyBridge, onWebViewCreated = onWebViewCreated, webViewFactory = webViewFactory)
+        WebViewManager(url = url, enableLegacyBridge = enableLegacyBridge, onWebViewCreated = onWebViewCreated, webViewFactory = webViewFactory, onPageLoaded = onPageLoaded)
     }
 }

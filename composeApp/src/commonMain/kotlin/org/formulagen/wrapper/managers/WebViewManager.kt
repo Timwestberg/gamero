@@ -6,10 +6,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import com.multiplatform.webview.jsbridge.WebViewJsBridge
+import com.multiplatform.webview.web.LoadingState
 import com.multiplatform.webview.web.NativeWebView
 import com.multiplatform.webview.web.WebViewFactoryParam
 import com.multiplatform.webview.web.defaultWebViewFactory
@@ -44,6 +46,8 @@ fun WebViewManager(
     enableLegacyBridge: Boolean = true,
     onWebViewCreated: (NativeWebView) -> Unit = {},
     webViewFactory: (WebViewFactoryParam) -> NativeWebView = ::defaultWebViewFactory,
+    /** Called when a page finishes loading, and again if its title changes. The title can be null on the first call. */
+    onPageLoaded: (url: String, title: String?) -> Unit = { _, _ -> },
 ) {
     val tag = "WebViewManager"
     val webViewNavigator = rememberWebViewNavigator()
@@ -84,6 +88,14 @@ fun WebViewManager(
         )
     }
     
+    // The title can arrive after loading finishes, so a late title fires onPageLoaded again.
+    val pageFinished = webViewState.loadingState is LoadingState.Finished
+    val pageTitle = webViewState.pageTitle
+    val currentOnPageLoaded by rememberUpdatedState(onPageLoaded)
+    LaunchedEffect(pageFinished, pageTitle) {
+        if (pageFinished) currentOnPageLoaded(webViewState.lastLoadedUrl ?: url, pageTitle)
+    }
+
     LaunchedEffect(Unit) {
         EventBus.events
             .filterIsInstance<AppEvent.WebContent>()
