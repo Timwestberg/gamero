@@ -76,9 +76,11 @@ The app resolves the URL once at launch, in this order:
    `iosApp/Configuration/Config.xcconfig`. xcconfig treats `//` as a comment, so
    write the scheme separator as `/$()/`, e.g. `https:/$()/example.com/hovel.html`.
 
-The first non-blank value is used and validated with the shared `isAllowedWebUrl` rule in commonMain (desktop uses the same one):
-HTTPS only, HTTP only on `localhost`, `127.0.0.1` or `::1`, a host is required,
-and userinfo and fragments are rejected. An invalid value does not fall back to
+The first non-blank value is used. It must pass `isAllowedWebUrl` in
+`commonMain/.../WebUrlPolicy.kt`, the same rule desktop uses: HTTPS only, HTTP
+only on `localhost`, `127.0.0.1` or `::1`, a host is required, and userinfo and
+fragments are rejected. Scheme and host match case-insensitively. An invalid
+value does not fall back to
 the next source. Instead the app shows a "Set GAMERO_WEB_URL" message and logs
 `GAMERO_WEB_URL is missing or invalid`.
 
