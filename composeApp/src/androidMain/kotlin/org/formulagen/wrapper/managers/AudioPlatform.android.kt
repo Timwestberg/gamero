@@ -4,7 +4,7 @@ import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 
 actual fun platformOnUserReady(event: AudioEvent.OnUserReadyEvent) {
-    log(LogLevel.Info, AudioManager.TAG, "Audio user ready: ${event.data.userId}")
+    log(LogLevel.Info, AudioManager.TAG, "Audio user ready: ${event.data.user.userId}")
 }
 
 actual fun platformOnUserLogout(event: AudioEvent.OnUserLogoutEvent) {

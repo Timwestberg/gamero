@@ -12,6 +12,7 @@ import org.formulagen.wrapper.di.initializationKoin
 import org.formulagen.wrapper.hovel.HovelAndroidApp
 import org.formulagen.wrapper.hovel.hovelWebUrl
 import org.formulagen.wrapper.platform.AppContext
+import org.koin.core.context.GlobalContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -19,7 +20,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         Firebase.initialize(context = this)
-        initializationKoin()
+        // Koin outlives the activity, which is recreated on every configuration change.
+        if (GlobalContext.getOrNull() == null) initializationKoin()
         AppContext.init(this)
         val hovelUrl = hovelWebUrl(intent, resources)
         setContent {
