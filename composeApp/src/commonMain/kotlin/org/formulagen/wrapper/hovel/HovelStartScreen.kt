@@ -51,11 +51,11 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import composeapp.generated.resources.Res
-import composeapp.generated.resources.hovel_furniture_sheet
-import composeapp.generated.resources.hovel_room_shell
-import composeapp.generated.resources.hovel_traveler_atlas
-import composeapp.generated.resources.pixelify_sans
+import westbergwrapper.composeapp.generated.resources.Res
+import westbergwrapper.composeapp.generated.resources.hovel_furniture_sheet
+import westbergwrapper.composeapp.generated.resources.hovel_room_shell
+import westbergwrapper.composeapp.generated.resources.hovel_traveler_atlas
+import westbergwrapper.composeapp.generated.resources.pixelify_sans
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
