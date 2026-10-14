@@ -16,6 +16,14 @@ plugins {
 // `gamero.iosTargets` adds only iOS, so Xcode builds need no Android SDK.
 val mobileTargets = providers.gradleProperty("gamero.mobileTargets").orNull == "true"
 val iosTargets = mobileTargets || providers.gradleProperty("gamero.iosTargets").orNull == "true"
+
+// Release settings, passed by tools/build-release.sh. Blank values keep the development defaults.
+fun releaseSetting(name: String): String? = providers.gradleProperty(name).orNull?.takeIf { it.isNotBlank() }
+val releaseProduct = releaseSetting("gamero.product")
+val releaseWebUrl = releaseSetting("gamero.webUrl")
+val releaseVersion = releaseSetting("gamero.version") ?: "1.0.0"
+val releaseBuildNumber = releaseSetting("gamero.buildNumber")?.toInt() ?: 1
+fun signingSetting(name: String): String? = providers.environmentVariable(name).orNull?.takeIf { it.isNotBlank() }
 if (mobileTargets) {
     apply(plugin = "com.android.application")
     apply(plugin = "com.google.gms.google-services")
@@ -92,17 +100,32 @@ if (mobileTargets) extensions.configure<com.android.build.gradle.AppExtension> {
         applicationId = "org.formulagen.wrapper"
         minSdkVersion(libs.versions.android.minSdk.get().toInt())
         targetSdkVersion(libs.versions.android.targetSdk.get().toInt())
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = releaseBuildNumber
+        versionName = releaseVersion
+        // Read by HovelAndroid.kt. Debuggable builds also accept launch extras.
+        resValue("string", "gamero_product", releaseProduct.orEmpty())
+        resValue("string", "gamero_web_url", releaseWebUrl.orEmpty())
     }
+    buildFeatures.resValues = true
     packagingOptions {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+    // Without a keystore, release builds come out unsigned for signing elsewhere.
+    val keystore = signingSetting("GAMERO_ANDROID_KEYSTORE")
+    if (keystore != null) signingConfigs.create("release") {
+        storeFile = file(keystore)
+        storePassword = signingSetting("GAMERO_ANDROID_KEYSTORE_PASSWORD")
+        keyAlias = signingSetting("GAMERO_ANDROID_KEY_ALIAS")
+        keyPassword = signingSetting("GAMERO_ANDROID_KEY_PASSWORD")
+    }
     buildTypes {
         getByName("release") {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (keystore != null) signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {
@@ -124,10 +147,39 @@ compose.desktop {
             jvmArgs += listOf("--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED", "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
         }
 
+        // A packaged app gets no shell environment, so the release URL and product are baked in.
+        releaseProduct?.let { jvmArgs += "-Dgamero.product=$it" }
+        releaseWebUrl?.let { jvmArgs += "-Dgamero.webUrl=$it" }
+
+        buildTypes.release.proguard {
+            // Shrink and optimize, but keep names: KCEF, JCEF and the WebView bridge use reflection.
+            obfuscate.set(false)
+            configurationFiles.from(project.file("proguard-desktop.pro"))
+        }
+
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "org.formulagen.wrapper"
-            packageVersion = "1.0.0"
+            packageVersion = releaseVersion
+            // The bundled runtime is GAMERO_BROWSER_JAVA_HOME's JetBrains Runtime, whose jcef module
+            // the browser needs. Every module is kept until a Mac run of suggestRuntimeModules trims it.
+            includeAllModules = true
+            macOS {
+                bundleID = "org.formulagen.wrapper"
+                signingSetting("GAMERO_MAC_SIGN_IDENTITY")?.let { identity ->
+                    signing {
+                        sign.set(true)
+                        this.identity.set(identity)
+                    }
+                }
+                signingSetting("GAMERO_NOTARIZE_APPLE_ID")?.let { appleId ->
+                    notarization {
+                        appleID.set(appleId)
+                        password.set(signingSetting("GAMERO_NOTARIZE_PASSWORD"))
+                        teamID.set(signingSetting("GAMERO_NOTARIZE_TEAM_ID"))
+                    }
+                }
+            }
         }
     }
 }
