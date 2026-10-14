@@ -23,9 +23,9 @@ internal const val WEB_URL_KEY = "GAMERO_WEB_URL"
  * doesn't allow cleartext traffic, and localhost on a device isn't the developer's machine.
  */
 internal fun hovelWebUrl(product: String?, webUrl: String?): String? {
-    if (product != "hovel") return null
-    val uri = runCatching { URI(webUrl.orEmpty()) }.getOrNull() ?: return null
-    if (uri.scheme != "https" || uri.host.isNullOrEmpty() || uri.userInfo != null || uri.fragment != null) return null
+    if (product?.trim() != "hovel") return null
+    val uri = runCatching { URI(webUrl?.trim().orEmpty()) }.getOrNull() ?: return null
+    if (!uri.scheme.equals("https", ignoreCase = true) || uri.host.isNullOrEmpty() || uri.userInfo != null || uri.fragment != null) return null
     return uri.toASCIIString()
 }
 

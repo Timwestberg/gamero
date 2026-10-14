@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -68,7 +69,8 @@ import westbergwrapper.composeapp.generated.resources.pixelify_sans
 
 /**
  * Hovel start screen, drawn with the game's own art (see composeResources/files/hovel/PROVENANCE.md).
- * The desktop host shows it for GAMERO_PRODUCT=hovel; it covers the ready, preparing and failed
+ * The desktop host shows it for GAMERO_PRODUCT=hovel and the Android app for a Hovel launch URL
+ * (see HovelAndroid.kt); it covers the ready, preparing and failed
  * states and can open with a short launch animation.
  */
 sealed interface HovelStartState {
@@ -238,8 +240,9 @@ fun KeeperStartScreen(
         translationY = (1 - panel) * 24.dp.toPx()
     }
     val titleReveal = { LaunchBeat(intro()).title }
-    // The panel is invisible early in the launch; ignore taps on its button until it has mostly arrived.
-    val continueWhenShown = { if (intro() >= 0.9f) onContinue() }
+    // The panel is invisible early in the launch, so its button stays disabled (no clicks, focus or
+    // accessibility action) until the panel is mostly shown. Recomposes only when this flips.
+    val shown by remember(intro) { derivedStateOf { LaunchBeat(intro()).panel >= 0.5f } }
     var panelHeight by remember { mutableStateOf(0) }
     BoxWithConstraints(modifier.fillMaxSize().background(HovelPalette.ground)) {
         val phone = maxWidth < 600.dp
@@ -250,7 +253,7 @@ fun KeeperStartScreen(
         Canvas(Modifier.fillMaxSize()) { drawKeeperRoom(art, LaunchBeat(intro()), settled, fadeFromBottom = phone) }
         if (phone) {
             KeeperPanel(
-                state, continueWhenShown, art, footnote, compact = true, titleReveal,
+                state, onContinue, art, footnote, compact = true, titleReveal, shown,
                 panelMotion.align(Alignment.BottomCenter).fillMaxWidth().onSizeChanged { panelHeight = it.height }
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(horizontal = 24.dp).padding(bottom = 32.dp),
@@ -258,7 +261,7 @@ fun KeeperStartScreen(
         } else {
             Column(Modifier.fillMaxWidth(0.45f).fillMaxHeight().padding(40.dp), verticalArrangement = Arrangement.Center) {
                 KeeperPanel(
-                    state, continueWhenShown, art, footnote, compact = false, titleReveal,
+                    state, onContinue, art, footnote, compact = false, titleReveal, shown,
                     modifier = panelMotion
                         .widthIn(max = 440.dp)
                         .clip(RoundedCornerShape(16.dp))
@@ -279,6 +282,7 @@ private fun KeeperPanel(
     footnote: String?,
     compact: Boolean,
     titleReveal: () -> Float,
+    enabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier) {
@@ -289,7 +293,7 @@ private fun KeeperPanel(
         val buttonModifier = if (compact) Modifier.fillMaxWidth() else Modifier
         when (state) {
             is HovelStartState.Ready -> {
-                PanelButton(art, "Open the door", onContinue, buttonModifier)
+                PanelButton(art, "Open the door", onContinue, enabled, buttonModifier)
                 Spacer(Modifier.height(10.dp))
                 Text(state.url, color = HovelPalette.muted.copy(alpha = 0.8f), fontSize = 12.sp)
             }
@@ -302,7 +306,7 @@ private fun KeeperPanel(
                 Text("The door is stuck", color = HovelPalette.error, fontFamily = art.display, fontSize = 18.sp)
                 Text(state.reason, color = HovelPalette.muted, fontSize = 13.sp)
                 Spacer(Modifier.height(14.dp))
-                if (state.canRetry) PanelButton(art, "Try again", onContinue, buttonModifier)
+                if (state.canRetry) PanelButton(art, "Try again", onContinue, enabled, buttonModifier)
                 else Text("Close Hovel and open it again to retry.", color = HovelPalette.text, fontSize = 14.sp)
             }
         }
@@ -353,12 +357,12 @@ private fun DrawScope.drawKeeperRoom(art: HovelArt, beat: LaunchBeat, settled: R
 }
 
 @Composable
-private fun PanelButton(art: HovelArt, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun PanelButton(art: HovelArt, label: String, onClick: () -> Unit, enabled: Boolean, modifier: Modifier = Modifier) {
     Box(
         modifier
             .clip(RoundedCornerShape(10.dp))
             .background(HovelPalette.ochre)
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 28.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) { Text(label, color = HovelPalette.ochreInk, fontFamily = art.display, fontSize = 18.sp) }
