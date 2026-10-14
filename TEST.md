@@ -19,6 +19,15 @@ runtime. Unless a case says otherwise, Hovel is served at
   0. `build/ios/smoke.png` shows the Hovel welcome screen, and no
   `gamero-smoke-*` simulator is left in `xcrun simctl list devices`.
 
+### 1b. Smoke test over HTTPS
+
+- **Preconditions:** The HTTPS dev server and extracted certificate from
+  [docs/ios.md](docs/ios.md#sign-in-https).
+- **Steps:** Run
+  `GAMERO_WEB_URL=https://localhost:8123/hovel.html GAMERO_SMOKE_ROOT_CERT=/tmp/vite-dev-cert.pem tools/ios-smoke.sh`.
+- **Expected:** `PASS: GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Hovel`.
+  Without `GAMERO_SMOKE_ROOT_CERT`, it fails at the reachability check.
+
 ### 2. Run from Xcode with the default URL
 
 - **Preconditions:** Hovel is served.
@@ -109,6 +118,12 @@ runtime. Unless a case says otherwise, Hovel is served at
   (`http://127.0.0.1:8080/hovel.html`), not the HTTPS URL, because
   `SIMCTL_CHILD_*` applies to one launch. Relaunch through `simctl`, or set the
   URL in the scheme or `Config.xcconfig`.
+
+### Release build URL
+
+- **Steps:** Run `xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Release -showBuildSettings | grep GAMERO_WEB_URL`.
+- **Expected:** `https://web.worldwinner.com`, the URL used before Hovel. Only
+  Debug defaults to the loopback Hovel URL, which a device cannot reach.
 
 ### Physical device
 

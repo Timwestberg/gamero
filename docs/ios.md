@@ -20,7 +20,7 @@ WebView through `MainViewController()`.
 
 ## Serve Hovel locally
 
-The app loads `http://127.0.0.1:8080/hovel.html` by default. The simulator
+Debug builds load `http://127.0.0.1:8080/hovel.html` by default. The simulator
 shares the Mac's loopback, so serve the built web app with game-platform's
 production edge. It speaks HTTP and sends the COOP/COEP headers Hovel needs.
 From `game-platform`, with `tool-webkit` and `event-contracts` checked out next
