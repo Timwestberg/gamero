@@ -22,7 +22,7 @@ Spec `specs/2026-10-14-bridge-kit-design.md`, ADR-002 (Accepted). G5: product se
 
 - [x] K0 test-all-targets script (to verify on the Mac)
 - [x] K1 typed handlers and events (JVM tests pass)
-- [ ] K2 method time limit
+- [x] K2 method time limit (JVM tests pass)
 - [ ] K3 platform set and product set
 - [ ] K4 parity test per factory
 - [ ] B1+K5 Android transport with HostBridge and TransportContractTest

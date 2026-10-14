@@ -6,18 +6,26 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonElement
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * One method of `host-bridge.v2`: its wire name, its argument and result
- * serializers, and any rule a serializer cannot express. Mirrors
- * `HOST_BRIDGE_METHODS` in event-contracts.
+ * serializers, how long a call may run, and any rule a serializer cannot
+ * express. Mirrors `HOST_BRIDGE_METHODS` in event-contracts.
  */
 class BridgeMethod<A, R>(
     val name: String,
     val args: KSerializer<A>,
     val result: KSerializer<R>,
+    /** A call that runs longer is cancelled and answers `failed`. */
+    val timeout: Duration = DEFAULT_TIMEOUT,
     val accepts: (A) -> Boolean = { true },
-)
+) {
+    companion object {
+        val DEFAULT_TIMEOUT: Duration = 30.seconds
+    }
+}
 
 @Serializable
 data object NoArgs
