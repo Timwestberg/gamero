@@ -65,13 +65,14 @@ import org.jetbrains.compose.ui.tooling.preview.Preview
 
 /**
  * Hovel start screen, drawn with the game's own art (see composeResources/files/hovel/PROVENANCE.md).
- * Not wired into a host yet: it renders the same three states the desktop start screen has,
- * and can open with a short launch animation.
+ * The desktop host shows it for GAMERO_PRODUCT=hovel; it covers the ready, preparing and failed
+ * states and can open with a short launch animation.
  */
 sealed interface HovelStartState {
     data class Ready(val url: String) : HovelStartState
     data object Preparing : HovelStartState
-    data class Failed(val reason: String) : HovelStartState
+    /** [canRetry] is false when the host must restart to try again, as with JCEF. */
+    data class Failed(val reason: String, val canRetry: Boolean = true) : HovelStartState
 }
 
 /** Hovel palette: the environment art brief plus the web host's `--hv-*` tokens. */
@@ -283,7 +284,8 @@ private fun KeeperPanel(
                 Text("The door is stuck", color = HovelPalette.error, fontFamily = art.display, fontSize = 18.sp)
                 Text(state.reason, color = HovelPalette.muted, fontSize = 13.sp)
                 Spacer(Modifier.height(14.dp))
-                PanelButton(art, "Try again", onContinue, buttonModifier)
+                if (state.canRetry) PanelButton(art, "Try again", onContinue, buttonModifier)
+                else Text("Close Hovel and open it again to retry.", color = HovelPalette.text, fontSize = 14.sp)
             }
         }
         if (footnote != null) {
@@ -305,8 +307,10 @@ private fun DrawScope.drawKeeperRoom(art: HovelArt, beat: LaunchBeat, settled: R
     val closeScale = if (fadeFromBottom) settled.height / (RoomHeight * 0.95f)
     else maxOf(settled.width / (RoomWidth * 0.62f), settled.height / (RoomHeight * 0.95f))
     val closeFocus = if (fadeFromBottom) Offset(470f, 262f) else Offset(450f, 250f)
-    val wideScale = minOf(size.width / RoomWidth, size.height / RoomHeight) * 0.92f
-    val wideFocus = Offset(RoomWidth / 2, RoomHeight / 2)
+    // Desktop opens on the whole room; a portrait phone opens on the doorway and the keeper's path,
+    // since the whole room would be a thin band there.
+    val wideScale = if (fadeFromBottom) size.height * 0.68f / RoomHeight else minOf(size.width / RoomWidth, size.height / RoomHeight) * 0.92f
+    val wideFocus = if (fadeFromBottom) Offset(Keeper.position.x, 290f) else Offset(RoomWidth / 2, RoomHeight / 2)
     val scale = lerp(wideScale, closeScale, z)
     val focus = wideFocus + (closeFocus - wideFocus) * z
     val frame = RoomFrame(scale, pane.center - focus * scale)
