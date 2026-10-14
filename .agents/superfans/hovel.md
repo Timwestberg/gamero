@@ -12,6 +12,9 @@ Last refreshed 2026-10-14 from each repo's default branch: gamero `2a6c80a`,
 game-platform `f696cd9`, server-platform `634f71b`, tool-webkit `8ac8b0a`.
 Seeded from the Linear document "Hovel component superfan briefs".
 
+The brief lives in gamero because the Hovel routine is told to read it here. It
+covers all four repos; gamero does not use the shared agent-skills library.
+
 ## What the superfans watch over
 
 Hovel is a room with one character that runs real tasks on the player's own
@@ -120,13 +123,14 @@ and say so.
 - **Lives in:** `apps/hovel-service/src/hovel.store.ts`, `hovel.service.ts`,
   `hovel.controller.ts`, `hovel-native-auth.ts`, `database/` (`hovel_accounts`,
   `hovel_hosts`, `hovel_tasks`). Port 3007, routes under `/v1/hovel`. Contracts
-  in `event-contracts/src/hovel/*` (`HOVEL_LIMITS`).
+  in `event-contracts/src/hovel/*` (`HOVEL_LIMITS` holds text and size limits).
 - **Healthy looks like:** `GET /v1/hovel` reads one REPEATABLE READ snapshot
   with no locks and lists task summaries in pages. Heartbeat, claim and progress
   lock only their own `hovel_hosts` row plus one task. Character, room,
   register, revoke and submit lock the account row then hosts, never tasks.
-  Lock order everywhere: account, hosts, tasks, Brain, allowance. Limits 5 hosts,
-  100 tasks. Every route p95 under 200 ms at size limits.
+  Lock order everywhere: account, hosts, tasks, Brain, allowance. Limits 5 hosts and
+  100 tasks (`HOVEL_HOST_LIMIT`, `HOVEL_TASK_LIMIT` in
+  `apps/hovel-service/src/hovel-state.schemas.ts:10-11`). Every route p95 under 200 ms at size limits.
 - **Watch:** `pnpm test:unit`; `pnpm test`; `npx jest --selectProjects hovel`
   with `DB_PORT=5432 DB_NAME=pin_lockout_test`; DB specs need
   `ALLOWANCE_TEST_URL=postgres://identity:identity@127.0.0.1:5432/pin_lockout_test`;
@@ -220,7 +224,7 @@ and say so.
   `docs/hovel-native-validation.md`, `docs/browser-profile-review.md`.
 - **Healthy looks like:** `GAMERO_JCEF_INITIALIZED` before the browser shows,
   no `GAMERO_RUNTIME_FAILED`, close within 15 s. The bridge accepts only the
-  trusted origin's main frame (origin from native frame facts), requests under
+  trusted origin's main frame (origin from native frame facts), requests of at most
   4096 bytes, a context id plus frame id on every call, and reload invalidates.
   Companion: one native call at a time, user-approval dialog,
   `registration.json` 0600 in a 0700 dir, the web side sees only the token hash,
@@ -232,8 +236,8 @@ and say so.
 - **Known quirks:** Gradle success is never proof the page rendered. The
   persistent browser profile fix (FOR-80) is not yet Mac-validated. Account
   switching on one native profile is rejected by design. The host-bridge v2
-  rewrite is a stack of draft PRs (#15 to #25, with the contract in
-  server-platform #128, plan FOR-117/FOR-118); drafts are tracked but not reviewed
+  rewrite is a stack of draft PRs (#15 to #23 and #25; #24 is not part of
+  it), with the contract in server-platform #128, plan FOR-117/FOR-118); drafts are tracked but not reviewed
   until marked ready.
 - **Cares most about:** failing loudly, bounded shutdown, and trusting only
   native frame facts.
@@ -246,8 +250,9 @@ and say so.
 - **Healthy looks like:** phases PREPARED, LAUNCHING, SUCCEEDED or FAILED; a
   crash after LAUNCHING becomes RECONCILIATION_REQUIRED and is never relaunched;
   same claim id on retry; `host.lock` has one owner; atomic fsync writes; corrupt
-  files fail closed. Codex runs `-a never exec --ignore-user-config --ephemeral
-  --sandbox read-only`, prompt on stdin, `OPENAI_*`/`CODEX_API_KEY` stripped,
+  files fail closed. Codex runs `-a never -c forced_login_method="chatgpt" exec
+  --ignore-user-config --ephemeral --sandbox read-only --skip-git-repo-check`
+  (ChatGPT login is forced, so a paid API key is never used), prompt on stdin, `OPENAI_*`/`CODEX_API_KEY` stripped,
   10-minute timeout with process-tree kill. Brain keeps separate execution and
   presentation journals.
 - **Watch:** `ExecutionCoordinatorTest`, `CodexCliProviderTest` (fixtures do not
@@ -258,13 +263,17 @@ and say so.
   enabled. Read-only sandbox only.
 - **Cares most about:** never running a task twice.
 
-### 7. Gamero iOS port (gamero)
+### 7. Gamero mobile shells and shared code (gamero)
 
-- **Lives in:** `composeApp/src/iosMain/.../{MainViewController,IosWebUrl,NativeBridge.ios}.kt`,
-  `iosApp/`, `tools/ios-smoke.sh`, `docs/ios.md`, `TEST.md`.
+- **Lives in:** iOS: `composeApp/src/iosMain/.../{MainViewController,IosWebUrl,NativeBridge.ios}.kt`,
+  `hovel/HovelIos.kt`, `iosApp/`, `tools/ios-smoke.sh`, `docs/ios.md`, `TEST.md`.
+  Android: `composeApp/src/androidMain/` (`MainActivity.kt`, `HovelAndroid.kt`).
+  Shared: `composeApp/src/commonMain/` (`WebUrlPolicy.kt`, `WebViewManager`,
+  the Hovel launch and start screen, `SessionManager.kt`).
 - **Healthy looks like:** logs `GAMERO_PAGE_LOADED origin=… title=Hovel` within
   90 s; the URL passes `WebUrlPolicy.kt`; with `GAMERO_PRODUCT=hovel` the launch
-  and start screen show as on desktop and Android.
+  and start screen show the same on iOS, Android and desktop; Android and iOS
+  load the web app without the legacy bridge.
 - **Watch:** `./gradlew -Pgamero.iosTargets=true
   :composeApp:compileKotlinIosSimulatorArm64 :composeApp:iosSimulatorArm64Test`
   (Mac only), `tools/ios-smoke.sh`, `WebUrlPolicyTest`, `IosWebUrlTest`.
