@@ -49,13 +49,41 @@ moves it to all platforms.
 
 ## Goals
 
-1. **Reusable.** One router, one envelope, one web client for all hosts.
-2. **Extensible.** A new capability needs one contract entry, one Kotlin
-   interface, and one implementation for each platform. Nothing else changes.
-3. **Consistent.** The same request gives the same response shape and the same
-   error codes on desktop, Android and iOS. Shared fixtures prove this in tests.
+Tim set these goals on 2026-10-14.
+
+1. **Reusable.** To add a native capability, you follow one obvious recipe
+   (see "Recipe: add a capability").
+2. **Extensible.** You can add a capability or a platform target, and no
+   existing caller must change or break.
+3. **Consistent.** A capability behaves the same on every platform. It has the
+   same API shape, error handling, threading, lifecycle, and the same handling
+   of "not supported on this platform" (see "Consistency rules").
 4. **Safe by default.** Only the main frame of the trusted origin can call the
    host. The rule is the same on every platform.
+
+### Design priorities
+
+When two choices conflict, use this order:
+
+1. **Composability.** Each capability is a small part that you can add or
+   remove alone. A host is a set of these parts.
+2. **Maintainability.** Each rule is in one place. A reader finds a
+   capability's contract, interface and binding together.
+3. **Reusability.** Reuse the patterns that exist (the JCEF context rules,
+   kotlinx-serialization, the event-contracts fixtures). Do not add an
+   abstraction that only one caller needs.
+4. **Extensibility.** Make the next capability and the next platform easy,
+   but do not build for capabilities that nobody asked for.
+
+### How the design meets the goals
+
+| Goal | Where the design meets it | Gap and fix |
+|---|---|---|
+| Reusable | One router, one envelope, one web client. The recipe below. | The router has a hand-written binding for each capability (`BridgeRouter.buildHandlers`). Task A2b moves each binding next to its capability. |
+| Extensible: new capability | Web callers ask `host.capabilities` and do not change. Old methods do not change. | A new `HostCapabilities` parameter makes each platform's factory add one line. This is intended: a forgotten platform is a compile error, not a runtime surprise. |
+| Extensible: new platform | A new transport and a new `HostCapabilities` factory. The router and the capabilities do not change. | None. |
+| Consistent | The router does all checks, all error mapping and all context rules. Shared fixtures run on every target. The parity test checks the parity table. | Haptics has a non-suspend method; the other capabilities suspend. Task A2b makes every capability method `suspend`. |
+| Safe by default | Frame facts come from the platform API. The router checks them first. | None. |
 
 ## Not in scope
 
@@ -81,7 +109,7 @@ flowchart LR
   end
   subgraph Common["commonMain (shared, pure Kotlin)"]
     R["BridgeRouter: envelope, origin, context, size, errors"]
-    REG["CapabilityRegistry"]
+    REG["Method bindings (one per capability)"]
   end
   subgraph Caps["Capabilities"]
     C1["host.info"]
@@ -121,27 +149,74 @@ frame facts. All rules live in the router. The capabilities hold the platform wo
       puts into script.
    3. It tells the router when the document changes, so the router ends the
       old context and cancels pending calls.
-4. **Capabilities.** Each capability is a Kotlin interface with typed methods.
-   `HostBridge` takes every capability as a constructor parameter:
+4. **Capabilities.** Each capability is a Kotlin interface with `suspend`
+   methods. `HostCapabilities` takes every capability as a constructor
+   parameter without a default:
 
    ```kotlin
    class HostCapabilities(
-       val info: HostInfo,
-       val links: LinkOpener,
-       val haptics: Haptics,          // or Haptics.Unsupported
-       val companion: Companion?,      // null where the product has none
+       val platform: HostPlatform,
+       val appVersion: String,
+       val links: Capability<LinkOpener>,
+       val haptics: Capability<Haptics>,
+       val lifecycle: Capability<Lifecycle>,
+       val companion: Capability<CompanionCapability>,
    )
    ```
 
-   A platform that forgets a capability does not compile. A platform that does
-   not support one passes the `Unsupported` object. The router then returns
-   `unsupported` for its methods, and `host.capabilities` does not list them.
-   Nothing throws at call time.
+   Each parameter is `Capability.Supported(impl)` or `Capability.Unsupported`.
+   A platform that forgets a capability does not compile. The router then
+   returns `unsupported` for the methods of an `Unsupported` capability, and
+   `host.capabilities` does not list them. Nothing throws at call time.
 5. **Web client (`@formulagen/host-bridge`).** It is a small package in
    `game-platform`. It finds the transport (`gameroQuery`, the Android listener
    object, or `window.webkit.messageHandlers`). It gives one API:
    `capabilities()`, `call(method, args)`, `on(event, handler)`. In a plain
    browser it reports no host. `nativeCompanion.ts` moves onto this client.
+
+### Consistency rules
+
+Every capability on every platform obeys these rules. The router enforces the
+rules in the first column; a capability or a transport must obey the rest.
+
+| Area | Rule | Who enforces it |
+|---|---|---|
+| API shape | One method name `area.verb`. Arguments and result are `@Serializable` types in `BridgeMethods.kt`, mirrored by zod in event-contracts. Every reply is `{ok:true, result}` or `{ok:false, error:{code, message}}`. | Router; fixtures in both repos |
+| Argument checks | The router decodes and checks the arguments before the capability runs. A capability never gets invalid input. | Router (`BridgeMethod.accepts`) |
+| Error handling | A capability throws `BridgeBusyException` for `busy`. Any other exception becomes `failed`, and the host logs it. The page sees only the code and a fixed message, never a stack trace. | Router |
+| Threading | The router calls a capability from a background coroutine, never the UI thread. A capability that needs the UI thread switches to it itself (`withContext(Dispatchers.Main)`). A transport may call the router from any thread, and it moves each reply to the thread its platform API needs. | Capability; transport |
+| Lifecycle | A context belongs to one document. A navigation, a reload or a closed WebView ends it and cancels the calls that run. A capability must stop when its coroutine is cancelled. A reply for an old context is dropped. Events go only to an open context. | Router; transport reports the document change |
+| Not supported | The platform passes `Capability.Unsupported`. Its methods return `unsupported`, and `host.capabilities` does not list them. A capability never throws "not supported" at call time. The parity table in event-contracts says which platform supports what. | Compiler; router; parity test |
+| One call at a time | A capability that cannot run two calls at once throws `BridgeBusyException`. It does not queue or wait. | Capability |
+
+### Recipe: add a capability
+
+1. **Contract.** In `server-platform/event-contracts/src/host-bridge`, add the
+   methods (zod arguments and result) to `capabilities.ts`, add the row to
+   `HOST_BRIDGE_PARITY`, and add the fixtures. Run the contract tests.
+2. **Interface.** In gamero `commonMain/.../bridge/`, add a file with the
+   interface (`suspend` methods), its `BridgeMethod` values and its binding.
+3. **Host parameter.** Add one `Capability<YourInterface>` parameter to
+   `HostCapabilities`. The compiler then names every platform factory that
+   must choose `Supported(impl)` or `Unsupported`.
+4. **Platforms.** Write the implementation in each platform source set that
+   supports it. Pass `Capability.Unsupported` in the others.
+5. **Fixtures.** Run `tools/sync-host-bridge-fixtures.py` and the router tests.
+6. **Web.** Callers use `call("area.verb", args)` from `@formulagen/host-bridge`
+   after they check `host.capabilities`.
+
+You do not edit the router, the transports, or other capabilities.
+
+### Recipe: add a platform target
+
+1. Write one transport that reads frame facts from the platform API, passes the
+   raw string to `BridgeRouter.handle`, sends replies and events as JSON values,
+   and calls `endContext()` when the document changes.
+2. Write one `HostCapabilities` factory for the platform.
+3. Add the platform to `HostPlatform` and to the parity table.
+4. Run the smoke page on the platform.
+
+You do not edit the router or the capabilities.
 
 ### Wire protocol v2
 

@@ -7,6 +7,7 @@ Tim's flow: one PR per task group, two review rounds, parent first through stack
 |---|---|---|---|---|
 | A1 | `host-bridge.v2` zod contract and JSON fixtures (valid/invalid) | server-platform | 0.5 d | – |
 | A2 | `BridgeEnvelope`, `BridgeRouter`, `HostCapabilities` in commonMain; fixture tests in commonTest | gamero | 1 d | A1 |
+| A2b | Move each capability's methods and binding next to its interface, so the router has no capability code; make every capability method `suspend` (Tim's goals, 2026-10-14) | gamero | 0.5 d | A2 |
 | A3 | JCEF transport on the router; `HovelCompanion` becomes the `companion` capability; accept v1 | gamero | 1 d | A2 |
 | A4 | Smoke page v2 on desktop; run on Mac; log round-trip times | gamero | 0.5 d | A3 |
 

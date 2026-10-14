@@ -9,6 +9,7 @@
 - [x] Tim approves the design
 - [x] A1: contract and fixtures (server-platform #128)
 - [x] A2: router in commonMain, fixture tests pass on JVM
+- [ ] A2b: capability bindings beside their interfaces; all capability methods suspend (Tim's goals)
 - [ ] A3: JCEF transport on the router, companion as a capability
 - [ ] A4: smoke page v2 on the Mac
 - [ ] Phase B: Android and iOS transports, web client (B1–B4)
