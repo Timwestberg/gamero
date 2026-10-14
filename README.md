@@ -2,6 +2,8 @@
 
 Production releases for web, Android, desktop and iOS: `tools/build-release.sh`, see [docs/release.md](docs/release.md).
 
+Tests on every target: `tools/test-all-targets.sh` runs the JVM, Android unit and iOS simulator tests and prints one count line per target (`jvm`, `android` or `ios` to run fewer).
+
 Mac desktop development: [build and launch guide](docs/desktop.md). Desktop is the default build target; mobile targets are opt-in.
 
 iOS (simulator): [build and run guide](docs/ios.md). Smoke test: `tools/ios-smoke.sh` builds the app, loads Hovel on a throwaway simulator, and fails unless the page loads. Android remains outside the current verification scope.
