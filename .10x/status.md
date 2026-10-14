@@ -16,9 +16,9 @@
 - [ ] Phase C: proof capabilities and parity (C1–C5)
 - [ ] Phase D: legacy decision (ADR-003)
 
-## bridge-kit (proposed 2026-10-14)
+## bridge-kit (approved 2026-10-14)
 
-Spec `specs/2026-10-14-bridge-kit-design.md`, ADR-002 (Proposed). G5 decided 2026-10-14: product set. Waits for Tim's approval of the whole plan.
+Spec `specs/2026-10-14-bridge-kit-design.md`, ADR-002 (Accepted). G5: product set. **Phase:** Implementation.
 
 - [ ] K0 test-all-targets script
 - [ ] K1 typed handlers and events

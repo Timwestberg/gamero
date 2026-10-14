@@ -12,3 +12,4 @@
 
 ## Active features
 - [host-bridge](host-bridge.md) — ADR-001
+- [bridge-kit](bridge-kit.md) — ADR-002

@@ -1,6 +1,6 @@
 # ADR-002: A shared bridge kit, with platform and product capability sets
 
-**Status:** Proposed (G5 decided by Tim, 2026-10-14; the whole plan waits for approval)
+**Status:** Accepted (Tim, 2026-10-14)
 **Date:** 2026-10-14
 **Feature:** bridge-kit
 **Author:** 10x-Team (Architect + Staff Engineer)

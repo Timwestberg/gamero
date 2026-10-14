@@ -1,6 +1,6 @@
 # Bridge kit: make the host bridge reusable before mobile
 
-**Status:** Proposed. Tim chose the product set for G5 on 2026-10-14. The whole plan still waits for Tim's approval.
+**Status:** Approved by Tim on 2026-10-14 (product set chosen for G5).
 **Date:** 2026-10-14
 **Feature slug:** `bridge-kit`
 **Builds on:** [host-bridge design](2026-10-14-host-bridge-design.md), ADR-001
