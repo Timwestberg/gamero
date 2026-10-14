@@ -14,7 +14,7 @@ GAMERO_WEB_URL[config=Release]=https:/$()/web.worldwinner.com
 
 // Product the shell runs. `hovel` shows the Hovel launch and start screen before the web app,
 // as on desktop and Android. Overridden at launch by the GAMERO_PRODUCT environment variable.
-// Release leaves it empty, so the shipped app keeps loading the web app directly.
+// Release leaves it empty; tools/build-release.sh sets it for the archive.
 GAMERO_PRODUCT=hovel
 GAMERO_PRODUCT[config=Release]=
 

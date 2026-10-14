@@ -7,6 +7,8 @@ and `IosWebUrlTest` (URL rules in cases 3 and 4, product rule in case 3b).
 Common preconditions: an Apple Silicon Mac with Xcode 26 and an iOS simulator
 runtime. Unless a case says otherwise, Hovel is served at
 `http://127.0.0.1:8080/hovel.html` with `pnpm serve:edge`.
+Debug builds open on the Hovel start screen: tap "Open the door" first, or
+launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 
 ## Happy paths
 
