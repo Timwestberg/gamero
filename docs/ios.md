@@ -142,7 +142,8 @@ The app reads the product once at launch, in the same order as the URL:
    from `simctl`).
 2. The `GameroProduct` Info.plist key, fed from `GAMERO_PRODUCT` in
    `iosApp/Configuration/Config.xcconfig`. Debug sets `hovel`. Release leaves it
-   empty.
+   empty, and `tools/build-release.sh` passes its own `GAMERO_PRODUCT` (default
+   `hovel`) to the archive, as it does for desktop and Android.
 
 The first non-blank value is used, trimmed. If it is `hovel`, the app plays the
 Hovel launch and start screen, as desktop and Android do. The web app opens
