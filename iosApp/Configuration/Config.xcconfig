@@ -9,6 +9,8 @@ MARKETING_VERSION=1.0
 // Web app the shell loads. Overridden at launch by the GAMERO_WEB_URL environment variable.
 // xcconfig treats `//` as a comment, so the scheme separator is written as `/$()/`.
 GAMERO_WEB_URL=http:/$()/127.0.0.1:8080/hovel.html
+// Release keeps the production URL the app loaded before Hovel; loopback only works on a simulator.
+GAMERO_WEB_URL[config=Release]=https:/$()/web.worldwinner.com
 
 // composeApp has no iosX64 target (see composeApp/build.gradle.kts), so simulators are arm64 only.
 EXCLUDED_ARCHS[sdk=iphonesimulator*]=x86_64

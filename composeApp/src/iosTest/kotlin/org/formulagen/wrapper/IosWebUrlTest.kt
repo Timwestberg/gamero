@@ -23,5 +23,6 @@ class IosWebUrlTest {
     @Test fun reducesUrlsToTheirOrigin() {
         assertEquals("http://127.0.0.1:8080", originOf("http://127.0.0.1:8080/hovel.html?x=1"))
         assertEquals("https://example.com", originOf("https://example.com/hovel.html"))
+        assertEquals("http://[::1]:8080", originOf("http://[::1]:8080/hovel.html"))
     }
 }

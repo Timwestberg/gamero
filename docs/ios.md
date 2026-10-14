@@ -119,6 +119,9 @@ The app resolves the URL once at launch, in this order:
 2. The `GameroWebURL` Info.plist key. It is fed from `GAMERO_WEB_URL` in
    `iosApp/Configuration/Config.xcconfig`. xcconfig treats `//` as a comment, so
    write the scheme separator as `/$()/`, e.g. `https:/$()/example.com/hovel.html`.
+   Debug defaults to `http://127.0.0.1:8080/hovel.html`. Release keeps
+   `https://web.worldwinner.com`, the URL the app loaded before Hovel, because
+   loopback only works on a simulator.
 
 The first non-blank value is used. It must pass `isAllowedWebUrl` in
 `commonMain/.../WebUrlPolicy.kt`, the same rule desktop uses: HTTPS only, HTTP
@@ -141,10 +144,10 @@ The script:
 
 1. Fails fast if `GAMERO_WEB_URL` is not responding.
 2. Builds the app into `build/ios`.
-3. Creates a throwaway iPhone simulator on the newest iOS runtime, installs the
-   app, and launches it with the URL.
+3. Creates a throwaway simulator of the newest numbered iPhone on the newest iOS
+   runtime, installs the app, and launches it with the URL.
 4. Passes when the app logs `GAMERO_PAGE_LOADED origin=<origin> title=Hovel`
-   within 90 seconds.
+   within 90 seconds. The title must match exactly, so `Hovel Error` fails.
 5. Saves `build/ios/smoke.png` and deletes the simulator.
 
 It exits non-zero on build failure, crash, or timeout, and leaves the build log
@@ -153,6 +156,15 @@ in `build/ios/xcodebuild.log` and the app console in `build/ios/smoke.log`.
 Tune it with `GAMERO_WEB_URL`, `GAMERO_EXPECTED_TITLE`, `GAMERO_SMOKE_TIMEOUT`
 (seconds), or `GAMERO_SIM_DEVICE` (reuse an existing simulator by name or UDID;
 it is left booted).
+
+To check the HTTPS setup that sign-in needs, also pass the dev server's
+certificate, extracted as in [Sign in (HTTPS)](#sign-in-https). curl and the
+throwaway simulator then both trust it:
+
+```sh
+GAMERO_WEB_URL=https://localhost:8123/hovel.html \
+GAMERO_SMOKE_ROOT_CERT=/tmp/vite-dev-cert.pem tools/ios-smoke.sh
+```
 
 `GAMERO_PAGE_LOADED` comes from the iOS `onPageLoaded` callback on `App()`. It
 fires when the page finishes loading, and again when its title arrives, so the
