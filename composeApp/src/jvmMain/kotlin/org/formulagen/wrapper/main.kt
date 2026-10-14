@@ -63,7 +63,14 @@ private class DesktopResources : AutoCloseable {
     }
 }
 
-private fun isHovelProduct() = System.getenv("GAMERO_PRODUCT") == "hovel"
+/**
+ * A launch setting from the environment, else the `-D` system property a packaged release bakes
+ * in (`tools/build-release.sh`). The environment wins so a developer can repoint a packaged app.
+ */
+internal fun desktopSetting(environment: String?, property: String?): String? =
+    environment?.takeIf { it.isNotBlank() } ?: property?.takeIf { it.isNotBlank() }
+
+private fun isHovelProduct() = desktopSetting(System.getenv("GAMERO_PRODUCT"), System.getProperty("gamero.product")) == "hovel"
 
 /** App-independent desktop configuration; product adapters supply the trusted URL. */
 internal fun desktopWebUrl(args: Array<String>, environment: String?): String? {
@@ -90,7 +97,7 @@ fun main(args: Array<String>) {
     try {
         application(exitProcessOnExit = false) {
             exitAction.set(::exitApplication)
-            val url = remember { desktopWebUrl(args, System.getenv("GAMERO_WEB_URL")) }
+            val url = remember { desktopWebUrl(args, desktopSetting(System.getenv("GAMERO_WEB_URL"), System.getProperty("gamero.webUrl"))) }
             CompositionLocalProvider(LocalWindowExceptionHandlerFactory provides object : WindowExceptionHandlerFactory {
                 override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler = failure
             }) {
