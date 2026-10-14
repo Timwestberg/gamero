@@ -13,3 +13,9 @@
 
 # compose-webview-multiplatform's JS bridge (de)serializes its message types.
 -keep class com.multiplatform.webview.** { *; }
+
+# Firebase finds registrars by name from the manifest and calls their no-arg
+# constructor; its consumer rule keeps the classes but not the constructors.
+-keepclassmembers class * implements com.google.firebase.components.ComponentRegistrar {
+    public <init>();
+}

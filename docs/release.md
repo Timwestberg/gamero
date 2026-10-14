@@ -57,8 +57,9 @@ the environment still override them at launch.
 
 `GAMERO_BROWSER_JAVA_HOME` is required. It is the JetBrains Runtime that gets
 bundled into the app, so it must be a JBR **SDK** with JCEF (`jbrsdk_jcef`, with
-`jlink` and `jpackage`). The runtime-only JBR inside IntelliJ IDEA is enough to
-run the app from Gradle but cannot package it. The bundle keeps every runtime
+`jlink`, `jpackage` and `jmods`). The runtime-only JBR inside IntelliJ IDEA is
+enough for `./gradlew :composeApp:run`, but it cannot package the app or run
+`runRelease`: ProGuard reads the JDK classes from `jmods`, which it lacks. The bundle keeps every runtime
 module for now; trimming it to `suggestRuntimeModules`' list shrinks the app.
 
 Optional signing and notarization for distribution outside the App Store:

@@ -104,7 +104,9 @@ build_desktop() {
   for tool in java jlink jpackage; do
     [[ -x "$jbr/bin/$tool" ]] || fail "$jbr/bin/$tool is missing. Packaging needs a JBR SDK (jbrsdk_jcef), not the runtime-only JBR that ships inside IntelliJ."
   done
-  "$jbr/bin/java" --list-modules 2>/dev/null | grep -q '^jcef@' || fail "$jbr has no jcef module; use a JBR SDK with JCEF"
+  # ProGuard reads the JDK classes from jmods/; runtime-only JBRs (IntelliJ, Android Studio) lack it.
+  [[ -d "$jbr/jmods" ]] || fail "$jbr has no jmods directory, which ProGuard needs. Use a JBR SDK (jbrsdk_jcef)."
+  "$jbr/bin/java" --list-modules 2>/dev/null | grep -qE '^jcef(@|$)' || fail "$jbr has no jcef module; use a JBR SDK with JCEF"
 
   local task=packageReleaseDistributionForCurrentOS
   [[ -z "${GAMERO_NOTARIZE_APPLE_ID:-}" ]] || task="$task notarizeReleaseDmg"
