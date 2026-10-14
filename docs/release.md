@@ -12,6 +12,33 @@ tools/build-release.sh all
 Outputs land in `build/release/<platform>/`. The script stops at the first
 failure and names what is missing.
 
+## Build speed and timings
+
+The script checks every requested platform's settings before it builds anything,
+so a missing variable fails at once. The web build then runs in the background
+(log: `build/release/web/build.log`), Android and desktop share one Gradle run, and
+iOS archives last. Set `GAMERO_SEQUENTIAL=1` to run the web build in the
+foreground instead. Inside the web build, Godot re-exports a game only when its
+sources, preset or Godot version changed, and the type check runs alongside the
+Vite build. The iOS archive skips Xcode's index store, which a release does not use.
+
+Every step's duration is appended to `.build-timings.csv` at the repo root
+(git-ignored; `BUILD_TIMINGS_FILE` moves it). Each row has the run, step, seconds,
+commit and host:
+
+- `build-release:web`, `build-release:android+desktop`, `build-release:ios`,
+  `build-release:total`: each stage and the whole run.
+- `build-web:*`: the web build's own steps (Godot export per game, `typecheck`,
+  `vite-build`), with the same run id.
+- `build-release:gradle:<task>`: every Gradle task that took a second or more,
+  from Gradle's `--profile` report (also saved as
+  `build/release/reports/gradle-profile.html`).
+- `build-release:ios:<phase>`: Xcode's build timing summary. The Kotlin framework
+  build is `ios:PhaseScriptExecution`.
+
+`tools/build-timings.sh [runs]` prints one row per step and one column per recent
+run, plus the best time seen, to show whether a change made a step faster.
+
 ## Settings for every native app
 
 | Variable | Default | Effect |

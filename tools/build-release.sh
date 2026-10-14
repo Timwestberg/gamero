@@ -25,6 +25,15 @@
 #   GAMERO_IOS_TEAM_ID      Apple team; without it the iOS archive is unsigned and not exported
 #   GAMERO_IOS_EXPORT_METHOD  app-store-connect (default), release-testing or enterprise
 #   GAME_PLATFORM_DIR       game-platform checkout for web (default: next to this repo)
+#   GAMERO_SEQUENTIAL       1 to run the web build in the foreground instead of alongside the others
+#   BUILD_TIMINGS_FILE      CSV that every step's duration is appended to
+#                           (default: .build-timings.csv at the repo root, git-ignored)
+#
+# Every platform's settings are checked before anything builds. The web build runs
+# in the background (log: build/release/web/build.log) while Android and desktop
+# share one Gradle run, then iOS archives. Every step's duration is appended to
+# BUILD_TIMINGS_FILE, down to Gradle tasks (from --profile) and Xcode build phases
+# (from -showBuildTimingSummary); tools/build-timings.sh compares recent runs.
 #
 # Outputs land in build/release/<platform>/. Exits non-zero at the first failure.
 set -euo pipefail
@@ -40,6 +49,25 @@ url="${GAMERO_WEB_URL:-$local_url}"
 
 fail() { echo "build-release: FAIL: $*" >&2; exit 1; }
 step() { echo "build-release: $*"; }
+started=$SECONDS
+timings=()
+timings_file="${BUILD_TIMINGS_FILE:-$root/.build-timings.csv}"
+case "$timings_file" in /*) ;; *) timings_file="$PWD/$timings_file" ;; esac
+run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+commit="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+host="$(hostname -s 2>/dev/null || echo unknown)"
+# One CSV row per step: run_id,finished_at,script,step,seconds,detail,commit,host.
+# game-platform's build-web.sh writes the same columns, so a full run shares one file.
+record() {
+  [[ -s "$timings_file" ]] || echo "run_id,finished_at,script,step,seconds,detail,commit,host" >"$timings_file"
+  printf '%s,%s,build-release,%s,%s,%s,%s,%s\n' "$run_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "${3//,/;}" "$commit" "$host" >>"$timings_file"
+}
+timed() {
+  local took=$((SECONDS - $2))
+  timings+=("$(printf '%-16s %5ss' "$1" "$took")")
+  step "$1 took ${took}s"
+  record "$1" "$took" "${3:-}"
+}
 usage() { sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 [[ $# -gt 0 ]] || usage
@@ -52,6 +80,8 @@ for arg in "$@"; do
     *) echo "build-release: unknown platform '$arg'" >&2; usage ;;
   esac
 done
+
+want() { [[ " ${platforms[*]} " == *" $1 "* ]]; }
 
 [[ "$version" =~ ^[1-9][0-9]*\.[0-9]+\.[0-9]+$ ]] || fail "GAMERO_VERSION must be MAJOR.MINOR.PATCH with MAJOR > 0 (macOS requires it), not '$version'"
 [[ "$build_number" =~ ^[1-9][0-9]*$ ]] || fail "GAMERO_BUILD_NUMBER must be a positive integer, not '$build_number'"
@@ -72,18 +102,46 @@ gradle() {
     -Pgamero.version="$version" -Pgamero.buildNumber="$build_number" "$@"
 }
 
-build_web() {
+web_dir() {
   local game_platform="${GAME_PLATFORM_DIR:-$root/../game-platform}"
   [[ -f "$game_platform/scripts/build-web.sh" ]] || fail "no scripts/build-web.sh in $game_platform. Check out game-platform there or set GAME_PLATFORM_DIR."
-  game_platform="$(cd "$game_platform" && pwd)"
-  step "web: building $game_platform"
-  bash "$game_platform/scripts/build-web.sh"
-  mkdir -p "$out/web"
-  printf '%s\n' "$game_platform/apps/game-bridge-host/dist" >"$out/web/DIST_PATH"
-  step "web: done -> $game_platform/apps/game-bridge-host/dist"
+  (cd "$game_platform" && pwd)
 }
 
-build_android() {
+web_pid=""
+web_started=0
+start_web() {
+  local game_platform
+  game_platform="$(web_dir)"
+  rm -rf "$out/web" && mkdir -p "$out/web"
+  web_started=$SECONDS
+  if [[ "${GAMERO_SEQUENTIAL:-}" == 1 ]]; then
+    step "web: building $game_platform"
+    BUILD_TIMINGS_FILE="$timings_file" BUILD_RUN_ID="$run_id" \
+      bash "$game_platform/scripts/build-web.sh" 2>&1 | tee "$out/web/build.log"
+    finish_web
+  else
+    step "web: building $game_platform in the background (log: $out/web/build.log)"
+    BUILD_TIMINGS_FILE="$timings_file" BUILD_RUN_ID="$run_id" \
+      bash "$game_platform/scripts/build-web.sh" >"$out/web/build.log" 2>&1 &
+    web_pid=$!
+  fi
+}
+
+finish_web() {
+  if [[ -n "$web_pid" ]]; then
+    local pid="$web_pid"
+    web_pid=""
+    wait "$pid" || { tail -30 "$out/web/build.log" >&2; fail "web: build failed (log: $out/web/build.log)"; }
+  fi
+  local dist
+  dist="$(web_dir)/apps/game-bridge-host/dist"
+  printf '%s\n' "$dist" >"$out/web/DIST_PATH"
+  timed web "$web_started"
+  step "web: done -> $dist"
+}
+
+check_android() {
   require_url
   # HovelAndroid.kt opens HTTPS only; any other URL silently starts the legacy WorldWinner page instead.
   [[ "$url" =~ ^[Hh][Tt][Tt][Pp][Ss]:// ]] \
@@ -96,8 +154,9 @@ build_android() {
       [[ -n "${!name:-}" ]] || fail "$name is required with GAMERO_ANDROID_KEYSTORE"
     done
   fi
-  step "android: bundleRelease and assembleRelease ($product, $url, $version/$build_number)"
-  gradle -Pgamero.mobileTargets=true :composeApp:bundleRelease :composeApp:assembleRelease
+}
+
+collect_android() {
   rm -rf "$out/android" && mkdir -p "$out/android"
   find "$root/composeApp/build/outputs/bundle/release" "$root/composeApp/build/outputs/apk/release" \
     -maxdepth 1 \( -name '*.aab' -o -name '*.apk' \) -exec cp {} "$out/android/" \;
@@ -108,7 +167,7 @@ build_android() {
   step "android: done -> $out/android"
 }
 
-build_desktop() {
+check_desktop() {
   require_url
   local jbr="${GAMERO_BROWSER_JAVA_HOME:-}"
   [[ -n "$jbr" ]] || fail "set GAMERO_BROWSER_JAVA_HOME to a JetBrains Runtime SDK with JCEF; it is bundled into the app (docs/release.md)"
@@ -118,12 +177,9 @@ build_desktop() {
   # ProGuard reads the JDK classes from jmods/; runtime-only JBRs (IntelliJ, Android Studio) lack it.
   [[ -d "$jbr/jmods" ]] || fail "$jbr has no jmods directory, which ProGuard needs. Use a JBR SDK (jbrsdk_jcef)."
   "$jbr/bin/java" --list-modules 2>/dev/null | grep -qE '^jcef(@|$)' || fail "$jbr has no jcef module; use a JBR SDK with JCEF"
+}
 
-  local task=packageReleaseDistributionForCurrentOS
-  [[ -z "${GAMERO_NOTARIZE_APPLE_ID:-}" ]] || task="$task notarizeReleaseDmg"
-  step "desktop: $task ($product, $url, $version)"
-  # shellcheck disable=SC2086
-  GAMERO_BROWSER_JAVA_HOME="$jbr" gradle $(printf ':composeApp:%s ' $task)
+collect_desktop() {
   rm -rf "$out/desktop" && mkdir -p "$out/desktop"
   find "$root/composeApp/build/compose/binaries/main-release" -mindepth 2 -maxdepth 2 \
     \( -name '*.dmg' -o -name '*.msi' -o -name '*.deb' -o -name '*.pkg' \) -exec cp {} "$out/desktop/" \;
@@ -131,13 +187,53 @@ build_desktop() {
   step "desktop: done -> $out/desktop"
 }
 
-build_ios() {
+# Android and desktop in one Gradle run: one configuration, one daemon warm-up, and
+# the shared Kotlin compilation done once.
+build_gradle() {
+  local tasks=() flags=() names=()
+  if want android; then
+    flags+=(-Pgamero.mobileTargets=true)
+    tasks+=(:composeApp:bundleRelease :composeApp:assembleRelease)
+    names+=(android)
+  fi
+  if want desktop; then
+    tasks+=(:composeApp:packageReleaseDistributionForCurrentOS)
+    [[ -z "${GAMERO_NOTARIZE_APPLE_ID:-}" ]] || tasks+=(:composeApp:notarizeReleaseDmg)
+    names+=(desktop)
+  fi
+  local t=$SECONDS label
+  label="$(IFS=+; echo "${names[*]}")"
+  step "$label: one Gradle run ($product, $url, $version/$build_number)"
+  # --profile writes a per-task HTML report; its rows go into the timings CSV below.
+  rm -rf "$root/build/reports/profile"
+  if want desktop; then
+    GAMERO_BROWSER_JAVA_HOME="$GAMERO_BROWSER_JAVA_HOME" gradle --profile "${flags[@]}" "${tasks[@]}"
+  else
+    gradle --profile "${flags[@]}" "${tasks[@]}"
+  fi
+  ! want android || collect_android
+  ! want desktop || collect_desktop
+  local report
+  report="$(ls -t "$root"/build/reports/profile/*.html 2>/dev/null | head -1 || true)"
+  if [[ -n "$report" ]]; then
+    mkdir -p "$out/reports" && cp "$report" "$out/reports/gradle-profile.html"
+    python3 "$root/tools/gradle-profile-steps.py" "$report" 1 2>/dev/null \
+      | while IFS=, read -r task secs; do record "gradle$task" "${secs%.*}" "${secs}s; $label run"; done || true
+  fi
+  timed "$label" "$t" "${report:+per-task report: build/release/reports/gradle-profile.html}"
+}
+
+check_ios() {
   require_url
   [[ "$(uname -s)" == Darwin ]] || fail "ios builds need a Mac with Xcode"
   if ! xcodebuild -version >/dev/null 2>&1 && [[ -d /Applications/Xcode.app ]]; then
     export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
   fi
   xcodebuild -version >/dev/null 2>&1 || fail "Xcode not found. Install it, or set DEVELOPER_DIR."
+}
+
+build_ios() {
+  local t=$SECONDS
 
   local team="${GAMERO_IOS_TEAM_ID:-}" archive="$out/ios/Gamero.xcarchive"
   local signing=(DEVELOPMENT_TEAM="$team")
@@ -149,11 +245,17 @@ build_ios() {
   xcodebuild -project "$root/iosApp/iosApp.xcodeproj" -scheme iosApp -configuration Release \
     -destination 'generic/platform=iOS' -archivePath "$archive" \
     GAMERO_WEB_URL="$url" MARKETING_VERSION="$version" CURRENT_PROJECT_VERSION="$build_number" \
-    "${signing[@]}" ${team:+-allowProvisioningUpdates} archive \
+    COMPILER_INDEX_STORE_ENABLE=NO "${signing[@]}" ${team:+-allowProvisioningUpdates} \
+    -showBuildTimingSummary archive \
     >"$out/ios/xcodebuild.log" 2>&1 || { grep -E "error:" "$out/ios/xcodebuild.log" | head -20 >&2; fail "ios: archive failed"; }
+
+  # "PhaseScriptExecution (1 task) | 95.123 seconds": the Kotlin framework is that script phase.
+  sed -nE 's/^([A-Za-z]+) \(([0-9]+) tasks?\) \| ([0-9.]+) seconds$/\1 \3 \2/p' "$out/ios/xcodebuild.log" \
+    | while read -r phase secs count; do record "ios:$phase" "${secs%.*}" "${secs}s; $count tasks"; done || true
 
   if [[ -z "$team" ]]; then
     step "ios: GAMERO_IOS_TEAM_ID is not set, so $archive is unsigned and no IPA was exported"
+    timed ios "$t"
     return
   fi
   cat >"$out/ios/ExportOptions.plist" <<EOF
@@ -173,10 +275,24 @@ EOF
   xcodebuild -exportArchive -archivePath "$archive" -exportPath "$out/ios" \
     -exportOptionsPlist "$out/ios/ExportOptions.plist" -allowProvisioningUpdates \
     >>"$out/ios/xcodebuild.log" 2>&1 || { grep -E "error:" "$out/ios/xcodebuild.log" | tail -20 >&2; fail "ios: export failed"; }
+  timed ios "$t"
   step "ios: done -> $out/ios"
 }
 
-for platform in "${platforms[@]}"; do
-  "build_$platform"
-done
+# Check every platform's settings first, so a missing variable fails in seconds, not after a build.
+! want android || check_android
+! want desktop || check_desktop
+! want ios || check_ios
+
+# If anything below fails, stop a web build still running in the background.
+trap '[[ -z "$web_pid" ]] || kill "$web_pid" 2>/dev/null || true' EXIT
+
+! want web || start_web
+if want android || want desktop; then build_gradle; fi
+! want ios || build_ios
+[[ -z "$web_pid" ]] || finish_web
+
+timed total "$started" "${platforms[*]}"
 step "all done: ${platforms[*]}"
+printf 'build-release:   %s\n' "${timings[@]}"
+step "timings appended to $timings_file (compare runs: tools/build-timings.sh)"
