@@ -58,6 +58,8 @@ kotlin {
         if (mobileTargets) getByName("androidMain").dependencies {
             implementation(compose.preview)
             implementation(libs.androidx.activity.compose)
+            // addWebMessageListener for the host bridge
+            implementation(libs.androidx.webkit)
             implementation(libs.google.firebase.config)
         }
         commonMain.dependencies {

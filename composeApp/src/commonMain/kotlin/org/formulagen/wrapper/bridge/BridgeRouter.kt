@@ -165,4 +165,4 @@ class BridgeRouter(
 }
 
 @OptIn(ExperimentalUuidApi::class)
-private fun randomContextId(): String = Uuid.random().toString()
+internal fun randomContextId(): String = Uuid.random().toString()

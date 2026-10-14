@@ -1,4 +1,4 @@
-package org.formulagen.wrapper.companion
+package org.formulagen.wrapper.bridge
 
 import org.junit.Test
 import kotlin.test.assertEquals
