@@ -8,16 +8,16 @@ struct ComposeView: UIViewControllerRepresentable {
     }
     
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
-    
-    struct ContentView: View {
-        var body: some View {
-            ComposeView()
-                .ignoresSafeArea(.all, edges: .all)
-                .statusBarHidden(true)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .onAppear {
-                    // one-time setup if needed
-                }
-        }
+}
+
+struct ContentView: View {
+    var body: some View {
+        ComposeView()
+            .ignoresSafeArea(.all, edges: .all)
+            .statusBarHidden(true)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear {
+                // one-time setup if needed
+            }
     }
 }

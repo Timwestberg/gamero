@@ -12,7 +12,10 @@ plugins {
     alias(libs.plugins.google.gms.service) apply false
     }
 
+// Desktop (JVM) is the default build. `gamero.mobileTargets` adds Android and iOS;
+// `gamero.iosTargets` adds only iOS, so Xcode builds need no Android SDK.
 val mobileTargets = providers.gradleProperty("gamero.mobileTargets").orNull == "true"
+val iosTargets = mobileTargets || providers.gradleProperty("gamero.iosTargets").orNull == "true"
 if (mobileTargets) {
     apply(plugin = "com.android.application")
     apply(plugin = "com.google.gms.google-services")
@@ -27,7 +30,9 @@ kotlin {
             jvmTarget.set(JvmTarget.JVM_11)
         }
     }
-    
+    }
+    if (iosTargets) {
+    // No iosX64: androidx lifecycle-runtime-compose 2.11 does not publish it (Intel simulators unsupported).
     listOf(
         iosArm64(),
         iosSimulatorArm64()

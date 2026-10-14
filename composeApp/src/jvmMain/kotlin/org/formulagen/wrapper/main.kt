@@ -70,8 +70,7 @@ internal fun desktopWebUrl(args: Array<String>, environment: String?): String? {
     if (args.size > 1) return null
     val raw = args.singleOrNull()?.removePrefix("--url=") ?: environment ?: return null
     val uri = runCatching { URI(raw) }.getOrNull() ?: return null
-    if (uri.userInfo != null || uri.host == null || uri.fragment != null) return null
-    if (uri.scheme != "https" && !(uri.scheme == "http" && uri.host in setOf("localhost", "127.0.0.1", "[::1]"))) return null
+    if (!isAllowedWebUrl(uri.scheme, uri.host, uri.userInfo != null, uri.fragment != null)) return null
     return uri.toASCIIString()
 }
 

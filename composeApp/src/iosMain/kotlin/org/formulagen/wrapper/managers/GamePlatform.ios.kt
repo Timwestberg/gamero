@@ -15,3 +15,14 @@ actual fun platformCompleteGame() {
 }
 
 
+actual fun platformPauseGame() {
+    postNotification(name = "onPauseGame")
+}
+
+actual fun platformResumeGame() {
+    postNotification(name = "onResumeGame")
+}
+
+actual fun platformQuitGame() {
+    postNotification(name = "onQuitGame")
+}

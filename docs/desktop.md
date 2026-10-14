@@ -36,11 +36,12 @@ Do not use native launch alone as Hovel task/result/reconnect acceptance.
 
 ## Build boundaries
 
-Desktop is the default target. Mobile targets are enabled with
-`-Pgamero.mobileTargets=true`; with it, the Android debug build
+Desktop is the default target. `-Pgamero.iosTargets=true` adds only the iOS
+targets and needs no Android SDK; see [ios.md](ios.md). `-Pgamero.mobileTargets=true`
+adds both Android and iOS; with it, the Android debug build
 (`:composeApp:assembleDebug`) compiles inside the shared `composeApp` module.
-iOS mobile builds are not validated, and the `iosX64` target is removed because
-Compose 1.12 no longer publishes it.
+There is no `iosX64` target: Compose 1.12 and androidx lifecycle 2.11 do not
+publish it.
 Mobile-only package versions are retained. Unsupported legacy mobile functions
 fail explicitly on desktop and are not exposed through its WebView bridge.
 
