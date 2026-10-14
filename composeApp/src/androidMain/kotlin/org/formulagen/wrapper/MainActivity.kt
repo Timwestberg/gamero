@@ -9,6 +9,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.google.firebase.Firebase
 import com.google.firebase.initialize
 import org.formulagen.wrapper.di.initializationKoin
+import org.formulagen.wrapper.hovel.HovelAndroidApp
+import org.formulagen.wrapper.hovel.hovelWebUrl
 import org.formulagen.wrapper.platform.AppContext
 
 class MainActivity : ComponentActivity() {
@@ -19,8 +21,9 @@ class MainActivity : ComponentActivity() {
         Firebase.initialize(context = this)
         initializationKoin()
         AppContext.init(this)
+        val hovelUrl = hovelWebUrl(intent, resources)
         setContent {
-            App()
+            if (hovelUrl != null) HovelAndroidApp(hovelUrl) else App()
         }
     }
 }

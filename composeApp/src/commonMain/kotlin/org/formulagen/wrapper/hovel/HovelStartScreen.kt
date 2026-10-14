@@ -16,13 +16,16 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,17 +55,17 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import westbergwrapper.composeapp.generated.resources.Res
-import westbergwrapper.composeapp.generated.resources.hovel_furniture_sheet
-import westbergwrapper.composeapp.generated.resources.hovel_room_shell
-import westbergwrapper.composeapp.generated.resources.hovel_traveler_atlas
-import westbergwrapper.composeapp.generated.resources.pixelify_sans
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
 import org.jetbrains.compose.resources.Font
 import org.jetbrains.compose.resources.imageResource
 import org.jetbrains.compose.ui.tooling.preview.Preview
+import westbergwrapper.composeapp.generated.resources.Res
+import westbergwrapper.composeapp.generated.resources.hovel_furniture_sheet
+import westbergwrapper.composeapp.generated.resources.hovel_room_shell
+import westbergwrapper.composeapp.generated.resources.hovel_traveler_atlas
+import westbergwrapper.composeapp.generated.resources.pixelify_sans
 
 /**
  * Hovel start screen, drawn with the game's own art (see composeResources/files/hovel/PROVENANCE.md).
@@ -199,8 +203,13 @@ fun HovelLaunchScreen(
     art: HovelArt = rememberHovelArt(),
     modifier: Modifier = Modifier,
 ) {
-    val intro = remember { Animatable(0f) }
-    LaunchedEffect(Unit) { intro.animateTo(1f, tween(durationMillis, easing = LinearEasing)) }
+    // Saved so the launch plays once, not again when an Android activity is recreated.
+    var played by rememberSaveable { mutableStateOf(false) }
+    val intro = remember { Animatable(if (played) 1f else 0f) }
+    LaunchedEffect(Unit) {
+        intro.animateTo(1f, tween(durationMillis, easing = LinearEasing))
+        played = true
+    }
     KeeperStartScreen(state, onContinue, footnote, art, modifier, intro = intro.value)
 }
 
@@ -235,6 +244,7 @@ fun KeeperStartScreen(
             KeeperPanel(
                 state, onContinue, art, footnote, compact = true, beat.title,
                 panelMotion.align(Alignment.BottomCenter).fillMaxWidth().onSizeChanged { panelHeight = it.height }
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(horizontal = 24.dp).padding(bottom = 32.dp),
             )
         } else {
