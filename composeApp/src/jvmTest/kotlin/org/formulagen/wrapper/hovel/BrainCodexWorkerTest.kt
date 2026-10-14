@@ -91,7 +91,7 @@ class BrainCodexWorkerTest {
                     require(claim == null || claim == proposed); claim = proposed; record!!
                 }
                 "brain/presentation" -> {
-                    require(claim == body.getValue("claimId").jsonPrimitive.content)
+                    if (claim != body.getValue("claimId").jsonPrimitive.content) throw HovelRejectedException()
                     val old = record!!
                     val result = old.getValue("result").jsonObject
                     record = JsonObject(old + ("result" to JsonObject(result + ("presentation" to
@@ -232,7 +232,7 @@ class BrainCodexWorkerTest {
             TaskProvider { error("must not present") }, BrainHovelRemote(backend), {}, BrainHovelRemote(backend)::authorizeLaunch)
         backend.fenced = true
         val rejected = assertFailsWith<HovelRejectedException> { worker.execute(a) }
-        assertEquals(1, rejected.suppressed.size)
+        assertTrue(rejected.suppressed.single() is HovelRejectedException)
         assertNull(backend.claim)
         assertFails { backend.retry() }
     }
@@ -270,7 +270,7 @@ class BrainCodexWorkerTest {
             // A rejection never counts as authorization, even when the body otherwise looks like a grant.
             status = 409; assertFailsWith<HovelRejectedException> { enabled.authorizeLaunch(a, "execution", record) }
             // Only a refusal is definitive; any other failure may hide a committed request.
-            status = 500; assertFalse(runCatching { enabled.authorizeLaunch(a, "execution", record) }.exceptionOrNull() is HovelRejectedException)
+            status = 500; assertFalse(assertFails { enabled.authorizeLaunch(a, "execution", record) } is HovelRejectedException)
             status = 200
             authorized = false; assertFails { enabled.authorizeLaunch(a, "execution", record) }; authorized = true
             echoedClaim = id(); assertFails { enabled.authorizeLaunch(a, "execution", record) }

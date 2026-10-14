@@ -45,7 +45,11 @@ data class BrainCodexAssignment(
 
 data class BrainPresentationTicket(val taskId: String, val attemptId: String, val revision: Long, val state: String)
 
-/** Implemented through the established host-scoped transport. None of these methods creates credentials. */
+/**
+ * Implemented through the established host-scoped transport. None of these methods creates credentials.
+ * A server refusal, which commits nothing, must surface as [HovelRejectedException] (also from authorizeLaunch);
+ * any other failure may hide a committed request. The worker releases a held presentation claim only on a refusal.
+ */
 interface BrainWorkerRemote {
     fun admit(assignment: BrainCodexAssignment, execution: ExecutionRecord)
     fun outcome(assignment: BrainCodexAssignment, execution: ExecutionRecord): BrainPresentationTicket
@@ -119,7 +123,8 @@ class BrainCodexWorker(
                 } catch (rejected: HovelRejectedException) {
                     // The server fences a re-claim on current configuration, host and account. An earlier delivery may
                     // already hold this claim, so release it as cancelled instead of leaving it pending. The server
-                    // accepts that from the holder after a fence and refuses it when this ID holds nothing.
+                    // accepts that from the holder after a fence and refuses it when this ID holds nothing. The journal
+                    // cannot tell a first claim from a replay, so a refused first claim sends one cancel that fails.
                     runCatching { remote.cancelPresentation(assignment, ticket, record.claimId) }
                         .exceptionOrNull()?.let(rejected::addSuppressed)
                     throw rejected
