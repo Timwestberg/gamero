@@ -33,7 +33,9 @@ fun MainViewController() = ComposeUIViewController {
         DisposableEffect(Unit) { onDispose { attached[0]?.close() } }
         App(url, onWebViewCreated = { webView ->
             attached[0]?.close()
-            attached[0] = IosHostBridge(webView, HostBridge(HOVEL_PRODUCT, url, iosHostCapabilities(appVersion()), iosHovelBridgePacks()))
+            // Only Hovel adds its packs, so another product's host answers unknown-method for companion.*.
+            val products = if (isIosHovelProduct()) iosHovelBridgePacks() else emptyList()
+            attached[0] = IosHostBridge(webView, HostBridge(if (isIosHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT, url, iosHostCapabilities(appVersion()), products))
         }, onPageLoaded = { loadedUrl, title ->
             // Smoke-test marker; mirrors desktop's GAMERO_JCEF_INITIALIZED.
             log(LogLevel.Info, TAG, "GAMERO_PAGE_LOADED origin=${originOf(loadedUrl)} title=$title")

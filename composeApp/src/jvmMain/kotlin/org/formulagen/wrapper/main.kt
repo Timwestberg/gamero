@@ -226,7 +226,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                 resources.bridge?.close()
                 resources.bridge = NativeBridge(
                     browser = browser,
-                    product = if (isHovelProduct()) HOVEL_PRODUCT else "Gamero",
+                    product = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT,
                     trustedUrl = url,
                     capabilities = desktopHostCapabilities(),
                     products = if (isHovelProduct()) hovelBridgePacks(companion) else emptyList(),
