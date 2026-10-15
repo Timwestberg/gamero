@@ -45,7 +45,9 @@ internal class BoundCapability(
  * A product passes its packs to the router when it starts the bridge, so the
  * shared core never names a product. A product passes
  * `pack(Capability.Unsupported)` on a platform where it has no such capability,
- * so its methods answer `unsupported`, not `unknown-method`.
+ * so its methods answer `unsupported`, not `unknown-method`. A host that does
+ * not run the product has no pack, and its methods answer `unknown-method`,
+ * as the contract says.
  */
 class CapabilityPack internal constructor(internal val bound: BoundCapability)
 
