@@ -6,6 +6,8 @@ Tests on every target: `tools/test-all-targets.sh` runs the JVM, Android unit an
 
 Mac desktop development: [build and launch guide](docs/desktop.md). Desktop is the default build target; mobile targets are opt-in.
 
+Hovel Mac companion and native bridge trust rules: [docs/hovel-companion.md](docs/hovel-companion.md).
+
 iOS (simulator): [build and run guide](docs/ios.md). Smoke test: `tools/ios-smoke.sh` builds the app, loads Hovel on a throwaway simulator, and fails unless the page loads. Android remains outside the current verification scope.
 
 Android: build with `./gradlew -Pgamero.mobileTargets=true :composeApp:assembleDebug`

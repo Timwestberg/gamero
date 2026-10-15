@@ -25,4 +25,12 @@ class IosWebUrlTest {
         assertEquals("https://example.com", originOf("https://example.com/hovel.html"))
         assertEquals("http://[::1]:8080", originOf("http://[::1]:8080/hovel.html"))
     }
+
+    @Test fun picksTheProductFromTheLaunchEnvironmentThenInfoPlist() {
+        assertNull(iosProduct(null, null))
+        assertNull(iosProduct("", " "))
+        assertEquals("hovel", iosProduct(null, "hovel"))
+        assertEquals("hovel", iosProduct(" hovel ", "gamero"))
+        assertEquals("gamero", iosProduct("  ", "gamero"))
+    }
 }

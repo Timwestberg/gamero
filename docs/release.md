@@ -47,7 +47,7 @@ run, plus the best time seen, to show whether a change made a step faster.
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `GAMERO_WEB_URL` | `http://127.0.0.1:8080/hovel.html` | Page the app opens. Checked against the same rule as `WebUrlPolicy.kt`: HTTPS, or http on loopback; a host, no userinfo, no fragment. Android requires HTTPS. |
-| `GAMERO_PRODUCT` | `hovel` | Product the app presents. `hovel` shows the Hovel launch and start screen on desktop and Android. |
+| `GAMERO_PRODUCT` | `hovel` | Product the app presents. `hovel` shows the Hovel launch and start screen on desktop, Android and iOS (see [ios.md](ios.md#choose-the-product)). |
 | `GAMERO_VERSION` | `1.0.0` | Version name. `MAJOR.MINOR.PATCH` with `MAJOR > 0`, because macOS packaging rejects `0.x`. |
 | `GAMERO_BUILD_NUMBER` | `1` | Android `versionCode` and iOS `CURRENT_PROJECT_VERSION`. Raise it for every store upload. |
 
