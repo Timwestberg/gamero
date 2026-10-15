@@ -8,8 +8,8 @@ When a run spawns a component superfan, it passes that component's full entry,
 the design principles, and the superfan rules. A subagent knows only what it is
 given.
 
-Last refreshed 2026-10-14 from each repo's default branch: gamero `2a6c80a`,
-game-platform `f696cd9`, server-platform `634f71b`, tool-webkit `8ac8b0a`.
+Last refreshed 2026-10-15 from each repo's default branch: gamero `16bea67`,
+game-platform `11fde58`, server-platform `e038975`, tool-webkit `8ac8b0a`.
 Components 9 and 10 added 2026-10-15 from gamero `37f82ef` and game-platform
 `5f7a2ff`.
 Seeded from the Linear document "Hovel component superfan briefs".
@@ -143,8 +143,8 @@ and say so.
   #124 (run the Hovel migration with that deploy). The home read pages task
   summaries since #125; clients must not expect full tasks in the snapshot. The
   coverage gate was red on main until #129. No Prometheus metrics or alerts exist
-  for Hovel yet. The perf scripts call the Brain feedback route too
-  (`perf/http/hovel.ts`, `perf/http/hovel-brain.ts`).
+  for Hovel yet. `perf/http/hovel.ts` calls the Brain feedback route, and
+  `perf/http/hovel-brain.ts` seeds the data for that phase.
 - **Cares most about:** heartbeat cost staying flat as history grows, host-token
   auth, and caps.
 
@@ -225,7 +225,9 @@ and say so.
   `jvmMain/.../main.kt`, `BrowserLifecycle.kt`, `BrowserReadiness.kt`,
   `PersistentDesktopBrowser.kt`, `companion/NativeBridge.kt`,
   `hovel/HovelCompanion.kt`, `HovelHostAdapter.kt`, `HovelHostSession.kt`,
-  `companion/MacHostCredentials.kt`. Docs `docs/desktop.md`,
+  `companion/MacHostCredentials.kt`; the shared host-bridge.v2 router in
+  `commonMain/.../bridge/` (`BridgeRouter.kt`, `BridgeProtocol.kt`, merged
+  in #15). Docs `docs/desktop.md`,
   `docs/hovel-native-validation.md`, `docs/browser-profile-review.md`.
 - **Healthy looks like:** `GAMERO_JCEF_INITIALIZED` before the browser shows,
   no `GAMERO_RUNTIME_FAILED`, close within 15 s. The bridge accepts only the
@@ -235,8 +237,9 @@ and say so.
   `registration.json` 0600 in a 0700 dir, the web side sees only the token hash,
   transport 15 s timeout, 16 MiB cap, no redirects, heartbeat every 10 s.
 - **Watch:** `./gradlew :composeApp:jvmTest :composeApp:jvmJar --console=plain`
-  (JDK 21, works in the cloud); `HovelAdapterTest`, `BrowserLifecycleTest`,
-  `BrowserReadinessTest`, `DesktopConfigurationTest`. Live JCEF, Keychain and real
+  (JDK 21; in the cloud only where dl.google.com is reachable);
+  `HovelAdapterTest`, `BrowserLifecycleTest`, `BrowserReadinessTest`,
+  `DesktopConfigurationTest`, `BridgeRouterTest`. Live JCEF, Keychain and real
   Codex runs need a Mac (`hovel-local-env-#` folder).
 - **Known quirks:** Gradle success is never proof the page rendered. The
   persistent browser profile fix (FOR-80) is not yet Mac-validated. Account
@@ -284,7 +287,8 @@ and say so.
   (Mac only), `tools/ios-smoke.sh`, `WebUrlPolicyTest`, `IosWebUrlTest`.
 - **Known quirks and gaps:** Hovel runs as remote UI only: no Connect computer,
   no companion, no `gameroQuery` bridge (`NativeBridge.ios.kt` only posts
-  NSNotifications; plan FOR-120, draft #28). No `iosX64` target. Sign-in needs HTTPS.
+  NSNotifications). Draft #28 (plan FOR-120) adds the host-bridge.v2
+  `gameroHost` transport, not `gameroQuery`. No `iosX64` target. Sign-in needs HTTPS.
   `SessionManager.kt:31` logout is `TODO()` and crashes. The iOS start screen
   merged as #24; the smoke script does not exercise the Hovel path yet.
 - **Cares most about:** parity with desktop where the platform allows it, and
