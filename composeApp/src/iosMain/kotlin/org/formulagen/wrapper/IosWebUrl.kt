@@ -29,6 +29,17 @@ internal fun resolveIosWebUrl(): String? = iosWebUrl(
     infoPlist = NSBundle.mainBundle.objectForInfoDictionaryKey(WEB_URL_INFO_PLIST_KEY) as? String,
 )
 
+/** Launch-environment variable and Info.plist key that name the product, as `GAMERO_PRODUCT` does on desktop. */
+internal const val PRODUCT_ENVIRONMENT_KEY = "GAMERO_PRODUCT"
+internal const val PRODUCT_INFO_PLIST_KEY = "GameroProduct"
+
+/** True when the launch environment, or else Info.plist, names Hovel as the product. */
+internal fun isIosHovelProduct(): Boolean {
+    val environment = NSProcessInfo.processInfo.environment[PRODUCT_ENVIRONMENT_KEY] as? String
+    val infoPlist = NSBundle.mainBundle.objectForInfoDictionaryKey(PRODUCT_INFO_PLIST_KEY) as? String
+    return listOf(environment, infoPlist).firstOrNull { !it.isNullOrBlank() }?.trim() == "hovel"
+}
+
 /** The `scheme://host[:port]` origin of [url], or [url] itself when it cannot be parsed. */
 internal fun originOf(url: String): String {
     val components = NSURLComponents.componentsWithString(url) ?: return url

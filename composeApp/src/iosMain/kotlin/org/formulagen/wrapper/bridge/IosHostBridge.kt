@@ -36,17 +36,22 @@ class IosHostBridge(private val webView: WKWebView, private val bridge: HostBrid
             val frame = message.frameInfo
             when (val body = message.body) {
                 is String -> transport.receive(body, PageFrame(frame.mainFrame, originOf(frame)), { json -> onMain { replyHandler(json, null) } })
-                else -> {
+                else -> if (isDocumentStart(body)) {
                     // The document-start script. A page can send the same thing, which only ends its own context.
                     if (frame.mainFrame) transport.documentStarted()
                     replyHandler(null, null)
+                } else {
+                    // Anything else is a client bug; it must not end the context silently.
+                    replyHandler(bridgeFailureEnvelope(BridgeErrorCode.INVALID), null)
                 }
             }
         }
     }
 
     init {
-        controller.addUserScript(
+        // Attaching again to the same view must not add a second document-start script.
+        val added = controller.userScripts.any { (it as? WKUserScript)?.source == DOCUMENT_START_SCRIPT }
+        if (!added) controller.addUserScript(
             WKUserScript(
                 source = DOCUMENT_START_SCRIPT,
                 injectionTime = WKUserScriptInjectionTime.WKUserScriptInjectionTimeAtDocumentStart,
@@ -62,8 +67,14 @@ class IosHostBridge(private val webView: WKWebView, private val bridge: HostBrid
         bridge.close()
     }
 
-    /** Hands [json] to the page's `gameroHostEvent` as an argument. The value is never pasted into script. */
+    /**
+     * Hands [json] to the page's `gameroHostEvent` as an argument. The value is
+     * never pasted into script. An event queued before a navigation is dropped
+     * if the main frame now shows a page from another origin.
+     */
     private fun postEvent(json: String) {
+        val current = webView.URL?.absoluteString ?: return
+        if (!bridge.origin.matches(current)) return
         webView.callAsyncJavaScript(
             EVENT_SCRIPT,
             arguments = mapOf<Any?, Any?>("event" to json),
@@ -78,8 +89,14 @@ class IosHostBridge(private val webView: WKWebView, private val bridge: HostBrid
     private fun originOf(frame: platform.WebKit.WKFrameInfo): String {
         val origin = frame.securityOrigin
         val port = origin.port.toInt().takeIf { it != 0 }?.let { ":$it" } ?: ""
-        return "${origin.protocol}://${origin.host}$port"
+        // WebKit gives an IPv6 host without its brackets.
+        val host = origin.host.let { if (':' in it) "[$it]" else it }
+        return "${origin.protocol}://$host$port"
     }
+
+    /** Exactly `{documentStart: true}`, as [DOCUMENT_START_SCRIPT] sends it. */
+    private fun isDocumentStart(body: Any?): Boolean =
+        body is Map<*, *> && body.size == 1 && (body["documentStart"] as? NSNumber)?.boolValue == true
 
     companion object {
         const val OBJECT_NAME = "gameroHost"
