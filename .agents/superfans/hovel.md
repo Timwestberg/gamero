@@ -10,6 +10,8 @@ given.
 
 Last refreshed 2026-10-14 from each repo's default branch: gamero `2a6c80a`,
 game-platform `f696cd9`, server-platform `634f71b`, tool-webkit `8ac8b0a`.
+Components 9 and 10 added 2026-10-15 from gamero `37f82ef` and game-platform
+`5f7a2ff`.
 Seeded from the Linear document "Hovel component superfan briefs".
 
 The brief lives in gamero because the Hovel routine is told to read it here. It
@@ -26,6 +28,7 @@ computer. It spans four repos:
 | `Timwestberg/game-platform` | Hovel web app, Godot room and character, room and character kits |
 | `Timwestberg/gamero` | Kotlin Multiplatform shells: Mac companion, Android, iOS, host bridge |
 | `Timwestberg/tool-webkit` | Shared SolidJS building blocks used by the web app |
+| `Timwestberg/hovel-editor` | The Hovel Godot editor fork (not created yet) |
 
 ## What success looks like
 
@@ -303,6 +306,59 @@ and say so.
   `string` (`connections.types.ts:4`); browser-storage is outside the coverage
   floor and its parser overrides never run on string or boolean keys.
 - **Cares most about:** accessibility and never misreporting state.
+
+### 9. Godot engine layer (game-platform, gamero)
+
+- **Lives in:** game-platform `packages/game-bridge/godot4/games/hovel/`
+  (`project.godot`, `export_presets.cfg`, `room.gd`), `packages/game-bridge/src/godot.ts`
+  (the web loader), `scripts/build-web.sh` (export and version check). gamero
+  has no Godot dependency: every shell loads the Hovel web app, and with it the
+  Godot web export, in a web view (`commonMain/.../managers/WebViewManager.kt`,
+  `WebViewUserAgent.kt`).
+- **Healthy looks like:** each platform runs the Godot build made for it when
+  that build is Available (same source and Godot version as the editor, starts
+  inside Hovel on that platform, passes that platform's Hovel tests), and the
+  Godot web engine otherwise. Each platform has one build-time place that
+  selects native or web. A platform with a native engine keeps both variants
+  building. A capability behaves the same on either engine: API shape, errors,
+  threading, lifecycle and "unsupported". Every engine and the editor come from
+  one pinned stable Godot version.
+- **Watch:** from the Hovel Godot project, `godot --headless --editor --import`,
+  `godot --headless --export-release Web builds/web/hovel.html` (Godot
+  `4.6.3.stable.official` and its official templates, which download in the
+  cloud), the room checks under component 4, and `pnpm build:web` in
+  game-platform. Android native builds need the Android SDK and iOS needs a Mac;
+  neither exists in the cloud, so use a `hovel-local-env-#` folder.
+- **Known quirks and history:** every platform runs the web engine today; no
+  native engine is started. Hovel pins 4.6 (`project.godot:6`, GL
+  Compatibility, non-threaded Web preset) while the fixture games need 4.7, and
+  `build-web.sh` refuses a mismatched major.minor. `room.gd:10-32` reads and
+  writes the page only when `OS.has_feature("web")`, through `JavaScriptBridge`,
+  so on a native engine the room gets no presentation data. Android WebView's
+  `Version/4.0` token made Emscripten refuse to start the export
+  (`WebViewUserAgent.kt:9-15`). Godot 4.6 ships an embeddable Android library
+  (`org.godotengine:godot:4.6.3.stable` on Maven Central, one engine instance
+  per process, no automatic orientation changes); LibGodot is experimental and
+  desktop-only in 4.6, and has no iOS or Android support yet. The stable docs
+  were on the 4.7 branch on 2026-10-15.
+- **Cares most about:** one engine selector per platform, a web fallback that
+  always builds, and identical behavior on both engines.
+
+### 10. Hovel editor (hovel-editor)
+
+- **Lives in:** `Timwestberg/hovel-editor`, a fork of `godotengine/godot`. It
+  does not exist yet; until it does, Hovel uses the official Godot builds of
+  the pinned version (4.6.3).
+- **Healthy looks like:** the editor and every engine (iOS, Android, web) build
+  from the same fork and Godot version, and the engines include every custom
+  module the editor uses. Hovel changes live in custom modules, editor plugins
+  and build options, not Godot core. Godot's license, copyright notices and
+  trademark policy are kept. Godot upgrades only through an approved plan.
+- **Watch:** Godot's own build instructions for the pinned version (SCons),
+  once the fork exists.
+- **Known quirks:** the routine never creates the repo; the question waits on
+  Tim in an `engine` issue labelled `needs-input`.
+- **Cares most about:** small, mergeable divergence from upstream.
 
 ## Watch sources
 
