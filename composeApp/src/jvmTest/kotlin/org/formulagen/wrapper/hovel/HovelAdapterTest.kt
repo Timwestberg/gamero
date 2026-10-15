@@ -109,8 +109,9 @@ class HovelAdapterTest {
             assertEquals("Connection timed out. Start again from Hovel.", companion.status)
         }
         val next = async(Dispatchers.IO) { runCatching { companion.dispatch("prepareConnection", prepare) } }
-        withTimeout(5000) { while (withContext(Dispatchers.Main) { companion.approval } == null) delay(5) }
-        withContext(Dispatchers.Main) { companion.approval!!.answer.complete(false) }
+        // A leaked lock answers busy at once, so stop waiting for an approval when the call ends.
+        withTimeout(5000) { while (!next.isCompleted && withContext(Dispatchers.Main) { companion.approval } == null) delay(5) }
+        withContext(Dispatchers.Main) { companion.approval?.answer?.complete(false) }
         val declined = next.await().exceptionOrNull()
         assertTrue(declined is IllegalStateException && declined !is org.formulagen.wrapper.bridge.BridgeBusyException, "the next call was busy: $declined")
         companion.close()
