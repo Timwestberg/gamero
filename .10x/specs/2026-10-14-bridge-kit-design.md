@@ -95,7 +95,7 @@ the kit.
    The document id becomes a counter inside `HostBridge`. A platform does not
    make its own id. JCEF, Android and iOS then end contexts by the same rule.
 2. **Typed handlers (G3).** A method binds with the capability as a parameter:
-   `PLAY.handle<Haptics> { haptics, args -> haptics.play(args.effect) }`. The
+   `PLAY.handle { haptics: Haptics, args -> haptics.play(args.effect) }`. The
    binder gets its method list from the handlers. The compiler checks the
    match, and the run-time list check goes away.
 3. **Typed events (G4).** Add `BridgeEvent<D>(name, serializer)`, the same shape
