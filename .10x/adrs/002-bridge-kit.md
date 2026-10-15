@@ -14,7 +14,8 @@ reusable yet:
 
 - The JCEF transport makes its own scope, router, event channel, document id
   and failure log. Android and iOS would copy all of it.
-- No test checks a transport, so nothing proves that each platform rejects
+- No shared transport test runs on every platform. JCEF has its own tests
+  (`JcefV2QueriesTest`), but nothing proves that each platform rejects
   sub-frames, ends a context on navigation, and delivers events the same way.
 - Handlers are matched to methods by list position at run time, and events have
   no types.
