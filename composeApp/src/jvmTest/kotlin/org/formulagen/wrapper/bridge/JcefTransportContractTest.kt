@@ -71,10 +71,10 @@ class JcefHostBridgeTest {
     private val watch = """{"version":2,"method":"watchContext","args":{}}"""
     private fun call(contextId: String) = """{"version":2,"contextId":"$contextId","method":"host.info","args":{}}"""
 
-    private fun TestScope.transport() = JcefHostBridge(
+    private fun TestScope.transport(lifecycle: Capability<Lifecycle> = Capability.Unsupported) = JcefHostBridge(
         HostBridge(
             trustedUrl = trusted,
-            capabilities = HostCapabilities(HostPlatform.DESKTOP, "1.0.0", Capability.Unsupported, Capability.Unsupported, Capability.Unsupported),
+            capabilities = HostCapabilities(HostPlatform.DESKTOP, "1.0.0", Capability.Unsupported, Capability.Unsupported, lifecycle),
             context = backgroundScope.coroutineContext,
         ),
     )
@@ -148,6 +148,19 @@ class JcefHostBridgeTest {
         assertTrue(transport.onQueryCanceled(1))
         settle()
         assertContextOpen(transport, second)
+    }
+
+    @Test
+    fun anOlderWatchGetsNoEventsOnceANewerWatchReplacesItsContext() = runTest {
+        // Query 2 replaces query 1's context and is cancelled before its reply. An event in between reaches neither watch.
+        var pause: () -> Unit = {}
+        val transport = transport(Capability.Supported(Lifecycle { onPause, _ -> pause = onPause; AutoCloseable { } }))
+        val first = ask(transport, watch, persistent = true, queryId = 1)
+        transport.onQuery(watch, true, true, trusted, 2, Answers())
+        assertTrue(transport.onQueryCanceled(2))
+        pause()
+        settle()
+        assertEquals(1, first.successes.size, "the older watch got an event for a context it never held")
     }
 
     private fun TestScope.assertContextOpen(transport: JcefHostBridge, watchAnswers: Answers) {
