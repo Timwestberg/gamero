@@ -167,6 +167,18 @@ class JcefV2QueriesTest {
         assertContextOpen(page, second)
     }
 
+    @Test
+    fun anOlderWatchGetsNoEventsOnceANewerWatchReplacesItsContext() = runTest {
+        // q1 replaces q0's context, and q1 is cancelled before its reply. An event in between reaches neither watch.
+        val page = page()
+        val (_, first) = open(page)
+        page.queries.onQuery(true, trusted, "frame-1", 2, watch, true, Answers())
+        assertTrue(page.queries.onQueryCanceled(2))
+        page.pause()
+        settle()
+        assertEquals(1, first.successes.size, "the older watch got an event for a context it never held")
+    }
+
     private fun TestScope.assertContextOpen(page: Page, watchAnswers: Answers) {
         val contextId = Json.parseToJsonElement(watchAnswers.successes.single()).jsonObject.getValue("contextId").jsonPrimitive.content
         val reply = ask(page, call(contextId), queryId = 3)
