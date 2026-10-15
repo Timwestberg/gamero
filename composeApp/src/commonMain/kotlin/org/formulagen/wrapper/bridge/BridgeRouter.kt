@@ -102,8 +102,11 @@ class BridgeRouter(
             )
             when (check) {
                 is BridgeCheck.Reject ->
-                    if (check.method == null) reply(bridgeFailureEnvelope(check.code))
-                    else reply(BridgeEnvelopes.failure(check.code, unsupportedMessage(check.method)))
+                    if (check.code == BridgeErrorCode.UNSUPPORTED && check.method != null) {
+                        reply(BridgeEnvelopes.failure(check.code, unsupportedMessage(check.method)))
+                    } else {
+                        reply(bridgeFailureEnvelope(check.code))
+                    }
                 BridgeCheck.WatchContext -> {
                     endContextNow()
                     val id = newContextId()

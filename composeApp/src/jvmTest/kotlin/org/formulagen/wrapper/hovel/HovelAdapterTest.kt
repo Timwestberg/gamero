@@ -113,7 +113,7 @@ class HovelAdapterTest {
         withTimeout(5000) { while (!next.isCompleted && withContext(Dispatchers.Main) { companion.approval } == null) delay(5) }
         withContext(Dispatchers.Main) { companion.approval?.answer?.complete(false) }
         val declined = next.await().exceptionOrNull()
-        assertTrue(declined is IllegalStateException && declined !is org.formulagen.wrapper.bridge.BridgeBusyException, "the next call was busy: $declined")
+        assertIs<org.formulagen.wrapper.bridge.BridgeDeclinedException>(declined, "the person's cancel did not answer declined: $declined")
         companion.close()
     }
 
