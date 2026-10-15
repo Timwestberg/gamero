@@ -105,8 +105,11 @@ the kit.
    capabilities that every platform must decide on (`links`, `haptics`,
    `lifecycle`). A product adds its own capabilities as a list of
    `CapabilityPack` values when it starts the bridge. The Hovel desktop entry
-   point adds the companion pack. The parity test checks both sets. Tim chose
-   this option on 2026-10-14 (see "Decision: product capabilities").
+   point adds the companion pack. The parity test checks both sets. A host
+   that does not run a product does not know its methods, so it answers
+   `unknown-method` for them; the contract (server-platform #128) scopes that
+   code to the host's own methods. Tim chose this option on 2026-10-14 (see
+   "Decision: product capabilities").
 5. **Time limit (G6).** Each `BridgeMethod` has a `timeout` with a default of
    30 seconds. The companion methods set a longer value. When the time ends,
    the router cancels the call and answers `failed`. The wire contract does not
