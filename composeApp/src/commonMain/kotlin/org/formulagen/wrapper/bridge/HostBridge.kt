@@ -83,7 +83,13 @@ class HostBridge(
         router.handle(raw, facts) { reply ->
             val contextId = openedContext(reply)
             if (contextId != null && document.load() == documentId) {
-                if (channel.opened(contextId)) events.store(OpenContext(contextId, channel)) else router.endContext(contextId)
+                // This context replaced any older one, so an older channel gets no more events either way.
+                if (channel.opened(contextId)) {
+                    events.store(OpenContext(contextId, channel))
+                } else {
+                    events.store(null)
+                    router.endContext(contextId)
+                }
             }
             channel.reply(reply)
         }
