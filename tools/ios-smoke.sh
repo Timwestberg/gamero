@@ -35,6 +35,8 @@ timeout="${GAMERO_SMOKE_TIMEOUT:-90}"
 cert="${GAMERO_SMOKE_ROOT_CERT:-}"
 # Scheme and host are case-insensitive, so the origin is compared in lowercase.
 origin="$(printf '%s' "$url" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://[^/?#]+).*#\1#' | tr '[:upper:]' '[:lower:]')"
+# The app logs the origin without a default port, as TrustedOrigin.rule does.
+origin="$(printf '%s' "$origin" | sed -E 's#^(https://[^/]+):443$#\1#; s#^(http://[^/]+):80$#\1#')"
 
 fail() { echo "ios-smoke: FAIL: $*" >&2; exit 1; }
 step() { echo "ios-smoke: $*"; }
@@ -120,14 +122,16 @@ done
 if [[ "$product" == hovel ]]; then
   # The bridge logs the first answer each page gets. Any answer, `unsupported` included, proves the
   # round trip; `invalid` means the page and the app disagree on the protocol.
-  answered() { tr -d '\r' <"$out/smoke.log" | grep -o 'GAMERO_BRIDGE_ANSWERED platform=ios product=[^ ]* method=[^ ]* outcome=[^ ]*' | tail -1; }
+  # The page controls its title, which ends the GAMERO_PAGE_LOADED line, so that part of each line
+  # is dropped before looking for the bridge marker: a title can't stand in for it.
+  answered() { tr -d '\r' <"$out/smoke.log" | sed 's/GAMERO_PAGE_LOADED.*//' | grep -o 'GAMERO_BRIDGE_ANSWERED platform=ios product=[^ ]* method=[^ ]* outcome=[^ ]*' | tail -1; }
   while [[ -z "$(answered)" ]]; do
     kill -0 "$console_pid" 2>/dev/null || { tail -20 "$out/smoke.log" >&2; fail "app exited before the bridge answered"; }
     (( SECONDS < deadline )) || fail "no GAMERO_BRIDGE_ANSWERED within ${timeout}s; the page never called the host bridge"
     sleep 1
   done
   bridge="$(answered)"
-  [[ "$bridge" != *" outcome=invalid" && "$bridge" != *" outcome=forbidden" ]] || fail "$bridge"
+  [[ "$bridge" != *" outcome=invalid" ]] || fail "$bridge"
   expected="$expected; $bridge"
 fi
 

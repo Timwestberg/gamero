@@ -66,6 +66,8 @@ class HostBridge(
     /**
      * Gets the first answer each document of the trusted main frame receives: the request's
      * method (null when it had none) and `ok` or the error code. By default it logs [SmokeMarkers.bridgeAnswered].
+     * A transport that learns of navigation only when a watch ends (JCEF) calls [endContext], which
+     * also counts as a new document here, so a reload logs again on every platform.
      */
     private val onFirstAnswer: (method: String?, outcome: String) -> Unit = { method, outcome ->
         log(LogLevel.Info, "HostBridge", SmokeMarkers.bridgeAnswered(capabilities.platform, product, method, outcome))
@@ -126,6 +128,7 @@ class HostBridge(
      * away, and [documentChanged] when the whole document does.
      */
     fun endContext(contextId: String) {
+        answered.store(-1)
         events.load()?.takeIf { it.id == contextId }?.let { events.compareAndSet(it, null) }
         router.endContext(contextId)
     }

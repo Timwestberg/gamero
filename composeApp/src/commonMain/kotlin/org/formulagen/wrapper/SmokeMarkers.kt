@@ -8,7 +8,7 @@ import org.formulagen.wrapper.bridge.TrustedOrigin
  * The log lines the smoke scripts wait for (`tools/ios-smoke.sh`, `tools/android-smoke.sh`,
  * docs/desktop.md). Every shell logs the same lines, so one pass rule covers every platform.
  * Nothing the page controls reaches the log unchecked: the URL is reduced to its origin, the
- * title loses line breaks, and a method name that is not a v2 method name is logged as `invalid`.
+ * title loses line breaks and other control characters, and a method name that is not a v2 method name is logged as `invalid`.
  */
 object SmokeMarkers {
     /** `GAMERO_PAGE_LOADED origin=<scheme://host[:port]> title=<title>`. */
@@ -26,5 +26,6 @@ object SmokeMarkers {
         return "GAMERO_BRIDGE_ANSWERED platform=${platform.wireName} product=${oneLine(product)} method=$name outcome=${oneLine(outcome)}"
     }
 
-    private fun oneLine(value: String): String = value.replace(Regex("[\\r\\n]+"), " ")
+    /** Control characters, including Unicode line and paragraph separators, become one space. */
+    private fun oneLine(value: String): String = value.replace(Regex("[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]+"), " ")
 }

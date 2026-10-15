@@ -198,16 +198,19 @@ private class LaunchBeat(t: Float) {
     val title = stepped(phase(t, 0.78f, 0.94f), 4)
 }
 
-/** Launch setting that makes a debug build step inside on its own, for the smoke scripts. */
+/**
+ * Launch setting that steps inside on its own, for the smoke scripts. Android and iOS honor it
+ * only in debug builds; desktop reads it from the environment only, never from a baked-in property.
+ */
 const val AUTO_ENTER_KEY = "GAMERO_AUTO_ENTER"
 
-/** True for `1` or `true`, trimmed, any case. Each platform reads it only in debug builds. */
+/** True for `1` or `true`, trimmed, any case. */
 fun autoEnterRequested(value: String?): Boolean = value?.trim()?.lowercase() in setOf("1", "true")
 
 /**
  * Plays the launch animation once, then settles on [KeeperStartScreen]. With [autoEnter], it
  * calls [onContinue] once the launch has played and the state is [HovelStartState.Ready], as a
- * tap on the door would. Only the smoke scripts turn it on, and only in debug builds.
+ * tap on the door would. Only the smoke scripts turn it on (see [AUTO_ENTER_KEY]).
  */
 @Composable
 fun HovelLaunchScreen(

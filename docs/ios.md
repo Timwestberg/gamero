@@ -172,8 +172,8 @@ The script:
    The title must match exactly, so `Hovel Error` fails.
 5. For Hovel, also waits for `GAMERO_BRIDGE_ANSWERED platform=ios product=Hovel
    method=<method> outcome=<outcome>`, the first answer the host bridge gave
-   the page. Any outcome passes, `unsupported` included, except `invalid` or
-   `forbidden`. Both markers must arrive within 90 seconds of launch.
+   the page. Any outcome passes, `unsupported` included, except `invalid`.
+   Both markers must arrive within 90 seconds of launch.
 6. Saves `build/ios/smoke.png` and deletes the simulator.
 
 It exits non-zero on build failure, crash, or timeout, and leaves the build log

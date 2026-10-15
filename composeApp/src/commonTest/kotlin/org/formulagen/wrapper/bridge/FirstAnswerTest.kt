@@ -71,6 +71,16 @@ class FirstAnswerTest {
         )
     }
 
+    @Test
+    fun anEndedWatchCountsAsANewDocumentForTransportsThatOnlySeeThat() = runTest {
+        val bridge = bridge()
+        send(bridge, WATCH)
+        bridge.endContext(CONTEXTS[0])
+        send(bridge, WATCH)
+        send(bridge, call(CONTEXTS[1], "host.info"))
+        assertEquals(listOf<Pair<String?, String>>("watchContext" to "ok", "watchContext" to "ok"), answers)
+    }
+
     private companion object {
         const val TRUSTED_URL = "https://hovel.example/hovel.html"
         const val WATCH = """{"version":2,"method":"watchContext","args":{}}"""

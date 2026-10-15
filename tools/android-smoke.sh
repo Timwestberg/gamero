@@ -11,6 +11,7 @@
 #   GAMERO_EXPECTED_TITLE  document title that proves the page loaded (default Hovel)
 #   GAMERO_SMOKE_TIMEOUT   seconds to wait for the page and the bridge (default 90)
 #   GAMERO_AVD             emulator to boot when no device is attached (default Pixel_8_Pro_API_34)
+#   ANDROID_SERIAL         device to use when several are attached (adb reads it)
 #   ANDROID_HOME           Android SDK (default: local.properties sdk.dir, then ~/Library/Android/sdk, ~/Android/Sdk)
 #   BUILD_TIMINGS_FILE     CSV that every step's duration is appended to (default .build-timings.csv)
 #
@@ -40,11 +41,14 @@ record() {
   [[ -s "$timings_file" ]] || echo "run_id,finished_at,script,step,seconds,detail,commit,host" >"$timings_file"
   printf '%s,%s,android-smoke,%s,%s,%s,%s,%s\n' "$run_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "${3//,/;}" "$commit" "$host" >>"$timings_file"
 }
-timed() { local name="$1" begun=$SECONDS; shift; "$@"; record "$name" $((SECONDS - begun)) ""; }
+# Returns the command's status: under `||`, set -e would not stop a failing command here.
+timed() { local name="$1" begun=$SECONDS rc=0; shift; "$@" || rc=$?; record "$name" $((SECONDS - begun)) "${rc/#0/}"; return $rc; }
 
 [[ "$url" =~ ^[Hh][Tt][Tt][Pp][Ss]:// ]] || fail "set GAMERO_WEB_URL to an HTTPS page the emulator trusts; the app opens HTTPS only"
 # Scheme and host are case-insensitive, so the origin is compared in lowercase.
 origin="$(printf '%s' "$url" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://[^/?#]+).*#\1#' | tr '[:upper:]' '[:lower:]')"
+# The app logs the origin without a default port, as TrustedOrigin.rule does.
+origin="$(printf '%s' "$origin" | sed -E 's#^(https://[^/]+):443$#\1#; s#^(http://[^/]+):80$#\1#')"
 authority="${origin#https://}"
 port=""
 if [[ "$authority" =~ ^(localhost|127\.0\.0\.1)(:([0-9]+))?$ ]]; then port="${BASH_REMATCH[3]:-443}"; fi
@@ -60,6 +64,8 @@ adb="$ANDROID_HOME/platform-tools/adb"
 [[ -x "$adb" ]] || fail "no adb at $adb"
 
 mkdir -p "$out"
+# A failed build must not leave an older APK to install.
+rm -f composeApp/build/outputs/apk/debug/*.apk
 step "building the debug app (log: $out/gradle.log)"
 timed build ./gradlew -Pgamero.mobileTargets=true :composeApp:assembleDebug >"$out/gradle.log" 2>&1 \
   || { grep -E "^e: |error:|FAILURE" "$out/gradle.log" | head -20 >&2; fail "build failed"; }
@@ -75,7 +81,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! "$adb" get-state >/dev/null 2>&1; then
+devices="$("$adb" devices | awk 'NR > 1 && $2 == "device"' | wc -l | tr -d ' ')"
+(( devices <= 1 )) || [[ -n "${ANDROID_SERIAL:-}" ]] || fail "$devices devices attached; set ANDROID_SERIAL to pick one"
+if [[ -n "${ANDROID_SERIAL:-}" ]]; then
+  "$adb" get-state >/dev/null 2>&1 || fail "ANDROID_SERIAL $ANDROID_SERIAL is not attached"
+elif (( devices == 0 )); then
   step "booting emulator $avd"
   "$ANDROID_HOME/emulator/emulator" -avd "$avd" -no-snapshot-save -no-audio >"$out/emulator.log" 2>&1 &
   started_emulator=1
@@ -115,7 +125,9 @@ page_loaded() {
       if (tolower(substr(rest, 1, m - 1)) == o && substr(rest, m + 7) == t) found = 1 }
     END { exit !found }'
 }
-answered() { tr -d '\r' <"$out/smoke.log" | grep -o 'GAMERO_BRIDGE_ANSWERED platform=android product=[^ ]* method=[^ ]* outcome=[^ ]*' | tail -1; }
+# A page title is page-controlled and ends the GAMERO_PAGE_LOADED line, so that part of each line is
+# dropped before looking for the bridge marker: a title can't stand in for it.
+answered() { tr -d '\r' <"$out/smoke.log" | sed 's/GAMERO_PAGE_LOADED.*//' | grep -o 'GAMERO_BRIDGE_ANSWERED platform=android product=[^ ]* method=[^ ]* outcome=[^ ]*' | tail -1; }
 running() { "$adb" shell pidof "$package" >/dev/null 2>&1; }
 
 deadline=$((SECONDS + timeout))
@@ -135,7 +147,7 @@ while [[ -z "$(answered)" ]]; do
 done
 bridge="$(answered)"
 record bridge_answered $((SECONDS - launched)) "${bridge##* outcome=}"
-[[ "$bridge" != *" outcome=invalid" && "$bridge" != *" outcome=forbidden" ]] || fail "$bridge"
+[[ "$bridge" != *" outcome=invalid" ]] || fail "$bridge"
 
 "$adb" exec-out screencap -p >"$out/smoke.png" 2>/dev/null || step "warning: screenshot failed"
 step "PASS: $expected; $bridge (screenshot: $out/smoke.png)"

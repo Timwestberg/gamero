@@ -16,6 +16,10 @@ class SmokeMarkersTest {
         )
         assertEquals("GAMERO_PAGE_LOADED origin=https://hovel.example title=null", SmokeMarkers.pageLoaded("https://hovel.example/", null))
         assertEquals("GAMERO_PAGE_LOADED origin=invalid title=", SmokeMarkers.pageLoaded("file:///etc/passwd", ""))
+        assertEquals(
+            "GAMERO_PAGE_LOADED origin=https://hovel.example title=a b c d",
+            SmokeMarkers.pageLoaded("https://hovel.example:443/", "a\u2028b\u0085c\u0000d"),
+        )
     }
 
     @Test
