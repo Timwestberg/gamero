@@ -47,9 +47,8 @@ internal class JcefV2Queries(private val policy: NativeOriginPolicy, private val
                 router.handle(request, facts) { reply ->
                     val opened = "contextId" in Json.parseToJsonElement(reply).jsonObject
                     synchronized(lock) {
-                        val live = pendingWatches.remove(queryId)
-                        // A watch that JCEF cancelled before this reply must not keep the context open.
-                        if (opened && live) watch = queryId to callback else if (opened) router.endContext()
+                        // A watch that JCEF cancelled before this reply has already ended its context.
+                        if (pendingWatches.remove(queryId) && opened) watch = queryId to callback
                     }
                     callback.success(reply)
                 }
@@ -58,9 +57,17 @@ internal class JcefV2Queries(private val policy: NativeOriginPolicy, private val
         return true
     }
 
-    /** Returns true when [queryId] was a version 2 watch query. Cancelling the open one ends the context. */
+    /**
+     * Returns true when [queryId] was a version 2 watch query, and ends the
+     * context. For a watch the router has not answered yet, the end is queued
+     * behind it on the router, so it closes the context that watch opens and
+     * not one a later watch opens.
+     */
     fun onQueryCanceled(queryId: Long): Boolean = synchronized(lock) {
-        if (pendingWatches.remove(queryId)) return true
+        if (pendingWatches.remove(queryId)) {
+            router.endContext()
+            return true
+        }
         if (watch?.first != queryId) return false
         watch = null
         router.endContext()
