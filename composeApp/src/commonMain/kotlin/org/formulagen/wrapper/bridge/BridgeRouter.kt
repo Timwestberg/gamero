@@ -52,11 +52,22 @@ class BridgeRouter(
     private var contextId: String? = null
     private var documentId: String? = null
     private val pending = mutableSetOf<Job>()
-    private val events = object : EventSink {
-        override fun <D> emit(event: BridgeEvent<D>, data: D) = this@BridgeRouter.emit(event, data)
-    }
     private var subscriptions: List<AutoCloseable> =
-        bound.mapNotNull { capability -> capability.observe?.invoke(events) }
+        bound.mapNotNull { capability -> capability.observe?.invoke(sinkFor(capability)) }
+
+    /**
+     * The sink one capability's events go through. An event the capability did
+     * not declare is not in `host.capabilities`, so it is dropped and reported
+     * to [onFailure] instead of reaching the page.
+     */
+    private fun sinkFor(capability: BoundCapability): EventSink = object : EventSink {
+        private val declared = capability.events.map { it.name }.toSet()
+
+        override fun <D> emit(event: BridgeEvent<D>, data: D) {
+            if (event.name in declared) this@BridgeRouter.emit(event, data)
+            else onFailure(event.name, IllegalStateException("${event.name} is not one of its capability's declared events"))
+        }
+    }
 
     /** Methods this host supports, in declaration order. `host.capabilities` returns this. */
     val supportedMethods: List<String> = handlers.filterValues { it != null }.keys.toList()
