@@ -94,6 +94,15 @@ class BridgeRouter(
         scope.launch(serial) { endContextNow() }
     }
 
+    /**
+     * Ends the context [id] if it is still the open one, and does nothing once
+     * a newer `watchContext` has replaced it. A transport calls this when one
+     * watch goes away while a newer watch may already be open.
+     */
+    fun endContext(id: String) {
+        scope.launch(serial) { if (contextId == id) endContextNow() }
+    }
+
     /** Sends an event if a document has an open context. Events before `watchContext` are dropped. */
     fun <D> emit(event: BridgeEvent<D>, data: D) {
         val encoded = bridgeJson.encodeToJsonElement(event.data, data)

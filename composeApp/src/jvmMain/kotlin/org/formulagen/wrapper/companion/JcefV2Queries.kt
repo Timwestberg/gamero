@@ -1,6 +1,7 @@
 package org.formulagen.wrapper.companion
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import org.cef.callback.CefQueryCallback
 import org.formulagen.wrapper.bridge.BridgeErrorCode
@@ -20,14 +21,14 @@ import org.formulagen.wrapper.bridge.bridgeFailureEnvelope
 internal class JcefV2Queries(private val policy: NativeOriginPolicy, private val router: BridgeRouter) {
     private val lock = Any()
 
-    /** The open watch query. Its callback carries events; its cancellation ends the context. */
-    private var watch: Pair<Long, CefQueryCallback>? = null
+    /** The open watch query and the context it opened. Its callback carries events; its cancellation ends that context. */
+    private var watch: OpenWatch? = null
 
     /** Watch queries the router has not answered yet. A cancel removes its id, so the late reply knows. */
     private val pendingWatches = mutableSetOf<Long>()
 
     /** Where the router sends events: the open watch query, if any. */
-    fun events(): CefQueryCallback? = synchronized(lock) { watch?.second }
+    fun events(): CefQueryCallback? = synchronized(lock) { watch?.callback }
 
     /** Answers a version 2 query, or any query from an untrusted frame, and returns true. Returns false for a trusted version 1 query. */
     fun onQuery(mainFrame: Boolean, frameUrl: String, frameId: String, queryId: Long, request: String, persistent: Boolean, callback: CefQueryCallback): Boolean {
@@ -45,11 +46,14 @@ internal class JcefV2Queries(private val policy: NativeOriginPolicy, private val
             JcefQueryKind.V2_WATCH -> {
                 synchronized(lock) { pendingWatches += queryId }
                 router.handle(request, facts) { reply ->
-                    val opened = "contextId" in Json.parseToJsonElement(reply).jsonObject
-                    synchronized(lock) {
-                        // A watch that JCEF cancelled before this reply has already ended its context.
-                        if (pendingWatches.remove(queryId) && opened) watch = queryId to callback
+                    val contextId = (Json.parseToJsonElement(reply).jsonObject["contextId"] as? JsonPrimitive)?.content
+                    val cancelled = synchronized(lock) {
+                        val stillPending = pendingWatches.remove(queryId)
+                        if (stillPending && contextId != null) watch = OpenWatch(queryId, callback, contextId)
+                        !stillPending
                     }
+                    // JCEF cancelled this watch before its reply. End only the context it opened.
+                    if (cancelled && contextId != null) router.endContext(contextId)
                     callback.success(reply)
                 }
             }
@@ -59,25 +63,26 @@ internal class JcefV2Queries(private val policy: NativeOriginPolicy, private val
 
     /**
      * Returns true when [queryId] was a version 2 watch query, and ends the
-     * context. For a watch the router has not answered yet, the end is queued
-     * behind it on the router, so it closes the context that watch opens and
-     * not one a later watch opens.
+     * context that watch opened, never a newer one. For a watch the router has
+     * not answered yet, its reply ends the context when it arrives.
      */
-    fun onQueryCanceled(queryId: Long): Boolean = synchronized(lock) {
-        if (pendingWatches.remove(queryId)) {
-            router.endContext()
-            return true
+    fun onQueryCanceled(queryId: Long): Boolean {
+        val ended = synchronized(lock) {
+            if (pendingWatches.remove(queryId)) return true
+            val open = watch?.takeIf { it.queryId == queryId } ?: return false
+            watch = null
+            open
         }
-        if (watch?.first != queryId) return false
-        watch = null
-        router.endContext()
-        true
+        router.endContext(ended.contextId)
+        return true
     }
 
     fun close() = synchronized(lock) {
         watch = null
         pendingWatches.clear()
     }
+
+    private class OpenWatch(val queryId: Long, val callback: CefQueryCallback, val contextId: String)
 
     private companion object {
         /** Version 1's request cap. An untrusted frame never gets more parsed than this. */
