@@ -103,8 +103,9 @@ GAMERO_PRODUCT=hovel GAMERO_AUTO_ENTER=1 GAMERO_WEB_URL=http://127.0.0.1:8080/ho
 `tools/android-smoke.sh` builds the debug app, boots `GAMERO_AVD` (default
 `Pixel_8_Pro_API_34`) unless a device is attached, launches with the Hovel
 extras and `GAMERO_AUTO_ENTER 1`, and passes on both markers, as
-`tools/ios-smoke.sh` does. `GAMERO_WEB_URL` is required and must be an HTTPS
-page the emulator trusts, because the app opens HTTPS only, even in debug
-builds. A `localhost` port is forwarded to the Mac with `adb reverse`. It writes
+`tools/ios-smoke.sh` does. `GAMERO_WEB_URL` defaults to the local edge,
+`http://127.0.0.1:8080/hovel.html`: Android debug builds open http on loopback
+(release builds stay HTTPS-only), and the script forwards the port to the Mac
+with `adb reverse`. It writes
 `build/android/smoke.png` and `build/android/smoke.log`, and each step's time to
 `.build-timings.csv`.

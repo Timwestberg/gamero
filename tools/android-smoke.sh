@@ -5,9 +5,9 @@
 # Usage: tools/android-smoke.sh
 #
 # Environment:
-#   GAMERO_WEB_URL         page to load (required). Must be HTTPS and trusted by the device: the
-#                          app opens HTTPS only, even in debug builds (HovelAndroid.kt), and trusts
-#                          only system certificates. A localhost port is forwarded with adb reverse.
+#   GAMERO_WEB_URL         page to load (default http://127.0.0.1:8080/hovel.html). The debug build
+#                          opens HTTPS, or http on loopback (HovelAndroid.kt). A loopback port is
+#                          forwarded to this machine with adb reverse, so the local edge just works.
 #   GAMERO_EXPECTED_TITLE  document title that proves the page loaded (default Hovel)
 #   GAMERO_SMOKE_TIMEOUT   seconds to wait for the page and the bridge (default 90)
 #   GAMERO_AVD             emulator to boot when no device is attached (default Pixel_8_Pro_API_34)
@@ -22,7 +22,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 out="$root/build/android"
-url="${GAMERO_WEB_URL:-}"
+url="${GAMERO_WEB_URL:-http://127.0.0.1:8080/hovel.html}"
 title="${GAMERO_EXPECTED_TITLE:-Hovel}"
 timeout="${GAMERO_SMOKE_TIMEOUT:-90}"
 avd="${GAMERO_AVD:-Pixel_8_Pro_API_34}"
@@ -44,14 +44,22 @@ record() {
 # Returns the command's status: under `||`, set -e would not stop a failing command here.
 timed() { local name="$1" begun=$SECONDS rc=0; shift; "$@" || rc=$?; record "$name" $((SECONDS - begun)) "${rc/#0/}"; return $rc; }
 
-[[ "$url" =~ ^[Hh][Tt][Tt][Pp][Ss]:// ]] || fail "set GAMERO_WEB_URL to an HTTPS page the emulator trusts; the app opens HTTPS only"
 # Scheme and host are case-insensitive, so the origin is compared in lowercase.
 origin="$(printf '%s' "$url" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://[^/?#]+).*#\1#' | tr '[:upper:]' '[:lower:]')"
 # The app logs the origin without a default port, as TrustedOrigin.rule does.
 origin="$(printf '%s' "$origin" | sed -E 's#^(https://[^/]+):443$#\1#; s#^(http://[^/]+):80$#\1#')"
-authority="${origin#https://}"
+scheme="${origin%%://*}"
+authority="${origin#*://}"
 port=""
-if [[ "$authority" =~ ^(localhost|127\.0\.0\.1)(:([0-9]+))?$ ]]; then port="${BASH_REMATCH[3]:-443}"; fi
+if [[ "$authority" =~ ^(localhost|127\.0\.0\.1|\[::1\])(:([0-9]+))?$ ]]; then
+  port="${BASH_REMATCH[3]:-}"
+  [[ -n "$port" ]] || { [[ "$scheme" == http ]] && port=80 || port=443; }
+elif [[ "$scheme" != https ]]; then
+  fail "GAMERO_WEB_URL must be HTTPS, or http on loopback (HovelAndroid.kt)"
+fi
+
+step "checking $url"
+curl -fsS -o /dev/null --max-time 10 "$url" || fail "$url is not responding. Start the web app first (docs/ios.md)."
 
 if [[ -z "${ANDROID_HOME:-}" ]]; then
   sdk="$(sed -n 's/^sdk\.dir=//p' local.properties 2>/dev/null || true)"

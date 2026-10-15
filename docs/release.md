@@ -46,7 +46,7 @@ run, plus the best time seen, to show whether a change made a step faster.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `GAMERO_WEB_URL` | `http://127.0.0.1:8080/hovel.html` | Page the app opens. Checked against the same rule as `WebUrlPolicy.kt`: HTTPS, or http on loopback; a host, no userinfo, no fragment. Android requires HTTPS. |
+| `GAMERO_WEB_URL` | `http://127.0.0.1:8080/hovel.html` | Page the app opens. Checked against the same rule as `WebUrlPolicy.kt`: HTTPS, or http on loopback; a host, no userinfo, no fragment. Android release requires HTTPS. |
 | `GAMERO_PRODUCT` | `hovel` | Product the app presents. `hovel` shows the Hovel launch and start screen on desktop, Android and iOS (see [ios.md](ios.md#choose-the-product)), and on iOS adds Hovel's host bridge capabilities. |
 | `GAMERO_VERSION` | `1.0.0` | Version name. `MAJOR.MINOR.PATCH` with `MAJOR > 0`, because macOS packaging rejects `0.x`. |
 | `GAMERO_BUILD_NUMBER` | `1` | Android `versionCode` and iOS `CURRENT_PROJECT_VERSION`. Raise it for every store upload. |
@@ -74,7 +74,10 @@ exists, an HTTPS placeholder such as `https://127.0.0.1/hovel.html` builds and
 shows the Hovel start screen, but the game page itself will not load. Local play
 uses debug builds, not release builds: the desktop and iOS simulator debug builds
 open the local edge, and an Android debug build takes the `GAMERO_WEB_URL` launch
-extra (README.md), which must also be an HTTPS page the device trusts.
+extra (README.md), which may be HTTPS or http on loopback. A debug build's
+network security config (`network_security_debug.xml`) allows cleartext to
+loopback only, and `adb reverse tcp:8080 tcp:8080` forwards the emulator's port
+to the Mac. Release builds use `network_security_release.xml`: no cleartext.
 
 ## Web
 

@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import java.net.URI
 import org.formulagen.wrapper.App
 import org.formulagen.wrapper.R
+import org.formulagen.wrapper.isAllowedWebUrl
 import org.formulagen.wrapper.bridge.AndroidHostBridge
 import org.formulagen.wrapper.bridge.Capability
 import org.formulagen.wrapper.bridge.CapabilityPack
@@ -28,13 +29,16 @@ internal const val PRODUCT_KEY = "GAMERO_PRODUCT"
 internal const val WEB_URL_KEY = "GAMERO_WEB_URL"
 
 /**
- * The Hovel web app URL when this launch is for Hovel, else null. Only HTTPS is accepted: the app
- * doesn't allow cleartext traffic, and localhost on a device isn't the developer's machine.
+ * The Hovel web app URL when this launch is for Hovel, else null. Release builds accept HTTPS only.
+ * A [debuggable] build also accepts http on loopback, the shared [isAllowedWebUrl] rule, for local
+ * play and `tools/android-smoke.sh`: `adb reverse` forwards the device's port to the developer's
+ * machine, and the debug network security config allows cleartext to loopback only.
  */
-internal fun hovelWebUrl(product: String?, webUrl: String?): String? {
+internal fun hovelWebUrl(product: String?, webUrl: String?, debuggable: Boolean = false): String? {
     if (product?.trim() != "hovel") return null
     val uri = runCatching { URI(webUrl?.trim().orEmpty()) }.getOrNull() ?: return null
-    if (!uri.scheme.equals("https", ignoreCase = true) || uri.host.isNullOrEmpty() || uri.userInfo != null || uri.fragment != null) return null
+    if (!isAllowedWebUrl(uri.scheme, uri.host, uri.userInfo != null, uri.fragment != null)) return null
+    if (!debuggable && !uri.scheme.equals("https", ignoreCase = true)) return null
     return uri.toASCIIString()
 }
 
@@ -44,10 +48,12 @@ internal fun hovelWebUrl(product: String?, webUrl: String?): String? {
  * override them only in debuggable builds; otherwise any app could point Hovel at its own page.
  */
 internal fun hovelWebUrl(intent: Intent?, context: Context): String? {
-    val extras = intent.takeIf { (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0 }
+    val debuggable = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    val extras = intent.takeIf { debuggable }
     return hovelWebUrl(
         product = extras?.getStringExtra(PRODUCT_KEY) ?: context.getString(R.string.gamero_product),
         webUrl = extras?.getStringExtra(WEB_URL_KEY) ?: context.getString(R.string.gamero_web_url),
+        debuggable = debuggable,
     )
 }
 
