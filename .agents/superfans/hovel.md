@@ -8,19 +8,18 @@ When a run spawns a component superfan, it passes that component's full entry,
 the design principles, and the superfan rules. A subagent knows only what it is
 given.
 
-Last refreshed 2026-10-15 from each repo's default branch: gamero `16bea67`,
-game-platform `11fde58`, server-platform `e038975`, tool-webkit `8ac8b0a`.
-Components 9 and 10 added 2026-10-15 from gamero `37f82ef` and game-platform
-`5f7a2ff`.
+Last refreshed 2026-10-15 from each repo's default branch: gamero `a994b61`,
+game-platform `e6bf399`, server-platform `f617258`, tool-webkit `0abbb0f`, and
+hovel-editor `hovel/main` at `1a3b18f`.
 Seeded from the Linear document "Hovel component superfan briefs".
 
 The brief lives in gamero because the Hovel routine is told to read it here. It
-covers all four repos; gamero does not use the shared agent-skills library.
+covers all five repos; gamero does not use the shared agent-skills library.
 
 ## What the superfans watch over
 
 Hovel is a room with one character that runs real tasks on the player's own
-computer. It spans four repos:
+computer. It spans five repos:
 
 | Repo | What Hovel keeps there |
 | --- | --- |
@@ -28,7 +27,7 @@ computer. It spans four repos:
 | `Timwestberg/game-platform` | Hovel web app, Godot room and character, room and character kits |
 | `Timwestberg/gamero` | Kotlin Multiplatform shells: Mac companion, Android, iOS, host bridge |
 | `Timwestberg/tool-webkit` | Shared SolidJS building blocks used by the web app |
-| `Timwestberg/hovel-editor` | The Hovel Godot editor fork (not created yet) |
+| `Timwestberg/hovel-editor` | The Hovel Godot fork: editor and export templates, built from `hovel/main` |
 
 ## What success looks like
 
@@ -133,7 +132,7 @@ and say so.
   register, revoke and submit lock the account row then hosts, never tasks.
   Lock order everywhere: account, hosts, tasks, Brain, allowance. Limits 5 hosts and
   100 tasks (`HOVEL_HOST_LIMIT`, `HOVEL_TASK_LIMIT` in
-  `apps/hovel-service/src/hovel-state.schemas.ts:10-11`). Every route p95 under 200 ms at size limits.
+  `apps/hovel-service/src/hovel-state.schemas.ts:11-12`). Every route p95 under 200 ms at size limits.
 - **Watch:** `pnpm test:unit`; `pnpm test`; `npx jest --selectProjects hovel`
   with `DB_PORT=5432 DB_NAME=pin_lockout_test`; DB specs need
   `ALLOWANCE_TEST_URL=postgres://identity:identity@127.0.0.1:5432/pin_lockout_test`;
@@ -144,7 +143,12 @@ and say so.
   summaries since #125; clients must not expect full tasks in the snapshot. The
   coverage gate was red on main until #129. No Prometheus metrics or alerts exist
   for Hovel yet. `perf/http/hovel.ts` calls the Brain feedback route, and
-  `perf/http/hovel-brain.ts` seeds the data for that phase.
+  `perf/http/hovel-brain.ts` seeds the data for that phase. #151 (FOR-84, 1 of
+  3) added follow-ups: a task may carry `followUp`, only a follow-up stores
+  `providerInput` (at most `HOVEL_LIMITS.providerInput`, 131,072 characters,
+  else 409), and heartbeats declare `features` in `hovel_hosts.features`. A
+  computer without `provider-input` is never sent or given a follow-up. Run the
+  Hovel migration with that deploy.
 - **Cares most about:** heartbeat cost staying flat as history grows, host-token
   auth, and caps.
 
@@ -167,7 +171,10 @@ and say so.
 - **Known quirks:** `lockBrainAccountState` locked the account, every host and
   every task even for reads until #130, which gave Brain reads a lock-free
   snapshot and stopped Brain writes locking computers and tasks. #131 reads
-  `GET brain/feedback` without locks. All Brain errors map to 409. `verify` takes the lock twice.
+  `GET brain/feedback` without locks. All Brain errors map to 409. `verify`
+  takes the lock twice. Since #152 a new link at the 256-link limit evicts the
+  oldest revoked link; active and pending links are never evicted, and up to
+  1,024 digests of evicted requests refuse replays.
 - **Cares most about:** correctness of allowances and revocation, and not
   blocking the computer routes.
 
@@ -194,29 +201,39 @@ and say so.
   tabs (#94), Brain draft lost across Check connection, overlay and Escape focus.
 - **Cares most about:** never running a task twice and the account boundary.
 
-### 4. Hovel room, character and kits (game-platform, Godot 4.6)
+### 4. Hovel room, character and kits (game-platform, Godot 4.8)
 
 - **Lives in:** `packages/game-bridge/godot4/games/hovel/` (`room.gd`,
-  `room.tscn`, `character/`, `environment/`, `assets/`, `tools/`); host side
-  `HovelRoom.tsx`, `RoomEditor.tsx`, `createRoomController.ts`,
-  `roomMessages.ts`, `kitRenderer.ts`, `hovelRuntimeMain.tsx`. Server room kit in
-  server-platform (`/v1/hovel/room`).
+  `room.tscn`, `host/`, `character/`, `environment/`, `assets/`, `tools/`);
+  host side `HovelRoom.tsx`, `RoomEditor.tsx`, `createRoomController.ts`,
+  `roomInteraction.ts`, `kitRenderer.ts`, `HovelRuntime.tsx`,
+  `hovelRuntimeMain.tsx`. The room reaches its host only through
+  `host/room_host.gd`. Server room kit in server-platform (`/v1/hovel/room`).
 - **Healthy looks like:** the room runs in an opaque sandboxed frame; only
   strict-schema `hovel:room`, `room-interaction`, `render-status`,
   `load-failure` messages cross; no cookies or prompts go in; optimistic
   `expectedRevision`, 409 when the server holds a room the client cannot show;
   readiness does not flicker on identical polls; runtime art copies follow one
-  copy rule and a check fails when they drift.
+  copy rule and a check fails when they drift. With no host the room says
+  "Room host unavailable" instead of showing a room nobody can reach.
 - **Watch:** `godot --headless --script res://environment/tests/room_layout_check.gd`
-  (also `runtime_copies_check.gd`, `geometry_check.gd`, and
-  `res://character/tests/appearance_check.gd`),
-  `roomEditor.browser.test.ts`, `roomService.test.ts`, `roomMessages.test.ts`,
-  `roomKitArt.test.ts`, `pnpm build:web`; docs `docs/hovel/room/`.
-- **Known quirks:** Hovel needs Godot 4.6, fixture games need 4.7. Kit revision 5
-  (Hearth set) is merged (server #127, game-platform #100). Since #102 the Godot
-  export has a content-versioned URL, so a new kit never meets stale art. #103
-  fixed undo around drags. Since #104 `derive.mjs` sizes each starter copy per
-  piece (plan FOR-144). The character kit's teal tunic bakes olive.
+  (also `runtime_copies_check.gd`, `geometry_check.gd`, `room_host_check.gd`,
+  and `res://character/tests/appearance_check.gd`), after one
+  `godot --headless --editor --import`; `roomEditor.browser.test.ts`,
+  `roomService.test.ts`, `roomInteraction.test.ts`, `roomKitArt.test.ts`,
+  `pnpm build:web`; docs `docs/hovel/room/` and the Hovel project's `README.md`.
+  The `assert`-based checks hang on failure, so wrap them in `timeout` and treat
+  a missing passing line as a failure.
+- **Known quirks:** Hovel needs Godot 4.8 from hovel-editor (#128), fixture
+  games need 4.7. A 4.6 or 4.7 editor opens the project without a warning and
+  rewrites every `.import` file. Room docs dated before #128 recorded checks on
+  4.6.3. Kit revision 5 (Hearth set) is merged (server #127, game-platform
+  #100). Since #102 the Godot export has a content-versioned URL, so a new kit
+  never meets stale art. #103 fixed undo around drags. Since #104 `derive.mjs` sizes each starter copy per
+  piece (plan FOR-144). `roomMessages.ts` became `roomInteraction.ts` in #124.
+  Since #131 derive checks every `catalog.json` source, and since #132 an
+  unknown flag stops the art tools and `-c` means `--check`. The character
+  kit's teal tunic bakes olive.
 - **Cares most about:** the frame isolation boundary and stable readiness.
 
 ### 5. Gamero Mac companion and host bridge (gamero)
@@ -225,28 +242,43 @@ and say so.
   `jvmMain/.../main.kt`, `BrowserLifecycle.kt`, `BrowserReadiness.kt`,
   `PersistentDesktopBrowser.kt`, `companion/NativeBridge.kt`,
   `hovel/HovelCompanion.kt`, `HovelHostAdapter.kt`, `HovelHostSession.kt`,
-  `companion/MacHostCredentials.kt`; the shared host-bridge.v2 router in
-  `commonMain/.../bridge/` (`BridgeRouter.kt`, `BridgeProtocol.kt`, merged
-  in #15). Docs `docs/desktop.md`,
-  `docs/hovel-native-validation.md`, `docs/browser-profile-review.md`.
+  `companion/MacHostCredentials.kt`; the shared host-bridge.v2 kit in
+  `commonMain/.../bridge/` (`HostBridge.kt`, `BridgeRouter.kt`,
+  `BridgeProtocol.kt`, `HostCapabilities.kt`, `CompanionCapability.kt`,
+  `TrustedOrigin.kt`) and its desktop transport
+  `jvmMain/.../bridge/JcefHostBridge.kt`. Docs `docs/desktop.md`,
+  `docs/hovel-companion.md`, `docs/hovel-native-validation.md`,
+  `docs/browser-profile-review.md`.
 - **Healthy looks like:** `GAMERO_JCEF_INITIALIZED` before the browser shows,
   no `GAMERO_RUNTIME_FAILED`, close within 15 s. The bridge accepts only the
   trusted origin's main frame (origin from native frame facts), requests of at most
-  4096 bytes, a context id plus frame id on every call, and reload invalidates.
+  4096 characters for v1 and untrusted queries (a trusted v2 request may be up to
+  64 Ki characters, `BridgeProtocol.MAX_REQUEST_CHARS`), a context id plus frame id on every call, and reload invalidates.
   Companion: one native call at a time, user-approval dialog,
   `registration.json` 0600 in a 0700 dir, the web side sees only the token hash,
   transport 15 s timeout, 16 MiB cap, no redirects, heartbeat every 10 s.
 - **Watch:** `./gradlew :composeApp:jvmTest :composeApp:jvmJar --console=plain`
   (JDK 21; in the cloud only where dl.google.com is reachable);
   `HovelAdapterTest`, `BrowserLifecycleTest`, `BrowserReadinessTest`,
-  `DesktopConfigurationTest`, `BridgeRouterTest`. Live JCEF, Keychain and real
-  Codex runs need a Mac (`hovel-local-env-#` folder).
+  `DesktopConfigurationTest`, `BridgeRouterTest`, `CapabilityBinderTest`,
+  `TrustedOriginTest`, `DesktopParityTest`, `JcefTransportContractTest` and the
+  commonTest `TransportContractTest` and `MessagePortTransportContractTest`.
+  `AndroidParityTest` needs the Android unit-test task, and `IosParityTest` and
+  `WebKitTransportContractTest` run only on a Mac, so a JVM run alone does not
+  verify parity. Live JCEF, Keychain and real Codex runs need a Mac (`hovel-local-env-#`
+  folder).
 - **Known quirks:** Gradle success is never proof the page rendered. The
   persistent browser profile fix (FOR-80) is not yet Mac-validated. Account
   switching on one native profile is rejected by design. The host-bridge v2
-  plan and shared router merged as #15, and its contract as server-platform
-  #128 (plan FOR-117/FOR-118). The rest is a stack of draft PRs (#16 to #23,
-  #25, #28, #30); drafts are tracked but not reviewed until marked ready.
+  plan merged as #15, its contract as server-platform #128 (plan
+  FOR-117/FOR-118) and its transport shapes as server-platform #153. The kit,
+  the JCEF, Android and iOS transports and the parity tests merged as #16 to
+  #23, #25, #28 and #30; #32 stops events to a watch a newer watch replaced.
+  On desktop, v2 and the v1 companion protocol share the `gameroQuery` router;
+  `JcefHostBridge` claims v2 first, and v1 stays until `nativeCompanion.ts`
+  moves (task B4). Companion calls time out after 5 min (prepare, which covers approval and
+  Keychain) and 2 min (activate) in `CompanionCapability.kt`. Desktop links,
+  haptics and lifecycle answer `unsupported` for now.
 - **Cares most about:** failing loudly, bounded shutdown, and trusting only
   native frame facts.
 
@@ -286,9 +318,11 @@ and say so.
   :composeApp:compileKotlinIosSimulatorArm64 :composeApp:iosSimulatorArm64Test`
   (Mac only), `tools/ios-smoke.sh`, `WebUrlPolicyTest`, `IosWebUrlTest`.
 - **Known quirks and gaps:** Hovel runs as remote UI only: no Connect computer,
-  no companion, no `gameroQuery` bridge (`NativeBridge.ios.kt` only posts
-  NSNotifications). Draft #28 (plan FOR-120) adds the host-bridge.v2
-  `gameroHost` transport, not `gameroQuery`. No `iosX64` target. Sign-in needs HTTPS.
+  no companion. Android (`bridge/AndroidHostBridge.kt`) and iOS
+  (`bridge/IosHostBridge.kt`, `WebKitHostTransport.kt`) carry the host-bridge.v2
+  `gameroHost` transport (#28, plan FOR-120), with `companion` passed as
+  `Unsupported`; there is no `gameroQuery` (`NativeBridge.ios.kt` only posts
+  NSNotifications). No `iosX64` target. Sign-in needs HTTPS.
   `SessionManager.kt:31` logout is `TODO()` and crashes. The iOS start screen
   merged as #24; the smoke script does not exercise the Hovel path yet.
 - **Cares most about:** parity with desktop where the platform allows it, and
@@ -310,15 +344,18 @@ and say so.
   Tests pass `--conditions=browser`, and so do the smoke scripts for
   browser-only modules (`component-registry`, `entity-kit`, `game-results`,
   `monaco-editor`); the other smoke scripts run without it.
-- **Known quirks:** ConnectionCard has no unit tests and `status` is a plain
-  `string` (`connections.types.ts:4`); browser-storage is outside the coverage
-  floor and its parser overrides never run on string or boolean keys.
+- **Known quirks:** entity-kit documents its states, data client contract,
+  failures and accessibility since #65. ConnectionCard has no unit tests and
+  `status` is a plain `string` (`connections.types.ts:4`); browser-storage is
+  outside the coverage floor and its parser overrides never run on string or
+  boolean keys.
 - **Cares most about:** accessibility and never misreporting state.
 
 ### 9. Godot engine layer (game-platform, gamero)
 
 - **Lives in:** game-platform `packages/game-bridge/godot4/games/hovel/`
-  (`project.godot`, `export_presets.cfg`, `room.gd`), `packages/game-bridge/src/godot.ts`
+  (`project.godot`, `export_presets.cfg`, `room.gd`, and `host/`, the seam
+  between the room and whatever hosts it), `packages/game-bridge/src/godot.ts`
   (the web loader), `scripts/build-web.sh` (export and version check). gamero
   has no Godot dependency: every shell loads the Hovel web app, and with it the
   Godot web export, in a web view (`commonMain/.../managers/WebViewManager.kt`,
@@ -330,47 +367,72 @@ and say so.
   selects native or web. A platform with a native engine keeps both variants
   building. A capability behaves the same on either engine: API shape, errors,
   threading, lifecycle and "unsupported". Every engine and the editor come from
-  one pinned stable Godot version.
+  one pinned hovel-editor commit.
 - **Watch:** from the Hovel Godot project, `godot --headless --editor --import`,
-  `godot --headless --export-release Web builds/web/hovel.html` (Godot
-  `4.6.3.stable.official` and its official templates, which download in the
-  cloud), the room checks under component 4, and `pnpm build:web` in
-  game-platform. Android native builds need the Android SDK and iOS needs a Mac;
-  neither exists in the cloud, so use a `hovel-local-env-#` folder.
+  `godot --headless --export-release Web builds/web/hovel.html`, the room checks
+  under component 4 (`room_host_check.gd` covers the host seam), and
+  `GODOT=<bin> FORCE_GODOT=1 pnpm build:web` in game-platform. There are no
+  official 4.8 templates: use the editor and non-threaded Web template built
+  from hovel-editor (component 10). Android native builds need the Android SDK
+  and iOS needs a Mac; neither exists in the cloud, so use a
+  `hovel-local-env-#` folder.
 - **Known quirks and history:** every platform runs the web engine today; no
-  native engine is started. Hovel pins 4.6 (`project.godot:6`, GL
-  Compatibility, non-threaded Web preset) while the fixture games need 4.7, and
-  `build-web.sh` refuses a mismatched major.minor. `room.gd:10-32` reads and
-  writes the page only when `OS.has_feature("web")`, through `JavaScriptBridge`,
-  so on a native engine the room gets no presentation data. Android WebView's
+  native engine is started. Since game-platform #128 Hovel declares 4.8
+  (`project.godot:6`, GL Compatibility, non-threaded Web preset) built from
+  hovel-editor, while the fixture games need 4.7, and `build-web.sh` refuses a
+  mismatched major.minor but checks nothing finer. The Hovel `README.md` records
+  the hovel-editor commit the room was last verified on (`92c9648`, upstream
+  `4d10419`, Emscripten 6.0.12); update it when you re-verify. Since #133
+  (FOR-153) `host/room_host.gd` picks the host once: the page through
+  `JavaScriptBridge` on web, else an engine singleton named `HovelHost` with the
+  same three calls and JSON, else none. With none the room shows "Room host
+  unavailable", logs one error and stops polling. A native host owns the
+  boundary the runtime page owns on web (schema, `characterId`, readiness
+  rules); the room calls it on Godot's main thread. Android WebView's
   `Version/4.0` token made Emscripten refuse to start the export
-  (`WebViewUserAgent.kt:9-15`). Godot 4.6 ships an embeddable Android library
-  (`org.godotengine:godot:4.6.3.stable` on Maven Central, one engine instance
-  per process, no automatic orientation changes); LibGodot is experimental and
-  desktop-only in 4.6, and has no iOS or Android support yet. The stable docs
-  were on the 4.7 branch on 2026-10-15.
+  (`WebViewUserAgent.kt:9-15`). Notes on Godot 4.6's embeddable Android library
+  (`org.godotengine:godot:4.6.3.stable`) and LibGodot (experimental,
+  desktop-only in 4.6) predate the move to 4.8; recheck them before planning a
+  native engine.
 - **Cares most about:** one engine selector per platform, a web fallback that
   always builds, and identical behavior on both engines.
 
 ### 10. Hovel editor (hovel-editor)
 
-- **Lives in:** `Timwestberg/hovel-editor`, a fork of `godotengine/godot`. It
-  does not exist yet; until it does, Hovel uses the official Godot builds of
-  the pinned version (4.6.3).
+- **Lives in:** `Timwestberg/hovel-editor`, a fork of `godotengine/godot`.
+  `master` mirrors upstream and is never committed to; every Hovel build comes
+  from `hovel/main`, which is the upstream commit in `hovel/UPSTREAM` (today
+  `master` at `4d10419`, the 4.8 beta) plus the `.github/CODEOWNERS` entry
+  `CORE_CHANGES` allows, plus the `hovel/` folder: `profile.py`,
+  `modules/` (no modules yet), `CORE_CHANGES`, and `scripts/build.sh`,
+  `sync-upstream.sh` and `check-divergence.sh`. Docs `hovel/README.md`.
 - **Healthy looks like:** the editor and every engine (iOS, Android, web) build
   from the same fork and Godot version, and the engines include every custom
   module the editor uses. Hovel changes live in custom modules, editor plugins
   and build options, not Godot core. Godot's license, copyright notices and
   trademark policy are kept. Godot upgrades only through an approved plan.
-- **Watch:** Godot's own build instructions for the pinned version (SCons),
-  once the fork exists.
-- **Known quirks:** the routine never creates the repo; the question waits on
-  Tim in an `engine` issue labelled `needs-input`.
+- **Watch:** `hovel/scripts/check-divergence.sh` (fails when a file outside
+  `hovel/` differs from the upstream commit and is not listed, with a reason, in
+  `hovel/CORE_CHANGES`; today that list holds only `.github/CODEOWNERS`). Cloud build, verified 2026-10-15
+  on `d9f0725` (engine the same as `92c9648`): `pip install scons zstandard`;
+  the editor with `python3 -m SCons profile=hovel/profile.py platform=linuxbsd
+  target=editor x11=no wayland=no alsa=no pulseaudio=no dbus=no speechd=no
+  fontconfig=no udev=no -j4` (about 25 min on 4 cores); the Web template with
+  emsdk 6.0.12 and `platform=web target=template_release threads=no` (about 10
+  min), copied to
+  `~/.local/share/godot/export_templates/4.8.beta/web_nothreads_release.zip`
+  (also as `web_nothreads_debug.zip`). Then run component 9's export checks.
+  Android needs the SDK and NDK, and iOS a Mac.
+- **Known quirks:** `hovel/main` follows upstream `master`, not a stable
+  release, so there are no official templates; `sync-upstream.sh <tag>` moves
+  it to a release. A sync is a PR into `hovel/main`, then a rebuild and the
+  Hovel checks in game-platform before merging. `hovel/main` moved past
+  `d9f0725` only in `sync-upstream.sh` (#1, `1a3b18f`).
 - **Cares most about:** small, mergeable divergence from upstream.
 
 ## Watch sources
 
-- Open PRs in the four repos and the Hovel PR Tracker artifact.
+- Open PRs in the five repos and the Hovel PR Tracker artifact.
 - Linear projects "Hovel PoC: one character, Codex, and a connected Mac" and
   "Hovel Brain: local runtimes and role routing" (labels `claude-plan`,
   `approved`, `needs-input`).
