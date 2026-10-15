@@ -80,6 +80,14 @@ class ExecutionCoordinatorTest {
         }
     }
 
+    @Test fun aWholeConversationFitsButNotOneCharacterMore() {
+        ExecutionJournal(Files.createTempDirectory("journal"), host).use { journal ->
+            journal.prepare(request().copy(prompt = "x".repeat(ExecutionRequest.MAX_PROMPT_CHARS)))
+            assertFails { journal.prepare(request().copy(prompt = "x".repeat(ExecutionRequest.MAX_PROMPT_CHARS + 1))) }
+            assertFails { journal.prepare(request().copy(context = "x".repeat(ExecutionRequest.MAX_CONTEXT_CHARS + 1))) }
+        }
+    }
+
     @Test fun concurrentOwnerAndCorruptionFailClosed() {
         val dir = Files.createTempDirectory("journal")
         ExecutionJournal(dir, host).use { journal ->

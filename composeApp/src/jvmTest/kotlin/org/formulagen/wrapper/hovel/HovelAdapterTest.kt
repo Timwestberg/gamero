@@ -47,6 +47,38 @@ class HovelAdapterTest {
         assertFails { hovelExecutionRequest(task(buildJsonObject { put("state", "queued") }, 0), UUID.randomUUID().toString()) }
     }
 
+    private fun followUp(providerInput: String?, withFollowUp: Boolean) = buildJsonObject {
+        val base = task(buildJsonObject { put("state", "queued") }, 0)
+        base.forEach { (key, value) -> if (key != "request") put(key, value) }
+        put("request", buildJsonObject {
+            base.getValue("request").jsonObject.forEach { (key, value) -> put(key, value) }
+            put("prompt", "And the tests?")
+            if (withFollowUp) put("followUp", buildJsonObject {
+                put("conversationId", UUID.randomUUID().toString()); put("previousTaskId", UUID.randomUUID().toString())
+            })
+        })
+        if (providerInput != null) put("providerInput", providerInput)
+    }
+
+    @Test fun aFollowUpRunsItsWholeConversationNotItsBarePrompt() {
+        val conversation = "Earlier request and its result, then: And the tests?"
+        val request = hovelExecutionRequest(followUp(conversation, withFollowUp = true), host)
+        assertEquals(conversation, request.prompt)
+        assertEquals("Ada remembers", request.context)
+        assertEquals("Inspect", hovelExecutionRequest(task(buildJsonObject { put("state", "queued") }, 0), host).prompt)
+    }
+
+    @Test fun aFollowUpWithoutItsConversationIsRefused() {
+        assertFails { hovelExecutionRequest(followUp(null, withFollowUp = true), host) }
+        assertFails { hovelExecutionRequest(followUp("Earlier exchanges", withFollowUp = false), host) }
+    }
+
+    @Test fun everyHeartbeatDeclaresProviderInput() {
+        val body = hovelHeartbeat("ready")
+        assertEquals("ready", body.getValue("providerState").jsonPrimitive.content)
+        assertEquals(listOf("provider-input"), body.getValue("features").jsonArray.map { it.jsonPrimitive.content })
+    }
+
     @Test fun registrationReusesIdentityAndNeverPersistsBearerInMetadata() {
         val directory = Files.createTempDirectory("registration")
         val secrets = mutableMapOf<String, String>()

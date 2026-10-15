@@ -13,7 +13,13 @@ import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
 
 @Serializable
-data class ExecutionRequest(val id: String, val hostId: String, val prompt: String, val context: String = "")
+data class ExecutionRequest(val id: String, val hostId: String, val prompt: String, val context: String = "") {
+    companion object {
+        /** The longest prompt a provider is given: a Hovel follow-up's whole conversation (event-contracts `HOVEL_LIMITS.providerInput`). */
+        const val MAX_PROMPT_CHARS = 131_072
+        const val MAX_CONTEXT_CHARS = 16_384
+    }
+}
 
 @Serializable
 enum class ExecutionPhase { PREPARED, LAUNCHING, SUCCEEDED, FAILED, RECONCILIATION_REQUIRED }
@@ -51,7 +57,8 @@ class ExecutionJournal(private val directory: Path, private val hostId: String) 
         checkOpen()
         require(request.hostId == hostId) { "Task belongs to another computer" }
         UUID.fromString(request.id)
-        require(request.prompt.isNotBlank() && request.prompt.length <= 16_384 && request.context.length <= 16_384)
+        require(request.prompt.isNotBlank() && request.prompt.length <= ExecutionRequest.MAX_PROMPT_CHARS &&
+            request.context.length <= ExecutionRequest.MAX_CONTEXT_CHARS)
         read(request.id)?.let {
             require(it.request == request) { "Task identity has changed" }
             return it
