@@ -1,6 +1,12 @@
 package org.formulagen.wrapper.bridge
 
-/** A capability this host provides, or an explicit `Unsupported`. Nothing throws at call time. */
+/**
+ * A capability this host provides, or an explicit `Unsupported`. Nothing throws at call time.
+ *
+ * Threading: the router calls a capability from its scope's dispatcher, never
+ * from the UI thread. A capability that needs the UI thread switches to it
+ * itself, for example with `withContext(Dispatchers.Main)`.
+ */
 sealed interface Capability<out T> {
     data class Supported<out T>(val impl: T) : Capability<T>
     data object Unsupported : Capability<Nothing>
@@ -13,6 +19,8 @@ sealed interface Capability<out T> {
  * the compiler checks that each one has code.
  */
 class CapabilityBinder<T>(
+    /** The name an `unsupported` error gives, such as `haptics`. */
+    internal val name: String,
     internal val handlers: List<CapabilityHandler<T>>,
     internal val events: List<BridgeEvent<*>> = emptyList(),
     /** Starts the capability's events. The router calls it once and closes the result on [BridgeRouter.close]. */
@@ -22,18 +30,20 @@ class CapabilityBinder<T>(
         val methods = handlers.map { it.method }
         return when (capability) {
             is Capability.Supported -> BoundCapability(
+                name = name,
                 methods = methods,
                 events = events,
                 handlers = handlers.map { it.bind(capability.impl) },
                 observe = observe?.let { start -> { sink -> start(capability.impl, sink) } },
             )
-            Capability.Unsupported -> BoundCapability(methods, events, handlers = null, observe = null)
+            Capability.Unsupported -> BoundCapability(name, methods, events, handlers = null, observe = null)
         }
     }
 }
 
 /** A capability as this host has it. [handlers] is null when the host does not support it. */
 internal class BoundCapability(
+    val name: String,
     val methods: List<BridgeMethod<*, *>>,
     val events: List<BridgeEvent<*>>,
     val handlers: List<MethodHandler>?,

@@ -25,6 +25,7 @@ object HapticMethods {
     val PLAY = BridgeMethod("haptic.play", HapticPlayArgs.serializer(), NoResult.serializer())
 
     internal val binder = CapabilityBinder(
+        "haptics",
         listOf(PLAY.handle { haptics: Haptics, args -> haptics.play(args.effect); NoResult }),
     )
 }

@@ -10,7 +10,7 @@ enum class MethodSupport { SUPPORTED, UNSUPPORTED }
 sealed interface BridgeCheck {
     data object WatchContext : BridgeCheck
     data class Call(val contextId: String, val method: String, val args: JsonObject) : BridgeCheck
-    data class Reject(val code: BridgeErrorCode) : BridgeCheck
+    data class Reject(val code: BridgeErrorCode, val method: String? = null) : BridgeCheck
 }
 
 private val WATCH_CONTEXT_KEYS = setOf("version", "method", "args")
@@ -47,7 +47,7 @@ internal fun checkBridgeRequest(
     if (contextId == null || requestContext != contextId) return BridgeCheck.Reject(BridgeErrorCode.EXPIRED)
     when (support(method)) {
         null -> return BridgeCheck.Reject(BridgeErrorCode.UNKNOWN_METHOD)
-        MethodSupport.UNSUPPORTED -> return BridgeCheck.Reject(BridgeErrorCode.UNSUPPORTED)
+        MethodSupport.UNSUPPORTED -> return BridgeCheck.Reject(BridgeErrorCode.UNSUPPORTED, method)
         MethodSupport.SUPPORTED -> Unit
     }
     if (!acceptsArgs(method, args)) return BridgeCheck.Reject(BridgeErrorCode.INVALID)

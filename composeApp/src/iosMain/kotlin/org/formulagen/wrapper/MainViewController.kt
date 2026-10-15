@@ -14,6 +14,7 @@ import org.formulagen.wrapper.bridge.HostBridge
 import org.formulagen.wrapper.bridge.IosHostBridge
 import org.formulagen.wrapper.bridge.iosHostCapabilities
 import org.formulagen.wrapper.bridge.iosHovelBridgePacks
+import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import platform.Foundation.NSBundle
@@ -32,7 +33,7 @@ fun MainViewController() = ComposeUIViewController {
         DisposableEffect(Unit) { onDispose { attached[0]?.close() } }
         App(url, onWebViewCreated = { webView ->
             attached[0]?.close()
-            attached[0] = IosHostBridge(webView, HostBridge(url, iosHostCapabilities(appVersion()), iosHovelBridgePacks()))
+            attached[0] = IosHostBridge(webView, HostBridge(HOVEL_PRODUCT, url, iosHostCapabilities(appVersion()), iosHovelBridgePacks()))
         }, onPageLoaded = { loadedUrl, title ->
             // Smoke-test marker; mirrors desktop's GAMERO_JCEF_INITIALIZED.
             log(LogLevel.Info, TAG, "GAMERO_PAGE_LOADED origin=${originOf(loadedUrl)} title=$title")

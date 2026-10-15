@@ -34,10 +34,10 @@ data object NoArgs
 data object NoResult
 
 @Serializable
-enum class HostPlatform {
-    @SerialName("desktop") DESKTOP,
-    @SerialName("android") ANDROID,
-    @SerialName("ios") IOS,
+enum class HostPlatform(val wireName: String) {
+    @SerialName("desktop") DESKTOP("desktop"),
+    @SerialName("android") ANDROID("android"),
+    @SerialName("ios") IOS("ios"),
 }
 
 @Serializable

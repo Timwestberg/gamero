@@ -14,6 +14,7 @@ object LinkMethods {
     val OPEN = BridgeMethod("link.open", LinkOpenArgs.serializer(), NoResult.serializer()) { isSafeHttpsUrl(it.url) }
 
     internal val binder = CapabilityBinder(
+        "links",
         listOf(OPEN.handle { links: LinkOpener, args -> links.open(args.url); NoResult }),
     )
 }

@@ -36,6 +36,7 @@ enum class BridgeErrorCode(val wire: String, val message: String) {
     UNKNOWN_METHOD("unknown-method", "No host defines this method"),
     UNSUPPORTED("unsupported", "This host does not support this method"),
     BUSY("busy", "Another call to this capability is running"),
+    DECLINED("declined", "The person declined the request"),
     FAILED("failed", "The host could not complete the call"),
 }
 
@@ -47,6 +48,9 @@ data class FrameFacts(val mainFrame: Boolean, val trustedOrigin: Boolean, val do
 
 /** Thrown by a single-flight capability that is already running a call. The router answers `busy`. */
 class BridgeBusyException : IllegalStateException("Another call to this capability is running")
+
+/** Thrown by a capability when the person said no, such as to a connection request. The router answers `declined`. */
+class BridgeDeclinedException(message: String) : IllegalStateException(message)
 
 /** A failure reply with the code's standard message, for transports that reject before the router. */
 internal fun bridgeFailureEnvelope(code: BridgeErrorCode): String = BridgeEnvelopes.failure(code, code.message)

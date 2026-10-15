@@ -36,6 +36,8 @@ fun interface BridgeTransport {
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class BridgeRouter(
+    /** The product the page belongs to, such as `Hovel`. An `unsupported` error names it. */
+    private val product: String,
     private val capabilities: HostCapabilities,
     /** The product's own capabilities, such as Hovel's companion. */
     products: List<CapabilityPack> = emptyList(),
@@ -81,7 +83,9 @@ class BridgeRouter(
                 acceptsArgs = { method, args -> handlers[method]?.accepts(args) == true },
             )
             when (check) {
-                is BridgeCheck.Reject -> reply(bridgeFailureEnvelope(check.code))
+                is BridgeCheck.Reject ->
+                    if (check.method == null) reply(bridgeFailureEnvelope(check.code))
+                    else reply(BridgeEnvelopes.failure(check.code, unsupportedMessage(check.method)))
                 BridgeCheck.WatchContext -> {
                     endContextNow()
                     val id = newContextId()
@@ -128,6 +132,8 @@ class BridgeRouter(
                 throw error
             } catch (_: BridgeBusyException) {
                 bridgeFailureEnvelope(BridgeErrorCode.BUSY)
+            } catch (_: BridgeDeclinedException) {
+                bridgeFailureEnvelope(BridgeErrorCode.DECLINED)
             } catch (error: Throwable) {
                 onFailure(call.method, error)
                 bridgeFailureEnvelope(BridgeErrorCode.FAILED)
@@ -139,6 +145,12 @@ class BridgeRouter(
         }
         pending += job
         job.invokeOnCompletion { scope.launch(serial) { pending -= job } }
+    }
+
+    /** Names the product, the platform and the missing capability, so the page and its logs can say what is absent. */
+    private fun unsupportedMessage(method: String): String {
+        val capability = bound.first { capability -> capability.methods.any { it.name == method } }.name
+        return "$product on ${capabilities.platform.wireName} has no $capability capability ($method)"
     }
 
     private fun endContextNow() {

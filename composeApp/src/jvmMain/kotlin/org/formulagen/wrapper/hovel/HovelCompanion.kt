@@ -7,6 +7,7 @@ import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.BridgeBusyException
+import org.formulagen.wrapper.bridge.BridgeDeclinedException
 import org.formulagen.wrapper.bridge.Capability
 import org.formulagen.wrapper.bridge.CapabilityPack
 import org.formulagen.wrapper.bridge.CompanionCapability
@@ -67,7 +68,7 @@ class HovelCompanion(
                             approval = ConnectionApproval(owner, answer)
                         }
                     }
-                    try { check(answer.await()) { "Connection declined" } }
+                    try { if (!answer.await()) throw BridgeDeclinedException("Connection declined") }
                     finally { withContext(NonCancellable + Dispatchers.Main) { approval = null } }
                     currentCoroutineContext().ensureActive()
                     val registered = runInterruptible { prepareRegistration(owner) }

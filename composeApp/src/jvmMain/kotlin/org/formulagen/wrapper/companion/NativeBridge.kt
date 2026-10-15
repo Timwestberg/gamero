@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class NativeBridge(
     private val browser: KCEFBrowser,
+    product: String,
     trustedUrl: String,
     capabilities: HostCapabilities,
     products: List<CapabilityPack>,
@@ -29,7 +30,7 @@ class NativeBridge(
     private val gate = Any()
     private val origin = TrustedOrigin(trustedUrl)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val hostBridge = JcefHostBridge(trustedUrl, capabilities, products)
+    private val hostBridge = JcefHostBridge(product, trustedUrl, capabilities, products)
     private val pending = ConcurrentHashMap<Long, Job>()
     private val closed = AtomicBoolean(false)
     private var watchId: Long? = null

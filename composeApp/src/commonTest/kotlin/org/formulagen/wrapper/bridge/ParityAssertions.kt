@@ -17,7 +17,7 @@ import kotlin.test.assertTrue
  */
 internal fun assertMatchesParity(platform: HostPlatform, router: BridgeRouter, pending: Set<String> = emptySet()) {
     val column = Json.parseToJsonElement(HostBridgeFixtures.PARITY).jsonObject
-        .getValue(platform.name.lowercase()).jsonObject
+        .getValue(platform.wireName).jsonObject
         .mapValues { it.value.jsonPrimitive.content == "supported" }
     val known = (router.knownMethods + router.knownEvents).toSet()
     val supported = (router.supportedMethods + router.supportedEvents).toSet()
