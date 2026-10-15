@@ -145,4 +145,34 @@ class JcefV2QueriesTest {
         settle()
         assertEquals(2, second.successes.size, "the second watch lost its events")
     }
+
+    @Test
+    fun cancellingAnOlderWatchLeavesTheNewerContextOpen() = runTest {
+        // Both watches sent, then the older one cancelled.
+        var page = page()
+        page.queries.onQuery(true, trusted, "frame-1", 1, watch, true, Answers())
+        var second = Answers()
+        page.queries.onQuery(true, trusted, "frame-1", 2, watch, true, second)
+        assertTrue(page.queries.onQueryCanceled(1))
+        settle()
+        assertContextOpen(page, second)
+
+        // The older watch already open, the newer one not answered yet.
+        page = page()
+        open(page)
+        second = Answers()
+        page.queries.onQuery(true, trusted, "frame-1", 2, watch, true, second)
+        assertTrue(page.queries.onQueryCanceled(1))
+        settle()
+        assertContextOpen(page, second)
+    }
+
+    private fun TestScope.assertContextOpen(page: Page, watchAnswers: Answers) {
+        val contextId = Json.parseToJsonElement(watchAnswers.successes.single()).jsonObject.getValue("contextId").jsonPrimitive.content
+        val reply = ask(page, call(contextId), queryId = 3)
+        assertEquals(null, reply.code(), "the cancelled watch ended the newer context")
+        page.pause()
+        settle()
+        assertEquals(2, watchAnswers.successes.size, "the newer watch lost its events")
+    }
 }
