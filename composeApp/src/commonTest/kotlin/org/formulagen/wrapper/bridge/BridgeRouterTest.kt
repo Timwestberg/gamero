@@ -149,8 +149,14 @@ class BridgeRouterTest {
         assertEquals(fixture("success-empty.json"), Json.parseToJsonElement(BridgeEnvelopes.success(JsonObject(emptyMap()))))
         assertEquals(
             fixture("failure-unsupported.json"),
-            Json.parseToJsonElement(BridgeEnvelopes.failure(BridgeErrorCode.UNSUPPORTED, "Haptics are not available on this host")),
+            Json.parseToJsonElement(BridgeEnvelopes.failure(BridgeErrorCode.UNSUPPORTED, "Hovel on desktop has no haptics capability (haptic.play)")),
         )
+        // The contract rejects a message over the limit, so the router cuts it to fit.
+        val long = Json.parseToJsonElement(HostBridgeFixtures.ENVELOPES.getValue("failure-long-message.json")).jsonObject.getValue("value")
+            .jsonObject.getValue("error").jsonObject.getValue("message").jsonPrimitive.content
+        assertTrue(long.length > BridgeProtocol.MAX_ERROR_MESSAGE_CHARS)
+        val cut = Json.parseToJsonElement(BridgeEnvelopes.failure(BridgeErrorCode.FAILED, long)).jsonObject.getValue("error").jsonObject.getValue("message").jsonPrimitive.content
+        assertEquals(long.take(BridgeProtocol.MAX_ERROR_MESSAGE_CHARS), cut)
         assertEquals(fixture("event-pause.json"), Json.parseToJsonElement(BridgeEnvelopes.event(LifecycleEvents.PAUSE.name, bridgeJson.encodeToJsonElement(NoData.serializer(), NoData))))
         assertEquals(fixture("watch-context-reply.json"), Json.parseToJsonElement(BridgeEnvelopes.watchContextReply(HostBridgeFixtures.CONTEXT_ID)))
     }
@@ -315,7 +321,7 @@ class BridgeRouterTest {
     @Test
     fun safeHttpsUrls() {
         for (url in listOf("https://example.com", "https://example.com:8443/a?b=c#d", "HTTPS://Example.com/")) assertTrue(isSafeHttpsUrl(url), url)
-        for (url in listOf("http://example.com", "javascript:alert(1)", "https://", "https://user:pass@example.com", "https://a b.com", "intent://x#Intent;end", "https://:443/")) {
+        for (url in listOf("http://example.com", "javascript:alert(1)", "https://", "https://user:pass@example.com", "https://a b.com", "intent://x#Intent;end", "https://:443/", "https:example.com", "https://exa\\mple.com", "https://[::1", "https://example.com:0/", "https://example.com:65536/", "https://example.com/caf\u00e9")) {
             assertTrue(!isSafeHttpsUrl(url), url)
         }
     }
