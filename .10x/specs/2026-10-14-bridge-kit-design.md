@@ -19,7 +19,7 @@ builds the Android and iOS transports on that kit.
 
 | Check | Result |
 |---|---|
-| `:composeApp:jvmTest` | 84 tests, 0 failures |
+| `:composeApp:jvmTest` | 84 tests, 0 failures (90 after the #16 review fixes) |
 | `:composeApp:testDebugUnitTest` (Android) | 16 tests, 0 failures. `BridgeRouterTest`: 11 |
 | `:composeApp:iosSimulatorArm64Test` | 20 tests, 0 failures. `BridgeRouterTest`: 11 |
 | Compile iOS simulator and Android debug | Pass |
@@ -38,10 +38,10 @@ Tim's goals are: reusable, extensible, consistent, and safe by default.
 
 | # | Gap | Goal it hurts | Evidence |
 |---|---|---|---|
-| G1 | The transport duties are prose, not code. `companion/NativeBridge.kt` makes its own scope, router, event channel, document id and failure log. Android and iOS would copy all of this. | Reusable, consistent | `NativeBridge.kt` lines 62–75 and 96–106 |
-| G2 | No test checks a transport. The router tests do not prove that a platform reports frame facts, ends a context on navigation, or delivers events the same way. | Consistent | QA plan item 4 says "one test per transport". Only JCEF has a test, and it tests the query kind only. |
+| G1 | The transport duties are prose, not code. The JCEF transport makes its own scope, router, event channel, document id and failure log. Android and iOS would copy all of this. | Reusable, consistent | `NativeBridge.kt` lines 62–75 (scope, router, failure log); `companion/JcefV2Queries.kt` lines 23–30 (watch and `events()`) and line 40 (`documentId = frameId`) |
+| G2 | No shared transport test runs on every platform. The router tests do not prove that each platform reports frame facts, ends a context on navigation, or delivers events the same way. | Consistent | QA plan item 4 says "one test per transport". Only JCEF has transport tests: `JcefV2QueriesTest` (6 tests) covers untrusted frames, the watch and its events, and cancelling the watch. Android and iOS would each have to write their own. |
 | G3 | A capability lists its methods two times. The binder matches handlers to methods by list position and checks this at run time. | Reusable | `Haptics.kt`: `listOf(PLAY)` and `listOf(PLAY.handle {...})` |
-| G4 | Methods have types, events do not. An event is a string name and a `JsonObject`. | Consistent, extensible | `Lifecycle.kt`, `BridgeRouter.emit` |
+| G4 | Methods have types, events do not. An event is a string name and a `JsonElement`. | Consistent, extensible | `Lifecycle.kt`, `BridgeRouter.emit` |
 | G5 | A product capability sits in the shared core. `companion` is Hovel on desktop only, but each platform factory must name it. Each new product adds a parameter that every platform must name. | Extensible | `HostCapabilities.kt` |
 | G6 | A call has no time limit. A capability that hangs keeps its call open until the page navigates. | Consistent | `BridgeRouter.run` |
 | G7 | Two haptics paths exist. The legacy `HapticManager` (it does not run) and the new `Haptics` capability. About 55 legacy `expect fun` functions stay as dead code. | Maintainable | `managers/*Platform.*.kt` |
@@ -203,12 +203,12 @@ GitHub Actions job on `macos-latest` runs the same script.
 ## Delivery plan
 
 The task IDs continue the host-bridge plan. One PR per task group, stacked on
-the A3 branch.
+the A2b branch (#17).
 
 | # | Task | Size | Depends on | Closes |
 |---|---|---|---|---|
 | K0 | `tools/test-all-targets.sh` | 0.25 d | – | CI gap |
-| K1 | Typed handlers and typed events | 0.5 d | A3 | G3, G4 |
+| K1 | Typed handlers and typed events | 0.5 d | A2b | G3, G4 |
 | K2 | Method time limit | 0.25 d | K1 | G6 |
 | K3 | Platform set and product set; companion becomes a Hovel pack | 0.5 d | K1 | G5 |
 | K4 | Parity test for each platform factory | 0.25 d | K3 | G8 |
@@ -221,7 +221,10 @@ Total: about 4.75 days. B3, B4, C1, C2, C4 and A4 stay as planned.
 ## Done means
 
 1. A new capability touches its own file, the contract, and one line per
-   platform. It does not touch the router, `HostBridge` or a transport.
+   platform. It does not touch the router, `HostBridge` or a transport. A
+   platform capability also adds one parameter to `HostCapabilities` and one
+   line to its `bound` list, so the compiler makes every platform decide on
+   it. A product capability needs neither: it goes in the product's pack.
 2. A new platform is one adapter file and one factory. It passes
    `TransportContractTest` with no change to the kit.
 3. `tools/test-all-targets.sh` passes on JVM, Android and iOS with the same
