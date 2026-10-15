@@ -29,10 +29,12 @@ The wiring lives in [main.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wr
 
 - `GAMERO_PRODUCT` (or `-Dgamero.product`) is `hovel`.
 - The OS is macOS.
-- `GAMERO_CODEX_PATH` and `GAMERO_WORKSPACE` are both set.
+- `GAMERO_CODEX_PATH` and `GAMERO_WORKSPACE` are both set. These two are read
+  only from the environment; unlike `GAMERO_PRODUCT` they have no `-D` fallback.
 
-Otherwise the page shows a hint to set the two variables and no bridge is
-attached. The companion's data directory is
+Otherwise no bridge is attached. When the product is `hovel` but there is no
+companion, the window shows a hint to set the two variables (main.kt line 218).
+On other products it shows nothing. The companion's data directory is
 `~/Library/Application Support/Gamero/hovel-<sha256 of the app URL>` (line 168),
 so each configured app URL gets its own registration, journal and output.
 
@@ -78,8 +80,10 @@ companion status` (line 79).
 Only `NativeOriginPolicy` has a unit test
 (`nativeOriginPolicyRejectsChildOpaqueAndLookalikeFrames` in
 [HovelAdapterTest.kt](../composeApp/src/jvmTest/kotlin/org/formulagen/wrapper/hovel/HovelAdapterTest.kt)).
-The size cap, context and frame checks in `onQuery` need a live JCEF and are
-checked by the smoke page on a Mac.
+The size cap, the protocol version check and the context and frame checks in
+`onQuery` are untested. They need a live JCEF, and the smoke page does not
+exercise them: [native-bridge-smoke.html](../tools/native-bridge-smoke.html)
+only opens `watchContext`, calls `capabilities` and offers a reload.
 
 ## Bridge methods
 
@@ -96,6 +100,11 @@ Only one non-`capabilities` call runs at a time. A second call while one is
 pending fails with "Another native operation is pending" (line 50). Each call
 records the companion's generation when it starts and fails if
 `invalidatePending` or `close` bumps it before the call finishes.
+
+`invalidatePending` also clears the approved registration
+(HovelCompanion.kt line 146). So after any reload, `activateConnection` fails
+with "Native approval is required" until the page calls `prepareConnection`
+again.
 
 ## Connecting a Mac
 
@@ -173,9 +182,12 @@ launch boundary, and waits up to 3 and 5 seconds for them to end.
 | --- | --- |
 | `403 Native request unavailable for this frame` | Wrong frame, wrong origin, closed bridge, or request over 4096 characters. |
 | `403 Native context expired` | Missing or old `contextId`, different frame, or a reload happened. |
-| `400 Native action failed; inspect the companion status` | The method threw. The status line in the window says more. |
-| "This native profile belongs to another account" | `registration.json` has a different `ownerId`. |
-| "Task needs reconciliation on this computer" | The coordinator stopped a task. See the journal. |
+| `400 Invalid native protocol` | The request is not a JSON object with `"version": 1` (NativeBridge.kt line 56). |
+| `400 Native action failed; inspect the companion status` | A bridge method threw. The page never sees the reason. |
+| Status line "Connection failed. Check the native configuration, Keychain approval and server." | Any bridge method failure other than a cancellation (HovelCompanion.kt line 105). This replaces the specific error, so the causes below never reach the window. |
+| (not shown) "This native profile belongs to another account" | Thrown when `registration.json` has a different `ownerId` (HovelCompanion.kt line 124). Users see only the two generic messages above; check `registration.json` in the data directory. |
+| Status line "Server unavailable; tasks remain on this computer" | A heartbeat failed. The session keeps retrying every 10 seconds. |
+| Status line "Task needs reconciliation on this computer; no automatic host change" | Any exception from `ExecutionCoordinator.accept`, including network errors and a server 409, not only a stopped task (HovelHostSession.kt line 51). See the journal before retrying. |
 
 ## Tests
 
