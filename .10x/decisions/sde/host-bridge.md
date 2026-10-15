@@ -23,4 +23,4 @@
 
 ## Tech debt
 - `HostBridgeFixtures.kt` drift check is manual until gamero has CI.
-- `main.kt` (Compose UI) is not compiled in the cloud; it changed only the `NativeBridge` construction.
+- `main.kt` changed only the `NativeBridge` construction. The jvmTest build compiles it.
