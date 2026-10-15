@@ -31,7 +31,7 @@ Tim's flow: one PR per task group, two review rounds, parent first through stack
 ## Phase D: legacy decision
 | # | Task | Size |
 |---|---|---|
-| D1 | ADR-002: delete or port the legacy managers and `WebBridge.kt` | 0.25 d |
+| D1 | ADR-003: delete or port the legacy managers and `WebBridge.kt` | 0.25 d |
 
 ## Order and parallel work
 A1 → A2 → A3 → A4. After A2, B1, B2 and B3 can run in parallel. C starts when the transports land.
