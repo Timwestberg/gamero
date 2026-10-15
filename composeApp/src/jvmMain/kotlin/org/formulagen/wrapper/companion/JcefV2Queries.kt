@@ -49,7 +49,8 @@ internal class JcefV2Queries(private val policy: NativeOriginPolicy, private val
                     val contextId = (Json.parseToJsonElement(reply).jsonObject["contextId"] as? JsonPrimitive)?.content
                     val cancelled = synchronized(lock) {
                         val stillPending = pendingWatches.remove(queryId)
-                        if (stillPending && contextId != null) watch = OpenWatch(queryId, callback, contextId)
+                        // A context from this watch replaced any older one, so an older watch gets no more events.
+                        if (contextId != null) watch = if (stillPending) OpenWatch(queryId, callback, contextId) else null
                         !stillPending
                     }
                     // JCEF cancelled this watch before its reply. End only the context it opened.
