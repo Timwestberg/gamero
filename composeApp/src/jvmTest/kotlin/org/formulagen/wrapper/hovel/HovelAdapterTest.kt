@@ -114,6 +114,8 @@ class HovelAdapterTest {
         withContext(Dispatchers.Main) { companion.approval?.answer?.complete(false) }
         val declined = next.await().exceptionOrNull()
         assertTrue(declined is IllegalStateException && declined !is org.formulagen.wrapper.bridge.BridgeBusyException, "the next call was busy: $declined")
+        // Only a call that reached its approval gets this message.
+        assertEquals("Connection declined", declined.message)
         companion.close()
     }
 
