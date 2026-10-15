@@ -2,6 +2,8 @@
 
 Production releases for web, Android, desktop and iOS: `tools/build-release.sh`, see [docs/release.md](docs/release.md).
 
+Tests on every target: `tools/test-all-targets.sh` runs the JVM, Android unit and iOS simulator tests and prints one count line per target (`jvm`, `android` or `ios` to run fewer).
+
 Mac desktop development: [build and launch guide](docs/desktop.md). Desktop is the default build target; mobile targets are opt-in.
 
 Hovel Mac companion and native bridge trust rules: [docs/hovel-companion.md](docs/hovel-companion.md).
