@@ -77,12 +77,30 @@ class HovelTaskRemote(private val transport: HovelTransport, initial: JsonObject
     }
 }
 
+/** What this companion can run, declared on every heartbeat. The server sends follow-ups only to a computer that lists `provider-input`. */
+val HOVEL_HOST_FEATURES = listOf("provider-input")
+
+fun hovelHeartbeat(providerState: String) = buildJsonObject {
+    put("providerState", providerState)
+    putJsonArray("features") { HOVEL_HOST_FEATURES.forEach(::add) }
+}
+
+/** A follow-up runs the server-built `providerInput` (earlier exchanges, then the new prompt) in place of its bare prompt. */
 fun hovelExecutionRequest(task: JsonObject, hostId: String): ExecutionRequest {
     val request = task.getValue("request").jsonObject
     require(request.getValue("hostId").jsonPrimitive.content == hostId)
     require(request.getValue("mode").jsonPrimitive.content == "local") { "Cloud execution is unavailable" }
-    return ExecutionRequest(request.getValue("id").jsonPrimitive.content, hostId,
-        request.getValue("prompt").jsonPrimitive.content, task.getValue("characterMemory").jsonPrimitive.content)
+    // An explicit null or a non-string is malformed, not absent: it would otherwise run as the text "null".
+    val providerInput = task["providerInput"]?.let {
+        require(it is JsonPrimitive && it.isString) { "Provider input must be text" }
+        it.content
+    }
+    val followUp = request["followUp"]?.also { require(it is JsonObject) { "Follow-up must be an object" } }
+    // The contract pairs them; one without the other would run a reply without its conversation.
+    require((followUp == null) == (providerInput == null)) { "Follow-up and its provider input must arrive together" }
+    val prompt = providerInput ?: request.getValue("prompt").jsonPrimitive.content
+    return ExecutionRequest(request.getValue("id").jsonPrimitive.content, hostId, prompt,
+        task.getValue("characterMemory").jsonPrimitive.content)
 }
 
 /** Complete-body timeout belongs to the exchange future; this subscriber bounds memory. */

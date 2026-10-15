@@ -80,6 +80,17 @@ class ExecutionCoordinatorTest {
         }
     }
 
+    @Test fun aWholeConversationFitsButNotOneCharacterMore() {
+        // The server's limits (event-contracts HOVEL_LIMITS.providerInput and .memory), pinned so the constants can't drift.
+        assertEquals(131_072, ExecutionRequest.MAX_PROMPT_CHARS)
+        assertEquals(16_384, ExecutionRequest.MAX_CONTEXT_CHARS)
+        ExecutionJournal(Files.createTempDirectory("journal"), host).use { journal ->
+            journal.prepare(request().copy(prompt = "x".repeat(ExecutionRequest.MAX_PROMPT_CHARS)))
+            assertFails { journal.prepare(request().copy(prompt = "x".repeat(ExecutionRequest.MAX_PROMPT_CHARS + 1))) }
+            assertFails { journal.prepare(request().copy(context = "x".repeat(ExecutionRequest.MAX_CONTEXT_CHARS + 1))) }
+        }
+    }
+
     @Test fun concurrentOwnerAndCorruptionFailClosed() {
         val dir = Files.createTempDirectory("journal")
         ExecutionJournal(dir, host).use { journal ->

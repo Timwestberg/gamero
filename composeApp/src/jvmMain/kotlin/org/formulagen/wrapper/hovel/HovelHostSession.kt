@@ -27,13 +27,11 @@ class HovelHostSession(
 
     private fun heartbeat() {
         val readiness = provider.readiness()
-        val response = transport.post("heartbeat", buildJsonObject {
-            put("providerState", when (readiness) {
-                CodexCliProvider.Readiness.READY -> "ready"
-                CodexCliProvider.Readiness.AUTH_REQUIRED -> "auth-required"
-                CodexCliProvider.Readiness.UNAVAILABLE -> "unavailable"
-            })
-        })
+        val response = transport.post("heartbeat", hovelHeartbeat(when (readiness) {
+            CodexCliProvider.Readiness.READY -> "ready"
+            CodexCliProvider.Readiness.AUTH_REQUIRED -> "auth-required"
+            CodexCliProvider.Readiness.UNAVAILABLE -> "unavailable"
+        }))
         status(if (readiness == CodexCliProvider.Readiness.READY) "Connected · Codex ready" else "Connected · Sign in to Codex using ChatGPT")
         if (working.get()) return
         val task = response.getValue("tasks").jsonArray.map { it.jsonObject }.firstOrNull {

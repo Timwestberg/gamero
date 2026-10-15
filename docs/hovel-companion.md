@@ -162,13 +162,22 @@ prompt.
 
 `HovelHostSession` (HovelHostSession.kt) runs a heartbeat immediately and then
 every 10 seconds after the previous one ends. Each heartbeat reports the Codex
-state (`ready`, `auth-required` or `unavailable`) and updates the status line. A
-failed heartbeat shows "Server unavailable; tasks remain on this computer".
+state (`ready`, `auth-required` or `unavailable`) and declares
+`features: ["provider-input"]` (`HOVEL_HOST_FEATURES` in HovelHostAdapter.kt),
+then updates the status line. The server sends follow-up tasks only to a
+computer that declares `provider-input`. A failed heartbeat shows "Server unavailable; tasks remain on this computer".
 
 If no task is running, it picks the first returned task in `queued`, `claimed`
 or `running`, skipping `queued` tasks unless Codex is ready. The task must be
-pinned to this host and use `local` mode (HovelHostAdapter.kt lines 80-86). It
-runs on a single worker thread through `ExecutionCoordinator`, so one task runs
+pinned to this host and use `local` mode (`hovelExecutionRequest` in
+HovelHostAdapter.kt). A follow-up (a task whose request has `followUp`) runs the
+task's `providerInput`, the conversation text the server built from the earlier
+exchanges and the new prompt, in place of `request.prompt`. A task with
+`followUp` but no `providerInput`, or the reverse, is refused before anything is
+journaled. Prompts may be up to 131,072 characters, the server's
+`providerInput` limit; character context stays at 16,384.
+
+The task runs on a single worker thread through `ExecutionCoordinator`, so one task runs
 at a time and launch rules from [desktop-execution.md](desktop-execution.md)
 apply. `ExecutionJournal` also holds a `host.lock` so two companions cannot share
 a journal.
