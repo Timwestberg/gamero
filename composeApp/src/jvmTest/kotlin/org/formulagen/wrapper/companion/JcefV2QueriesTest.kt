@@ -130,4 +130,20 @@ class JcefV2QueriesTest {
         settle()
         assertEquals(1, answers.successes.size, "an event went to a cancelled query")
     }
+
+    @Test
+    fun aLateReplyToACancelledWatchLeavesTheNextContextOpen() = runTest {
+        val page = page()
+        page.queries.onQuery(true, trusted, "frame-1", 1, watch, true, Answers())
+        assertTrue(page.queries.onQueryCanceled(1))
+        val second = Answers()
+        page.queries.onQuery(true, trusted, "frame-1", 2, watch, true, second)
+        settle()
+        val contextId = Json.parseToJsonElement(second.successes.single()).jsonObject.getValue("contextId").jsonPrimitive.content
+        val reply = ask(page, call(contextId), queryId = 3)
+        assertEquals("desktop", Json.parseToJsonElement(reply.successes.single()).jsonObject.getValue("result").jsonObject.getValue("platform").jsonPrimitive.content)
+        page.pause()
+        settle()
+        assertEquals(2, second.successes.size, "the second watch lost its events")
+    }
 }
