@@ -66,11 +66,12 @@ class BridgeRouterTest {
         fakes: Fakes = Fakes(),
         posted: MutableList<String> = mutableListOf(),
         failures: MutableList<String> = mutableListOf(),
+        newContextId: () -> String = { HostBridgeFixtures.CONTEXT_ID },
     ) = BridgeRouter(
         capabilities = capabilities(platform, fakes),
         scope = backgroundScope,
         transport = { posted += it },
-        newContextId = { HostBridgeFixtures.CONTEXT_ID },
+        newContextId = newContextId,
         onFailure = { method, _ -> failures += method },
     )
 
@@ -246,6 +247,27 @@ class BridgeRouterTest {
         runCurrent()
         assertEquals("failed", replies.single().code())
         assertEquals(listOf("companion.prepareConnection"), failures)
+        router.close()
+    }
+
+    @Test
+    fun endingAContextByIdLeavesANewerContextOpen() = runTest {
+        val first = "00000000-0000-4000-8000-00000000000a"
+        val second = "00000000-0000-4000-8000-00000000000b"
+        val ids = ArrayDeque(listOf(first, second))
+        val router = router(newContextId = { ids.removeFirst() })
+        call(router, watch)
+        router.endContext(second)
+        settle()
+        assertEquals(true, call(router, request("host.info", contextId = first)).single()["ok"]?.jsonPrimitive?.content?.toBoolean())
+        call(router, watch)
+        // The first watch goes away after the second one replaced its context.
+        router.endContext(first)
+        settle()
+        assertEquals(true, call(router, request("host.info", contextId = second)).single()["ok"]?.jsonPrimitive?.content?.toBoolean())
+        router.endContext(second)
+        settle()
+        assertEquals("expired", call(router, request("host.info", contextId = second)).single().code())
         router.close()
     }
 
