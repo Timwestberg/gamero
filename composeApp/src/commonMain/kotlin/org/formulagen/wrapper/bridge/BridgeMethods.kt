@@ -113,7 +113,13 @@ internal fun <R> BridgeMethod<*, R>.encodeResult(result: R): JsonElement = bridg
  * `intent:`, `file:` or `javascript:`, and must not send a password in the URL.
  */
 internal fun isSafeHttpsUrl(value: String): Boolean {
-    val match = Regex("^https://([^/?#]*)(.*)$", RegexOption.IGNORE_CASE).matchEntire(value) ?: return false
-    val authority = match.groupValues[1]
-    return authority.isNotEmpty() && !authority.startsWith(':') && '@' !in authority && value.none { it.isWhitespace() || it.isISOControl() }
+    val port = HTTPS_URL.matchEntire(value)?.groupValues?.get(1) ?: return false
+    return port.isEmpty() || port.toInt() in 1..65535
 }
+
+/**
+ * `HOST_BRIDGE_HTTPS_URL_PATTERN` in event-contracts: `https://`, a host of
+ * dot-separated labels, an optional port, then printable ASCII with no
+ * backslash. A pattern, not a URL parser, so every host decides the same way.
+ */
+private val HTTPS_URL = Regex("^https://[a-z0-9-]+(?:\\.[a-z0-9-]+)*(?::(\\d{1,5}))?(?:[/?#][!-\\[\\]-~]*)?$", RegexOption.IGNORE_CASE)
