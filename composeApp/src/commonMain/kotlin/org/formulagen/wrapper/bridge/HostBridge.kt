@@ -54,8 +54,9 @@ class HostBridge(
     /** Where capability work runs. The bridge makes a child scope and cancels it on [close]. */
     context: CoroutineContext = Dispatchers.Default,
     newContextId: () -> String = ::randomContextId,
-    onFailure: (method: String, error: Throwable) -> Unit = { method, error ->
-        log(LogLevel.Warn, "HostBridge", "Host bridge call $method failed", error)
+    /** Gets the method or event name when a capability fails or emits an undeclared event. */
+    onFailure: (name: String, error: Throwable) -> Unit = { name, error ->
+        log(LogLevel.Warn, "HostBridge", "Host bridge $name failed", error)
     },
 ) : AutoCloseable {
     val origin = TrustedOrigin(trustedUrl)
