@@ -3,13 +3,10 @@ package org.formulagen.wrapper.companion
 import dev.datlag.kcef.KCEFBrowser
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
-import org.formulagen.wrapper.bridge.BridgeErrorCode
 import org.formulagen.wrapper.bridge.BridgeProtocol
 import org.formulagen.wrapper.bridge.BridgeRouter
 import org.formulagen.wrapper.bridge.BridgeTransport
-import org.formulagen.wrapper.bridge.FrameFacts
 import org.formulagen.wrapper.bridge.HostCapabilities
-import org.formulagen.wrapper.bridge.bridgeFailureEnvelope
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.cef.browser.*
@@ -68,14 +65,13 @@ class NativeBridge(
     private val gate = Any()
     private val policy = NativeOriginPolicy(trustedUrl)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    /** The open v2 watch query. Its callback carries events; its cancellation ends the context. */
-    private var watch: Pair<Long, CefQueryCallback>? = null
     private val hostRouter = BridgeRouter(
         capabilities = capabilities,
         scope = scope,
-        transport = BridgeTransport { json -> synchronized(gate) { watch?.second }?.success(json) },
+        transport = BridgeTransport { json -> v2.events()?.success(json) },
         onFailure = { method, error -> log(LogLevel.Warn, "NativeBridge", "Host bridge call $method failed", error) },
     )
+    private val v2: JcefV2Queries = JcefV2Queries(policy, hostRouter)
     private val pending = ConcurrentHashMap<Long, Job>()
     private val closed = AtomicBoolean(false)
     private var watchId: Long? = null
@@ -95,28 +91,8 @@ class NativeBridge(
                 callback.failure(403, "Native request unavailable for this frame")
                 return@synchronized true
             }
-            when (classifyJcefQuery(request, persistent)) {
-                JcefQueryKind.V1 -> Unit
-                JcefQueryKind.V2_MISUSE -> {
-                    callback.success(bridgeFailureEnvelope(BridgeErrorCode.INVALID))
-                    return@synchronized true
-                }
-                JcefQueryKind.V2_WATCH -> {
-                    val facts = FrameFacts(frame.isMain, policy.permits(true, frame.url), frame.identifier)
-                    hostRouter.handle(request, facts) { reply ->
-                        val opened = "contextId" in Json.parseToJsonElement(reply).jsonObject
-                        synchronized(gate) { if (opened) watch = queryId to callback }
-                        callback.success(reply)
-                    }
-                    return@synchronized true
-                }
-                JcefQueryKind.V2_CALL -> {
-                    val facts = FrameFacts(frame.isMain, policy.permits(true, frame.url), frame.identifier)
-                    hostRouter.handle(request, facts, callback::success)
-                    return@synchronized true
-                }
-            }
-            if (dispatch == null || !policy.permits(frame.isMain, frame.url) || request.length > 4096) {
+            if (v2.onQuery(frame.isMain, frame.url, frame.identifier, queryId, request, persistent, callback)) return@synchronized true
+            if (dispatch == null || request.length > 4096) {
                 callback.failure(403, "Native request unavailable for this frame")
                 return@synchronized true
             }
@@ -155,10 +131,8 @@ class NativeBridge(
         override fun onQueryCanceled(source: CefBrowser, frame: CefFrame, queryId: Long) {
             synchronized(gate) {
                 if (source.identifier == browser.identifier) {
-                    if (watch?.first == queryId) {
-                        watch = null
-                        hostRouter.endContext()
-                    } else if (watchId == queryId) invalidate()
+                    if (v2.onQueryCanceled(queryId)) Unit
+                    else if (watchId == queryId) invalidate()
                     else pending.remove(queryId)?.let { it.cancel(); onInvalidate() }
                 }
             }
@@ -171,7 +145,7 @@ class NativeBridge(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         invalidate()
-        synchronized(gate) { watch = null }
+        v2.close()
         hostRouter.close()
         scope.cancel()
         browser.client.removeMessageRouter(router)
