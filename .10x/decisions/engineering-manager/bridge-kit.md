@@ -5,7 +5,7 @@ Approved by Tim on 2026-10-14. One stacked PR per row, in this order.
 | # | Task | Size | Depends on | Verify |
 |---|---|---|---|---|
 | K0 | `tools/test-all-targets.sh` | 0.25 d | – | Runs on Tim's Mac; prints a count line per target |
-| K1 | Typed handlers and typed events | 0.5 d | A3 | JVM tests; mobile via K0 |
+| K1 | Typed handlers and typed events | 0.5 d | A2b | JVM tests; mobile via K0 |
 | K2 | Method time limit | 0.25 d | K1 | Router test for a hanging call |
 | K3 | Platform set and product set; companion becomes a Hovel pack | 0.5 d | K1 | JVM tests; A4 smoke page |
 | K4 | Parity test for each platform factory | 0.25 d | K3 | All targets via K0 |
