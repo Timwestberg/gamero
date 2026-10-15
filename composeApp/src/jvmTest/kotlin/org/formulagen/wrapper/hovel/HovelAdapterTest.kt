@@ -114,6 +114,8 @@ class HovelAdapterTest {
         withContext(Dispatchers.Main) { companion.approval?.answer?.complete(false) }
         val declined = next.await().exceptionOrNull()
         assertIs<org.formulagen.wrapper.bridge.BridgeDeclinedException>(declined, "the person's cancel did not answer declined: $declined")
+        // Only a call that reached its approval gets this message.
+        assertEquals("Connection declined", declined.message)
         companion.close()
     }
 
