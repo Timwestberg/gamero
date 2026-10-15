@@ -319,6 +319,25 @@ class BridgeRouterTest {
     }
 
     @Test
+    fun anUndeclaredEventIsReportedAndNotSent() = runTest {
+        val undeclared = BridgeEvent("rogue.event", NoData.serializer())
+        var sink: EventSink? = null
+        val rogue = CapabilityBinder<Unit>(
+            handlers = emptyList(),
+            observe = { _, events -> sink = events; AutoCloseable { } },
+        ).pack(Capability.Supported(Unit))
+        val posted = mutableListOf<String>()
+        val failures = mutableListOf<String>()
+        val router = router(HostPlatform.DESKTOP, posted = posted, failures = failures, products = listOf(rogue))
+        call(router, watch)
+        sink!!.emit(undeclared, NoData)
+        settle()
+        assertEquals(emptyList(), posted)
+        assertEquals(listOf("rogue.event"), failures)
+        router.close()
+    }
+
+    @Test
     fun safeHttpsUrls() {
         for (url in listOf("https://example.com", "https://example.com:8443/a?b=c#d", "HTTPS://Example.com/", "https://" + "a.".repeat(125) + "co", "https://example.com/" + "a/".repeat(30_000))) assertTrue(isSafeHttpsUrl(url), url)
         for (url in listOf("http://example.com", "javascript:alert(1)", "https://", "https://user:pass@example.com", "https://a b.com", "intent://x#Intent;end", "https://:443/", "https:example.com", "https://exa\\mple.com", "https://[::1", "https://example.com:0/", "https://example.com:65536/", "https://example.com/caf\u00e9",
