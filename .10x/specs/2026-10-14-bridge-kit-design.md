@@ -78,7 +78,7 @@ flowchart LR
     R["BridgeRouter (exists)"]
     P["CapabilityPack: platform set + product set"]
   end
-  T -->|receive / documentChanged| S --> R --> P
+  T -->|"receive / documentChanged or endContext(contextId)"| S --> R --> P
   S -->|post JSON| T
 ```
 
@@ -96,7 +96,9 @@ the kit.
       end closes only that watch's context and never a newer one.
 
    The document id becomes a counter inside `HostBridge`. A platform does not
-   make its own id. JCEF, Android and iOS then end contexts by the same rule.
+   make its own id. Android and iOS move the counter with `documentChanged()`;
+   JCEF leaves it alone and ends one context at a time with
+   `endContext(contextId)`.
 2. **Typed handlers (G3).** A method binds with the capability as a parameter:
    `PLAY.handle { haptics: Haptics, args -> haptics.play(args.effect) }`. The
    binder gets its method list from the handlers. The compiler checks the
@@ -191,6 +193,10 @@ B2 changed no file in `commonMain`, so the kit held for a third platform.
 - `WebKitTransportContractTest` runs the six scenarios on the iOS target.
   `IosParityTest` checks the iOS factory. The web client (B3) adds
   `gameroHostEvent` and the message shapes to the contract.
+- No unit test covers the WebKit glue in `IosHostBridge`: how the
+  `{documentStart: true}` body bridges into Kotlin, and the `callAsyncJavaScript`
+  arguments. The device smoke run checks that a navigation ends the old
+  context, which fails if the document-start body is not recognized.
 
 ### Parity and legacy (G7, G8)
 

@@ -274,11 +274,11 @@ build_ios() {
   [[ -n "$team" ]] || signing=(CODE_SIGNING_ALLOWED=NO)
   rm -rf "$out/ios" && mkdir -p "$out/ios"
   step "ios: archiving Release ($url, $version/$build_number${team:+, team $team}; log: $out/ios/xcodebuild.log)"
-  # Command-line settings override Config.xcconfig, including its Release GAMERO_WEB_URL.
+  # Command-line settings override Config.xcconfig, including its Release GAMERO_WEB_URL and GAMERO_PRODUCT.
   # DEVELOPMENT_TEAM rather than TEAM_ID, which Config.xcconfig also appends to the bundle ID.
   xcodebuild -project "$root/iosApp/iosApp.xcodeproj" -scheme iosApp -configuration Release \
     -destination 'generic/platform=iOS' -archivePath "$archive" \
-    GAMERO_WEB_URL="$url" MARKETING_VERSION="$version" CURRENT_PROJECT_VERSION="$build_number" \
+    GAMERO_WEB_URL="$url" GAMERO_PRODUCT="$product" MARKETING_VERSION="$version" CURRENT_PROJECT_VERSION="$build_number" \
     COMPILER_INDEX_STORE_ENABLE=NO "${signing[@]}" ${team:+-allowProvisioningUpdates} \
     -resultBundlePath "$out/ios/Gamero.xcresult" archive \
     >"$out/ios/xcodebuild.log" 2>&1 || { grep -E "error:" "$out/ios/xcodebuild.log" | head -20 >&2; fail "ios: archive failed"; }
