@@ -66,7 +66,7 @@ class HostBridge(
         onFailure = onFailure,
     )
 
-    /** Hands one request to the router. [channel] gets exactly one reply, from any thread. */
+    /** Hands one request to the router. [channel] gets at most one reply, from any thread; a cancelled call gets none. */
     fun receive(raw: String, frame: PageFrame, channel: BridgeChannel) {
         val documentId = document.load()
         val facts = FrameFacts(frame.mainFrame, origin.matches(frame.url), documentId.toString())
