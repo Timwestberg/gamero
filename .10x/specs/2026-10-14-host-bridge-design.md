@@ -82,7 +82,7 @@ When two choices conflict, use this order:
 | Reusable | One router, one envelope, one web client. The recipe below. | Fixed in A2b: each capability file declares its methods and a `CapabilityBinder`; the router holds no capability code. |
 | Extensible: new capability | Web callers ask `host.capabilities` and do not change. Old methods do not change. | A new `HostCapabilities` parameter makes each platform's factory add one line. This is intended: a forgotten platform is a compile error, not a runtime surprise. |
 | Extensible: new platform | A new transport and a new `HostCapabilities` factory. The router and the capabilities do not change. | None. |
-| Consistent | The router does all checks, all error mapping and all context rules. Shared fixtures run on every target. The parity test checks the parity table. | Fixed in A2b: every capability method is `suspend`. |
+| Consistent | The router does all checks, all error mapping and all context rules. Shared fixtures run on every target. The parity test checks the parity table. | Fixed in A2b: every bridge method is `suspend`. `Lifecycle.observe` is not, because it only registers callbacks. |
 | Safe by default | Frame facts come from the platform API. The router checks them first. | None. |
 
 ## Not in scope
@@ -197,13 +197,15 @@ rules in the first column; a capability or a transport must obey the rest.
    methods (zod arguments and result) to `capabilities.ts`, add the row to
    `HOST_BRIDGE_PARITY`, and add the fixtures. Run the contract tests.
 2. **Interface.** In gamero `commonMain/.../bridge/`, add one file with the
-   interface (`suspend` methods), the argument and result types, and an object
+   interface (`suspend` bridge methods), the argument and result types, and an object
    with the `BridgeMethod` values and a `CapabilityBinder`. `Haptics.kt` is the
    smallest example.
 3. **Host parameter.** For a platform capability, add one
    `Capability<YourInterface>` parameter to `HostCapabilities`, and its binder
    to the `bound` list beside it. The compiler then names every platform
-   factory that must choose `Supported(impl)` or `Unsupported`. For a product
+   factory that must choose `Supported(impl)` or `Unsupported`. The compiler
+   does not catch a binder missing from `bound`; the parity listing test in
+   `BridgeRouterTest` does. For a product
    capability, add a `pack()` function beside the binder instead, and pass the
    pack from the product's start code on every platform.
 4. **Platforms.** Write the implementation in each platform source set that
