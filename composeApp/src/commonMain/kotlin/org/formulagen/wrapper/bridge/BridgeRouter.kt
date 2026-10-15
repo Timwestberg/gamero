@@ -102,7 +102,6 @@ class BridgeRouter(
         }
     }
 
-
     override fun close() {
         subscriptions.forEach { it.close() }
         subscriptions = emptyList()

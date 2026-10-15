@@ -70,7 +70,7 @@ internal class MethodHandler(
 )
 
 /** A method bound to a capability of type [T]. Made by [BridgeMethod.handle]. */
-class CapabilityHandler<in T> internal constructor(
+internal class CapabilityHandler<in T>(
     internal val method: BridgeMethod<*, *>,
     internal val bind: (T) -> MethodHandler,
 )
@@ -79,7 +79,7 @@ class CapabilityHandler<in T> internal constructor(
  * Binds [body] to this method for a capability of type [T]. The router has
  * checked the arguments before [body] runs.
  */
-fun <T, A, R> BridgeMethod<A, R>.handle(body: suspend (capability: T, args: A) -> R): CapabilityHandler<T> =
+internal fun <T, A, R> BridgeMethod<A, R>.handle(body: suspend (capability: T, args: A) -> R): CapabilityHandler<T> =
     CapabilityHandler(this) { capability -> answer { args -> body(capability, args) } }
 
 /** Binds [body] to this method with no capability. The router uses it for `host.*`. */
