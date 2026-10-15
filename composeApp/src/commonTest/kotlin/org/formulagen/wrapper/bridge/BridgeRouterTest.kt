@@ -259,7 +259,9 @@ class BridgeRouterTest {
     fun aHostWithoutAProductDoesNotKnowItsMethods() = runTest {
         val router = router(HostPlatform.DESKTOP, products = emptyList())
         call(router, watch)
-        assertEquals("unknown-method", call(router, request("companion.capabilities")).single().code())
+        val reply = call(router, request("companion.capabilities")).single()
+        assertEquals("unknown-method", reply.code())
+        assertEquals("This host does not define this method", reply["error"]!!.jsonObject["message"]!!.jsonPrimitive.content)
         val methods = call(router, request("host.capabilities")).single()["result"]!!.jsonObject["methods"]!!.jsonArray
         assertTrue(methods.none { it.jsonPrimitive.content.startsWith("companion.") }, methods.toString())
         router.close()
