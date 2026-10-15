@@ -19,13 +19,6 @@ class BridgeMethod<A, R>(
     val accepts: (A) -> Boolean = { true },
 )
 
-/** Event names of `host-bridge.v2`. Mirrors `HOST_BRIDGE_EVENTS`. */
-object BridgeEvents {
-    const val LIFECYCLE_PAUSE = "lifecycle.pause"
-    const val LIFECYCLE_RESUME = "lifecycle.resume"
-    val ALL = listOf(LIFECYCLE_PAUSE, LIFECYCLE_RESUME)
-}
-
 @Serializable
 data object NoArgs
 
@@ -40,59 +33,33 @@ enum class HostPlatform {
 }
 
 @Serializable
-enum class HapticEffect {
-    @SerialName("light") LIGHT,
-    @SerialName("medium") MEDIUM,
-    @SerialName("heavy") HEAVY,
-    @SerialName("selection") SELECTION,
-    @SerialName("success") SUCCESS,
-    @SerialName("warning") WARNING,
-    @SerialName("error") ERROR,
-}
-
-@Serializable
 data class HostCapabilitiesResult(val methods: List<String>, val events: List<String>)
 
 @Serializable
 data class HostInfoResult(val platform: HostPlatform, val appVersion: String, val bridgeVersion: Int = BridgeProtocol.VERSION)
 
-@Serializable
-data class LinkOpenArgs(val url: String)
-
-@Serializable
-data class HapticPlayArgs(val effect: HapticEffect)
-
-@Serializable
-data class CompanionCapabilitiesResult(val connectComputer: Boolean = true, val cloud: Boolean = false, val sandbox: String = "read-only")
-
-@Serializable
-data class CompanionPrepareArgs(val ownerId: String)
-
-@Serializable
-data class CompanionRegistration(val id: String, val name: String, val tokenHash: String)
-
-@Serializable
-data class CompanionActivateArgs(val ownerId: String, val hostId: String)
-
+/**
+ * The methods the router answers itself. Each capability declares its own
+ * methods beside its interface (`LinkMethods`, `HapticMethods`, ...).
+ */
 object BridgeMethods {
     val HOST_CAPABILITIES = BridgeMethod("host.capabilities", NoArgs.serializer(), HostCapabilitiesResult.serializer())
     val HOST_INFO = BridgeMethod("host.info", NoArgs.serializer(), HostInfoResult.serializer())
-    val LINK_OPEN = BridgeMethod("link.open", LinkOpenArgs.serializer(), NoResult.serializer()) { isSafeHttpsUrl(it.url) }
-    val HAPTIC_PLAY = BridgeMethod("haptic.play", HapticPlayArgs.serializer(), NoResult.serializer())
-    val COMPANION_CAPABILITIES =
-        BridgeMethod("companion.capabilities", NoArgs.serializer(), CompanionCapabilitiesResult.serializer())
-    val COMPANION_PREPARE = BridgeMethod("companion.prepareConnection", CompanionPrepareArgs.serializer(), CompanionRegistration.serializer()) {
-        BridgeProtocol.UUID_PATTERN.matches(it.ownerId)
-    }
-    val COMPANION_ACTIVATE = BridgeMethod("companion.activateConnection", CompanionActivateArgs.serializer(), JsonObject.serializer()) {
-        BridgeProtocol.UUID_PATTERN.matches(it.ownerId) && BridgeProtocol.UUID_PATTERN.matches(it.hostId)
-    }
-
-    /** Every method any host defines. A method not listed here is `unknown-method` everywhere. */
-    val ALL: List<BridgeMethod<*, *>> = listOf(
-        HOST_CAPABILITIES, HOST_INFO, LINK_OPEN, HAPTIC_PLAY, COMPANION_CAPABILITIES, COMPANION_PREPARE, COMPANION_ACTIVATE,
-    )
 }
+
+/** One method and the code that runs it. Made by [BridgeMethod.handle]. */
+internal class MethodHandler(
+    val method: BridgeMethod<*, *>,
+    val accepts: (JsonObject) -> Boolean,
+    val invoke: suspend (JsonObject) -> JsonElement,
+)
+
+/** Binds [body] to this method. The router has checked the arguments before [body] runs. */
+internal fun <A, R> BridgeMethod<A, R>.handle(body: suspend (A) -> R): MethodHandler = MethodHandler(
+    method = this,
+    accepts = { args -> decodeArgs(args) != null },
+    invoke = { args -> encodeResult(body(decodeArgs(args)!!)) },
+)
 
 /** Strict: an unknown key fails, as `z.strictObject` does. */
 internal val bridgeJson = Json { ignoreUnknownKeys = false; isLenient = false; explicitNulls = false; encodeDefaults = true }
