@@ -78,7 +78,7 @@ flowchart LR
     R["BridgeRouter (exists)"]
     P["CapabilityPack: platform set + product set"]
   end
-  T -->|receive / documentChanged| S --> R --> P
+  T -->|"receive / documentChanged or endContext(contextId)"| S --> R --> P
   S -->|post JSON| T
 ```
 
@@ -96,7 +96,9 @@ the kit.
       end closes only that watch's context and never a newer one.
 
    The document id becomes a counter inside `HostBridge`. A platform does not
-   make its own id. JCEF, Android and iOS then end contexts by the same rule.
+   make its own id. Android and iOS move the counter with `documentChanged()`;
+   JCEF leaves it alone and ends one context at a time with
+   `endContext(contextId)`.
 2. **Typed handlers (G3).** A method binds with the capability as a parameter:
    `PLAY.handle { haptics: Haptics, args -> haptics.play(args.effect) }`. The
    binder gets its method list from the handlers. The compiler checks the
