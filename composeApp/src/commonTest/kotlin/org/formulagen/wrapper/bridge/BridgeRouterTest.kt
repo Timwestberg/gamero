@@ -149,7 +149,7 @@ class BridgeRouterTest {
         assertTrue(long.length > BridgeProtocol.MAX_ERROR_MESSAGE_CHARS)
         val cut = Json.parseToJsonElement(BridgeEnvelopes.failure(BridgeErrorCode.FAILED, long)).jsonObject.getValue("error").jsonObject.getValue("message").jsonPrimitive.content
         assertEquals(long.take(BridgeProtocol.MAX_ERROR_MESSAGE_CHARS), cut)
-        assertEquals(fixture("event-pause.json"), Json.parseToJsonElement(BridgeEnvelopes.event("lifecycle.pause", JsonObject(emptyMap()))))
+        assertEquals(fixture("event-pause.json"), Json.parseToJsonElement(BridgeEnvelopes.event(LifecycleEvents.PAUSE.name, bridgeJson.encodeToJsonElement(NoData.serializer(), NoData))))
         assertEquals(fixture("watch-context-reply.json"), Json.parseToJsonElement(BridgeEnvelopes.watchContextReply(HostBridgeFixtures.CONTEXT_ID)))
     }
 

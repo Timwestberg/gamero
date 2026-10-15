@@ -47,15 +47,43 @@ object BridgeMethods {
     val HOST_INFO = BridgeMethod("host.info", NoArgs.serializer(), HostInfoResult.serializer())
 }
 
-/** One method and the code that runs it. Made by [BridgeMethod.handle]. */
+/**
+ * One event of `host-bridge.v2`: its wire name and its payload serializer.
+ * Mirrors `HOST_BRIDGE_EVENTS` in event-contracts.
+ */
+class BridgeEvent<D>(val name: String, val data: KSerializer<D>)
+
+/** Sends typed events. The router gives one to each capability that has events. */
+interface EventSink {
+    fun <D> emit(event: BridgeEvent<D>, data: D)
+}
+
+/** An event payload with no fields. It encodes as `{}`. */
+@Serializable
+data object NoData
+
+/** One method and the code that runs it. */
 internal class MethodHandler(
     val method: BridgeMethod<*, *>,
     val accepts: (JsonObject) -> Boolean,
     val invoke: suspend (JsonObject) -> JsonElement,
 )
 
-/** Binds [body] to this method. The router has checked the arguments before [body] runs. */
-internal fun <A, R> BridgeMethod<A, R>.handle(body: suspend (A) -> R): MethodHandler = MethodHandler(
+/** A method bound to a capability of type [T]. Made by [BridgeMethod.handle]. */
+internal class CapabilityHandler<in T>(
+    internal val method: BridgeMethod<*, *>,
+    internal val bind: (T) -> MethodHandler,
+)
+
+/**
+ * Binds [body] to this method for a capability of type [T]. The router has
+ * checked the arguments before [body] runs.
+ */
+internal fun <T, A, R> BridgeMethod<A, R>.handle(body: suspend (capability: T, args: A) -> R): CapabilityHandler<T> =
+    CapabilityHandler(this) { capability -> answer { args -> body(capability, args) } }
+
+/** Binds [body] to this method with no capability. The router uses it for `host.*`. */
+internal fun <A, R> BridgeMethod<A, R>.answer(body: suspend (A) -> R): MethodHandler = MethodHandler(
     method = this,
     accepts = { args -> decodeArgs(args) != null },
     invoke = { args -> encodeResult(body(decodeArgs(args)!!)) },

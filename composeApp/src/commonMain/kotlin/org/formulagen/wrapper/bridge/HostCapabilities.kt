@@ -1,7 +1,5 @@
 package org.formulagen.wrapper.bridge
 
-import kotlinx.serialization.json.JsonElement
-
 /** A capability this host provides, or an explicit `Unsupported`. Nothing throws at call time. */
 sealed interface Capability<out T> {
     data class Supported<out T>(val impl: T) : Capability<T>
@@ -9,36 +7,37 @@ sealed interface Capability<out T> {
 }
 
 /**
- * How one capability meets the bridge: its methods, its events, and how to
- * run them. Each capability declares one beside its interface, so the router
- * holds no capability code.
+ * How one capability meets the bridge: its handlers, its events, and how to
+ * start the events. Each capability declares one beside its interface, so the
+ * router holds no capability code. The methods are the handlers' methods, so
+ * the compiler checks that each one has code.
  */
 internal class CapabilityBinder<T>(
-    val methods: List<BridgeMethod<*, *>>,
-    val events: List<String> = emptyList(),
-    private val handlers: (T) -> List<MethodHandler> = { emptyList() },
+    internal val handlers: List<CapabilityHandler<T>>,
+    internal val events: List<BridgeEvent<*>> = emptyList(),
     /** Starts the capability's events. The router calls it once and closes the result on [BridgeRouter.close]. */
-    private val observe: ((T, emit: (String, JsonElement) -> Unit) -> AutoCloseable)? = null,
+    internal val observe: ((capability: T, events: EventSink) -> AutoCloseable)? = null,
 ) {
-    fun bind(capability: Capability<T>): BoundCapability = when (capability) {
-        is Capability.Supported -> BoundCapability(
-            methods = methods,
-            events = events,
-            handlers = handlers(capability.impl).also { bound ->
-                check(bound.map { it.method } == methods) { "Handlers must match the declared methods: ${methods.map { it.name }}" }
-            },
-            observe = observe?.let { start -> { emit -> start(capability.impl, emit) } },
-        )
-        Capability.Unsupported -> BoundCapability(methods, events, handlers = null, observe = null)
+    internal fun bind(capability: Capability<T>): BoundCapability {
+        val methods = handlers.map { it.method }
+        return when (capability) {
+            is Capability.Supported -> BoundCapability(
+                methods = methods,
+                events = events,
+                handlers = handlers.map { it.bind(capability.impl) },
+                observe = observe?.let { start -> { sink -> start(capability.impl, sink) } },
+            )
+            Capability.Unsupported -> BoundCapability(methods, events, handlers = null, observe = null)
+        }
     }
 }
 
 /** A capability as this host has it. [handlers] is null when the host does not support it. */
 internal class BoundCapability(
     val methods: List<BridgeMethod<*, *>>,
-    val events: List<String>,
+    val events: List<BridgeEvent<*>>,
     val handlers: List<MethodHandler>?,
-    val observe: ((emit: (String, JsonElement) -> Unit) -> AutoCloseable)?,
+    val observe: ((EventSink) -> AutoCloseable)?,
 )
 
 /**

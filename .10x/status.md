@@ -21,7 +21,7 @@
 Spec `specs/2026-10-14-bridge-kit-design.md`, ADR-002 (Accepted). G5: product set. **Phase:** Implementation.
 
 - [x] K0 test-all-targets script (to verify on the Mac)
-- [ ] K1 typed handlers and events
+- [x] K1 typed handlers and events (JVM tests pass)
 - [ ] K2 method time limit
 - [ ] K3 platform set and product set
 - [ ] K4 parity test per factory
