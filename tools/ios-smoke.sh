@@ -84,7 +84,8 @@ xcrun simctl install "$device" "$app"
 
 step "launching $bundle_id"
 : >"$out/smoke.log"
-SIMCTL_CHILD_GAMERO_WEB_URL="$url" xcrun simctl launch --console-pty --terminate-running-process \
+# The smoke test checks the web view, so it skips the Hovel start screen, which waits for a tap.
+SIMCTL_CHILD_GAMERO_PRODUCT=gamero SIMCTL_CHILD_GAMERO_WEB_URL="$url" xcrun simctl launch --console-pty --terminate-running-process \
   "$device" "$bundle_id" >"$out/smoke.log" 2>&1 &
 console_pid=$!
 
