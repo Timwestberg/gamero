@@ -247,11 +247,13 @@ and say so.
   `BridgeProtocol.kt`, `HostCapabilities.kt`, `CompanionCapability.kt`,
   `TrustedOrigin.kt`) and its desktop transport
   `jvmMain/.../bridge/JcefHostBridge.kt`. Docs `docs/desktop.md`,
-  `docs/hovel-native-validation.md`, `docs/browser-profile-review.md`.
+  `docs/hovel-companion.md`, `docs/hovel-native-validation.md`,
+  `docs/browser-profile-review.md`.
 - **Healthy looks like:** `GAMERO_JCEF_INITIALIZED` before the browser shows,
   no `GAMERO_RUNTIME_FAILED`, close within 15 s. The bridge accepts only the
   trusted origin's main frame (origin from native frame facts), requests of at most
-  4096 bytes, a context id plus frame id on every call, and reload invalidates.
+  4096 characters for v1 and untrusted queries (a trusted v2 request may be up to
+  64 Ki characters, `BridgeProtocol.MAX_REQUEST_CHARS`), a context id plus frame id on every call, and reload invalidates.
   Companion: one native call at a time, user-approval dialog,
   `registration.json` 0600 in a 0700 dir, the web side sees only the token hash,
   transport 15 s timeout, 16 MiB cap, no redirects, heartbeat every 10 s.
@@ -259,8 +261,11 @@ and say so.
   (JDK 21; in the cloud only where dl.google.com is reachable);
   `HovelAdapterTest`, `BrowserLifecycleTest`, `BrowserReadinessTest`,
   `DesktopConfigurationTest`, `BridgeRouterTest`, `CapabilityBinderTest`,
-  `TrustedOriginTest`, the `*TransportContractTest` and `*ParityTest` suites.
-  Live JCEF, Keychain and real Codex runs need a Mac (`hovel-local-env-#`
+  `TrustedOriginTest`, `DesktopParityTest`, `JcefTransportContractTest` and the
+  commonTest `TransportContractTest` and `MessagePortTransportContractTest`.
+  `AndroidParityTest` needs the Android unit-test task, and `IosParityTest` and
+  `WebKitTransportContractTest` run only on a Mac, so a JVM run alone does not
+  verify parity. Live JCEF, Keychain and real Codex runs need a Mac (`hovel-local-env-#`
   folder).
 - **Known quirks:** Gradle success is never proof the page rendered. The
   persistent browser profile fix (FOR-80) is not yet Mac-validated. Account
@@ -269,9 +274,9 @@ and say so.
   FOR-117/FOR-118) and its transport shapes as server-platform #153. The kit,
   the JCEF, Android and iOS transports and the parity tests merged as #16 to
   #23, #25, #28 and #30; #32 stops events to a watch a newer watch replaced.
-  `NativeBridge.kt` sends v2 requests to `JcefHostBridge` and keeps the v1
-  companion protocol on `gameroQuery` until `nativeCompanion.ts` moves (task
-  B4). Companion calls time out after 5 min (prepare, which covers approval and
+  On desktop, v2 and the v1 companion protocol share the `gameroQuery` router;
+  `JcefHostBridge` claims v2 first, and v1 stays until `nativeCompanion.ts`
+  moves (task B4). Companion calls time out after 5 min (prepare, which covers approval and
   Keychain) and 2 min (activate) in `CompanionCapability.kt`. Desktop links,
   haptics and lifecycle answer `unsupported` for now.
 - **Cares most about:** failing loudly, bounded shutdown, and trusting only
@@ -397,7 +402,8 @@ and say so.
 - **Lives in:** `Timwestberg/hovel-editor`, a fork of `godotengine/godot`.
   `master` mirrors upstream and is never committed to; every Hovel build comes
   from `hovel/main`, which is the upstream commit in `hovel/UPSTREAM` (today
-  `master` at `4d10419`, the 4.8 beta) plus the `hovel/` folder: `profile.py`,
+  `master` at `4d10419`, the 4.8 beta) plus the `.github/CODEOWNERS` entry
+  `CORE_CHANGES` allows, plus the `hovel/` folder: `profile.py`,
   `modules/` (no modules yet), `CORE_CHANGES`, and `scripts/build.sh`,
   `sync-upstream.sh` and `check-divergence.sh`. Docs `hovel/README.md`.
 - **Healthy looks like:** the editor and every engine (iOS, Android, web) build
@@ -405,8 +411,9 @@ and say so.
   module the editor uses. Hovel changes live in custom modules, editor plugins
   and build options, not Godot core. Godot's license, copyright notices and
   trademark policy are kept. Godot upgrades only through an approved plan.
-- **Watch:** `hovel/scripts/check-divergence.sh` (fails when anything outside
-  `hovel/` differs from the upstream commit). Cloud build, verified 2026-10-15
+- **Watch:** `hovel/scripts/check-divergence.sh` (fails when a file outside
+  `hovel/` differs from the upstream commit and is not listed, with a reason, in
+  `hovel/CORE_CHANGES`; today that list holds only `.github/CODEOWNERS`). Cloud build, verified 2026-10-15
   on `d9f0725` (engine the same as `92c9648`): `pip install scons zstandard`;
   the editor with `python3 -m SCons profile=hovel/profile.py platform=linuxbsd
   target=editor x11=no wayland=no alsa=no pulseaudio=no dbus=no speechd=no
