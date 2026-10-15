@@ -111,12 +111,15 @@ internal fun isSafeHttpsUrl(value: String): Boolean {
 
 /**
  * `HOST_BRIDGE_HTTPS_URL_PATTERN` in event-contracts: `https://`, a host of
- * dot-separated ASCII labels whose last label has a letter, an optional port,
- * then printable ASCII with no backslash. A pattern, not a URL parser, so
- * every host decides the same way. It spells out case instead of using
- * `IGNORE_CASE`, which folds Unicode case on the JVM and would accept `httpſ`.
+ * at most 253 characters with two or more ASCII labels, whose last label has
+ * a letter and is not `localhost`, an optional port, then printable ASCII
+ * with no backslash. A pattern, not a URL parser, so every host decides the
+ * same way. It spells out case instead of using `IGNORE_CASE`, which folds
+ * Unicode case on the JVM and would accept `httpſ`. The host cap runs first,
+ * because the JVM engine recurses once per label and would overflow its stack.
  */
 private val HTTPS_URL = Regex(
-    "^[hH][tT][tT][pP][sS]://(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)*(?=[A-Za-z0-9-]*[A-Za-z])[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?" +
+    "^[hH][tT][tT][pP][sS]://(?=[A-Za-z0-9.-]{1,253}(?![A-Za-z0-9.-]))(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)+" +
+        "(?![lL][oO][cC][aA][lL][hH][oO][sS][tT](?![A-Za-z0-9-]))(?=[A-Za-z0-9-]*[A-Za-z])[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?" +
         "(?::([0-9]{1,5}))?(?:[/?#][!-\\[\\]-~]*)?$",
 )
