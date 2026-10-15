@@ -139,7 +139,8 @@ The test then says so in one skipped scenario.
 
 - `HostBridge` (`commonMain`) owns the router, its scope, `TrustedOrigin`, the
   document counter and the event channel. A transport calls
-  `receive(raw, PageFrame(mainFrame, url), channel)` and `documentChanged()`.
+  `receive(raw, PageFrame(mainFrame, url), channel)` and `documentChanged()`,
+  or `endContext(contextId)` to end one watch's context.
   The channel of the `watchContext` request that opens a context carries that
   context's events.
 - `TrustedOrigin` (`commonMain`) replaces the JCEF-only origin policy. It also

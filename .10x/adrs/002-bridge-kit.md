@@ -30,7 +30,9 @@ Tim's goals are reusable, extensible and consistent, with composability first.
 1. Add `HostBridge` to `commonMain`. It owns the scope, the router, a document
    counter, the event channel and the failure log. A platform adapter only
    calls `receive(raw, frame, reply)`, supplies `post(json)`, and calls
-   `documentChanged()` on main-frame navigation.
+   `documentChanged()` on main-frame navigation. A transport whose only
+   signal is the end of one watch (JCEF) calls `endContext(contextId)`
+   instead, which never closes a newer watch's context.
 2. Add `TransportContractTest` to `commonTest`. Every platform adapter runs the
    same six scenarios with a fake WebView.
 3. Bind handlers with the capability as a typed parameter, and add a typed
