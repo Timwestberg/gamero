@@ -183,7 +183,7 @@ rules in the first column; a capability or a transport must obey the rest.
 |---|---|---|
 | API shape | One method name `area.verb`. Arguments and result are `@Serializable` types in `BridgeMethods.kt`, mirrored by zod in event-contracts. Every reply is `{ok:true, result}` or `{ok:false, error:{code, message}}`. | Router; fixtures in both repos |
 | Argument checks | The router decodes and checks the arguments before the capability runs. A capability never gets invalid input. | Router (`BridgeMethod.accepts`) |
-| Error handling | A capability throws `BridgeBusyException` for `busy`. Any other exception becomes `failed`, and the host logs it. The page sees only the code and a fixed message, never a stack trace. | Router |
+| Error handling | A capability throws `BridgeBusyException` for `busy` and `BridgeDeclinedException` for `declined` (K6). Any other exception becomes `failed`, and the host logs it. The page sees only the code and a fixed message, never a stack trace. | Router |
 | Threading | The router calls a capability from a background coroutine, never the UI thread. A capability that needs the UI thread switches to it itself (`withContext(Dispatchers.Main)`). A transport may call the router from any thread, and it moves each reply to the thread its platform API needs. | Capability; transport |
 | Lifecycle | A context belongs to one document. A navigation, a reload or a closed WebView ends it and cancels the calls that run. A capability must stop when its coroutine is cancelled. A reply for an old context is dropped. Events go only to an open context. | Router; transport reports the document change |
 | Not supported | The platform passes `Capability.Unsupported`. Its methods return `unsupported`, and `host.capabilities` does not list them. A capability never throws "not supported" at call time. The parity table in event-contracts says which platform supports what. | Compiler; router; parity test |
@@ -237,7 +237,9 @@ The desktop router accepts version 1 for the companion methods until
 Android and iOS support only version 2.
 
 Error codes: `forbidden`, `invalid`, `expired`, `unknown-method`, `unsupported`,
-`busy`, `failed`. The message text is for people. Code must read only `code`.
+`busy`, `declined`, `failed`. `declined` means the person said no; K6 (gamero
+#30) adds it. An `unsupported` message names the product, the platform and
+the capability. The message text is for people. Code must read only `code`.
 
 ### First capabilities (proof of the pattern)
 
