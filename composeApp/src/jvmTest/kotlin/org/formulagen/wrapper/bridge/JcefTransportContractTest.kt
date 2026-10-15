@@ -115,4 +115,18 @@ class JcefHostBridgeTest {
         val contextId = Json.parseToJsonElement(answers.successes.single()).jsonObject.getValue("contextId").jsonPrimitive.content
         assertEquals("expired", ask(transport, call(contextId), queryId = 2).code())
     }
+
+    @Test
+    fun aLateReplyToACancelledWatchLeavesTheNextContextOpen() = runTest {
+        val transport = transport()
+        val first = Answers()
+        val second = Answers()
+        transport.onQuery(watch, true, true, trusted, 1, first)
+        assertTrue(transport.onQueryCanceled(1))
+        transport.onQuery(watch, true, true, trusted, 2, second)
+        settle()
+        val contextId = Json.parseToJsonElement(second.successes.single()).jsonObject.getValue("contextId").jsonPrimitive.content
+        val info = ask(transport, call(contextId), queryId = 3)
+        assertEquals(null, info.code(), "the first watch's late reply closed the second watch's context")
+    }
 }
