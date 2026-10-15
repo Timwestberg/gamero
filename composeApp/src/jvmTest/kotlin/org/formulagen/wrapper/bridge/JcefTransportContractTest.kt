@@ -73,6 +73,7 @@ class JcefHostBridgeTest {
 
     private fun TestScope.transport() = JcefHostBridge(
         HostBridge(
+            product = "Hovel",
             trustedUrl = trusted,
             capabilities = HostCapabilities(HostPlatform.DESKTOP, "1.0.0", Capability.Unsupported, Capability.Unsupported, Capability.Unsupported),
             context = backgroundScope.coroutineContext,
