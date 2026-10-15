@@ -74,6 +74,7 @@ abstract class TransportContractTest {
             override suspend fun activateConnection(ownerId: String, hostId: String) = JsonObject(emptyMap())
         }
         val bridge = HostBridge(
+            product = "Hovel",
             trustedUrl = TRUSTED_URL,
             capabilities = capabilities,
             products = listOf(CompanionMethods.pack(Capability.Supported(companion))),

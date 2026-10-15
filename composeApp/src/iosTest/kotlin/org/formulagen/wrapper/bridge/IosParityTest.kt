@@ -1,5 +1,6 @@
 package org.formulagen.wrapper.bridge
 
+import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import kotlin.test.Test
 
 class IosParityTest {
@@ -8,7 +9,7 @@ class IosParityTest {
 
     @Test
     fun hovelOnIosMatchesTheParityTable() {
-        val bridge = HostBridge("https://hovel.example/hovel.html", iosHostCapabilities("test"), iosHovelBridgePacks())
+        val bridge = HostBridge(HOVEL_PRODUCT, "https://hovel.example/hovel.html", iosHostCapabilities("test"), iosHovelBridgePacks())
         try {
             assertMatchesParity(HostPlatform.IOS, bridge.router, pending)
         } finally {

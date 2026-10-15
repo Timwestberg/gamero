@@ -27,4 +27,5 @@ Spec `specs/2026-10-14-bridge-kit-design.md`, ADR-002 (Accepted). G5: product se
 - [x] K4 parity test per factory (desktop; Android and iOS reuse assertMatchesParity in B1 and B2)
 - [x] B1+K5 Android transport with HostBridge and TransportContractTest (Mac: JVM 102, Android 29, iOS 32, 0 failures; Android debug APK builds; desktop smoke on HostBridge passes with and without the companion, reload check included. Android device smoke waits for the web client, B3)
 - [x] B2 iOS transport on the kit, no kit change (no commonMain change; Mac: JVM 102, Android 29, iOS 39, 0 failures; simulator app builds and starts with the bridge attached. Bridge round trip on iOS waits for the web client, B3)
+- [x] K6 FOR-117 comment: an `unsupported` error names the product, the platform and the capability; a `declined` code for a person who says no; threading rule on `Capability` (Mac: JVM 104, Android 31, iOS 41, 0 failures; desktop jar, Android debug APK and iOS simulator framework build)
 - [ ] C3+ haptic.play on mobile, legacy haptic path deleted

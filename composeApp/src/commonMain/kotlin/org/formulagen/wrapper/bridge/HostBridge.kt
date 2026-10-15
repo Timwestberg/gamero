@@ -49,6 +49,8 @@ interface BridgeChannel {
  */
 @OptIn(ExperimentalAtomicApi::class)
 class HostBridge(
+    /** The product the page belongs to, such as `Hovel`. An `unsupported` error names it. */
+    product: String,
     trustedUrl: String,
     capabilities: HostCapabilities,
     /** The product's own capabilities, such as Hovel's companion. */
@@ -68,6 +70,7 @@ class HostBridge(
     private val events = AtomicReference<OpenContext?>(null)
 
     internal val router = BridgeRouter(
+        product = product,
         capabilities = capabilities,
         products = products,
         scope = scope,

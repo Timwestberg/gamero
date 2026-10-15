@@ -8,11 +8,11 @@ import kotlin.test.assertFailsWith
 class CapabilityBinderTest {
     @Test
     fun aProductThatRedeclaresAMethodFailsAtStartUp() {
-        val copy = CapabilityBinder(listOf(LinkMethods.OPEN.handle { _: LinkOpener, _ -> NoResult }))
+        val copy = CapabilityBinder("links", listOf(LinkMethods.OPEN.handle { _: LinkOpener, _ -> NoResult }))
         val capabilities = HostCapabilities(HostPlatform.DESKTOP, "1.0.0", Capability.Unsupported, Capability.Unsupported, Capability.Unsupported)
         val scope = CoroutineScope(Job())
         assertFailsWith<IllegalStateException> {
-            BridgeRouter(capabilities, listOf(copy.pack(Capability.Supported(LinkOpener { }))), scope, transport = {})
+            BridgeRouter("Hovel", capabilities, listOf(copy.pack(Capability.Supported(LinkOpener { }))), scope, transport = {})
         }
         scope.coroutineContext[Job]!!.cancel()
     }

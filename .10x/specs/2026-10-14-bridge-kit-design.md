@@ -274,3 +274,20 @@ Tim chose option 1, the product set, on 2026-10-14.
 2. **Keep all in `HostCapabilities` (not chosen).** The compiler forces every
    platform to name every capability, including product ones. Cost: the core
    knows each product, and the list grows with each product.
+
+## What K6 adds (2026-10-15)
+
+Tim's answer on FOR-123, recorded on FOR-117: a missing capability must give a
+clear error that names the platform, the product and the capability.
+
+- Each `CapabilityBinder` has a `name`, such as `haptics` or `companion`.
+- `HostBridge` and `BridgeRouter` take a `product`, such as `Hovel`. Every
+  host passes it, so no host can forget it.
+- An `unsupported` reply says, for example, "Hovel on android has no companion
+  capability (companion.capabilities)". The code stays `unsupported`.
+- A new `declined` code, with `BridgeDeclinedException`, works as `busy` does.
+  Hovel's companion throws it when the person cancels the connection, so the
+  page can tell "the person said no" from "it broke". The contract
+  (server-platform #128) lists the code.
+- `Capability` documents the threading rule: the router never calls a
+  capability on the UI thread, and a capability that needs it switches itself.

@@ -48,6 +48,7 @@ object CompanionMethods {
     fun pack(companion: Capability<CompanionCapability>): CapabilityPack = binder.pack(companion)
 
     internal val binder = CapabilityBinder(
+        "companion",
         listOf<CapabilityHandler<CompanionCapability>>(
             CAPABILITIES.handle { _, _ -> CompanionCapabilitiesResult() },
             PREPARE.handle { companion, args -> companion.prepareConnection(args.ownerId) },

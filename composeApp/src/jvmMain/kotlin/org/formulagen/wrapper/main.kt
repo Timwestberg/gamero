@@ -24,6 +24,7 @@ import java.net.URI
 import kotlin.system.exitProcess
 import org.formulagen.wrapper.bridge.desktopHostCapabilities
 import org.formulagen.wrapper.companion.NativeBridge
+import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.hovel.hovelBridgePacks
 import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.hovel.HovelLaunchScreen
@@ -103,7 +104,7 @@ fun main(args: Array<String>) {
             CompositionLocalProvider(LocalWindowExceptionHandlerFactory provides object : WindowExceptionHandlerFactory {
                 override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler = failure
             }) {
-                Window(onCloseRequest = ::exitApplication, title = if (isHovelProduct()) "Hovel" else "Gamero") {
+                Window(onCloseRequest = ::exitApplication, title = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME) {
                     DisposableEffect(window) {
                         // Read AWT state on its event thread, never from the CEF callback thread.
                         val listener = object : WindowAdapter() {
@@ -225,6 +226,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                 resources.bridge?.close()
                 resources.bridge = NativeBridge(
                     browser = browser,
+                    product = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME,
                     trustedUrl = url,
                     capabilities = desktopHostCapabilities(),
                     products = if (isHovelProduct()) hovelBridgePacks(companion) else emptyList(),

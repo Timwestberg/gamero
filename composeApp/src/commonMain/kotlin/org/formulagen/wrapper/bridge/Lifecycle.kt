@@ -11,6 +11,7 @@ object LifecycleEvents {
     val RESUME = BridgeEvent("lifecycle.resume", NoData.serializer())
 
     internal val binder = CapabilityBinder<Lifecycle>(
+        name = "lifecycle",
         handlers = emptyList(),
         events = listOf(PAUSE, RESUME),
         observe = { lifecycle, events ->

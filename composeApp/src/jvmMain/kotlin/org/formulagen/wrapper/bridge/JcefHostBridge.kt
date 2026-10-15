@@ -45,8 +45,8 @@ internal fun classifyJcefQuery(request: String, persistent: Boolean): JcefQueryK
  * browser and frame, then calls this from the CEF UI thread.
  */
 class JcefHostBridge(private val bridge: HostBridge) : AutoCloseable {
-    constructor(trustedUrl: String, capabilities: HostCapabilities, products: List<CapabilityPack>) :
-        this(HostBridge(trustedUrl, capabilities, products, Dispatchers.IO))
+    constructor(product: String, trustedUrl: String, capabilities: HostCapabilities, products: List<CapabilityPack>) :
+        this(HostBridge(product, trustedUrl, capabilities, products, Dispatchers.IO))
 
     /** Guards [watchQuery] and [pendingWatches]: the router's thread and the CEF UI thread both change them. */
     private val lock = Any()

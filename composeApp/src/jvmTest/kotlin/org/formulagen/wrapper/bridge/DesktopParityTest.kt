@@ -6,6 +6,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import org.formulagen.wrapper.companion.HostCredentials
 import org.formulagen.wrapper.hovel.HovelCompanion
+import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.hovel.hovelBridgePacks
 import java.nio.file.Files
 import kotlin.test.Test
@@ -24,6 +25,7 @@ class DesktopParityTest {
         val companion = HovelCompanion("https://example.test/hovel.html", directory, directory.resolve("codex"), directory, credentials)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val router = BridgeRouter(
+            product = HOVEL_PRODUCT,
             capabilities = desktopHostCapabilities(),
             products = hovelBridgePacks(companion),
             scope = scope,

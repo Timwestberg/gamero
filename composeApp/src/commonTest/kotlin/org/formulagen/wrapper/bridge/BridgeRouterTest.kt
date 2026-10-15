@@ -42,7 +42,7 @@ class BridgeRouterTest {
 
     /** Supported or not, as the parity table says for [platform]. */
     private fun <T> supported(platform: HostPlatform, name: String, impl: T): Capability<T> =
-        if (parity.getValue(platform.wire).jsonObject.getValue(name).jsonPrimitive.content == "supported") Capability.Supported(impl)
+        if (parity.getValue(platform.wireName).jsonObject.getValue(name).jsonPrimitive.content == "supported") Capability.Supported(impl)
         else Capability.Unsupported
 
     private fun capabilities(platform: HostPlatform, fakes: Fakes = Fakes()): HostCapabilities = HostCapabilities(
@@ -72,6 +72,7 @@ class BridgeRouterTest {
         failures: MutableList<String> = mutableListOf(),
         products: List<CapabilityPack> = hovelPacks(platform, fakes),
     ) = BridgeRouter(
+        product = "Hovel",
         capabilities = capabilities(platform, fakes),
         products = products,
         scope = backgroundScope,
@@ -103,7 +104,6 @@ class BridgeRouterTest {
 
     private fun JsonObject.code(): String? = this["error"]?.jsonObject?.get("code")?.jsonPrimitive?.content
 
-    private val HostPlatform.wire get() = name.lowercase()
 
     /** The raw string a transport would deliver, as `hostBridgeFixtureRaw` builds it. */
     private fun rawOf(fixture: JsonObject): String {
@@ -121,7 +121,7 @@ class BridgeRouterTest {
         assertTrue(HostBridgeFixtures.ROUTER.size >= 30)
         for ((name, text) in HostBridgeFixtures.ROUTER) {
             val fixture = Json.parseToJsonElement(text).jsonObject
-            val platform = HostPlatform.entries.single { it.wire == fixture.getValue("platform").jsonPrimitive.content }
+            val platform = HostPlatform.entries.single { it.wireName == fixture.getValue("platform").jsonPrimitive.content }
             val router = router(platform)
             if (fixture.getValue("context").jsonPrimitive.content == "open") call(router, watch)
             val frame = fixture.getValue("frame").jsonObject
@@ -168,7 +168,7 @@ class BridgeRouterTest {
             call(router, watch)
             val result = call(router, request("host.capabilities")).single().getValue("result").jsonObject
             val listed = (result.getValue("methods").jsonArray + result.getValue("events").jsonArray).map { it.jsonPrimitive.content }.toSet()
-            val expected = parity.getValue(platform.wire).jsonObject.filterValues { it.jsonPrimitive.content == "supported" }.keys
+            val expected = parity.getValue(platform.wireName).jsonObject.filterValues { it.jsonPrimitive.content == "supported" }.keys
             assertEquals(expected, listed, platform.name)
             router.close()
         }
@@ -217,6 +217,35 @@ class BridgeRouterTest {
         val reply = call(router, request("companion.prepareConnection", buildJsonObject { put("ownerId", "00000000-0000-4000-8000-000000000001") })).single()
         assertEquals("busy", reply.code())
         router.close()
+    }
+
+    @Test
+    fun aDeclinedCallAnswersDeclined() = runTest {
+        val fakes = Fakes().apply { prepare = { throw BridgeDeclinedException("Connection declined") } }
+        val failures = mutableListOf<String>()
+        val router = router(HostPlatform.DESKTOP, fakes, failures = failures)
+        call(router, watch)
+        val reply = call(router, request("companion.prepareConnection", buildJsonObject { put("ownerId", "00000000-0000-4000-8000-000000000001") })).single()
+        assertEquals("declined", reply.code())
+        assertEquals(emptyList(), failures)
+        router.close()
+    }
+
+    @Test
+    fun anUnsupportedCallNamesTheProductThePlatformAndTheCapability() = runTest {
+        val cases = listOf(
+            Triple(HostPlatform.DESKTOP, "haptic.play", "Hovel on desktop has no haptics capability (haptic.play)"),
+            Triple(HostPlatform.ANDROID, "companion.capabilities", "Hovel on android has no companion capability (companion.capabilities)"),
+        )
+        for ((platform, method, message) in cases) {
+            val router = router(platform)
+            call(router, watch)
+            val args = if (method == "haptic.play") buildJsonObject { put("effect", "light") } else JsonObject(emptyMap())
+            val error = call(router, request(method, args)).single().getValue("error").jsonObject
+            assertEquals("unsupported", error.getValue("code").jsonPrimitive.content)
+            assertEquals(message, error.getValue("message").jsonPrimitive.content)
+            router.close()
+        }
     }
 
     @Test
@@ -296,6 +325,7 @@ class BridgeRouterTest {
         val undeclared = BridgeEvent("rogue.event", NoData.serializer())
         var sink: EventSink? = null
         val rogue = CapabilityBinder<Unit>(
+            name = "rogue",
             handlers = emptyList(),
             observe = { _, events -> sink = events; AutoCloseable { } },
         ).pack(Capability.Supported(Unit))
