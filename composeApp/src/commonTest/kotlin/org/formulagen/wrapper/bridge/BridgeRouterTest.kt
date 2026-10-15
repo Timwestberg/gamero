@@ -323,6 +323,7 @@ class BridgeRouterTest {
         val undeclared = BridgeEvent("rogue.event", NoData.serializer())
         var sink: EventSink? = null
         val rogue = CapabilityBinder<Unit>(
+            name = "rogue",
             handlers = emptyList(),
             observe = { _, events -> sink = events; AutoCloseable { } },
         ).pack(Capability.Supported(Unit))
