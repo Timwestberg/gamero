@@ -47,15 +47,18 @@ class HovelAdapterTest {
         assertFails { hovelExecutionRequest(task(buildJsonObject { put("state", "queued") }, 0), UUID.randomUUID().toString()) }
     }
 
-    private fun followUp(providerInput: String?, withFollowUp: Boolean) = buildJsonObject {
+    private fun followUp(providerInput: String?, withFollowUp: Boolean) =
+        followUp(providerInput?.let(::JsonPrimitive), if (withFollowUp) buildJsonObject {
+            put("conversationId", UUID.randomUUID().toString()); put("previousTaskId", UUID.randomUUID().toString())
+        } else null)
+
+    private fun followUp(providerInput: JsonElement?, followUp: JsonElement?) = buildJsonObject {
         val base = task(buildJsonObject { put("state", "queued") }, 0)
         base.forEach { (key, value) -> if (key != "request") put(key, value) }
         put("request", buildJsonObject {
             base.getValue("request").jsonObject.forEach { (key, value) -> put(key, value) }
             put("prompt", "And the tests?")
-            if (withFollowUp) put("followUp", buildJsonObject {
-                put("conversationId", UUID.randomUUID().toString()); put("previousTaskId", UUID.randomUUID().toString())
-            })
+            if (followUp != null) put("followUp", followUp)
         })
         if (providerInput != null) put("providerInput", providerInput)
     }
@@ -71,6 +74,12 @@ class HovelAdapterTest {
     @Test fun aFollowUpWithoutItsConversationIsRefused() {
         assertFails { hovelExecutionRequest(followUp(null, withFollowUp = true), host) }
         assertFails { hovelExecutionRequest(followUp("Earlier exchanges", withFollowUp = false), host) }
+        val link = buildJsonObject { put("conversationId", UUID.randomUUID().toString()) }
+        // Malformed is refused, never run as the text "null" or "42".
+        assertFails { hovelExecutionRequest(followUp(JsonNull, link), host) }
+        assertFails { hovelExecutionRequest(followUp(JsonPrimitive(42), link), host) }
+        assertFails { hovelExecutionRequest(followUp(JsonNull, JsonNull), host) }
+        assertFails { hovelExecutionRequest(followUp(JsonPrimitive("Earlier exchanges"), JsonPrimitive("c-1")), host) }
     }
 
     @Test fun everyHeartbeatDeclaresProviderInput() {
