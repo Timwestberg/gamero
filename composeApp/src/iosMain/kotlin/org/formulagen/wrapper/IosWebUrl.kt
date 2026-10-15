@@ -29,16 +29,21 @@ internal fun resolveIosWebUrl(): String? = iosWebUrl(
     infoPlist = NSBundle.mainBundle.objectForInfoDictionaryKey(WEB_URL_INFO_PLIST_KEY) as? String,
 )
 
-/** Launch-environment variable and Info.plist key that name the product, as `GAMERO_PRODUCT` does on desktop. */
+/** Launch-environment variable that selects the product (`hovel`), as on desktop and Android. */
 internal const val PRODUCT_ENVIRONMENT_KEY = "GAMERO_PRODUCT"
+
+/** Info.plist key fed from `GAMERO_PRODUCT` in `iosApp/Configuration/Config.xcconfig`. */
 internal const val PRODUCT_INFO_PLIST_KEY = "GameroProduct"
 
-/** True when the launch environment, or else Info.plist, names Hovel as the product. */
-internal fun isIosHovelProduct(): Boolean {
-    val environment = NSProcessInfo.processInfo.environment[PRODUCT_ENVIRONMENT_KEY] as? String
-    val infoPlist = NSBundle.mainBundle.objectForInfoDictionaryKey(PRODUCT_INFO_PLIST_KEY) as? String
-    return listOf(environment, infoPlist).firstOrNull { !it.isNullOrBlank() }?.trim() == "hovel"
-}
+/** The product name: the launch environment first, then Info.plist, first non-blank wins, trimmed. */
+internal fun iosProduct(environment: String?, infoPlist: String?): String? =
+    listOf(environment, infoPlist).firstOrNull { !it.isNullOrBlank() }?.trim()
+
+/** Reads [iosProduct]'s inputs from the running process and the main bundle. */
+internal fun resolveIosProduct(): String? = iosProduct(
+    environment = NSProcessInfo.processInfo.environment[PRODUCT_ENVIRONMENT_KEY] as? String,
+    infoPlist = NSBundle.mainBundle.objectForInfoDictionaryKey(PRODUCT_INFO_PLIST_KEY) as? String,
+)
 
 /** The `scheme://host[:port]` origin of [url], or [url] itself when it cannot be parsed. */
 internal fun originOf(url: String): String {
