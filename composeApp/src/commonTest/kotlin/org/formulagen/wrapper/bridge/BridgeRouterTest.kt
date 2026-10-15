@@ -291,10 +291,11 @@ class BridgeRouterTest {
 
     @Test
     fun safeHttpsUrls() {
-        for (url in listOf("https://example.com", "https://example.com:8443/a?b=c#d", "HTTPS://Example.com/")) assertTrue(isSafeHttpsUrl(url), url)
+        for (url in listOf("https://example.com", "https://example.com:8443/a?b=c#d", "HTTPS://Example.com/", "https://" + "a.".repeat(125) + "co", "https://example.com/" + "a/".repeat(30_000))) assertTrue(isSafeHttpsUrl(url), url)
         for (url in listOf("http://example.com", "javascript:alert(1)", "https://", "https://user:pass@example.com", "https://a b.com", "intent://x#Intent;end", "https://:443/", "https:example.com", "https://exa\\mple.com", "https://[::1", "https://example.com:0/", "https://example.com:65536/", "https://example.com/caf\u00e9",
             "http\u017f://example.com", "https://exampl\u212a.com", "https://\u017fx.com", "https://\u0131.com", "https://example.com/\u0131",
             "https://-.com", "https://a-.com", "https://2130706433/", "https://127.0.0.1/",
+            "https://localhost/", "https://app.localhost/", "https://intranet/", "https://" + "a.".repeat(2000) + "com",
         )) {
             assertTrue(!isSafeHttpsUrl(url), url)
         }
