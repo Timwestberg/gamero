@@ -9,7 +9,7 @@ See the spec `specs/2026-10-14-host-bridge-design.md` and ADR-001.
 | `BridgeRouter` | commonMain | Checks, routes, maps errors, owns context and pending jobs | registry, coroutines |
 | `CapabilityRegistry` / `HostCapabilities` | commonMain | Maps method names to typed handlers; lists supported methods | capability interfaces |
 | `BridgeTransport` | expect/actual | Moves strings, reports `FrameFacts`, signals navigation | platform WebView API |
-| Capabilities (`HostInfo`, `LinkOpener`, `Haptics`, `Lifecycle`, `Companion`) | interfaces in commonMain, actuals per platform | Platform work | platform SDKs |
+| Capabilities (`LinkOpener`, `Haptics`, `Lifecycle`, and the product capability `CompanionCapability`; the router answers `host.info` itself) | interfaces in commonMain, actuals per platform | Platform work | platform SDKs |
 | `@formulagen/host-bridge` | game-platform package | Detects transport; `capabilities`, `call`, `on` | zod, event-contracts |
 
 ## Data flow
