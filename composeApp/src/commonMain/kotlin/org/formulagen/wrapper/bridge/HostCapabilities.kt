@@ -12,7 +12,7 @@ sealed interface Capability<out T> {
  * router holds no capability code. The methods are the handlers' methods, so
  * the compiler checks that each one has code.
  */
-class CapabilityBinder<T>(
+internal class CapabilityBinder<T>(
     internal val handlers: List<CapabilityHandler<T>>,
     internal val events: List<BridgeEvent<*>> = emptyList(),
     /** Starts the capability's events. The router calls it once and closes the result on [BridgeRouter.close]. */

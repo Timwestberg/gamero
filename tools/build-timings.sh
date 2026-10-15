@@ -8,8 +8,8 @@
 # One row per step, one column per run (start time UTC and commit), newest on the
 # right, in seconds. A blank
 # cell means the step did not run. "best" is the fastest time seen for that step
-# in the whole file. Rows come from tools/build-release.sh and game-platform's
-# scripts/build-web.sh.
+# in the whole file. Rows come from tools/build-release.sh,
+# tools/test-all-targets.sh and game-platform's scripts/build-web.sh.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
