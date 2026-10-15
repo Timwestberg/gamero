@@ -72,7 +72,7 @@ class NativeBridge(
         products = products,
         scope = scope,
         transport = BridgeTransport { json -> v2.events()?.success(json) },
-        onFailure = { method, error -> log(LogLevel.Warn, "NativeBridge", "Host bridge call $method failed", error) },
+        onFailure = { name, error -> log(LogLevel.Warn, "NativeBridge", "Host bridge $name failed", error) },
     )
     private val v2: JcefV2Queries = JcefV2Queries(policy, hostRouter)
     private val pending = ConcurrentHashMap<Long, Job>()
