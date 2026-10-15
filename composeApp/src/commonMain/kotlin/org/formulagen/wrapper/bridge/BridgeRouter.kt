@@ -6,9 +6,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlin.coroutines.ContinuationInterceptor
@@ -121,7 +123,10 @@ class BridgeRouter(
         val handler = handlers.getValue(call.method)!!
         val job = scope.launch {
             val answer = try {
-                BridgeEnvelopes.success(handler.invoke(call.args))
+                BridgeEnvelopes.success(withTimeout(handler.method.timeout) { handler.invoke(call.args) })
+            } catch (error: TimeoutCancellationException) {
+                onFailure(call.method, error)
+                bridgeFailureEnvelope(BridgeErrorCode.FAILED)
             } catch (error: CancellationException) {
                 throw error
             } catch (_: BridgeBusyException) {

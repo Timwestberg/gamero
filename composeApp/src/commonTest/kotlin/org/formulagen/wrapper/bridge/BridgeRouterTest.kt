@@ -4,6 +4,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -21,6 +22,7 @@ import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class BridgeRouterTest {
@@ -223,6 +225,27 @@ class BridgeRouterTest {
         settle()
         assertEquals(emptyList(), replies)
         assertEquals("expired", call(router, request("host.info")).single().code())
+        router.close()
+    }
+
+    @Test
+    fun aCallPastItsTimeLimitAnswersFailed() = runTest {
+        val fakes = Fakes().apply { prepare = { awaitCancellation() } }
+        val failures = mutableListOf<String>()
+        val router = router(HostPlatform.DESKTOP, fakes, failures = failures)
+        call(router, watch)
+        val replies = mutableListOf<JsonObject>()
+        router.handle(request("companion.prepareConnection", buildJsonObject { put("ownerId", "00000000-0000-4000-8000-000000000001") }), trusted) {
+            replies += Json.parseToJsonElement(it).jsonObject
+        }
+        advanceTimeBy(CompanionMethods.PREPARE.timeout - 1.seconds)
+        runCurrent()
+        assertEquals(emptyList(), replies)
+        // Background work runs on virtual time only when the test advances it.
+        advanceTimeBy(2.seconds)
+        runCurrent()
+        assertEquals("failed", replies.single().code())
+        assertEquals(listOf("companion.prepareConnection"), failures)
         router.close()
     }
 

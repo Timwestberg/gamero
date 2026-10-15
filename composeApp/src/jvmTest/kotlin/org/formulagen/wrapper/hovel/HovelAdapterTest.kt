@@ -94,6 +94,31 @@ class HovelAdapterTest {
         }
     }
 
+    @Test fun aTimedOutApprovalIsClearedAndTheNextCallIsNotBusy() = runBlocking {
+        val directory = Files.createTempDirectory("approval-timeout")
+        val credentials = object : HostCredentials {
+            override fun save(hostId: String, token: String) = Unit
+            override fun read(hostId: String) = ""
+        }
+        val companion = HovelCompanion("https://example.test/hovel.html", directory, directory.resolve("fixture"), directory, credentials)
+        val prepare = buildJsonObject { put("ownerId", owner) }
+        val timedOut = runCatching { withTimeout(500) { companion.dispatch("prepareConnection", prepare) } }
+        assertIs<TimeoutCancellationException>(timedOut.exceptionOrNull())
+        withContext(Dispatchers.Main) {
+            assertNull(companion.approval)
+            assertEquals("Connection timed out. Start again from Hovel.", companion.status)
+        }
+        val next = async(Dispatchers.IO) { runCatching { companion.dispatch("prepareConnection", prepare) } }
+        // A leaked lock answers busy at once, so stop waiting for an approval when the call ends.
+        withTimeout(5000) { while (!next.isCompleted && withContext(Dispatchers.Main) { companion.approval } == null) delay(5) }
+        withContext(Dispatchers.Main) { companion.approval?.answer?.complete(false) }
+        val declined = next.await().exceptionOrNull()
+        assertTrue(declined is IllegalStateException && declined !is org.formulagen.wrapper.bridge.BridgeBusyException, "the next call was busy: $declined")
+        // Only a call that reached its approval gets this message.
+        assertEquals("Connection declined", declined.message)
+        companion.close()
+    }
+
     @Test fun stalledResponseBodyHasAnExchangeDeadline() {
         val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
         val release = java.util.concurrent.CountDownLatch(1)

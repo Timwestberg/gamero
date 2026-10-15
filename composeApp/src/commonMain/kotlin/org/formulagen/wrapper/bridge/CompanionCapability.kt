@@ -2,6 +2,7 @@ package org.formulagen.wrapper.bridge
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
+import kotlin.time.Duration.Companion.minutes
 
 /**
  * Hovel's Mac companion. A call while another runs throws [BridgeBusyException].
@@ -26,10 +27,20 @@ data class CompanionActivateArgs(val ownerId: String, val hostId: String)
 
 object CompanionMethods {
     val CAPABILITIES = BridgeMethod("companion.capabilities", NoArgs.serializer(), CompanionCapabilitiesResult.serializer())
-    val PREPARE = BridgeMethod("companion.prepareConnection", CompanionPrepareArgs.serializer(), CompanionRegistration.serializer()) {
+    /**
+     * Waits for the person to approve the connection and the Keychain prompt.
+     * The five minutes cover both, so a slow approval leaves less time for the
+     * Keychain prompts that follow it.
+     */
+    val PREPARE = BridgeMethod(
+        "companion.prepareConnection", CompanionPrepareArgs.serializer(), CompanionRegistration.serializer(), timeout = 5.minutes,
+    ) {
         BridgeProtocol.UUID_PATTERN.matches(it.ownerId)
     }
-    val ACTIVATE = BridgeMethod("companion.activateConnection", CompanionActivateArgs.serializer(), JsonObject.serializer()) {
+    /** Reads the Keychain, which can show a prompt. */
+    val ACTIVATE = BridgeMethod(
+        "companion.activateConnection", CompanionActivateArgs.serializer(), JsonObject.serializer(), timeout = 2.minutes,
+    ) {
         BridgeProtocol.UUID_PATTERN.matches(it.ownerId) && BridgeProtocol.UUID_PATTERN.matches(it.hostId)
     }
 
