@@ -19,7 +19,7 @@ builds the Android and iOS transports on that kit.
 
 | Check | Result |
 |---|---|
-| `:composeApp:jvmTest` | 84 tests, 0 failures (90 after the #16 review fixes) |
+| `:composeApp:jvmTest` | 84 tests, 0 failures. A snapshot: later review fixes add tests, so the base now has more. |
 | `:composeApp:testDebugUnitTest` (Android) | 16 tests, 0 failures. `BridgeRouterTest`: 11 |
 | `:composeApp:iosSimulatorArm64Test` | 20 tests, 0 failures. `BridgeRouterTest`: 11 |
 | Compile iOS simulator and Android debug | Pass |
