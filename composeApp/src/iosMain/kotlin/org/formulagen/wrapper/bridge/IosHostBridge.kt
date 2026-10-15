@@ -89,8 +89,8 @@ class IosHostBridge(private val webView: WKWebView, private val bridge: HostBrid
     private fun originOf(frame: platform.WebKit.WKFrameInfo): String {
         val origin = frame.securityOrigin
         val port = origin.port.toInt().takeIf { it != 0 }?.let { ":$it" } ?: ""
-        // WebKit gives an IPv6 host without its brackets.
-        val host = origin.host.let { if (':' in it) "[$it]" else it }
+        // An IPv6 host needs brackets; add them only if WebKit left them out.
+        val host = origin.host.let { if (':' in it && !it.startsWith("[")) "[$it]" else it }
         return "${origin.protocol}://$host$port"
     }
 

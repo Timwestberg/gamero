@@ -193,6 +193,10 @@ B2 changed no file in `commonMain`, so the kit held for a third platform.
 - `WebKitTransportContractTest` runs the six scenarios on the iOS target.
   `IosParityTest` checks the iOS factory. The web client (B3) adds
   `gameroHostEvent` and the message shapes to the contract.
+- No unit test covers the WebKit glue in `IosHostBridge`: how the
+  `{documentStart: true}` body bridges into Kotlin, and the `callAsyncJavaScript`
+  arguments. The device smoke run checks that a navigation ends the old
+  context, which fails if the document-start body is not recognized.
 
 ### Parity and legacy (G7, G8)
 
