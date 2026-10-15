@@ -34,8 +34,10 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,6 +60,7 @@ import androidx.compose.ui.unit.sp
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
+import kotlinx.coroutines.flow.first
 import org.jetbrains.compose.resources.Font
 import org.jetbrains.compose.resources.imageResource
 import org.jetbrains.compose.ui.tooling.preview.Preview
@@ -195,7 +198,17 @@ private class LaunchBeat(t: Float) {
     val title = stepped(phase(t, 0.78f, 0.94f), 4)
 }
 
-/** Plays the launch animation once, then settles on [KeeperStartScreen]. */
+/** Launch setting that makes a debug build step inside on its own, for the smoke scripts. */
+const val AUTO_ENTER_KEY = "GAMERO_AUTO_ENTER"
+
+/** True for `1` or `true`, trimmed, any case. Each platform reads it only in debug builds. */
+fun autoEnterRequested(value: String?): Boolean = value?.trim()?.lowercase() in setOf("1", "true")
+
+/**
+ * Plays the launch animation once, then settles on [KeeperStartScreen]. With [autoEnter], it
+ * calls [onContinue] once the launch has played and the state is [HovelStartState.Ready], as a
+ * tap on the door would. Only the smoke scripts turn it on, and only in debug builds.
+ */
 @Composable
 fun HovelLaunchScreen(
     state: HovelStartState,
@@ -204,6 +217,7 @@ fun HovelLaunchScreen(
     durationMillis: Int = 2600,
     art: HovelArt = rememberHovelArt(),
     modifier: Modifier = Modifier,
+    autoEnter: Boolean = false,
 ) {
     // Saved as soon as the launch starts, so a recreated Android activity (even mid-intro) settles
     // straight onto the start screen instead of replaying it.
@@ -212,6 +226,13 @@ fun HovelLaunchScreen(
     LaunchedEffect(Unit) {
         played = true
         intro.animateTo(1f, tween(durationMillis, easing = LinearEasing))
+    }
+    val enter by rememberUpdatedState(onContinue)
+    if (autoEnter && state is HovelStartState.Ready) {
+        LaunchedEffect(state) {
+            snapshotFlow { intro.value }.first { it >= 1f }
+            enter()
+        }
     }
     KeeperStartScreen(state, onContinue, footnote, art, modifier, intro = { intro.value })
 }

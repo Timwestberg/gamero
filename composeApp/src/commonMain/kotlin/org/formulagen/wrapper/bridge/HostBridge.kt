@@ -8,6 +8,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import org.formulagen.wrapper.SmokeMarkers
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import kotlin.concurrent.atomics.AtomicLong
@@ -62,10 +63,19 @@ class HostBridge(
     onFailure: (name: String, error: Throwable) -> Unit = { name, error ->
         log(LogLevel.Warn, "HostBridge", "Host bridge $name failed", error)
     },
+    /**
+     * Gets the first answer each document of the trusted main frame receives: the request's
+     * method (null when it had none) and `ok` or the error code. By default it logs [SmokeMarkers.bridgeAnswered].
+     */
+    private val onFirstAnswer: (method: String?, outcome: String) -> Unit = { method, outcome ->
+        log(LogLevel.Info, "HostBridge", SmokeMarkers.bridgeAnswered(capabilities.platform, product, method, outcome))
+    },
 ) : AutoCloseable {
     val origin = TrustedOrigin(trustedUrl)
     private val scope = CoroutineScope(context + SupervisorJob(context[Job]))
     private val document = AtomicLong(0)
+    /** The last document that got an answer, so [onFirstAnswer] runs once per document. */
+    private val answered = AtomicLong(-1)
     /** The open context and the channel that carries its events. */
     private val events = AtomicReference<OpenContext?>(null)
 
@@ -95,6 +105,11 @@ class HostBridge(
                 }
             }
             channel.reply(reply)
+            // Only the trusted main frame's current document counts, so a refused frame can't stand in for it.
+            val last = answered.load()
+            if (facts.mainFrame && facts.trustedOrigin && document.load() == documentId &&
+                last != documentId && answered.compareAndSet(last, documentId)
+            ) onFirstAnswer(methodOf(raw), outcomeOf(reply))
         }
     }
 
@@ -119,6 +134,16 @@ class HostBridge(
         events.store(null)
         router.close()
         scope.cancel()
+    }
+
+    private fun methodOf(raw: String): String? =
+        runCatching { ((Json.parseToJsonElement(raw) as? JsonObject)?.get("method") as? JsonPrimitive)?.takeIf { it.isString }?.content }.getOrNull()
+
+    /** `ok` for a result or an opened context, else the error code. */
+    private fun outcomeOf(reply: String): String {
+        val envelope = Json.parseToJsonElement(reply) as? JsonObject ?: return "invalid"
+        if (envelope["ok"] == JsonPrimitive(false)) return ((envelope["error"] as? JsonObject)?.get("code") as? JsonPrimitive)?.content ?: "failed"
+        return "ok"
     }
 
     private fun openedContext(reply: String): String? =
