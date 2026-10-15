@@ -430,6 +430,54 @@ and say so.
   `d9f0725` only in `sync-upstream.sh` (#1, `1a3b18f`).
 - **Cares most about:** small, mergeable divergence from upstream.
 
+### 11. Hovel characters and animation (game-platform)
+
+- **Lives in:** game-platform `packages/game-bridge/godot4/games/hovel/`:
+  `assets/character/kit/` (`kit.json`, `kit.png`, `kit-mask.png`), baked by
+  `tools/character-kit/bake.mjs` (`poses.mjs` makes the `wave` and `cry`
+  poses); `character/kit.gd` (renderer), `appearance.gd` (action player),
+  `action_request.gd`, `walker.gd`, `movement.gd`. The web renderer for the
+  creator, messenger and thumbnails is `apps/game-bridge-host/src/hovel/kitRenderer.ts`.
+  The saved look and option catalog are server-platform
+  `event-contracts/src/hovel/appearance.{catalog,schemas}.ts`; the action catalog
+  and emote unlocks are `actions.catalog.ts` (`HOVEL_ACTIONS`). Conversations live
+  in `apps/game-bridge-host/src/hovel/conversations.ts` and `docs/hovel/CONVERSATIONS.*.md`.
+  Plans and the state of every animation: the "Hovel Animation Sheet" artifact
+  and Linear issues labelled `animation`.
+- **Healthy looks like:** one base character model that every character shares
+  (same parts, pivots, attachment points and face controls); each animation made
+  once on it and played by every character; a customization option changes looks,
+  never the skeleton; every option that exists keeps working and a saved character
+  draws the same before and after a model change (frame hashes); one recipe to add
+  an animation and one to add an option, neither editing the other; body, upper-body
+  and face layers so a character can talk or emote while it walks; idle and
+  conversation events reach animations through one mapping, never by name from
+  conversation code; every animation tested on every reference character, loops
+  without a seam, blends without a pop, and reads at the 110 px room size.
+- **Watch:** `node tools/character-kit/bake.mjs --check`; from the Hovel project,
+  after one `godot --headless --editor --import`, `timeout`-wrapped
+  `godot --headless --script res://character/tests/appearance_check.gd` (also
+  `action_player_check.gd`, `action_request_check.gd`, `movement_check.gd`,
+  `movement_rate_check.gd`); `pnpm --filter @formulagen/game-bridge-host
+  test:hovel:unit` (`kitRenderer.test.ts` keeps `character/tests/kit_frames.json`,
+  88 looks x 6 frames, equal between the renderers). The kit's Node renderer
+  (`tools/character-kit/kit-render.mjs`) plus the settle and pose steps from
+  `kit.gd` reproduces all 528 pinned frame hashes, so it can render preview clips
+  without Godot.
+- **Known quirks and history:** there is no skeleton yet. The kit is one front-facing
+  224 x 490 layered sprite (`hovel.traveler-v1`, one body); every option is a
+  whole-frame sprite, and an action is `[frame, ms, lift]` steps over six frames
+  (`idle`, `breathe`, `blink`, `crouch`, `wave`, `cry`, `kit.gd:9`). The action
+  library came from FOR-184 to FOR-188 and the movement sprint FOR-192. `breathe`
+  and `crouch` shift rows above the waist (row 312) and leave a seam through the
+  hands and shirt hem; the generated `wave` arm is skin only, so the sleeve stays
+  hanging; `walk` moves no legs. Godot shares animations by node path and
+  retargets only 3D skeletons, so 2D characters share an animation only with the
+  same node names, paths and rest poses. Rotating pixel-art parts blurs them at
+  room size; prefer whole-pixel offsets and painted part poses.
+- **Cares most about:** every animation playing correctly on every customization,
+  and a player's saved character keeping its look.
+
 ## Watch sources
 
 - Open PRs in the five repos and the Hovel PR Tracker artifact.
@@ -438,3 +486,4 @@ and say so.
   `approved`, `needs-input`).
 - `TODO` and `FIXME` comments in the paths above.
 - The iOS gaps listed under component 7.
+- The "Hovel Animation Sheet" artifact and Linear issues labelled `animation`.
