@@ -27,7 +27,11 @@ data class CompanionActivateArgs(val ownerId: String, val hostId: String)
 
 object CompanionMethods {
     val CAPABILITIES = BridgeMethod("companion.capabilities", NoArgs.serializer(), CompanionCapabilitiesResult.serializer())
-    /** Waits for the person to approve the connection and the Keychain prompt. */
+    /**
+     * Waits for the person to approve the connection and the Keychain prompt.
+     * The five minutes cover both, so a slow approval leaves less time for the
+     * Keychain prompts that follow it.
+     */
     val PREPARE = BridgeMethod(
         "companion.prepareConnection", CompanionPrepareArgs.serializer(), CompanionRegistration.serializer(), timeout = 5.minutes,
     ) {
