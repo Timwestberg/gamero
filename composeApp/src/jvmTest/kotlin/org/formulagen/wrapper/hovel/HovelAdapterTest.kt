@@ -137,13 +137,4 @@ class HovelAdapterTest {
             assertTrue(System.nanoTime() - started < java.util.concurrent.TimeUnit.SECONDS.toNanos(2))
         } finally { release.countDown(); server.stop(0) }
     }
-
-    @Test fun nativeOriginPolicyRejectsChildOpaqueAndLookalikeFrames() {
-        val policy = NativeOriginPolicy("https://example.test/hovel.html")
-        assertTrue(policy.permits(true, "https://example.test:443/another-path"))
-        for (url in listOf("https://example.test.attacker/", "http://example.test/", "https://example.test:444/", "data:text/html,test", "about:blank", "https://user@example.test/")) {
-            assertFalse(policy.permits(true, url), url)
-        }
-        assertFalse(policy.permits(false, "https://example.test/hovel.html"))
-    }
 }

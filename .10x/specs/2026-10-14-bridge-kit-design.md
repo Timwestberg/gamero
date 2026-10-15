@@ -78,7 +78,7 @@ flowchart LR
     R["BridgeRouter (exists)"]
     P["CapabilityPack: platform set + product set"]
   end
-  T -->|receive / documentChanged| S --> R --> P
+  T -->|"receive / documentChanged or endContext(contextId)"| S --> R --> P
   S -->|post JSON| T
 ```
 
@@ -90,10 +90,15 @@ the kit.
    three things:
    1. `receive(raw, frame, reply)` for each message.
    2. `post(json)` for events.
-   3. `documentChanged()` on each main-frame navigation.
+   3. A document signal. Android and iOS call `documentChanged()` when the
+      main frame gets a new document. JCEF has no navigation signal of its
+      own: it calls `endContext(contextId)` when a watch query ends, so the
+      end closes only that watch's context and never a newer one.
 
    The document id becomes a counter inside `HostBridge`. A platform does not
-   make its own id. JCEF, Android and iOS then end contexts by the same rule.
+   make its own id. Android and iOS move the counter with `documentChanged()`;
+   JCEF leaves it alone and ends one context at a time with
+   `endContext(contextId)`.
 2. **Typed handlers (G3).** A method binds with the capability as a parameter:
    `PLAY.handle { haptics: Haptics, args -> haptics.play(args.effect) }`. The
    binder gets its method list from the handlers. The compiler checks the
@@ -131,6 +136,41 @@ The same scenarios then run on JVM, Android and iOS:
 
 If a platform cannot fake its WebView, the smoke page covers that platform.
 The test then says so in one skipped scenario.
+
+### What B1+K5 built (2026-10-14)
+
+- `HostBridge` (`commonMain`) owns the router, its scope, `TrustedOrigin`, the
+  document counter and the event channel. A transport calls
+  `receive(raw, PageFrame(mainFrame, url), channel)` and `documentChanged()`,
+  or `endContext(contextId)` to end one watch's context.
+  The channel of the `watchContext` request that opens a context carries that
+  context's events.
+- `TrustedOrigin` (`commonMain`) replaces the JCEF-only origin policy. It also
+  gives Android its `allowedOriginRules` value.
+- **Android port frames.** `addWebMessageListener` has one port per document
+  and no reply per message, so replies and events share the port. The page
+  sends `{"id": n, "request": "<v2 request>"}`; the host sends
+  `{"id": n, "reply": {…}}` or `{"event": {…}}`. The request stays a string,
+  so the router checks the exact text. `MessagePortTransport` (`commonMain`)
+  holds these rules; `AndroidHostBridge` only moves strings. The web client
+  (B3) speaks this frame, and the contract gets its schema with B3.
+- **Android document change.** WebView makes a new port for each document. A
+  main-frame message on a new port ends the old context and cancels its calls.
+  A reply for the old document goes to the old port, which no page reads. The
+  new document's first message (the client's `watchContext`) is the signal,
+  so a running call ends then, not at the start of the navigation. A
+  navigation to a page that never talks to the bridge leaves the old context
+  open. Before phase C, a `WebViewCompat.addDocumentStartJavaScript` ping (as
+  iOS uses) closes that gap. The device smoke run checks that
+  `JavaScriptReplyProxy` keeps one identity per document.
+- `JcefHostBridge` (`jvmMain`) holds the JCEF v2 rules. JCEF cancels a frame's
+  queries when it navigates, so the end of a watch query calls
+  `HostBridge.endContext(contextId)` for the context that watch opened. A
+  newer watch keeps its context, and JCEF never calls `documentChanged()`.
+  `NativeBridge` keeps only the browser check and v1.
+- `TransportContractTest` runs its 6 scenarios on `MessagePortTransport`
+  (every target) and `JcefHostBridge` (JVM). The Android WebView glue and the
+  iOS adapter are not faked; a device smoke run covers them.
 
 ### Parity and legacy (G7, G8)
 
