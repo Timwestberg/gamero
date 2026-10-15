@@ -143,7 +143,8 @@ and say so.
   #124 (run the Hovel migration with that deploy). The home read pages task
   summaries since #125; clients must not expect full tasks in the snapshot. The
   coverage gate was red on main until #129. No Prometheus metrics or alerts exist
-  for Hovel yet. The perf script never calls the feedback route.
+  for Hovel yet. The perf scripts call the Brain feedback route too
+  (`perf/http/hovel.ts`, `perf/http/hovel-brain.ts`).
 - **Cares most about:** heartbeat cost staying flat as history grows, host-token
   auth, and caps.
 
@@ -164,9 +165,9 @@ and say so.
   `brain-accounts.controller.spec.ts`, `brain-observation.transport.spec.ts`, the
   feedback PostgreSQL test (slow, 300 s budget).
 - **Known quirks:** `lockBrainAccountState` locked the account, every host and
-  every task even for reads; #130 (open) gives Brain reads a lock-free snapshot.
-  `GET brain/feedback` still locks three rows and writes the ledger on every read
-  (plan FOR-143). All Brain errors map to 409. `verify` takes the lock twice.
+  every task even for reads until #130, which gave Brain reads a lock-free
+  snapshot and stopped Brain writes locking computers and tasks. #131 reads
+  `GET brain/feedback` without locks. All Brain errors map to 409. `verify` takes the lock twice.
 - **Cares most about:** correctness of allowances and revocation, and not
   blocking the computer routes.
 
@@ -207,14 +208,15 @@ and say so.
   readiness does not flicker on identical polls; runtime art copies follow one
   copy rule and a check fails when they drift.
 - **Watch:** `godot --headless --script res://environment/tests/room_layout_check.gd`
-  (also `appearance_check.gd`, `runtime_copies_check.gd`, `geometry_check.gd`),
+  (also `runtime_copies_check.gd`, `geometry_check.gd`, and
+  `res://character/tests/appearance_check.gd`),
   `roomEditor.browser.test.ts`, `roomService.test.ts`, `roomMessages.test.ts`,
   `roomKitArt.test.ts`, `pnpm build:web`; docs `docs/hovel/room/`.
 - **Known quirks:** Hovel needs Godot 4.6, fixture games need 4.7. Kit revision 5
-  (Hearth set) is merged (server #127, game-platform #100). #102 (open) gives the
-  Godot export a content-versioned URL so a new kit never meets stale art. #103
-  (open) fixes undo around drags. `derive.mjs` uses one prop scale for every
-  starter copy (plan FOR-144). The character kit's teal tunic bakes olive.
+  (Hearth set) is merged (server #127, game-platform #100). Since #102 the Godot
+  export has a content-versioned URL, so a new kit never meets stale art. #103
+  fixed undo around drags. Since #104 `derive.mjs` sizes each starter copy per
+  piece (plan FOR-144). The character kit's teal tunic bakes olive.
 - **Cares most about:** the frame isolation boundary and stable readiness.
 
 ### 5. Gamero Mac companion and host bridge (gamero)
@@ -239,9 +241,9 @@ and say so.
 - **Known quirks:** Gradle success is never proof the page rendered. The
   persistent browser profile fix (FOR-80) is not yet Mac-validated. Account
   switching on one native profile is rejected by design. The host-bridge v2
-  rewrite is a stack of draft PRs (#15 to #23 and #25; #24 is not part of
-  it), with the contract in server-platform #128, plan FOR-117/FOR-118); drafts are tracked but not reviewed
-  until marked ready.
+  plan and shared router merged as #15, and its contract as server-platform
+  #128 (plan FOR-117/FOR-118). The rest is a stack of draft PRs (#16 to #23,
+  #25, #28, #30); drafts are tracked but not reviewed until marked ready.
 - **Cares most about:** failing loudly, bounded shutdown, and trusting only
   native frame facts.
 
@@ -282,9 +284,9 @@ and say so.
   (Mac only), `tools/ios-smoke.sh`, `WebUrlPolicyTest`, `IosWebUrlTest`.
 - **Known quirks and gaps:** Hovel runs as remote UI only: no Connect computer,
   no companion, no `gameroQuery` bridge (`NativeBridge.ios.kt` only posts
-  NSNotifications; plan FOR-120). No `iosX64` target. Sign-in needs HTTPS.
-  `SessionManager.kt:31` logout is `TODO()` and crashes. The start screen is in
-  #24 (open); the smoke script does not exercise the Hovel path yet.
+  NSNotifications; plan FOR-120, draft #28). No `iosX64` target. Sign-in needs HTTPS.
+  `SessionManager.kt:31` logout is `TODO()` and crashes. The iOS start screen
+  merged as #24; the smoke script does not exercise the Hovel path yet.
 - **Cares most about:** parity with desktop where the platform allows it, and
   saying "unsupported" explicitly where it does not.
 
@@ -301,7 +303,9 @@ and say so.
 - **Watch:** `pnpm test`, `pnpm test:coverage` (90% floor only for
   `COVERAGE_INCLUDE` paths), `pnpm test:ux` (Storybook in Chromium, axe
   violations fail), `pnpm check`, `pnpm smoke:{entity-kit,browser-storage,feed,feed-persist,sse}`.
-  Test and smoke commands need `--conditions=browser`.
+  Tests pass `--conditions=browser`, and so do the smoke scripts for
+  browser-only modules (`component-registry`, `entity-kit`, `game-results`,
+  `monaco-editor`); the other smoke scripts run without it.
 - **Known quirks:** ConnectionCard has no unit tests and `status` is a plain
   `string` (`connections.types.ts:4`); browser-storage is outside the coverage
   floor and its parser overrides never run on string or boolean keys.
