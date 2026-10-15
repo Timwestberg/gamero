@@ -94,8 +94,10 @@ for target in "${targets[@]}"; do
   result=passed
   ./gradlew -Pgamero.mobileTargets=true ":composeApp:$task" --continue || { result=failed; status=1; }
   read -r tests failures errors skipped <<<"$(count "$task")"
+  # A task that ran no tests proves nothing, so it does not count as a pass.
+  if [[ "$result" == passed && "$tests" -eq 0 ]]; then result="no-tests"; status=1; fi
   took=$((SECONDS - t))
-  line="$(printf '%-8s %-7s %4s tests, %s failures, %s errors, %s skipped (%ss)' \
+  line="$(printf '%-8s %-8s %4s tests, %s failures, %s errors, %s skipped (%ss)' \
     "$target" "$result" "$tests" "$failures" "$errors" "$skipped" "$took")"
   summary+=("$line")
   record "test-$target" "$took" "$result $tests tests $failures failures $errors errors"
