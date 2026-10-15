@@ -90,7 +90,10 @@ the kit.
    three things:
    1. `receive(raw, frame, reply)` for each message.
    2. `post(json)` for events.
-   3. `documentChanged()` on each main-frame navigation.
+   3. A document signal. Android and iOS call `documentChanged()` when the
+      main frame gets a new document. JCEF has no navigation signal of its
+      own: it calls `endContext(contextId)` when a watch query ends, so the
+      end closes only that watch's context and never a newer one.
 
    The document id becomes a counter inside `HostBridge`. A platform does not
    make its own id. JCEF, Android and iOS then end contexts by the same rule.
@@ -152,10 +155,16 @@ The test then says so in one skipped scenario.
   main-frame message on a new port ends the old context and cancels its calls.
   A reply for the old document goes to the old port, which no page reads. The
   new document's first message (the client's `watchContext`) is the signal,
-  so a running call ends then, not at the start of the navigation.
+  so a running call ends then, not at the start of the navigation. A
+  navigation to a page that never talks to the bridge leaves the old context
+  open. Before phase C, a `WebViewCompat.addDocumentStartJavaScript` ping (as
+  iOS uses) closes that gap. The device smoke run checks that
+  `JavaScriptReplyProxy` keeps one identity per document.
 - `JcefHostBridge` (`jvmMain`) holds the JCEF v2 rules. JCEF cancels a frame's
-  queries when it navigates, so the end of the watch query is
-  `documentChanged()`. `NativeBridge` keeps only the browser check and v1.
+  queries when it navigates, so the end of a watch query calls
+  `HostBridge.endContext(contextId)` for the context that watch opened. A
+  newer watch keeps its context, and JCEF never calls `documentChanged()`.
+  `NativeBridge` keeps only the browser check and v1.
 - `TransportContractTest` runs its 6 scenarios on `MessagePortTransport`
   (every target) and `JcefHostBridge` (JVM). The Android WebView glue and the
   iOS adapter are not faked; a device smoke run covers them.
