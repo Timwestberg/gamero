@@ -71,13 +71,14 @@ class BridgeRouterTest {
         posted: MutableList<String> = mutableListOf(),
         failures: MutableList<String> = mutableListOf(),
         products: List<CapabilityPack> = hovelPacks(platform, fakes),
+        newContextId: () -> String = { HostBridgeFixtures.CONTEXT_ID },
     ) = BridgeRouter(
         product = "Hovel",
         capabilities = capabilities(platform, fakes),
         products = products,
         scope = backgroundScope,
         transport = { posted += it },
-        newContextId = { HostBridgeFixtures.CONTEXT_ID },
+        newContextId = newContextId,
         onFailure = { method, _ -> failures += method },
     )
 
@@ -293,6 +294,27 @@ class BridgeRouterTest {
         assertEquals("This host does not define this method", reply["error"]!!.jsonObject["message"]!!.jsonPrimitive.content)
         val methods = call(router, request("host.capabilities")).single()["result"]!!.jsonObject["methods"]!!.jsonArray
         assertTrue(methods.none { it.jsonPrimitive.content.startsWith("companion.") }, methods.toString())
+        router.close()
+    }
+
+    @Test
+    fun endingAContextByIdLeavesANewerContextOpen() = runTest {
+        val first = "00000000-0000-4000-8000-00000000000a"
+        val second = "00000000-0000-4000-8000-00000000000b"
+        val ids = ArrayDeque(listOf(first, second))
+        val router = router(newContextId = { ids.removeFirst() })
+        call(router, watch)
+        router.endContext(second)
+        settle()
+        assertEquals(true, call(router, request("host.info", contextId = first)).single()["ok"]?.jsonPrimitive?.content?.toBoolean())
+        call(router, watch)
+        // The first watch goes away after the second one replaced its context.
+        router.endContext(first)
+        settle()
+        assertEquals(true, call(router, request("host.info", contextId = second)).single()["ok"]?.jsonPrimitive?.content?.toBoolean())
+        router.endContext(second)
+        settle()
+        assertEquals("expired", call(router, request("host.info", contextId = second)).single().code())
         router.close()
     }
 
