@@ -24,6 +24,7 @@ import java.net.URI
 import kotlin.system.exitProcess
 import org.formulagen.wrapper.bridge.desktopHostCapabilities
 import org.formulagen.wrapper.companion.NativeBridge
+import org.formulagen.wrapper.hovel.hovelBridgePacks
 import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.hovel.HovelLaunchScreen
 import org.formulagen.wrapper.hovel.HovelStartState
@@ -225,7 +226,8 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                 resources.bridge = NativeBridge(
                     browser = browser,
                     trustedUrl = url,
-                    capabilities = desktopHostCapabilities(companion),
+                    capabilities = desktopHostCapabilities(),
+                    products = if (isHovelProduct()) hovelBridgePacks(companion) else emptyList(),
                     onInvalidate = { companion?.invalidatePending() },
                     dispatch = companion?.let { it::dispatch },
                 )

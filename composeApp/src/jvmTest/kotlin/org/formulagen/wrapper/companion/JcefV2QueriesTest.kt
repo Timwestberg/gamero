@@ -47,7 +47,6 @@ class JcefV2QueriesTest {
                 links = Capability.Unsupported,
                 haptics = Capability.Unsupported,
                 lifecycle = Capability.Supported(Lifecycle { onPause, _ -> page.pause = onPause; AutoCloseable { } }),
-                companion = Capability.Unsupported,
             ),
             scope = backgroundScope,
             transport = { json -> page.queries.events()?.success(json) },

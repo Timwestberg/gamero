@@ -7,7 +7,10 @@ import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.BridgeBusyException
+import org.formulagen.wrapper.bridge.Capability
+import org.formulagen.wrapper.bridge.CapabilityPack
 import org.formulagen.wrapper.bridge.CompanionCapability
+import org.formulagen.wrapper.bridge.CompanionMethods
 import org.formulagen.wrapper.bridge.CompanionRegistration
 import org.formulagen.wrapper.companion.*
 import java.net.URI
@@ -168,6 +171,14 @@ class HovelCompanion(
         fun sha256(value: String): String = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
     }
 }
+
+/**
+ * Hovel's capability packs for the host bridge. The companion is supported only
+ * when it is configured on this Mac; otherwise its methods answer `unsupported`.
+ */
+fun hovelBridgePacks(companion: HovelCompanion?): List<CapabilityPack> = listOf(
+    CompanionMethods.pack(companion?.let { Capability.Supported(HovelCompanionCapability(it)) } ?: Capability.Unsupported),
+)
 
 /** Hovel's companion as a `host-bridge.v2` capability. Validation and single-flight stay in [HovelCompanion.dispatch]. */
 class HovelCompanionCapability(private val companion: HovelCompanion) : CompanionCapability {

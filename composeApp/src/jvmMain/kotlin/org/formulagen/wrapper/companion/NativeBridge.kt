@@ -6,6 +6,7 @@ import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.BridgeProtocol
 import org.formulagen.wrapper.bridge.BridgeRouter
 import org.formulagen.wrapper.bridge.BridgeTransport
+import org.formulagen.wrapper.bridge.CapabilityPack
 import org.formulagen.wrapper.bridge.HostCapabilities
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
@@ -59,6 +60,7 @@ class NativeBridge(
     private val browser: KCEFBrowser,
     trustedUrl: String,
     capabilities: HostCapabilities,
+    products: List<CapabilityPack>,
     private val onInvalidate: () -> Unit,
     private val dispatch: (suspend (String, JsonObject) -> JsonObject)?,
 ) : AutoCloseable {
@@ -67,6 +69,7 @@ class NativeBridge(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val hostRouter = BridgeRouter(
         capabilities = capabilities,
+        products = products,
         scope = scope,
         transport = BridgeTransport { json -> v2.events()?.success(json) },
         onFailure = { method, error -> log(LogLevel.Warn, "NativeBridge", "Host bridge call $method failed", error) },

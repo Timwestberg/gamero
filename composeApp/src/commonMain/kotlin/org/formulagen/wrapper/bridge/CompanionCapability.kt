@@ -44,6 +44,9 @@ object CompanionMethods {
         BridgeProtocol.UUID_PATTERN.matches(it.ownerId) && BridgeProtocol.UUID_PATTERN.matches(it.hostId)
     }
 
+    /** Hovel's companion as a product pack. Hovel passes it on every platform, `Unsupported` where it has none. */
+    fun pack(companion: Capability<CompanionCapability>): CapabilityPack = binder.pack(companion)
+
     internal val binder = CapabilityBinder(
         listOf<CapabilityHandler<CompanionCapability>>(
             CAPABILITIES.handle { _, _ -> CompanionCapabilitiesResult() },

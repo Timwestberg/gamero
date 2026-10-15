@@ -33,7 +33,7 @@ enum class BridgeErrorCode(val wire: String, val message: String) {
     FORBIDDEN("forbidden", "This frame cannot call the host"),
     INVALID("invalid", "The request does not match host-bridge.v2"),
     EXPIRED("expired", "The bridge context expired; open a new one"),
-    UNKNOWN_METHOD("unknown-method", "No host defines this method"),
+    UNKNOWN_METHOD("unknown-method", "This host does not define this method"),
     UNSUPPORTED("unsupported", "This host does not support this method"),
     BUSY("busy", "Another call to this capability is running"),
     FAILED("failed", "The host could not complete the call"),
