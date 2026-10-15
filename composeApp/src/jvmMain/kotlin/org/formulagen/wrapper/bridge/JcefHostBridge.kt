@@ -6,8 +6,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.intOrNull
 import org.cef.callback.CefQueryCallback
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 
 /** How the JCEF transport handles one query, decided before any product code runs. */
 internal enum class JcefQueryKind {
@@ -50,11 +48,14 @@ class JcefHostBridge(private val bridge: HostBridge) : AutoCloseable {
     constructor(trustedUrl: String, capabilities: HostCapabilities, products: List<CapabilityPack>) :
         this(HostBridge(trustedUrl, capabilities, products, Dispatchers.IO))
 
-    /** The watch query of the open context, or [NONE]. Set from the router's thread, read on the CEF UI thread. */
-    private val watchQuery = AtomicLong(NONE)
+    /** Guards [watchQuery] and [pendingWatches]: the router's thread and the CEF UI thread both change them. */
+    private val lock = Any()
+
+    /** The watch query of the open context, or [NONE]. */
+    private var watchQuery = NONE
 
     /** Watch queries the router has not answered yet. A cancel removes its id, so the late reply knows. */
-    private val pendingWatches: MutableSet<Long> = ConcurrentHashMap.newKeySet()
+    private val pendingWatches = mutableSetOf<Long>()
 
     /**
      * Answers a version 2 query, or any query from an untrusted frame, and
@@ -73,19 +74,18 @@ class JcefHostBridge(private val bridge: HostBridge) : AutoCloseable {
             callback.success(bridgeFailureEnvelope(BridgeErrorCode.INVALID))
             return true
         }
-        if (kind == JcefQueryKind.V2_WATCH) pendingWatches += queryId
+        if (kind == JcefQueryKind.V2_WATCH) synchronized(lock) { pendingWatches += queryId }
         bridge.receive(request, PageFrame(mainFrame, frameUrl), object : BridgeChannel {
             override fun reply(json: String) {
-                pendingWatches -= queryId
+                synchronized(lock) { pendingWatches -= queryId }
                 callback.success(json)
             }
 
             override fun event(json: String) = callback.success(json)
 
-            override fun opened() {
-                watchQuery.set(queryId)
-                // JCEF cancelled this watch before the reply: its document is gone, so close the context.
-                if (!pendingWatches.remove(queryId) && watchQuery.compareAndSet(queryId, NONE)) bridge.documentChanged()
+            override fun opened() = synchronized(lock) {
+                // A watch that JCEF cancelled before this reply has already ended its context.
+                if (pendingWatches.remove(queryId)) watchQuery = queryId
             }
         })
         return true
@@ -93,15 +93,22 @@ class JcefHostBridge(private val bridge: HostBridge) : AutoCloseable {
 
     /** Returns true when [queryId] was a version 2 watch query. Cancelling the open one ends the document's context. */
     fun onQueryCanceled(queryId: Long): Boolean {
-        if (pendingWatches.remove(queryId)) return true
-        if (!watchQuery.compareAndSet(queryId, NONE)) return false
+        synchronized(lock) {
+            // A pending watch ends its document now, queued behind its own reply and ahead of any later watch.
+            if (!pendingWatches.remove(queryId)) {
+                if (watchQuery != queryId) return false
+                watchQuery = NONE
+            }
+        }
         bridge.documentChanged()
         return true
     }
 
     override fun close() {
-        watchQuery.set(NONE)
-        pendingWatches.clear()
+        synchronized(lock) {
+            watchQuery = NONE
+            pendingWatches.clear()
+        }
         bridge.close()
     }
 
