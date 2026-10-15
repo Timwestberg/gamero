@@ -4,6 +4,8 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>GameroProduct</key>
+	<string>$(GAMERO_PRODUCT)</string>
 	<key>GameroWebURL</key>
 	<string>$(GAMERO_WEB_URL)</string>
 	<key>NSAppTransportSecurity</key>
