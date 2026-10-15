@@ -65,7 +65,11 @@ class BridgeRouter(
     val supportedEvents: List<String> =
         if (capabilities.lifecycle is Capability.Supported) BridgeEvents.ALL else emptyList()
 
-    /** Checks and answers one request. [reply] is called exactly once, from any thread. */
+    /**
+     * Checks and answers one request. [reply] is called at most once, from any
+     * thread. A call that a navigation or a new `watchContext` cancels gets no
+     * reply, because no page is left to read it.
+     */
     fun handle(raw: String, frame: FrameFacts, reply: (String) -> Unit) {
         scope.launch(serial) {
             val check = checkBridgeRequest(
