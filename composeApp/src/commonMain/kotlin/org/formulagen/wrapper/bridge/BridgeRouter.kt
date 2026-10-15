@@ -44,8 +44,11 @@ class BridgeRouter(
     private val scope: CoroutineScope,
     private val transport: BridgeTransport,
     private val newContextId: () -> String = ::randomContextId,
-    /** Called when a capability fails. The page gets only the `failed` code. */
-    private val onFailure: (method: String, error: Throwable) -> Unit = { _, _ -> },
+    /**
+     * Called with a method or event name when a capability fails, or emits an
+     * event it did not declare. The page gets only the `failed` code, or nothing.
+     */
+    private val onFailure: (name: String, error: Throwable) -> Unit = { _, _ -> },
 ) : AutoCloseable {
     private val serial = ((scope.coroutineContext[ContinuationInterceptor] as? CoroutineDispatcher) ?: Dispatchers.Default)
         .limitedParallelism(1)
@@ -67,7 +70,7 @@ class BridgeRouter(
 
         override fun <D> emit(event: BridgeEvent<D>, data: D) {
             if (event.name in declared) this@BridgeRouter.emit(event, data)
-            else onFailure(event.name, IllegalStateException("${event.name} is not one of its capability's declared events"))
+            else onFailure(event.name, IllegalStateException("Event ${event.name} was not declared by its capability, so it was not sent"))
         }
     }
 
