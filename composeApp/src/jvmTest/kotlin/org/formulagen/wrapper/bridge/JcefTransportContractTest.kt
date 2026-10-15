@@ -128,4 +128,30 @@ class JcefHostBridgeTest {
         val info = ask(transport, call(contextId), queryId = 3)
         assertEquals(null, info.code(), "the first watch's late reply closed the second watch's context")
     }
+
+    @Test
+    fun cancellingAnOlderWatchLeavesTheNewerContextOpen() = runTest {
+        // Both watches sent, then the older one cancelled.
+        var transport = transport()
+        transport.onQuery(watch, true, true, trusted, 1, Answers())
+        var second = Answers()
+        transport.onQuery(watch, true, true, trusted, 2, second)
+        assertTrue(transport.onQueryCanceled(1))
+        settle()
+        assertContextOpen(transport, second)
+
+        // The older watch already open, the newer one not answered yet.
+        transport = transport()
+        ask(transport, watch, persistent = true, queryId = 1)
+        second = Answers()
+        transport.onQuery(watch, true, true, trusted, 2, second)
+        assertTrue(transport.onQueryCanceled(1))
+        settle()
+        assertContextOpen(transport, second)
+    }
+
+    private fun TestScope.assertContextOpen(transport: JcefHostBridge, watchAnswers: Answers) {
+        val contextId = Json.parseToJsonElement(watchAnswers.successes.single()).jsonObject.getValue("contextId").jsonPrimitive.content
+        assertEquals(null, ask(transport, call(contextId), queryId = 3).code(), "the cancelled watch ended the newer context")
+    }
 }
