@@ -42,7 +42,9 @@ interface BridgeChannel {
  *
  * A platform adapter only talks to its WebView. It calls [receive] for each
  * message with the frame facts it read, and [documentChanged] when the main
- * frame gets a new document. Each `post` it makes is a JSON string, never
+ * frame gets a new document. A transport whose only signal is the end of one
+ * watch (JCEF) calls [endContext] with that watch's context id instead, so a
+ * newer watch keeps its context. Each `post` it makes is a JSON string, never
  * script. `TransportContractTest` checks every adapter against these rules.
  */
 @OptIn(ExperimentalAtomicApi::class)
