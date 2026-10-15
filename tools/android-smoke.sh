@@ -125,17 +125,18 @@ launched=$SECONDS
   -e GAMERO_PRODUCT hovel -e GAMERO_WEB_URL "'$url'" -e GAMERO_AUTO_ENTER 1 >/dev/null
 
 expected="GAMERO_PAGE_LOADED origin=$origin title=$title"
+# Only the app's own log tags count. WebView console messages also reach logcat (tag chromium), so a
+# page's console.log could otherwise print either marker.
+native() { tr -d '\r' <"$out/smoke.log" | grep -E "^I/$1 *\(" || true; }
 # Pass only on a line that ends with the marker: an exact title, not a prefix such as "Hovel Error".
 page_loaded() {
-  tr -d '\r' <"$out/smoke.log" | awk -v o="$origin" -v t="$title" '
+  native MainActivity | awk -v o="$origin" -v t="$title" '
     { n = index($0, "GAMERO_PAGE_LOADED origin="); if (n == 0) next
       rest = substr($0, n + 26); m = index(rest, " title="); if (m == 0) next
       if (tolower(substr(rest, 1, m - 1)) == o && substr(rest, m + 7) == t) found = 1 }
     END { exit !found }'
 }
-# A page title is page-controlled and ends the GAMERO_PAGE_LOADED line, so that part of each line is
-# dropped before looking for the bridge marker: a title can't stand in for it.
-answered() { tr -d '\r' <"$out/smoke.log" | sed 's/GAMERO_PAGE_LOADED.*//' | grep -o 'GAMERO_BRIDGE_ANSWERED platform=android product=[^ ]* method=[^ ]* outcome=[^ ]*' | tail -1; }
+answered() { native HostBridge | grep -o 'GAMERO_BRIDGE_ANSWERED platform=android product=[^ ]* method=[^ ]* outcome=[^ ]*' | tail -1; }
 running() { "$adb" shell pidof "$package" >/dev/null 2>&1; }
 
 deadline=$((SECONDS + timeout))
