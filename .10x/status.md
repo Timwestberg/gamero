@@ -25,6 +25,6 @@ Spec `specs/2026-10-14-bridge-kit-design.md`, ADR-002 (Accepted). G5: product se
 - [x] K2 method time limit (JVM tests pass)
 - [x] K3 platform set and product set (JVM tests pass)
 - [x] K4 parity test per factory (desktop; Android and iOS reuse assertMatchesParity in B1 and B2)
-- [ ] B1+K5 Android transport with HostBridge and TransportContractTest (code done, JVM tests pass; Mac targets and the desktop smoke re-run pending)
+- [x] B1+K5 Android transport with HostBridge and TransportContractTest (Mac: JVM 102, Android 29, iOS 32, 0 failures; Android debug APK builds; desktop smoke on HostBridge passes with and without the companion, reload check included. Android device smoke waits for the web client, B3)
 - [ ] B2 iOS transport on the kit, no kit change
 - [ ] C3+ haptic.play on mobile, legacy haptic path deleted
