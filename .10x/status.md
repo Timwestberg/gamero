@@ -11,7 +11,7 @@
 - [x] A2: router in commonMain, fixture tests pass on JVM
 - [x] A2b: capability bindings beside their interfaces; all capability methods suspend (JVM tests pass)
 - [x] A3: JCEF transport on the router, companion as a capability (JVM tests pass; app launch not run)
-- [ ] A4: smoke page v2 on the Mac (tests pass on JVM 84, Android 16, iOS 20; compile passes; button clicks pending)
+- [ ] A4: smoke page v2 on the Mac (Mac snapshot 2026-10-14: tests pass on JVM 84, Android 16, iOS 20; compile passes; button clicks pending)
 - [ ] Phase B: Android and iOS transports, web client (B1–B4)
 - [ ] Phase C: proof capabilities and parity (C1–C5)
 - [ ] Phase D: legacy decision (ADR-003)
