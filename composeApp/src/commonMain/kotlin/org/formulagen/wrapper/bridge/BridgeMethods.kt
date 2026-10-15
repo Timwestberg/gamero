@@ -83,7 +83,12 @@ internal fun isSafeHttpsUrl(value: String): Boolean {
 
 /**
  * `HOST_BRIDGE_HTTPS_URL_PATTERN` in event-contracts: `https://`, a host of
- * dot-separated labels, an optional port, then printable ASCII with no
- * backslash. A pattern, not a URL parser, so every host decides the same way.
+ * dot-separated ASCII labels whose last label has a letter, an optional port,
+ * then printable ASCII with no backslash. A pattern, not a URL parser, so
+ * every host decides the same way. It spells out case instead of using
+ * `IGNORE_CASE`, which folds Unicode case on the JVM and would accept `httpſ`.
  */
-private val HTTPS_URL = Regex("^https://[a-z0-9-]+(?:\\.[a-z0-9-]+)*(?::(\\d{1,5}))?(?:[/?#][!-\\[\\]-~]*)?$", RegexOption.IGNORE_CASE)
+private val HTTPS_URL = Regex(
+    "^[hH][tT][tT][pP][sS]://(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)*(?=[A-Za-z0-9-]*[A-Za-z])[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?" +
+        "(?::([0-9]{1,5}))?(?:[/?#][!-\\[\\]-~]*)?$",
+)
