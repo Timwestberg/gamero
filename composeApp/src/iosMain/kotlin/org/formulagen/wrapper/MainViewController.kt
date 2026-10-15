@@ -26,6 +26,7 @@ private const val TAG = "MainViewController"
 fun MainViewController() = ComposeUIViewController {
     val url = remember { resolveIosWebUrl() }
     val product = remember { resolveIosProduct() }
+    val autoEnter = remember { resolveIosAutoEnter() }
     if (url == null) {
         LaunchedEffect(Unit) { log(LogLevel.Error, TAG, "GAMERO_WEB_URL is missing or invalid") }
         MaterialTheme {
@@ -41,14 +42,14 @@ fun MainViewController() = ComposeUIViewController {
             val products = if (hovel) iosHovelBridgePacks() else emptyList()
             attached[0] = IosHostBridge(webView, HostBridge(if (hovel) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME, url, iosHostCapabilities(appVersion()), products))
         }
-        if (hovel) HovelIosApp(url, onPageLoaded = ::logPageLoaded, onWebViewCreated = attach)
+        if (hovel) HovelIosApp(url, onPageLoaded = ::logPageLoaded, onWebViewCreated = attach, autoEnter = autoEnter)
         else App(url, onWebViewCreated = attach, onPageLoaded = ::logPageLoaded)
     }
 }
 
-/** Smoke-test marker; mirrors desktop's GAMERO_JCEF_INITIALIZED. */
+/** Smoke-test marker, the same on every platform. */
 private fun logPageLoaded(loadedUrl: String, title: String?) {
-    log(LogLevel.Info, TAG, "GAMERO_PAGE_LOADED origin=${originOf(loadedUrl)} title=$title")
+    log(LogLevel.Info, TAG, SmokeMarkers.pageLoaded(loadedUrl, title))
 }
 
 private fun appVersion(): String =
