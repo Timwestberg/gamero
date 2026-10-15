@@ -246,8 +246,7 @@ Android and iOS support only version 2.
 Error codes: `forbidden`, `invalid`, `expired`, `unknown-method`, `unsupported`,
 `busy`, `declined`, `failed`. `declined` means the person said no; K6 (gamero
 #30) adds it. An `unsupported` message names the product, the platform and
-the capability; until K6 the router sends the fixed message "This host does
-not support this method". The message text is for people. Code must read only `code`.
+the capability. The message text is for people. Code must read only `code`.
 
 ### First capabilities (proof of the pattern)
 
