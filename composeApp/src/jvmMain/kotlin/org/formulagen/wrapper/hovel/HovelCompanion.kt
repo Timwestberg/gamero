@@ -6,6 +6,9 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
+import org.formulagen.wrapper.bridge.BridgeBusyException
+import org.formulagen.wrapper.bridge.CompanionCapability
+import org.formulagen.wrapper.bridge.CompanionRegistration
 import org.formulagen.wrapper.companion.*
 import java.net.URI
 import java.nio.file.Files
@@ -47,7 +50,7 @@ class HovelCompanion(
             return buildJsonObject { put("version", 1); put("connectComputer", true); put("cloud", false); put("sandbox", "read-only") }
         }
         val authorizedGeneration = synchronized(lifecycle) { check(!closed); generation }
-        check(mutex.tryLock()) { "Another native operation is pending" }
+        if (!mutex.tryLock()) throw BridgeBusyException()
         try {
             return when (method) {
                 "prepareConnection" -> {
@@ -160,4 +163,19 @@ class HovelCompanion(
     companion object {
         fun sha256(value: String): String = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
     }
+}
+
+/** Hovel's companion as a `host-bridge.v2` capability. Validation and single-flight stay in [HovelCompanion.dispatch]. */
+class HovelCompanionCapability(private val companion: HovelCompanion) : CompanionCapability {
+    override suspend fun prepareConnection(ownerId: String): CompanionRegistration {
+        val result = companion.dispatch("prepareConnection", buildJsonObject { put("ownerId", ownerId) })
+        return CompanionRegistration(
+            id = result.getValue("id").jsonPrimitive.content,
+            name = result.getValue("name").jsonPrimitive.content,
+            tokenHash = result.getValue("tokenHash").jsonPrimitive.content,
+        )
+    }
+
+    override suspend fun activateConnection(ownerId: String, hostId: String): JsonObject =
+        companion.dispatch("activateConnection", buildJsonObject { put("ownerId", ownerId); put("hostId", hostId) })
 }

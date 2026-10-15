@@ -27,6 +27,26 @@ bridge: expect version1, connectComputer true, cloud false, sandbox read-only.
 Reload and repeat: expect a new context ID. Close; confirm JVM/browser termination.
 This fixture does not register a host, store credentials, sign in or execute Codex.
 
+Click Check host bridge v2. Each line shows the call, its round-trip time, and the
+reply. With the companion configured, expect these replies:
+
+| Line | Expected reply |
+|---|---|
+| `watchContext` | `{"version":2,"contextId":"<uuid>"}` |
+| `host.capabilities` | `ok:true`, methods `host.capabilities`, `host.info` and the three `companion.*` methods, and no events |
+| `host.info` | `ok:true`, `platform` `desktop`, `bridgeVersion` 2 |
+| `companion.capabilities` | `ok:true`, `connectComputer` true, `cloud` false, `sandbox` `read-only` |
+| `haptic.play` | `ok:false`, code `unsupported` |
+| `link.close` | `ok:false`, code `unknown-method` |
+| stale context | `ok:false`, code `expired` |
+| non-persistent watch | `ok:false`, code `invalid` |
+
+Without `GAMERO_CODEX_PATH` and `GAMERO_WORKSPACE`, the three `companion.*` methods
+are missing from `host.capabilities`, and `companion.capabilities` answers
+`unsupported`. Check native bridge (version 1) then fails with 403. That is the
+expected result, because only the companion uses version 1. The page also logs
+the whole result after `GAMERO_BRIDGE_V2_SMOKE`.
+
 Require `GAMERO_JCEF_INITIALIZED` in the launch log before the browser appears.
 JCEF startup is asynchronous: Gamero now waits up to30seconds for its native
 initialization callback before exposing WebView. A runtime initialization timeout,
