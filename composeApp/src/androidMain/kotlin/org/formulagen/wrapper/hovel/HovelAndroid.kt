@@ -44,8 +44,8 @@ internal fun hovelWebUrl(intent: Intent?, context: Context): String? {
 
 /** Plays the Hovel launch and start screen, then opens [url] once the player steps inside. */
 @Composable
-fun HovelAndroidApp(url: String) {
+fun HovelAndroidApp(url: String, onPageLoaded: (url: String, title: String?) -> Unit = { _, _ -> }) {
     var entered by rememberSaveable { mutableStateOf(false) }
     // Like the desktop host, Hovel runs without the legacy native bridge.
-    if (entered) App(url, enableLegacyBridge = false) else HovelLaunchScreen(HovelStartState.Ready(url), onContinue = { entered = true })
+    if (entered) App(url, enableLegacyBridge = false, onPageLoaded = onPageLoaded) else HovelLaunchScreen(HovelStartState.Ready(url), onContinue = { entered = true })
 }
