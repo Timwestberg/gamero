@@ -108,7 +108,11 @@ class HovelCompanion(
                 else -> error("Unsupported native method")
             }
         } catch (error: Exception) {
-            if (error !is CancellationException) status = "Connection failed. Check the native configuration, Keychain approval and server."
+            // A navigation cancels with no message; a call that ran out of time still tells the person.
+            when (error) {
+                is TimeoutCancellationException -> status = "Connection timed out. Start again from Hovel."
+                !is CancellationException -> status = "Connection failed. Check the native configuration, Keychain approval and server."
+            }
             throw error
         } finally { mutex.unlock() }
     }
