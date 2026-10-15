@@ -34,8 +34,8 @@ internal fun classifyJcefQuery(request: String, persistent: Boolean): JcefQueryK
 /**
  * The JCEF half of the host bridge. Each request is one `cefQuery`; the
  * persistent `watchContext` query stays open and carries the events. JCEF
- * cancels a frame's queries when it navigates, so the end of the watch query
- * is the end of the document.
+ * cancels a frame's queries when it navigates, so the end of a watch query
+ * ends the context that watch opened.
  *
  * The frame comes first: a query from a child frame or another origin is
  * answered before anything else reads it, and only its first
@@ -51,8 +51,9 @@ class JcefHostBridge(private val bridge: HostBridge) : AutoCloseable {
     /** Guards [watchQuery] and [pendingWatches]: the router's thread and the CEF UI thread both change them. */
     private val lock = Any()
 
-    /** The watch query of the open context, or [NONE]. */
+    /** The watch query of the open context, or [NONE], and the context it opened. */
     private var watchQuery = NONE
+    private var watchContext: String? = null
 
     /** Watch queries the router has not answered yet. A cancel removes its id, so the late reply knows. */
     private val pendingWatches = mutableSetOf<Long>()
@@ -83,30 +84,37 @@ class JcefHostBridge(private val bridge: HostBridge) : AutoCloseable {
 
             override fun event(json: String) = callback.success(json)
 
-            override fun opened() = synchronized(lock) {
-                // A watch that JCEF cancelled before this reply has already ended its context.
-                if (pendingWatches.remove(queryId)) watchQuery = queryId
+            override fun opened(contextId: String): Boolean = synchronized(lock) {
+                // A watch that JCEF cancelled before this reply declines, so the bridge ends only its context.
+                if (!pendingWatches.remove(queryId)) return false
+                watchQuery = queryId
+                watchContext = contextId
+                true
             }
         })
         return true
     }
 
-    /** Returns true when [queryId] was a version 2 watch query. Cancelling the open one ends the document's context. */
+    /**
+     * Returns true when [queryId] was a version 2 watch query, and ends the
+     * context that watch opened, never a newer one. A watch the router has not
+     * answered yet declines its context when the reply arrives.
+     */
     fun onQueryCanceled(queryId: Long): Boolean {
-        synchronized(lock) {
-            // A pending watch ends its document now, queued behind its own reply and ahead of any later watch.
-            if (!pendingWatches.remove(queryId)) {
-                if (watchQuery != queryId) return false
-                watchQuery = NONE
-            }
+        val contextId = synchronized(lock) {
+            if (pendingWatches.remove(queryId)) return true
+            if (watchQuery != queryId) return false
+            watchQuery = NONE
+            watchContext.also { watchContext = null }
         }
-        bridge.documentChanged()
+        if (contextId != null) bridge.endContext(contextId)
         return true
     }
 
     override fun close() {
         synchronized(lock) {
             watchQuery = NONE
+            watchContext = null
             pendingWatches.clear()
         }
         bridge.close()

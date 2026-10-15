@@ -7,6 +7,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import kotlin.concurrent.atomics.AtomicLong
@@ -26,8 +27,13 @@ interface BridgeChannel {
     fun reply(json: String)
     fun event(json: String)
 
-    /** Called just before [reply] when this channel's `watchContext` opened the context. */
-    fun opened() {}
+    /**
+     * Called just before [reply] when this channel's `watchContext` opened the
+     * context [contextId]. Returns false when the transport no longer wants it,
+     * such as a watch query cancelled before its reply; the bridge then ends
+     * that context, and only that one.
+     */
+    fun opened(contextId: String): Boolean = true
 }
 
 /**
@@ -57,14 +63,15 @@ class HostBridge(
     val origin = TrustedOrigin(trustedUrl)
     private val scope = CoroutineScope(context + SupervisorJob(context[Job]))
     private val document = AtomicLong(0)
-    private val events = AtomicReference<BridgeChannel?>(null)
+    /** The open context and the channel that carries its events. */
+    private val events = AtomicReference<OpenContext?>(null)
 
     internal val router = BridgeRouter(
         product = product,
         capabilities = capabilities,
         products = products,
         scope = scope,
-        transport = { json -> events.load()?.event(json) },
+        transport = { json -> events.load()?.channel?.event(json) },
         newContextId = newContextId,
         onFailure = onFailure,
     )
@@ -74,9 +81,9 @@ class HostBridge(
         val documentId = document.load()
         val facts = FrameFacts(frame.mainFrame, origin.matches(frame.url), documentId.toString())
         router.handle(raw, facts) { reply ->
-            if (opensContext(reply) && document.load() == documentId) {
-                events.store(channel)
-                channel.opened()
+            val contextId = openedContext(reply)
+            if (contextId != null && document.load() == documentId) {
+                if (channel.opened(contextId)) events.store(OpenContext(contextId, channel)) else router.endContext(contextId)
             }
             channel.reply(reply)
         }
@@ -89,12 +96,24 @@ class HostBridge(
         router.endContext()
     }
 
+    /**
+     * Ends the context [contextId] if it is still the open one. A newer
+     * `watchContext` that replaced it stays open. Use this when one watch goes
+     * away, and [documentChanged] when the whole document does.
+     */
+    fun endContext(contextId: String) {
+        events.load()?.takeIf { it.id == contextId }?.let { events.compareAndSet(it, null) }
+        router.endContext(contextId)
+    }
+
     override fun close() {
         events.store(null)
         router.close()
         scope.cancel()
     }
 
-    private fun opensContext(reply: String): Boolean =
-        (Json.parseToJsonElement(reply) as? JsonObject)?.containsKey("contextId") == true
+    private fun openedContext(reply: String): String? =
+        ((Json.parseToJsonElement(reply) as? JsonObject)?.get("contextId") as? JsonPrimitive)?.content
+
+    private class OpenContext(val id: String, val channel: BridgeChannel)
 }
