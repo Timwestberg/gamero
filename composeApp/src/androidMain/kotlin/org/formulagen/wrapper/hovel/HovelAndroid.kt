@@ -56,7 +56,7 @@ internal fun hovelBridgePacks(): List<CapabilityPack> = listOf(CompanionMethods.
 
 /** Plays the Hovel launch and start screen, then opens [url] once the player steps inside. */
 @Composable
-fun HovelAndroidApp(url: String) {
+fun HovelAndroidApp(url: String, onPageLoaded: (url: String, title: String?) -> Unit = { _, _ -> }) {
     var entered by rememberSaveable { mutableStateOf(false) }
     if (!entered) {
         HovelLaunchScreen(HovelStartState.Ready(url), onContinue = { entered = true })
@@ -69,7 +69,7 @@ fun HovelAndroidApp(url: String) {
     val attached = remember { arrayOfNulls<AndroidHostBridge>(1) }
     DisposableEffect(Unit) { onDispose { attached[0]?.close() } }
     // Like the desktop host, Hovel talks to the host bridge, not the legacy native bridge.
-    App(url, enableLegacyBridge = false, onWebViewCreated = { webView ->
+    App(url, enableLegacyBridge = false, onPageLoaded = onPageLoaded, onWebViewCreated = { webView ->
         attached[0]?.close()
         attached[0] = AndroidHostBridge.attach(webView, HostBridge(url, androidHostCapabilities(appVersion), hovelBridgePacks()))
     })
