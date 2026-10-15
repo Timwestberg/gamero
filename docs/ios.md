@@ -148,13 +148,17 @@ The app reads the product once at launch, in the same order as the URL:
 The first non-blank value is used, trimmed. If it is `hovel`, the app plays the
 Hovel launch and start screen, as desktop and Android do. The web app opens
 after the player taps "Open the door", without the legacy native bridge. Any
-other value loads the web app directly. `tools/ios-smoke.sh` sets
-`GAMERO_PRODUCT=gamero`, because the start screen waits for a tap.
+other value loads the web app directly.
+
+In a Debug build, `GAMERO_AUTO_ENTER=1` (`SIMCTL_CHILD_GAMERO_AUTO_ENTER=1`)
+steps inside on its own once the launch settles, so a script can test the Hovel
+path without a tap. Release builds ignore it.
 
 ## Smoke test
 
 ```sh
-tools/ios-smoke.sh
+tools/ios-smoke.sh                   # Hovel: start screen, page and host bridge
+tools/ios-smoke.sh --product gamero  # the plain web view, page load only
 ```
 
 The script:
@@ -162,10 +166,15 @@ The script:
 1. Fails fast if `GAMERO_WEB_URL` is not responding.
 2. Builds the app into `build/ios`.
 3. Creates a throwaway simulator of the newest numbered iPhone on the newest iOS
-   runtime, installs the app, and launches it with the URL.
-4. Passes when the app logs `GAMERO_PAGE_LOADED origin=<origin> title=Hovel`
-   within 90 seconds. The title must match exactly, so `Hovel Error` fails.
-5. Saves `build/ios/smoke.png` and deletes the simulator.
+   runtime, installs the app, and launches it with the URL, the product and
+   `GAMERO_AUTO_ENTER=1`.
+4. Waits for the app to log `GAMERO_PAGE_LOADED origin=<origin> title=Hovel`.
+   The title must match exactly, so `Hovel Error` fails.
+5. For Hovel, also waits for `GAMERO_BRIDGE_ANSWERED platform=ios product=Hovel
+   method=<method> outcome=<outcome>`, the first answer the host bridge gave
+   the page. Any outcome passes, `unsupported` included, except `invalid` or
+   `forbidden`. Both markers must arrive within 90 seconds of launch.
+6. Saves `build/ios/smoke.png` and deletes the simulator.
 
 It exits non-zero on build failure, crash, or timeout, and leaves the build log
 in `build/ios/xcodebuild.log` and the app console in `build/ios/smoke.log`.
@@ -185,7 +194,8 @@ GAMERO_SMOKE_ROOT_CERT=/tmp/vite-dev-cert.pem tools/ios-smoke.sh
 
 `GAMERO_PAGE_LOADED` comes from the iOS `onPageLoaded` callback on `App()`. It
 fires when the page finishes loading, and again when its title arrives, so the
-first line may show `title=null`.
+first line may show `title=null`. Both markers come from `SmokeMarkers.kt`, so
+desktop and Android log the same lines.
 
 ## Known limitations
 

@@ -78,3 +78,33 @@ On a Pixel 8 Pro (API 34) emulator, launched with the Hovel debug extras:
 
 `MainActivity` is portrait-only, so recreation was tested with a dark-mode toggle
 rather than rotation.
+
+## Smoke markers
+
+Every shell logs the same two lines (`SmokeMarkers.kt`):
+
+- `GAMERO_PAGE_LOADED origin=<origin> title=<title>` when the page loads, and
+  again when its title arrives.
+- `GAMERO_BRIDGE_ANSWERED platform=<platform> product=<product> method=<method> outcome=<outcome>`
+  for the first host bridge answer each page gets from its trusted main frame.
+  `outcome` is `ok` or the error code, such as `unsupported`.
+
+`GAMERO_AUTO_ENTER=1` steps past the Hovel start screen once the launch
+settles, so a script needs no click. Desktop reads it from the environment
+only, never from a `-D` property, so a packaged release can't bake it in; on
+Android and iOS only debug builds honor it. Both markers go to stderr on
+desktop:
+
+```sh
+GAMERO_PRODUCT=hovel GAMERO_AUTO_ENTER=1 GAMERO_WEB_URL=http://127.0.0.1:8080/hovel.html \
+  ./gradlew :composeApp:run 2>&1 | grep -E 'GAMERO_(PAGE_LOADED|BRIDGE_ANSWERED)'
+```
+
+`tools/android-smoke.sh` builds the debug app, boots `GAMERO_AVD` (default
+`Pixel_8_Pro_API_34`) unless a device is attached, launches with the Hovel
+extras and `GAMERO_AUTO_ENTER 1`, and passes on both markers, as
+`tools/ios-smoke.sh` does. `GAMERO_WEB_URL` is required and must be an HTTPS
+page the emulator trusts, because the app opens HTTPS only, even in debug
+builds. A `localhost` port is forwarded to the Mac with `adb reverse`. It writes
+`build/android/smoke.png` and `build/android/smoke.log`, and each step's time to
+`.build-timings.csv`.
