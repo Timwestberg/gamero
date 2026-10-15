@@ -157,6 +157,28 @@ The test then says so in one skipped scenario.
   (every target) and `JcefHostBridge` (JVM). The Android WebView glue and the
   iOS adapter are not faked; a device smoke run covers them.
 
+### What B2 built (2026-10-15)
+
+B2 changed no file in `commonMain`, so the kit held for a third platform.
+
+- `WebKitHostTransport` (`iosMain`, no WebKit types) holds the iOS rules, and
+  `IosHostBridge` only moves values between WebKit and it on the main thread.
+- **Requests.** The page sends the raw v2 request string to the `gameroHost`
+  handler (`WKScriptMessageHandlerWithReply`). The reply comes back on the
+  same message, so iOS needs no frame around the request. Frame facts come
+  from `WKFrameInfo.isMainFrame` and `securityOrigin`.
+- **Events.** `callAsyncJavaScript` calls the page's
+  `window.gameroHostEvent(event)` with the event envelope (a JSON string) as an
+  argument. The value is never pasted into script text.
+- **Document change.** WebKit has no port per document, and the WebView
+  library owns the navigation delegate. So a main-frame user script at
+  document start posts `{documentStart: true}`, and the host calls
+  `documentChanged()`. A page can send the same message, which only ends its
+  own context.
+- `WebKitTransportContractTest` runs the six scenarios on the iOS target.
+  `IosParityTest` checks the iOS factory. The web client (B3) adds
+  `gameroHostEvent` and the message shapes to the contract.
+
 ### Parity and legacy (G7, G8)
 
 - **Parity first.** The parity test moves from C5 into the kit. Each platform
