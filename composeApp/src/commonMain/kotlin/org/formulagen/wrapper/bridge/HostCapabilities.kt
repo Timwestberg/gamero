@@ -18,7 +18,7 @@ sealed interface Capability<out T> {
  * router holds no capability code. The methods are the handlers' methods, so
  * the compiler checks that each one has code.
  */
-class CapabilityBinder<T>(
+internal class CapabilityBinder<T>(
     /** The name an `unsupported` error gives, such as `haptics`. */
     internal val name: String,
     internal val handlers: List<CapabilityHandler<T>>,
@@ -59,7 +59,7 @@ internal class BoundCapability(
  */
 class CapabilityPack internal constructor(internal val bound: BoundCapability)
 
-fun <T> CapabilityBinder<T>.pack(capability: Capability<T>): CapabilityPack = CapabilityPack(bind(capability))
+internal fun <T> CapabilityBinder<T>.pack(capability: Capability<T>): CapabilityPack = CapabilityPack(bind(capability))
 
 /**
  * The platform set: every capability that each platform must decide on, as a
