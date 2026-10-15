@@ -42,8 +42,11 @@ class BridgeRouter(
     private val scope: CoroutineScope,
     private val transport: BridgeTransport,
     private val newContextId: () -> String = ::randomContextId,
-    /** Called when a capability fails. The page gets only the `failed` code. */
-    private val onFailure: (method: String, error: Throwable) -> Unit = { _, _ -> },
+    /**
+     * Called with a method or event name when a capability fails, or emits an
+     * event it did not declare. The page gets only the `failed` code, or nothing.
+     */
+    private val onFailure: (name: String, error: Throwable) -> Unit = { _, _ -> },
 ) : AutoCloseable {
     private val serial = ((scope.coroutineContext[ContinuationInterceptor] as? CoroutineDispatcher) ?: Dispatchers.Default)
         .limitedParallelism(1)
@@ -52,14 +55,31 @@ class BridgeRouter(
     private var contextId: String? = null
     private var documentId: String? = null
     private val pending = mutableSetOf<Job>()
-    private val events = object : EventSink {
-        override fun <D> emit(event: BridgeEvent<D>, data: D) = this@BridgeRouter.emit(event, data)
-    }
     private var subscriptions: List<AutoCloseable> =
-        bound.mapNotNull { capability -> capability.observe?.invoke(events) }
+        bound.mapNotNull { capability -> capability.observe?.invoke(sinkFor(capability)) }
+
+    /**
+     * The sink one capability's events go through. An event the capability did
+     * not declare is not in `host.capabilities`, so it is dropped and reported
+     * to [onFailure] instead of reaching the page.
+     */
+    private fun sinkFor(capability: BoundCapability): EventSink = object : EventSink {
+        private val declared = capability.events.map { it.name }.toSet()
+
+        override fun <D> emit(event: BridgeEvent<D>, data: D) {
+            if (event.name in declared) this@BridgeRouter.emit(event, data)
+            else onFailure(event.name, IllegalStateException("Event ${event.name} was not declared by its capability, so it was not sent"))
+        }
+    }
 
     /** Methods this host supports, in declaration order. `host.capabilities` returns this. */
     val supportedMethods: List<String> = handlers.filterValues { it != null }.keys.toList()
+
+    /** Every method this host knows, supported or not. The parity test reads it. */
+    internal val knownMethods: List<String> = handlers.keys.toList()
+
+    /** Every event this host knows, supported or not. */
+    internal val knownEvents: List<String> = bound.flatMap { capability -> capability.events.map { it.name } }
 
     /** Events this host can send. */
     val supportedEvents: List<String> = bound.filter { it.handlers != null }.flatMap { capability -> capability.events.map { it.name } }
