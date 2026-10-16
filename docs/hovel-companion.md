@@ -82,9 +82,10 @@ Every answer from step 2 on is a `host-bridge.v2` envelope:
 `{"version":2,"ok":false,"error":{"code","message"}}`.
 
 A cancelled watch query (for example on reload or navigation) ends the context
-it opened and cancels that context's running calls. A newer `watchContext`
-replaces the context; cancelling the older watch afterwards leaves the newer
-context open.
+it opened and cancels that context's running calls. A watch cancelled while
+still pending has no context yet; its context is declined when the reply
+arrives. A newer `watchContext` replaces the context; cancelling the older watch
+afterwards leaves the newer context open.
 
 Which cancels also clear a pending registration
 (`HovelCompanion.invalidatePending`):
@@ -129,11 +130,11 @@ fails if `invalidatePending` or `close` bumps it before the call finishes.
 
 1. **Approval.** `prepareConnection` sets `approval`, and `main.kt` shows a dialog
    naming the account, the app URL and the workspace, and saying a host
-   credential goes into Keychain and Codex runs read-only (main.kt lines 213-217).
+   credential goes into Keychain and Codex runs read-only (main.kt lines 216-220).
    Cancel, a reload or close fails the call.
 2. **Registration.** `prepareRegistration` makes the data directory `0700`, takes
    a file lock on `registration.lock`, and reads or creates `registration.json`
-   (HovelCompanion.kt lines 110-142).
+   (HovelCompanion.kt lines 117-149).
    - If the file exists it must be at most 4096 bytes and belong to the same
      `ownerId`. A different account is rejected: one native profile serves one
      account. The Keychain entry must still be readable.
@@ -148,7 +149,8 @@ fails if `invalidatePending` or `close` bumps it before the call finishes.
    approved registration. It reads the token from Keychain and starts a
    `HovelHostSession` with a transport, a per-host journal
    (`journal-<hostId>`) and a Codex provider writing to `output-<hostId>`
-   (lines 81-100). A second activation reuses the running session.
+   (HovelCompanion.kt lines 84-104). A second activation reuses the running
+   session.
 
 ### Keychain
 
