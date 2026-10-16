@@ -277,8 +277,9 @@ and say so.
   On desktop, v2 and the v1 companion protocol share the `gameroQuery` router;
   `JcefHostBridge` claims v2 first, and v1 stays until `nativeCompanion.ts`
   moves (task B4). Companion calls time out after 5 min (prepare, which covers approval and
-  Keychain) and 2 min (activate) in `CompanionCapability.kt`. Desktop links,
-  haptics and lifecycle answer `unsupported` for now.
+  Keychain) and 2 min (activate) in `CompanionCapability.kt`. `link.open` opens the
+  system browser on desktop, Android and iOS (FOR-125). Desktop haptics answer
+  `unsupported` by design; lifecycle answers `unsupported` for now.
 - **Cares most about:** failing loudly, bounded shutdown, and trusting only
   native frame facts.
 

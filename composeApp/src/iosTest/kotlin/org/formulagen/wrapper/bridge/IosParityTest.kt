@@ -5,7 +5,7 @@ import kotlin.test.Test
 
 class IosParityTest {
     /** Phase C of the host bridge plan ships these on iOS. */
-    private val pending = setOf("haptic.play", "link.open", "lifecycle.pause", "lifecycle.resume")
+    private val pending = setOf("haptic.play", "lifecycle.pause", "lifecycle.resume")
 
     @Test
     fun hovelOnIosMatchesTheParityTable() {
