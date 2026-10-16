@@ -231,7 +231,6 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                     capabilities = desktopHostCapabilities(),
                     products = if (isHovelProduct()) hovelBridgePacks(companion) else emptyList(),
                     onInvalidate = { companion?.invalidatePending() },
-                    dispatch = companion?.let { it::dispatch },
                 )
             })
         }
