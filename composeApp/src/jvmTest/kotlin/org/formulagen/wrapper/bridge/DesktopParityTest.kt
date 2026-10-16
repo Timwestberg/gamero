@@ -13,7 +13,7 @@ import kotlin.test.Test
 
 class DesktopParityTest {
     /** Phase C of the host bridge plan ships these on desktop. */
-    private val pending = setOf("link.open", "lifecycle.pause", "lifecycle.resume")
+    private val pending = setOf("lifecycle.pause", "lifecycle.resume")
 
     @Test
     fun hovelOnDesktopMatchesTheParityTable() {
