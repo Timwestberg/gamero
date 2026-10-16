@@ -29,6 +29,10 @@ import org.formulagen.wrapper.hovel.hovelBridgePacks
 import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.hovel.HovelLaunchScreen
 import org.formulagen.wrapper.hovel.HovelStartState
+import org.formulagen.wrapper.hovel.AUTO_ENTER_KEY
+import org.formulagen.wrapper.hovel.autoEnterRequested
+import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.logger.log
 import java.nio.file.Path
 import java.awt.EventQueue
 import java.util.concurrent.atomic.AtomicReference
@@ -74,6 +78,12 @@ internal fun desktopSetting(environment: String?, property: String?): String? =
     environment?.takeIf { it.isNotBlank() } ?: property?.takeIf { it.isNotBlank() }
 
 private fun isHovelProduct() = desktopSetting(System.getenv("GAMERO_PRODUCT"), System.getProperty("gamero.product")) == "hovel"
+
+/**
+ * Steps past the start screen without a click, for smoke runs. Read from the environment only,
+ * never from a `-D` property, so a packaged release can't bake it in.
+ */
+private fun desktopAutoEnter() = autoEnterRequested(System.getenv(AUTO_ENTER_KEY))
 
 /** App-independent desktop configuration; product adapters supply the trusted URL. */
 internal fun desktopWebUrl(args: Array<String>, environment: String?): String? {
@@ -207,6 +217,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
             state = failure?.let { HovelStartState.Failed(it, canRetry = false) }
                 ?: if (start) HovelStartState.Preparing else HovelStartState.Ready(url),
             onContinue = { start = true },
+            autoEnter = desktopAutoEnter(),
             footnote = "Hovel runs in a verified JetBrains Runtime with JCEF. It never downloads or modifies browser binaries.",
         )
         failure != null -> Text("Browser initialization failed: $failure. Close Gamero and retry setup.", Modifier.padding(24.dp))
@@ -221,7 +232,9 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
             } else if (isHovelProduct()) {
                 Text("Set GAMERO_CODEX_PATH and GAMERO_WORKSPACE to enable this Mac's optional Codex connection.", Modifier.padding(8.dp))
             }
-            App(url, enableLegacyBridge = false, webViewFactory = ::persistentDesktopBrowser, onWebViewCreated = { browser ->
+            App(url, enableLegacyBridge = false, webViewFactory = ::persistentDesktopBrowser, onPageLoaded = { loaded, title ->
+                log(LogLevel.Info, "Desktop", SmokeMarkers.pageLoaded(loaded, title))
+            }, onWebViewCreated = { browser ->
                 resources.attachBrowser(browser)
                 resources.bridge?.close()
                 resources.bridge = NativeBridge(

@@ -17,12 +17,14 @@ fun HovelIosApp(
     url: String,
     onPageLoaded: (url: String, title: String?) -> Unit = { _, _ -> },
     onWebViewCreated: (NativeWebView) -> Unit = {},
+    /** Steps inside without a tap, for `tools/ios-smoke.sh`. Debug builds only (see `resolveIosAutoEnter`). */
+    autoEnter: Boolean = false,
 ) {
     var entered by rememberSaveable { mutableStateOf(false) }
     // Like the desktop and Android hosts, Hovel talks to the host bridge, not the legacy native bridge.
     if (entered) {
         App(url, enableLegacyBridge = false, onWebViewCreated = onWebViewCreated, onPageLoaded = onPageLoaded)
     } else {
-        HovelLaunchScreen(HovelStartState.Ready(url), onContinue = { entered = true })
+        HovelLaunchScreen(HovelStartState.Ready(url), onContinue = { entered = true }, autoEnter = autoEnter)
     }
 }
