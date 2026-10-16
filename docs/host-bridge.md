@@ -7,8 +7,9 @@ in [the host bridge spec](../.10x/specs/2026-10-14-host-bridge-design.md) and
 [ADR-001](../.10x/adrs/001-one-host-bridge-protocol.md). The Mac companion's
 trust rules are in [hovel-companion.md](hovel-companion.md).
 
-All Kotlin paths below are under `composeApp/src/` and the package
-`org.formulagen.wrapper.bridge`, unless stated.
+All Kotlin paths below are under `composeApp/src/`. In them, `.../` stands for
+`kotlin/org/formulagen/wrapper/bridge/` unless another package directory
+follows it, such as `.../hovel/` for `kotlin/org/formulagen/wrapper/hovel/`.
 
 ## The parts
 
@@ -20,10 +21,10 @@ All Kotlin paths below are under `composeApp/src/` and the package
 | Platform set | `commonMain/.../HostCapabilities.kt` | One constructor parameter per platform capability: `Capability.Supported(impl)` or `Capability.Unsupported`. |
 | Capabilities | `commonMain/.../LinkOpener.kt`, `Haptics.kt`, `Lifecycle.kt`, `CompanionCapability.kt` | One file each: the interface, its argument and result types, its methods and its `CapabilityBinder`. |
 | Platform factories | `jvmMain/.../DesktopHostCapabilities.kt`, `androidMain/.../AndroidHostCapabilities.kt`, `iosMain/.../IosHostCapabilities.kt` | Each platform's choice for every capability. |
-| Shared transport half | `commonMain/.../HostBridge.kt` | What every transport shares: the router, the trusted origin, the document counter, the event channel and the failure log. A platform transport calls its `receive` and `documentChanged`. |
+| Shared transport half | `commonMain/.../HostBridge.kt` | What every transport shares: the router, the trusted origin, the document counter, the event channel and the failure log. A platform transport calls its `receive`, and `documentChanged` or `endContext` to end a context. |
 | Transport helpers | `commonMain/.../MessagePortTransport.kt` (Android), `iosMain/.../WebKitHostTransport.kt` (iOS) | The mobile transport rules with no WebView types, so tests can drive them: port frames on Android, document-start messages and events on iOS. |
 | Platform transports | `jvmMain/.../JcefHostBridge.kt`, `androidMain/.../AndroidHostBridge.kt`, `iosMain/.../IosHostBridge.kt` | Move strings between the WebView and the shared half, and report frame facts read from the platform. Nothing else. |
-| Desktop receiver | `jvmMain/.../companion/NativeBridge.kt` | The JCEF message router. It receives each query first, drops queries from another browser or an invalid frame, and hands version 2 requests to `JcefHostBridge`. See [hovel-companion.md](hovel-companion.md). |
+| Desktop receiver | `jvmMain/kotlin/org/formulagen/wrapper/companion/NativeBridge.kt` | The JCEF message router. It receives each query first, answers a query from another browser or an invalid frame with a 403 failure, and hands version 2 requests to `JcefHostBridge`. See [hovel-companion.md](hovel-companion.md). |
 | Web client | game-platform `packages/host-bridge` (`@formulagen/host-bridge`) | `capabilities()`, `call(method, args)`, `on(event, handler)`. |
 
 ## Ask before you call: `host.info` and `host.capabilities`
@@ -45,8 +46,9 @@ learn what the host is and what it supports before it calls anything else.
   desktop factory (`DesktopHostCapabilities.kt`) reads the
   `jpackage.app-version` system property itself. Android and iOS read the
   version in their start code and pass it to the factory: Android reads the
-  package `versionName` in `androidMain/.../hovel/HovelAndroid.kt`, and iOS
-  reads `CFBundleShortVersionString` in `iosMain/.../MainViewController.kt`.
+  package `versionName` in `androidMain/kotlin/org/formulagen/wrapper/hovel/HovelAndroid.kt`,
+  and iOS reads `CFBundleShortVersionString` in
+  `iosMain/kotlin/org/formulagen/wrapper/MainViewController.kt`.
   Each falls back to `dev` in a development build.
 - On the web, `bridge.capabilities()` calls `host.capabilities`. A call through
   the client never throws: it resolves to `ok`, `unsupported` or `error`, so a
@@ -121,8 +123,10 @@ capability; `Lifecycle.kt` is the example of an event capability.
      binder.pack(capability)` to the object, as `CompanionMethods.pack` does.
      Then add the pack to each platform's Hovel pack list, `Unsupported` where
      the platform has none. There are three lists, with different names:
-     - desktop: `hovelBridgePacks(companion)` in `jvmMain/.../hovel/HovelCompanion.kt`;
-     - Android: `hovelBridgePacks()` in `androidMain/.../hovel/HovelAndroid.kt`;
+     - desktop: `hovelBridgePacks(companion)` in
+       `jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelCompanion.kt`;
+     - Android: `hovelBridgePacks()` in
+       `androidMain/kotlin/org/formulagen/wrapper/hovel/HovelAndroid.kt`;
      - iOS: `iosHovelBridgePacks()` in `iosMain/.../IosHostCapabilities.kt`.
 
      The compiler does not check that the three lists agree; only the parity
@@ -160,10 +164,11 @@ capability; `Lifecycle.kt` is the example of an event capability.
    method and event types from the contract, so its source needs no change.
    The app still has to build against the merged contract: game-platform
    reads `@formulagen/event-contracts` from the sibling `../event-contracts`
-   checkout through a `file:` dependency. Update that checkout, build it,
-   reinstall (pnpm copies the package at install time), and rebuild the app.
-   Until then the new method does not typecheck and its result is not
-   validated.
+   checkout through a `file:` dependency. Update that checkout, run
+   `pnpm build:contracts` in server-platform, then `pnpm bootstrap` (or
+   `pnpm install`) in game-platform, since pnpm copies the package at install
+   time, and rebuild the app. Until then the new method does not typecheck, and
+   a call to it throws instead of resolving.
 
 Run the tests on every target with `tools/test-all-targets.sh`. A JVM run alone
 does not run the Android or iOS parity tests.
@@ -211,8 +216,10 @@ rest. The full table is in the spec under "Consistency rules".
 2. Write one transport on `HostBridge` that reads frame facts from the platform
    API, calls `receive` for each message, sends replies and events as JSON
    values (never as script), and calls `documentChanged` when the main frame
-   gets a new document. Reuse `MessagePortTransport` or `WebKitHostTransport`
-   if the WebView works the same way. `TransportContractTest` checks an
+   gets a new document (or `endContext` when the carrier's only signal is one
+   watch ending, as on JCEF). Reuse `MessagePortTransport` if the WebView works
+   the same way. `WebKitHostTransport` is in `iosMain`; move it to `commonMain`
+   first to reuse it (it has no WebKit types). `TransportContractTest` checks an
    adapter against these rules.
 3. Write one `HostCapabilities` factory for the platform, and a parity test.
 4. Add the platform to `HostPlatform` here and to `HOST_PLATFORMS` and
