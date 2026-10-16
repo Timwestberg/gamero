@@ -19,7 +19,14 @@ class NativeBridge(
     trustedUrl: String,
     capabilities: HostCapabilities,
     products: List<CapabilityPack>,
-    /** Called when a watch query ends its context, such as on a reload or navigation. */
+    /**
+     * Called when [JcefHostBridge.onQueryCanceled] reports that the cancelled query was
+     * the open watch or a still-pending one, and on [close]. A reload or navigation
+     * cancelling the open watch calls it. Cancelling an older watch after the newer one
+     * is answered does not. Cancelling a still-pending watch (the client's timeout), or
+     * the open one before a newer watch is answered, also calls it; that fails closed,
+     * and the page must call `companion.prepareConnection` again.
+     */
     private val onInvalidate: () -> Unit,
 ) : AutoCloseable {
     private val gate = Any()
