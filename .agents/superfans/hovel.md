@@ -459,11 +459,12 @@ and say so.
   `godot --headless --script res://character/tests/appearance_check.gd` (also
   `action_player_check.gd`, `action_request_check.gd`, `movement_check.gd`,
   `movement_rate_check.gd`); `pnpm --filter @formulagen/game-bridge-host
-  test:hovel:unit` (`kitRenderer.test.ts` keeps `character/tests/kit_frames.json`,
-  88 looks x 6 frames, equal between the renderers). The kit's Node renderer
-  (`tools/character-kit/kit-render.mjs`) plus the settle and pose steps from
-  `kit.gd` reproduces all 528 pinned frame hashes, so it can render preview clips
-  without Godot.
+  test` (`kitRenderer.test.ts` keeps `character/tests/kit_frames.json`, 88 looks
+  x 6 frames, equal between the renderers; `test:hovel:unit` does not run it).
+  The kit's Node renderer (`tools/character-kit/kit-render.mjs`) plus the settle
+  and pose steps from `kit.gd` can render preview clips without Godot: a check
+  on 2026-10-15 reproduced all 528 pinned hashes, which the suite itself does
+  not verify (it compares the renderers for idle and blink only).
 - **Known quirks and history:** there is no skeleton yet. The kit is one front-facing
   224 x 490 layered sprite (`hovel.traveler-v1`, one body); every option is a
   whole-frame sprite, and an action is `[frame, ms, lift]` steps over six frames
