@@ -49,10 +49,6 @@ class HovelCompanion(
     private val json = Json
 
     suspend fun dispatch(method: String, args: JsonObject): JsonObject {
-        if (method == "capabilities") {
-            require(args.isEmpty())
-            return buildJsonObject { put("version", 1); put("connectComputer", true); put("cloud", false); put("sandbox", "read-only") }
-        }
         val authorizedGeneration = synchronized(lifecycle) { check(!closed); generation }
         if (!mutex.tryLock()) throw BridgeBusyException()
         try {

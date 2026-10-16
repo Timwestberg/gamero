@@ -9,23 +9,26 @@ class JcefQueryKindTest {
     private val call2 = """{"version":2,"contextId":"$context","method":"host.info","args":{}}"""
 
     @Test fun versionTwoWatchMustBePersistent() {
-        assertEquals(JcefQueryKind.V2_WATCH, classifyJcefQuery(watch2, persistent = true))
-        assertEquals(JcefQueryKind.V2_MISUSE, classifyJcefQuery(watch2, persistent = false))
+        assertEquals(JcefQueryKind.WATCH, classifyJcefQuery(watch2, persistent = true))
+        assertEquals(JcefQueryKind.INVALID, classifyJcefQuery(watch2, persistent = false))
     }
 
     @Test fun versionTwoCallsMustNotBePersistent() {
-        assertEquals(JcefQueryKind.V2_CALL, classifyJcefQuery(call2, persistent = false))
-        assertEquals(JcefQueryKind.V2_MISUSE, classifyJcefQuery(call2, persistent = true))
+        assertEquals(JcefQueryKind.CALL, classifyJcefQuery(call2, persistent = false))
+        assertEquals(JcefQueryKind.INVALID, classifyJcefQuery(call2, persistent = true))
     }
 
-    @Test fun everythingElseKeepsTheVersionOnePath() {
+    @Test fun everythingElseIsInvalid() {
         for (request in listOf(
             """{"version":1,"method":"watchContext","args":{}}""",
+            """{"version":1,"method":"capabilities","args":{},"contextId":"$context"}""",
             """{"version":"2","method":"watchContext","args":{}}""",
             """{"method":"watchContext","args":{}}""",
             "not json",
             "[2]",
             """{"version":2,"args":{"pad":"${"a".repeat(70_000)}"}}""",
-        )) assertEquals(JcefQueryKind.V1, classifyJcefQuery(request, persistent = true), request.take(40))
+        )) for (persistent in listOf(true, false)) {
+            assertEquals(JcefQueryKind.INVALID, classifyJcefQuery(request, persistent), request.take(40))
+        }
     }
 }
