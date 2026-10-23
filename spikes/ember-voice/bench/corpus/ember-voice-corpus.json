@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "id": "ember-voice",
-  "sync": "Local copy in gamero. The shared voice config and this benchmark corpus will live in server-platform event-contracts/. Another agent owns that side. When that file exists, sync from it and bump version if the lines differ. Do not treat this copy as the long-term source.",
+  "sync": "Local copy in gamero. The shared corpus is server-platform event-contracts/src/voice/fixtures/corpus/ember-voice-corpus.v1.json (schema ember-voice-corpus.v1, draft PR 180, branch cursor/ember-voice-contract-c987). The first six lines and the 236-character say_limit line are the same text. This file still uses the harness field names until that private repo can be read and the names copied exactly.",
   "lines": [
     {
       "id": "build_passed",

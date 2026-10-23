@@ -2,6 +2,8 @@
 
 `./run.sh` writes this document. `./compare.sh` reads two of them. Numbers from this VM are labeled `Linux VM` in `label`. A Mac run is labeled from the machine that produced the file.
 
+The shared result schema is `ember-voice-benchmark.v1` in server-platform draft PR 180 (`benchmark-result.v1.ts`, example `fixtures/results/valid/example.json`). This harness document is not that schema yet. The private repo is not readable from the environment that produced the Linux baseline, so these field names were not copied from it.
+
 ```json
 {
   "schema": 1,
