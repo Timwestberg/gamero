@@ -40,7 +40,7 @@ cd spikes/ember-voice/bench
 - The voice path is refused when it contains `expresso` or `test_wavs`. Those clips are CC-BY-NC. Warm runs keep only the last waveform; earlier takes are dropped so they do not sit in the result list and raise peak RSS.
 - RSS is the process high-water mark (`VmHWM` on Linux, `ps` samples on macOS) plus `/usr/bin/time` when that binary exists.
 - CPU percent is process CPU time over wall time for that call (`getProcessCpuTime` on HotSpot).
-- WER transcribes the last warm WAV with Whisper tiny.en int8 and scores it against the corpus text after lowercasing and stripping punctuation. It is one draw per line.
+- WER transcribes every warm run with Whisper tiny.en int8 and reports the median against the corpus text after lowercasing and stripping punctuation. One short draw does not set the line.
 
 Percentiles are nearest-rank. With 10 runs, p99 is the worst run and p90 is the 9th.
 

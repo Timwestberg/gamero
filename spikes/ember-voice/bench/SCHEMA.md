@@ -34,6 +34,10 @@ The shared result schema is `ember-voice-benchmark.v1` in server-platform draft 
     "first_piece_target_chars": 60,
     "later_piece_max_chars": 140,
     "max_frames_per_character": 0,
+    "frame_intercept": 0,
+    "frame_floor": 0,
+    "short_piece_chars": 24,
+    "short_piece_min_frames": 0,
     "silence_ms": 40,
     "warmup": false,
     "warm_runs": 10,
@@ -76,7 +80,11 @@ The shared result schema is `ember-voice-benchmark.v1` in server-platform draft 
         "wer": 0.0,
         "reference_words": 0,
         "errors": 0,
-        "hypothesis": ""
+        "hypothesis": "",
+        "min": 0.0,
+        "max": 0.0,
+        "samples": [],
+        "hypotheses": []
       }
     }
   ]
@@ -89,11 +97,11 @@ The shared result schema is `ember-voice-benchmark.v1` in server-platform draft 
 
 Percentiles are nearest-rank. With 10 samples, p99 is the worst sample and p90 is the 9th. Median of an even count is the average of the two middle values.
 
-`wer` is word error rate of the last warm WAV against the corpus text. Tokens are runs of letters, digits, and ASCII apostrophes after lowercasing. The rate is the edit distance divided by the reference token count. An empty reference scores 0 when the hypothesis is also empty and 1 otherwise. It is one draw, not a median. `null` when ASR was skipped (`--no-wer`). `wer_spoken` scores the same hypothesis against the text actually sent to the model. With `chunker` `sherpa` that text is the corpus line. With `chunker` `ours` it is the normalized pieces joined by spaces, so a line that speaks "five hundred three" is not punished for saying the number instead of "503".
+`wer.wer` is the median word error rate across the warm runs. Tokens are runs of letters, digits, and ASCII apostrophes after lowercasing. The rate is the edit distance divided by the reference token count. An empty reference scores 0 when the hypothesis is also empty and 1 otherwise. `samples` are the per-run rates in order. `hypothesis` is the transcript of the upper of the two central draws, not the last WAV. `min` and `max` show whether one short draw was an outlier. `null` when ASR was skipped (`--no-wer`). `wer_spoken` is the same shape, scored against the text actually sent to the model. With `chunker` `sherpa` that text is the corpus line. With `chunker` `ours` it is the normalized pieces joined by spaces, so a line that speaks "five hundred three" is not punished for saying the number instead of "503".
 
 Version strings, when this harness compares them, use release ordering: `2.0.0-rc1` is lower than `2.0.0`. Build metadata after `+` is ignored.
 
-`chunker` `ours` cuts the first piece on a clause boundary inside 30..`first_piece_target_chars` (the whole first sentence when it already fits), then packs later pieces to `later_piece_max_chars`. `max_frames_per_character` of 0 leaves sherpa-onnx's frame cap alone. A positive rate caps each piece. A piece of 24 characters or fewer still gets a ceiling of 24 frames (1.92 s), because a lower ceiling stops "Done!" before the word is out. A piece that is still longer than `runaway_factor` times its expected audio is generated once more and the shorter take is kept. `silence_ms` is silence inserted between our pieces.
+`chunker` `ours` cuts the first piece on a clause boundary inside 30..`first_piece_target_chars` (the whole first sentence when it already fits), then packs later pieces to `later_piece_max_chars`. The frame ceiling for a piece is `max(frame_floor, frame_intercept + max_frames_per_character * chars)` when any of those three is positive. A piece of `short_piece_chars` or fewer is raised to `short_piece_min_frames` when that is higher. All of those at 0 leaves sherpa-onnx's own frame cap (500). A positive `max_frames` replaces the curve for every piece. A piece that is still longer than `runaway_factor` times its expected audio is generated once more and the shorter take is kept. `silence_ms` is silence inserted between our pieces. Sherpa's splitter ignores the curve.
 
 `./compare.sh baseline.json candidate.json` compares warm `ttfa_ms.samples` per line with a one-sided Mann–Whitney test (candidate slower). It exits 1 when a line's median TTFA is more than 10% higher and the test's p-value is under 0.05. Exact p-values are used when both samples have at most 10 values and no ties. Otherwise it uses the normal approximation with a tie correction and a continuity correction.
 
