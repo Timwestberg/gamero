@@ -1094,7 +1094,10 @@ private fun hostLabel(): String {
 private fun processCpuNanos(): Long {
     return try {
         val bean = java.lang.management.ManagementFactory.getOperatingSystemMXBean()
-        val method = bean.javaClass.methods.firstOrNull { it.name == "getProcessCpuTime" } ?: return -1L
+        // Call through the exported interface. The HotSpot implementation class
+        // is not opened to us, so invoking its own method throws IllegalAccessException.
+        val iface = Class.forName("com.sun.management.OperatingSystemMXBean")
+        val method = iface.getMethod("getProcessCpuTime")
         method.invoke(bean) as Long
     } catch (_: Throwable) {
         -1L
