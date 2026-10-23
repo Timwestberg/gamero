@@ -46,6 +46,10 @@ data class BenchConfig(
     val seed: String,
     val chunker: String,
     val maxFrames: Int,
+    val firstPieceTargetChars: Int,
+    val laterPieceMaxChars: Int,
+    val maxFramesPerCharacter: Double,
+    val silenceMs: Int,
     val warmup: Boolean,
     val warmRuns: Int,
     val passTtfaMs: Double,
@@ -208,7 +212,8 @@ private fun printHelp() {
 
         Times corpus/ember-voice-corpus.json with sherpa-onnx PocketTTS.
         --matrix keys: chunk_size, max_char_in_sentence, num_threads, num_steps,
-                       temperature, provider, model_dir, seed, chunker, warmup, max_frames
+                       temperature, provider, model_dir, seed, chunker, warmup, max_frames,
+                       first_piece_target_chars, max_frames_per_character, silence_ms
         --no-wer       skip the offline ASR intelligibility check
         Compare exits 1 when a line's warm TTFA median regresses by more than 10%
         and a one-sided Mann-Whitney test says that slowdown is unlikely to be noise (p < 0.05).
@@ -239,7 +244,7 @@ private fun runMatrix(config: BenchConfig, lines: List<CorpusLine>, cli: Cli) {
     summary.append("  \"external_peak_rss_kb\": null,\n")
     summary.append("  \"cells\": [\n")
     combos.forEachIndexed { index, overrides ->
-        val cellConfig = applyMap(config, overrides)
+        val cellConfig = applyMap(applyMap(config, cli.set), overrides)
         val slug = overrides.entries.joinToString("__") { "${it.key}-${it.value}" }
             .replace(Regex("[^A-Za-z0-9._-]+"), "_")
         val cellPath = "results/matrix/$slug.json"
@@ -291,7 +296,7 @@ private fun product(axes: List<Pair<String, List<String>>>): List<Map<String, St
 }
 
 private fun measure(config: BenchConfig, lines: List<CorpusLine>, cli: Cli): String {
-    if (config.chunker != "sherpa") {
+    if (config.chunker != "sherpa" && config.chunker != "ours") {
         throw BenchException("chunker ${config.chunker} is not implemented in this harness yet")
     }
     val warmRuns = cli.warmRuns ?: config.warmRuns
@@ -335,7 +340,9 @@ private fun measure(config: BenchConfig, lines: List<CorpusLine>, cli: Cli): Str
         println("Ember voice bench  ${hostLabel()}  ${config.modelName}")
         println(
             "steps ${config.numSteps}  threads ${config.numThreads}  temperature ${config.temperature}  " +
-                "chunk ${config.chunkSize}  max_char ${config.maxCharInSentence}  seed ${config.seed}  chunker ${config.chunker}",
+                "chunk ${config.chunkSize}  max_char ${config.maxCharInSentence}  seed ${config.seed}  " +
+                "chunker ${config.chunker}  first_piece ${config.firstPieceTargetChars}  " +
+                "frames_per_char ${config.maxFramesPerCharacter}",
         )
         println("cold ${lines[0].id}: TTFA ${fmtMs(cold.ttfaMs)} ms  total ${fmtMs(cold.totalMs)} ms  RTF ${fmt(cold.rtf)}")
         println(
@@ -374,9 +381,16 @@ private fun measure(config: BenchConfig, lines: List<CorpusLine>, cli: Cli): Str
             if (!WaveWriter.write(wav.path, last.samples, last.sampleRate)) {
                 throw BenchException("could not write ${wav.path}")
             }
-            val wer = if (asr != null) transcribe(asr, last, line.text) else null
-            if (wer != null) log("wer ${line.id}: ${fmt(wer.wer)} (${wer.hypothesis})")
-            lineDocs.add(renderLine(config, line, runs, wav.path, currentRssKb(), wer))
+            val spoken = if (config.chunker == "ours") {
+                speechPieces(line.text, config.firstPieceTargetChars, config.laterPieceMaxChars).joinToString(" ")
+            } else {
+                line.text
+            }
+            val hypothesis = if (asr != null) hypothesis(asr, last) else null
+            val wer = if (hypothesis != null) wordErrorRate(line.text, hypothesis) else null
+            val werSpoken = if (hypothesis != null) wordErrorRate(spoken, hypothesis) else null
+            if (wer != null) log("wer ${line.id}: ${fmt(wer.wer)} spoken ${fmt(werSpoken!!.wer)} (${wer.hypothesis})")
+            lineDocs.add(renderLine(config, line, runs, wav.path, currentRssKb(), wer, werSpoken, spoken))
         }
         val peak = sampler.stop()
         val peakSource = if (linuxPeakKb() > 0) "max(VmHWM, samples)" else "ps rss samples"
@@ -408,6 +422,8 @@ private fun renderLine(
     wav: String,
     rssKb: Long,
     wer: WerScore?,
+    werSpoken: WerScore?,
+    spoken: String,
 ): String {
     val ttfa = sampleStats(runs.map { it.ttfaMs })
     val total = sampleStats(runs.map { it.totalMs })
@@ -421,6 +437,7 @@ private fun renderLine(
     sb.append("      \"categories\": [${line.categories.joinToString(", ") { jsonString(it) }}],\n")
     sb.append("      \"chars\": ${line.text.length},\n")
     sb.append("      \"text\": ${jsonString(line.text)},\n")
+    sb.append("      \"spoken\": ${jsonString(spoken)},\n")
     sb.append("      \"expected_audio_s\": ${fmtNum(expected)},\n")
     sb.append("      \"wav\": ${jsonString(wav)},\n")
     sb.append("      \"ttfa_ms\": ${renderStats(ttfa)},\n")
@@ -430,16 +447,8 @@ private fun renderLine(
     sb.append("      \"cpu_percent\": ${renderStats(cpu)},\n")
     sb.append("      \"runaway_count\": ${runs.count { it.runaway }},\n")
     sb.append("      \"rss_kb\": $rssKb,\n")
-    if (wer == null) {
-        sb.append("      \"wer\": null\n")
-    } else {
-        sb.append("      \"wer\": {\n")
-        sb.append("        \"wer\": ${fmtNum(wer.wer)},\n")
-        sb.append("        \"reference_words\": ${wer.referenceWords},\n")
-        sb.append("        \"errors\": ${wer.errors},\n")
-        sb.append("        \"hypothesis\": ${jsonString(wer.hypothesis)}\n")
-        sb.append("      }\n")
-    }
+    sb.append("      \"wer\": ${renderWer(wer)},\n")
+    sb.append("      \"wer_spoken\": ${renderWer(werSpoken)}\n")
     sb.append("    }")
     val ttfaPass = ttfa.median <= config.passTtfaMs
     val rtfPass = rtf.median >= config.passRtf
@@ -461,6 +470,12 @@ private fun renderLine(
         ),
     )
     return sb.toString()
+}
+
+private fun renderWer(wer: WerScore?): String {
+    if (wer == null) return "null"
+    return "{ \"wer\": ${fmtNum(wer.wer)}, \"reference_words\": ${wer.referenceWords}, " +
+        "\"errors\": ${wer.errors}, \"hypothesis\": ${jsonString(wer.hypothesis)} }"
 }
 
 private fun renderStats(stats: SampleStats): String {
@@ -526,6 +541,10 @@ private fun renderDocument(
     sb.append("    \"seed\": ${jsonString(config.seed)},\n")
     sb.append("    \"chunker\": ${jsonString(config.chunker)},\n")
     sb.append("    \"max_frames\": ${config.maxFrames},\n")
+    sb.append("    \"first_piece_target_chars\": ${config.firstPieceTargetChars},\n")
+    sb.append("    \"later_piece_max_chars\": ${config.laterPieceMaxChars},\n")
+    sb.append("    \"max_frames_per_character\": ${fmtNum(config.maxFramesPerCharacter)},\n")
+    sb.append("    \"silence_ms\": ${config.silenceMs},\n")
     sb.append("    \"warmup\": ${config.warmup},\n")
     sb.append("    \"warm_runs\": $warmRuns,\n")
     sb.append("    \"chars_per_second\": ${fmtNum(config.charsPerSecond)},\n")
@@ -595,13 +614,19 @@ private fun loadTts(config: BenchConfig): OfflineTts {
     return OfflineTts(OfflineTtsConfig.builder().setModel(model).build())
 }
 
-private fun generationConfig(config: BenchConfig, voice: VoiceWave, text: String): GenerationConfig {
+private fun generationConfig(
+    config: BenchConfig,
+    voice: VoiceWave,
+    text: String,
+    seedOverride: String? = null,
+): GenerationConfig {
     val extra = HashMap<String, String>()
     extra["temperature"] = config.temperature
     extra["chunk_size"] = config.chunkSize
-    extra["max_char_in_sentence"] = config.maxCharInSentence.toString()
-    extra["seed"] = config.seed
-    val frames = if (config.maxFrames > 0) config.maxFrames else framesFor(config, text)
+    val maxChar = if (config.chunker == "ours") maxOf(config.maxCharInSentence, text.length) else config.maxCharInSentence
+    extra["max_char_in_sentence"] = maxChar.toString()
+    extra["seed"] = seedOverride ?: config.seed
+    val frames = framesFor(config, text)
     if (frames > 0) extra["max_frames"] = frames.toString()
     val gen = GenerationConfig()
     gen.referenceAudio = voice.samples
@@ -614,15 +639,104 @@ private fun generationConfig(config: BenchConfig, voice: VoiceWave, text: String
 
 private fun framesFor(config: BenchConfig, text: String): Int {
     if (config.maxFrames > 0) return config.maxFrames
+    if (config.chunker == "ours" && config.maxFramesPerCharacter > 0.0) {
+        val frames = kotlin.math.ceil(text.length * config.maxFramesPerCharacter).toInt()
+        return if (frames < 4) 4 else frames
+    }
     return 0
 }
 
 private fun speak(tts: OfflineTts, text: String, voice: VoiceWave, config: BenchConfig, id: String): SpeakResult {
-    val gen = generationConfig(config, voice, text)
+    if (config.chunker == "ours") return speakChunked(tts, text, voice, config, id)
+    return speakSherpa(tts, text, voice, config, id)
+}
+
+private fun speakChunked(
+    tts: OfflineTts,
+    text: String,
+    voice: VoiceWave,
+    config: BenchConfig,
+    id: String,
+): SpeakResult {
+    val pieces = speechPieces(text, config.firstPieceTargetChars, config.laterPieceMaxChars)
+    if (pieces.isEmpty()) throw BenchException("chunker produced no pieces for $id")
+    val cpuStart = processCpuNanos()
+    val start = System.nanoTime()
+    var ttfaMs = -1.0
+    var callbackCount = 0
+    var firstChunkSamples = 0
+    val parts = ArrayList<FloatArray>()
+    var sampleRate = voice.sampleRate
+    for ((index, piece) in pieces.withIndex()) {
+        var attempt = synthesizePiece(tts, piece, voice, config, "$id#$index", null)
+        if (config.maxFramesPerCharacter > 0.0 && pieceRanLong(config, piece, attempt.audioSeconds)) {
+            val retrySeed = nextSeed(config.seed)
+            val second = synthesizePiece(tts, piece, voice, config, "$id#$index", retrySeed)
+            log("regenerated $id piece $index (${fmt(attempt.audioSeconds)} s -> ${fmt(second.audioSeconds)} s)")
+            if (second.audioSeconds <= attempt.audioSeconds) attempt = second
+        }
+        if (index == 0) {
+            ttfaMs = attempt.ttfaMs
+            firstChunkSamples = attempt.firstChunkSamples
+        }
+        callbackCount += attempt.callbackCount
+        sampleRate = attempt.sampleRate
+        parts.add(attempt.samples)
+    }
+    val totalNs = System.nanoTime() - start
+    val cpuEnd = processCpuNanos()
+    val gap = sampleRate * config.silenceMs / 1000
+    val samples = concatAudio(parts, gap)
+    return finishSpeak(config, text, samples, sampleRate, ttfaMs, totalNs, cpuStart, cpuEnd, callbackCount, firstChunkSamples)
+}
+
+private fun pieceRanLong(config: BenchConfig, piece: String, audioSeconds: Double): Boolean {
+    val expected = expectedAudioSeconds(piece.length, config.charsPerSecond, config.minExpectedAudioS)
+    return audioSeconds > config.runawayFactor * expected
+}
+
+private fun nextSeed(seed: String): String {
+    val value = seed.toIntOrNull() ?: return seed + "1"
+    return (value + 1).toString()
+}
+
+private fun concatAudio(parts: List<FloatArray>, gap: Int): FloatArray {
+    if (parts.isEmpty()) return FloatArray(0)
+    val silence = if (gap > 0) gap else 0
+    var total = 0
+    for (part in parts) total += part.size
+    if (parts.size > 1) total += silence * (parts.size - 1)
+    val out = FloatArray(total)
+    var pos = 0
+    for ((index, part) in parts.withIndex()) {
+        part.copyInto(out, pos)
+        pos += part.size
+        if (index < parts.lastIndex) pos += silence
+    }
+    return out
+}
+
+private data class PieceAudio(
+    val samples: FloatArray,
+    val sampleRate: Int,
+    val ttfaMs: Double,
+    val audioSeconds: Double,
+    val callbackCount: Int,
+    val firstChunkSamples: Int,
+)
+
+private fun synthesizePiece(
+    tts: OfflineTts,
+    text: String,
+    voice: VoiceWave,
+    config: BenchConfig,
+    id: String,
+    seedOverride: String?,
+): PieceAudio {
+    val gen = generationConfig(config, voice, text, seedOverride)
     val callbackCount = AtomicInteger(0)
     val firstChunkSamples = AtomicInteger(0)
     val ttfaNs = AtomicLong(-1L)
-    val cpuStart = processCpuNanos()
     val start = System.nanoTime()
     val callback = object : OfflineTtsCallback {
         override fun invoke(samples: FloatArray): Int {
@@ -636,26 +750,66 @@ private fun speak(tts: OfflineTts, text: String, voice: VoiceWave, config: Bench
         }
     }
     val audio = tts.generateWithConfigAndCallback(text, gen, callback)
-    val totalNs = System.nanoTime() - start
-    val cpuEnd = processCpuNanos()
+    val totalMs = nanosToMs(System.nanoTime() - start)
     val samples = audio.samples
     val sampleRate = audio.sampleRate
     if (samples.isEmpty() || sampleRate <= 0) throw BenchException("no audio for $id")
-    val totalMs = nanosToMs(totalNs)
     val ttfaMs = if (ttfaNs.get() >= 0) nanosToMs(ttfaNs.get()) else totalMs
     val audioSeconds = samples.size / sampleRate.toDouble()
+    return PieceAudio(samples, sampleRate, ttfaMs, audioSeconds, callbackCount.get(), firstChunkSamples.get())
+}
+
+private fun speakSherpa(
+    tts: OfflineTts,
+    text: String,
+    voice: VoiceWave,
+    config: BenchConfig,
+    id: String,
+): SpeakResult {
+    val cpuStart = processCpuNanos()
+    val start = System.nanoTime()
+    val piece = synthesizePiece(tts, text, voice, config, id, null)
+    val totalNs = System.nanoTime() - start
+    val cpuEnd = processCpuNanos()
+    return finishSpeak(
+        config,
+        text,
+        piece.samples,
+        piece.sampleRate,
+        piece.ttfaMs,
+        totalNs,
+        cpuStart,
+        cpuEnd,
+        piece.callbackCount,
+        piece.firstChunkSamples,
+    )
+}
+
+private fun finishSpeak(
+    config: BenchConfig,
+    text: String,
+    samples: FloatArray,
+    sampleRate: Int,
+    ttfaMs: Double,
+    totalNs: Long,
+    cpuStart: Long,
+    cpuEnd: Long,
+    callbackCount: Int,
+    firstChunkSamples: Int,
+): SpeakResult {
+    val totalMs = nanosToMs(totalNs)
+    val audioSeconds = samples.size / sampleRate.toDouble()
     val rtf = if (totalMs > 0.0) audioSeconds / (totalMs / 1000.0) else 0.0
-    val cpuPercent = cpuPercent(cpuStart, cpuEnd, totalNs)
     val expected = expectedAudioSeconds(text.length, config.charsPerSecond, config.minExpectedAudioS)
     return SpeakResult(
         ttfaMs = ttfaMs,
         totalMs = totalMs,
         audioSeconds = audioSeconds,
         rtf = rtf,
-        cpuPercent = cpuPercent,
+        cpuPercent = cpuPercent(cpuStart, cpuEnd, totalNs),
         sampleRate = sampleRate,
-        callbackCount = callbackCount.get(),
-        firstChunkSamples = firstChunkSamples.get(),
+        callbackCount = callbackCount,
+        firstChunkSamples = firstChunkSamples,
         runaway = audioSeconds > config.runawayFactor * expected,
         samples = samples,
     )
@@ -686,25 +840,35 @@ private fun loadAsr(config: BenchConfig): OfflineRecognizer {
     return OfflineRecognizer(recognizerConfig)
 }
 
-private fun transcribe(asr: OfflineRecognizer, run: SpeakResult, reference: String): WerScore {
+private fun hypothesis(asr: OfflineRecognizer, run: SpeakResult): String {
     val stream = asr.createStream()
     try {
         stream.acceptWaveform(run.samples, run.sampleRate)
         asr.decode(stream)
-        val text = asr.getResult(stream).text ?: ""
-        return wordErrorRate(reference, text)
+        return asr.getResult(stream).text ?: ""
     } finally {
         stream.release()
     }
 }
 
 private fun printPieceNotes(config: BenchConfig, lines: List<CorpusLine>) {
-    println(
-        "sherpa pieces at max_char ${config.maxCharInSentence}: " +
-            "the language model finishes the first piece before the first callback.",
-    )
+    if (config.chunker == "ours") {
+        println(
+            "our pieces, first target ${config.firstPieceTargetChars}, later max ${config.laterPieceMaxChars}: " +
+                "the first piece is synthesized before the first callback.",
+        )
+    } else {
+        println(
+            "sherpa pieces at max_char ${config.maxCharInSentence}: " +
+                "the language model finishes the first piece before the first callback.",
+        )
+    }
     for (line in lines) {
-        val parts = sherpaPieces(line.text, config.maxCharInSentence, 30)
+        val parts = if (config.chunker == "ours") {
+            speechPieces(line.text, config.firstPieceTargetChars, config.laterPieceMaxChars)
+        } else {
+            sherpaPieces(line.text, config.maxCharInSentence, 30)
+        }
         println("  ${line.id}: ${parts.joinToString(" + ") { it.length.toString() }} chars")
     }
 }
@@ -724,6 +888,14 @@ private fun applyMap(config: BenchConfig, overrides: Map<String, String>): Bench
             "chunker" -> next.copy(chunker = value)
             "warmup" -> next.copy(warmup = value == "true" || value == "1")
             "max_frames" -> next.copy(maxFrames = value.toIntOrNull() ?: throw BenchException("max_frames needs an integer"))
+            "first_piece_target_chars" -> next.copy(firstPieceTargetChars = positive(value, key))
+            "later_piece_max_chars" -> next.copy(laterPieceMaxChars = positive(value, key))
+            "max_frames_per_character" -> {
+                val rate = value.toDoubleOrNull() ?: throw BenchException("max_frames_per_character needs a number")
+                if (rate < 0.0) throw BenchException("max_frames_per_character must be >= 0")
+                next.copy(maxFramesPerCharacter = rate)
+            }
+            "silence_ms" -> next.copy(silenceMs = value.toIntOrNull() ?: throw BenchException("silence_ms needs an integer"))
             "warm_runs" -> next.copy(warmRuns = positive(value, key))
             else -> throw BenchException("unknown config key $key")
         }
@@ -773,6 +945,10 @@ private fun loadConfig(path: File): BenchConfig {
         seed = req("seed"),
         chunker = req("chunker"),
         maxFrames = req("max_frames").toInt(),
+        firstPieceTargetChars = req("first_piece_target_chars").toInt(),
+        laterPieceMaxChars = req("later_piece_max_chars").toInt(),
+        maxFramesPerCharacter = req("max_frames_per_character").toDouble(),
+        silenceMs = req("silence_ms").toInt(),
         warmup = req("warmup") == "true",
         warmRuns = req("warm_runs").toInt(),
         passTtfaMs = req("pass_warm_ttfa_ms").toDouble(),
@@ -918,6 +1094,26 @@ private fun selfCheck(config: BenchConfig) {
     check(compareVersions("2.0.0", "2.0.0-rc1") > 0, "release is higher than its pre-release")
     check(compareVersions("2.0.0-rc1", "2.0.0-rc2") < 0, "rc1 before rc2")
     check(compareVersions("2.0.0+build", "2.0.0") == 0, "build metadata is not part of the order")
+    check(normalizeForSpeech("503") == "five hundred three", "503 ${normalizeForSpeech("503")}")
+    check(normalizeForSpeech("30") == "thirty", "30 ${normalizeForSpeech("30")}")
+    check(normalizeForSpeech("2:45 PM") == "two forty-five PM", "time ${normalizeForSpeech("2:45 PM")}")
+    check(normalizeForSpeech("PetBridge.kt") == "Pet Bridge dot kt", "file ${normalizeForSpeech("PetBridge.kt")}")
+    check(normalizeForSpeech("PetBridge") == "PetBridge", "bare camel")
+    val passed = speechPieces("Done! Your build passed.", 60, 140)
+    check(passed == listOf("Done!", "Your build passed."), "build pieces $passed")
+    val numbers = speechPieces(
+        "PetBridge.kt returned error 503 at 2:45 PM after 30 seconds.",
+        60,
+        140,
+    )
+    check(numbers.any { it.contains("five hundred three") }, "number split $numbers")
+    check(numbers.any { it.contains("two forty-five") }, "time split $numbers")
+    check(numbers.any { it.contains("thirty") }, "thirty $numbers")
+    val limit = speechPieces(say.text, 60, 140)
+    check(limit.first().endsWith("say,"), "say_limit first ${limit.first()}")
+    check(limit.any { it.contains("two hundred forty") }, "say_limit number $limit")
+    val questionPieces = speechPieces(question.text, 60, 140)
+    check(questionPieces.size == 1, "question pieces ${questionPieces.size}")
     refuseNonCommercialVoice(config.voice.path)
     checkFails("expresso") { refuseNonCommercialVoice("voices/expresso/ex03.wav") }
     checkFails("test_wavs") { refuseNonCommercialVoice("models/test_wavs/bria.wav") }

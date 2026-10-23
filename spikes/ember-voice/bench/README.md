@@ -23,7 +23,9 @@ cd spikes/ember-voice/bench
 
 `./run.sh` writes `results/ember-voice-bench.json` (schema in `SCHEMA.md`) and one WAV per line under `results/wav/`. `results/baseline-linux-vm.json` is the committed Linux VM baseline. Other result files are gitignored.
 
-`--matrix` takes one or more `key=a,b` axes and runs the cartesian product in one process. Keys: `chunk_size`, `max_char_in_sentence`, `num_threads`, `num_steps`, `temperature`, `provider`, `model_dir`, `seed`, `chunker`, `warmup`, `max_frames`. The summary is `results/matrix-summary.json`.
+`--matrix` takes one or more `key=a,b` axes and runs the cartesian product in one process. Keys: `chunk_size`, `max_char_in_sentence`, `num_threads`, `num_steps`, `temperature`, `provider`, `model_dir`, `seed`, `chunker`, `warmup`, `max_frames`, `first_piece_target_chars`, `max_frames_per_character`, `silence_ms`. `--set` applies to every cell. The summary is `results/matrix-summary.json`.
+
+`chunker=ours` is the bench splitter: the first sentence stays whole when it is at most `first_piece_target_chars` (so "Done!" is not glued on), otherwise the first piece is cut in the 30-character to target window on a clause boundary. Numbers, times, and file names are spoken as words (`503` becomes "five hundred three", `PetBridge.kt` becomes "Pet Bridge dot kt") and a cut will not land inside that phrase. Later pieces pack to `later_piece_max_chars`. `max_frames_per_character=0` leaves the frame cap off.
 
 `--set key=value` overrides one knob for a single run. `--no-wer` skips ASR. `--only LINE_ID` times one corpus line.
 

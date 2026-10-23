@@ -31,6 +31,10 @@ The shared result schema is `ember-voice-benchmark.v1` in server-platform draft 
     "seed": "1",
     "chunker": "sherpa",
     "max_frames": 0,
+    "first_piece_target_chars": 60,
+    "later_piece_max_chars": 140,
+    "max_frames_per_character": 0,
+    "silence_ms": 40,
     "warmup": false,
     "warm_runs": 10,
     "chars_per_second": 15,
@@ -85,9 +89,11 @@ The shared result schema is `ember-voice-benchmark.v1` in server-platform draft 
 
 Percentiles are nearest-rank. With 10 samples, p99 is the worst sample and p90 is the 9th. Median of an even count is the average of the two middle values.
 
-`wer` is word error rate of the last warm WAV against the corpus text. Tokens are runs of letters, digits, and ASCII apostrophes after lowercasing. The rate is the edit distance divided by the reference token count. An empty reference scores 0 when the hypothesis is also empty and 1 otherwise. It is one draw, not a median. `null` when ASR was skipped (`--no-wer`).
+`wer` is word error rate of the last warm WAV against the corpus text. Tokens are runs of letters, digits, and ASCII apostrophes after lowercasing. The rate is the edit distance divided by the reference token count. An empty reference scores 0 when the hypothesis is also empty and 1 otherwise. It is one draw, not a median. `null` when ASR was skipped (`--no-wer`). `wer_spoken` scores the same hypothesis against the text actually sent to the model. With `chunker` `sherpa` that text is the corpus line. With `chunker` `ours` it is the normalized pieces joined by spaces, so a line that speaks "five hundred three" is not punished for saying the number instead of "503".
 
 Version strings, when this harness compares them, use release ordering: `2.0.0-rc1` is lower than `2.0.0`. Build metadata after `+` is ignored.
+
+`chunker` `ours` cuts the first piece on a clause boundary inside 30..`first_piece_target_chars` (the whole first sentence when it already fits), then packs later pieces to `later_piece_max_chars`. `max_frames_per_character` of 0 leaves sherpa-onnx's frame cap alone. A positive rate caps each piece and regenerates a piece once when its audio exceeds `runaway_factor` times the expected length. `silence_ms` is silence inserted between our pieces.
 
 `./compare.sh baseline.json candidate.json` compares warm `ttfa_ms.samples` per line with a one-sided Mann–Whitney test (candidate slower). It exits 1 when a line's median TTFA is more than 10% higher and the test's p-value is under 0.05. Exact p-values are used when both samples have at most 10 values and no ties. Otherwise it uses the normal approximation with a tie correction and a continuity correction.
 
