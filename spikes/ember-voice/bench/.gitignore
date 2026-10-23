@@ -5,5 +5,6 @@ models/
 build/
 results/*
 !results/baseline-linux-vm.json
+!results/quick-wins-linux-vm.json
 *.partial
 *.tar.bz2

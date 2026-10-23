@@ -93,7 +93,7 @@ Percentiles are nearest-rank. With 10 samples, p99 is the worst sample and p90 i
 
 Version strings, when this harness compares them, use release ordering: `2.0.0-rc1` is lower than `2.0.0`. Build metadata after `+` is ignored.
 
-`chunker` `ours` cuts the first piece on a clause boundary inside 30..`first_piece_target_chars` (the whole first sentence when it already fits), then packs later pieces to `later_piece_max_chars`. `max_frames_per_character` of 0 leaves sherpa-onnx's frame cap alone. A positive rate caps each piece and regenerates a piece once when its audio exceeds `runaway_factor` times the expected length. `silence_ms` is silence inserted between our pieces.
+`chunker` `ours` cuts the first piece on a clause boundary inside 30..`first_piece_target_chars` (the whole first sentence when it already fits), then packs later pieces to `later_piece_max_chars`. `max_frames_per_character` of 0 leaves sherpa-onnx's frame cap alone. A positive rate caps each piece. A piece of 24 characters or fewer still gets a ceiling of 24 frames (1.92 s), because a lower ceiling stops "Done!" before the word is out. A piece that is still longer than `runaway_factor` times its expected audio is generated once more and the shorter take is kept. `silence_ms` is silence inserted between our pieces.
 
 `./compare.sh baseline.json candidate.json` compares warm `ttfa_ms.samples` per line with a one-sided Mann–Whitney test (candidate slower). It exits 1 when a line's median TTFA is more than 10% higher and the test's p-value is under 0.05. Exact p-values are used when both samples have at most 10 values and no ties. Otherwise it uses the normal approximation with a tie correction and a continuity correction.
 

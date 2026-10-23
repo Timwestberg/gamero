@@ -640,7 +640,10 @@ private fun generationConfig(
 private fun framesFor(config: BenchConfig, text: String): Int {
     if (config.maxFrames > 0) return config.maxFrames
     if (config.chunker == "ours" && config.maxFramesPerCharacter > 0.0) {
-        val frames = kotlin.math.ceil(text.length * config.maxFramesPerCharacter).toInt()
+        val scaled = kotlin.math.ceil(text.length * config.maxFramesPerCharacter).toInt()
+        // A short piece with a tiny ceiling stops before the words are out.
+        // 24 frames is 1.92 s, enough for "Done!" or "Your build passed."
+        val frames = if (text.length <= 24 && scaled < 24) 24 else scaled
         return if (frames < 4) 4 else frames
     }
     return 0
@@ -756,6 +759,10 @@ private fun synthesizePiece(
     if (samples.isEmpty() || sampleRate <= 0) throw BenchException("no audio for $id")
     val ttfaMs = if (ttfaNs.get() >= 0) nanosToMs(ttfaNs.get()) else totalMs
     val audioSeconds = samples.size / sampleRate.toDouble()
+    log(
+        "piece $id chars ${text.length} max_frames ${framesFor(config, text)} " +
+            "audio ${fmt(audioSeconds)} s ttfa ${fmtMs(ttfaMs)} ms",
+    )
     return PieceAudio(samples, sampleRate, ttfaMs, audioSeconds, callbackCount.get(), firstChunkSamples.get())
 }
 
