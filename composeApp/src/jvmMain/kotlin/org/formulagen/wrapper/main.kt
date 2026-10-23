@@ -26,6 +26,7 @@ import org.formulagen.wrapper.bridge.desktopHostCapabilities
 import org.formulagen.wrapper.companion.NativeBridge
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.hovel.hovelBridgePacks
+import org.formulagen.wrapper.hovel.EmberPetBridge
 import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.hovel.HovelLaunchScreen
 import org.formulagen.wrapper.hovel.HovelStartState
@@ -168,7 +169,10 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
             val executable = System.getenv("GAMERO_CODEX_PATH")?.let(Path::of)
             val workspace = System.getenv("GAMERO_WORKSPACE")?.let(Path::of)
             if (executable != null && workspace != null) {
-                HovelCompanion(url, support.toPath().resolve("hovel-${HovelCompanion.sha256(url)}"), executable, workspace)
+                val home = File(System.getProperty("user.home"))
+                val pet = System.getenv("GAMERO_EMBER_PET")?.takeIf { it.isNotBlank() }?.let(Path::of)
+                val bridge = EmberPetBridge(home.toPath().resolve("Library/Application Support/Hovel"), petExecutable = pet)
+                HovelCompanion(url, support.toPath().resolve("hovel-${HovelCompanion.sha256(url)}"), executable, workspace, ember = bridge)
                     .also { resources.companion = it }
             } else null
         } else null
@@ -217,6 +221,9 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                     Text("Connect account ${approval.ownerId} at $url to this Mac? This stores a host credential in Keychain and allows read-only Codex tasks in ${System.getenv("GAMERO_WORKSPACE")} while Gamero is open. Codex uses your own ChatGPT subscription.", Modifier.padding(8.dp))
                     Button(onClick = { approval.answer.complete(true) }) { Text("Approve computer connection") }
                     Button(onClick = { approval.answer.complete(false) }) { Text("Cancel") }
+                }
+                if (companion.emberPetAvailable) {
+                    Button(onClick = { companion.launchEmberPet() }) { Text("Open Ember pet") }
                 }
             } else if (isHovelProduct()) {
                 Text("Set GAMERO_CODEX_PATH and GAMERO_WORKSPACE to enable this Mac's optional Codex connection.", Modifier.padding(8.dp))

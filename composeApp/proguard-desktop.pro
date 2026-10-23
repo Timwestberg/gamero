@@ -42,6 +42,9 @@
 -dontwarn com.github.luben.zstd.**
 -dontwarn org.brotli.dec.**
 
+# Java-WebSocket optionally logs through slf4j, which the desktop app does not ship.
+-dontwarn org.java_websocket.**
+
 # OkHttp probes for Android and optional TLS providers; on the desktop JVM it uses the JDK's.
 -dontwarn android.**
 -dontwarn org.conscrypt.**
