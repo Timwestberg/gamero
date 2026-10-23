@@ -29,7 +29,7 @@ cd spikes/ember-voice/mac
 ./run.sh
 ```
 
-`./setup.sh` downloads the int8 model (~94 MB), the default CC0 voice, the sherpa-onnx JVM jar, the native library for this Mac, and a Kotlin compiler. Re-running it skips anything already downloaded and hash-checked.
+`./setup.sh` downloads the int8 model (~94 MB), the default CC0 voice, the sherpa-onnx JVM jar, the native library for this Mac, and a Kotlin compiler. Re-running it skips anything already downloaded and hash-checked. For the default voice it also converts the 32 kHz donation to 24 kHz once, so later synthesis calls do not resample it.
 
 `./run.sh` prints a table, writes `results/ember-voice-results.json` and `results/ember-voice-results.csv`, and saves one WAV per line under `results/wav/`.
 
@@ -46,11 +46,14 @@ Other flags:
 ```bash
 ./run.sh --only build_passed
 ./run.sh --warm-runs 2
+./run.sh --sweep
 ./run.sh --self-check
 ./run.sh --help
 ```
 
-`--self-check` confirms the six fixed lines and the median / percentile math. It does not load the model.
+`--sweep` keeps the model loaded and times `sweep_chunk_sizes` from the config (2, 4, 6, 10, and 15). For each value it prints warm TTFA median and p90, plus RTF, for every line. It writes `results/ember-voice-sweep.json` and `results/ember-voice-sweep.csv`. It does not write WAVs.
+
+`--chunk-size N` and `--max-char N` override those two config values for one process. `--self-check` confirms the six fixed lines, the sentence splitter, and the median / percentile math. It does not load the model.
 
 ## Change the voice
 
@@ -59,6 +62,8 @@ PocketTTS in this sherpa-onnx build is a reference-audio cloner. There is no spe
 The default is a CC0 donation:
 
 `kyutai/tts-voices` `voice-donations/0a67_enhanced.wav` (16-bit mono, 32 kHz, about 10 seconds).
+
+`./setup.sh` keeps that file as `models/voices/0a67_enhanced.source.wav` and writes `models/voices/0a67_enhanced-24k.wav`, which is the `voice` path in the config. PocketTTS speaks at 24 kHz. A 24 kHz mono 16-bit prompt skips the per-call resample (sherpa-onnx otherwise logs `Creating a resampler` on every call). Conversion uses `ffmpeg` if it is installed, then `sox`, then a small Kotlin resampler in the harness. The Kotlin path is linear interpolation, so prefer ffmpeg or sox when you have them. The stamp file next to the 24 kHz wav records the source hash. Delete the 24 kHz wav to convert again.
 
 Edit both of these in `config/harness.conf`, then rerun `./setup.sh` and `./run.sh`:
 
@@ -71,9 +76,13 @@ voice_url=https://huggingface.co/kyutai/tts-voices/resolve/main/voice-donations/
 
 Stay inside `voice-donations/` (or another CC0 set such as `voice-zero/`). Do not use Expresso. The clips under `models/.../test_wavs/` (including `bria.wav`) and anything under `expresso/` are CC-BY-NC.
 
-`num_steps`, `num_threads`, `temperature`, and `chunk_size` are in the same config file. The defaults match sherpa-onnx's PocketTTS example: 5 flow steps, 2 threads, temperature 0.7, chunk size 15. Fewer `num_steps` is faster and lower quality. `chunk_size` is forwarded to PocketTTS as the streaming chunk size. On the Linux run below, 15 produced a first callback of 28800 samples at 24 kHz, which is 1.20 seconds of audio (80 ms per frame). TTFA cannot be shorter than the time to synthesize that first frame group. Lower `chunk_size` if you are chasing the 500 ms bar.
+`num_steps`, `num_threads`, `temperature`, `chunk_size`, and `max_char_in_sentence` are in the same config file. The engine defaults match sherpa-onnx's PocketTTS example: 5 flow steps, 2 threads, temperature 0.7. Fewer `num_steps` is faster and lower quality.
 
-The default clip is 32 kHz and the model speaks at 24 kHz, so sherpa-onnx resamples the reference on every call and logs `Creating a resampler`. The voice embedding itself is cached after the first call. A mono 16-bit 24 kHz wav skips that resample. stderr will be noisy with the 32 kHz default; the table is printed after the runs.
+`chunk_size` is decoder frames per callback. One frame is 1920 samples, 80 ms at 24 kHz. It has to be at least 1 (0 divides by zero inside sherpa-onnx). The language model still generates every latent frame of the first text piece, up to end-of-speech, before the decoder runs. `chunk_size` only decides how those frames are sliced into callbacks. A smaller value can start playback a little sooner and makes the first chunk shorter. It does not start audio before that first piece is finished. `./run.sh --sweep` prints the latency versus RTF tradeoff.
+
+`max_char_in_sentence` is sherpa-onnx's long-sentence cut. The splitter breaks on `.` `!` `?`, merges pieces shorter than 30 characters, then cuts anything longer than this at the previous space. TTFA waits for the first piece. `PetSession.kt` splits at the period, which is why `summary` starts on a 44-character piece. `say_limit` has no period, so the default of 200 leaves a 196-character first piece. This config uses 120, which cuts only that line (116 + 119) and leaves the other five lines on the same pieces as 200. 80 was faster on `say_limit` but also left `summary` with leftover pieces `tests.` and `before merge.`
+
+stderr still prints sherpa-onnx's config dump on model load. The table comes after the runs.
 
 ## How to read the results
 
@@ -95,11 +104,28 @@ Temperature is 0.7, so duration can move a little between runs. The table uses t
 
 Kyutai's 20 October 2026 English models (`english_18m_2026-10`, about 18.2M parameters, and the smaller 7M / 2M variants) ship in pocket-tts v4. sherpa-onnx 2.0.0 does not publish them. The tts-models release still has the January 2026 PocketTTS archives only. A community ONNX export exists for onnxruntime-web, which this JNI binding cannot load. This spike times the int8 sherpa-onnx archive. If a later sherpa-onnx drop uses the same seven files (`lm_flow`, `lm_main`, `encoder`, `decoder`, `text_conditioner`, `vocab.json`, `token_scores.json`), point `model_dir` at that directory.
 
+## What dominates TTFA
+
+Sherpa-onnx splits the line before PocketTTS runs. The language model then generates every latent frame of the first piece, until end-of-speech, and only then does the decoder emit callbacks. `chunk_size` groups those decoder frames. One frame is 80 ms at 24 kHz, so the default of 2 makes the first callback 160 ms of audio. TTFA still includes the whole first piece.
+
+The splitter breaks on `.` `!` `?`, merges pieces under 30 characters, and cuts anything over `max_char_in_sentence` at the previous space. A piece that ends in punctuation is joined to the next piece without an added space, so `build_passed` is one 23-character piece: `Done!Your build passed.` `PetSession.kt` breaks at the period, which is why `summary` starts on `Here's the summary: I refactored PetSession.` (44 characters) and the next piece begins `kt, moved...`.
+
+Two slow numbers from the first Linux run come from that pipeline:
+
+- `build_passed` warm TTFA p90 was 3948 ms. Sorted warm runs included 3948 ms for 9.53 s of audio (15 callbacks) and 8885 ms for 19.43 s of audio (34 callbacks). The short runs were about 1.5–2.5 s of audio and 530–1023 ms TTFA. Callback count and audio length grow with the TTFA, which is a late end-of-speech at temperature 0.7. The harness prints a tail line when a line's longest warm audio is more than twice its median. `max_frames` stays at sherpa-onnx's default of 500 (about 40 s). A cap low enough to stop a 19 s runaway would also cut off a long first piece: at `max_char` 200 the first `say_limit` piece is 196 characters and the utterance ran about 12–16 s.
+- `say_limit` warm TTFA median was 3542 ms with RTF still about 3x. The line has no `.` `!` or `?`, so a cap of 200 leaves 196 + 39 characters and the first audio waits on the 196-character piece. `summary` is a similar length and was near 800 ms only because its first piece is 44 characters. The config now uses 120, which changes only `say_limit` (116 + 119). A cap of 80 was faster on that line and also left `summary` with leftover pieces `tests.` and `before merge.`
+
+Converting the voice to 24 kHz removed the per-call resample. It did not move TTFA. With `chunk_size` 15 and `max_char` 200, four warm `say_limit` runs at 24 kHz had median TTFA 3657 ms and RTF 3.01x, against 3542 ms and 3.04x on the 32 kHz clip. In the chunk sweep, `build_passed` at chunk 15 (same 23-character piece) was 616 ms median, against 681 ms before. The 24 kHz runs do not log `Creating a resampler`.
+
 ## Linux VM check
 
 These numbers are from the cloud Linux VM that built this spike. They are not Mac numbers. Tim's Apple Silicon run is the one that answers the pet question.
 
-Host: Linux 6.12.94+ x86_64, Intel Xeon, 4 CPUs, OpenJDK 21.0.12.1. sherpa-onnx 2.0.0 JVM, int8 PocketTTS, `chunk_size` 15, 5 steps, 2 threads, temperature 0.7, CC0 voice `voice-donations/0a67_enhanced.wav`. Wall clock for `./run.sh` was 2 minutes 46 seconds.
+Host: Linux 6.12.94+ x86_64, Intel Xeon, 4 CPUs, OpenJDK 21.0.12.1. sherpa-onnx 2.0.0 JVM, int8 PocketTTS, 5 steps, 2 threads, temperature 0.7, CC0 voice `voice-donations/0a67_enhanced.wav`.
+
+### Before
+
+32 kHz voice, resampled on every call. `chunk_size` 15. `max_char_in_sentence` 200 (sherpa-onnx's default). `./run.sh` wall clock 2 minutes 46 seconds.
 
 | | |
 | --- | --- |
@@ -111,7 +137,7 @@ Host: Linux 6.12.94+ x86_64, Intel Xeon, 4 CPUs, OpenJDK 21.0.12.1. sherpa-onnx 
 | RSS after model load | 374 MiB |
 | Peak RSS | 738 MiB in-process (`VmHWM`), 741 MiB from `/usr/bin/time -v` |
 
-Streaming did work. All 61 timed runs (1 cold + 60 warm) got more than one callback, and the first arrived before synthesis finished. The first callback was always 1.20 s of audio. Median callback count was 7.
+First callback was 1.20 s of audio. Median callback count was 7. All 61 timed runs streamed.
 
 | line | chars | TTFA med | TTFA p90 | synth med | audio s | RTF med | RTF p10 | TTFA | RTF |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -122,7 +148,46 @@ Streaming did work. All 61 timed runs (1 cold + 60 warm) got more than one callb
 | summary | 217 | 801 | 1081 | 3708 | 12.04 | 3.17x | 2.52x | FAIL | PASS |
 | say_limit | 236 | 3542 | 3705 | 4886 | 14.00 | 3.04x | 2.84x | FAIL | PASS |
 
-Overall on this VM: FAIL. Every line cleared the 1.5x RTF bar. None cleared the 500 ms warm-TTFA bar. `say_limit` was the outlier on TTFA (median 3542 ms) even though its RTF matched the other long lines. One `build_passed` run emitted 19.4 s of audio for that short sentence (TTFA 8885 ms); temperature 0.7 can occasionally run long, and p90 shows it. The median does not.
+### Chunk-size sweep
+
+Same VM, after the 24 kHz voice and `max_char_in_sentence` 120. One process, one discarded warmup and 10 measured runs per line per size. Every size kept every line's warm median RTF above 2.6x, so the smallest size is the default. Warm TTFA median (ms) and RTF:
+
+| chunk_size | build_passed | task_finished | sign_in | deploy_blocked | summary | say_limit | min RTF |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2 | 560 / 2.63x | 1074 / 2.82x | 772 / 3.16x | 1055 / 3.37x | 641 / 3.22x | 1565 / 3.18x | 2.63x |
+| 4 | 724 / 2.81x | 1130 / 3.03x | 755 / 3.41x | 1049 / 3.52x | 831 / 3.17x | 1617 / 3.31x | 2.81x |
+| 6 | 662 / 2.85x | 1035 / 3.13x | 727 / 3.65x | 1060 / 3.67x | 695 / 3.35x | 1905 / 3.26x | 2.85x |
+| 10 | 654 / 2.96x | 1192 / 3.06x | 801 / 3.66x | 1280 / 3.51x | 761 / 3.25x | 1664 / 3.34x | 2.96x |
+| 15 | 616 / 2.70x | 1269 / 2.96x | 828 / 3.20x | 1381 / 3.07x | 785 / 3.23x | 1783 / 3.29x | 2.70x |
+
+TTFA barely moves on the short lines. On `deploy_blocked` and `say_limit` chunk 2 was about 200–300 ms faster than chunk 15. The first callback at 2 is 160 ms of audio, and at 15 it is 1.20 s. RTF stayed above the 1.5x bar at every size, with the slowest line at chunk 2 still 2.63x. `config/harness.conf` therefore uses `chunk_size=2`.
+
+### After
+
+24 kHz voice, no per-call resample. `chunk_size` 2. `max_char_in_sentence` 120. `./run.sh` wall clock 2 minutes 45 seconds. This is the table `./run.sh` prints with the config Tim will run.
+
+| | |
+| --- | --- |
+| Native lib load | 143 ms (not part of cold start) |
+| Model load | 548 ms |
+| Cold TTFA (`build_passed`) | 729 ms, first callback |
+| Cold synthesis | 945 ms, 1.93 s of audio, RTF 2.04x |
+| Cold start (load + first line) | 1493 ms |
+| RSS after model load | 374 MiB |
+| Peak RSS | 678 MiB in-process (`VmHWM`), 680 MiB from `/usr/bin/time -v` |
+
+First callback was 160 ms of audio. Median callback count was 55. All 61 timed runs streamed.
+
+| line | chars | TTFA med | TTFA p90 | synth med | audio s | RTF med | RTF p10 | TTFA | RTF |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| build_passed | 24 | 699 | 1511 | 934 | 2.28 | 2.33x | 1.86x | FAIL | PASS |
+| task_finished | 65 | 1159 | 1965 | 1571 | 4.48 | 2.81x | 2.27x | FAIL | PASS |
+| sign_in | 73 | 703 | 763 | 947 | 3.14 | 3.36x | 3.12x | FAIL | PASS |
+| deploy_blocked | 114 | 1128 | 1326 | 2368 | 8.06 | 3.40x | 2.97x | FAIL | PASS |
+| summary | 217 | 682 | 721 | 3828 | 12.08 | 3.19x | 2.81x | FAIL | PASS |
+| say_limit | 236 | 1843 | 2311 | 4537 | 14.53 | 3.13x | 2.82x | FAIL | PASS |
+
+Overall on this VM: FAIL. Every line still clears 1.5x RTF. None clears 500 ms warm TTFA. `say_limit` median TTFA went from 3542 ms to 1843 ms. Cold start and the short lines are in the same range as the first run. `build_passed` p90 was 1511 ms this time: the 9th sorted run was 3.81 s of audio, and the longest was 6.41 s of audio at 2303 ms TTFA (72 callbacks). Same late end-of-speech, a smaller draw than the 19.4 s run in the first table.
 
 ## Layout
 
@@ -132,4 +197,4 @@ Overall on this VM: FAIL. Every line cleared the 1.5x RTF bar. None cleared the 
 | `setup.sh` / `run.sh` | Download, then measure |
 | `src/EmberVoiceSpike.kt` | The JVM harness |
 | `models/` | Gitignored model and voice |
-| `results/` | Gitignored JSON, CSV, and WAVs |
+| `results/` | Gitignored JSON, CSV, WAVs, and the `--sweep` table |

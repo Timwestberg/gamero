@@ -152,29 +152,74 @@ else
 fi
 
 voice_path="$ROOT/$voice"
-if [ "$voice_url" = "$DEFAULT_VOICE_URL" ] && [ -f "$voice_path" ]; then
-  got=$(sha256_file "$voice_path")
-  if [ "$got" != "$DEFAULT_VOICE_SHA" ]; then
-    printf 'replacing voice (hash mismatch)\n'
-    rm -f "$voice_path"
+if [ "$voice_url" = "$DEFAULT_VOICE_URL" ]; then
+  source_voice="$ROOT/models/voices/0a67_enhanced.source.wav"
+  legacy_voice="$ROOT/models/voices/0a67_enhanced.wav"
+  mkdir -p "$(dirname "$source_voice")"
+  if [ ! -f "$source_voice" ] && [ -f "$legacy_voice" ]; then
+    got=$(sha256_file "$legacy_voice")
+    if [ "$got" = "$DEFAULT_VOICE_SHA" ]; then
+      cp "$legacy_voice" "$source_voice"
+    fi
   fi
-fi
-if [ -f "$voice_path" ]; then
-  printf 'ok  voice %s\n' "$voice"
-else
-  mkdir -p "$(dirname "$voice_path")"
-  tmp="${voice_path}.partial"
-  rm -f "$tmp"
-  printf 'get voice %s\n' "$(basename "$voice_path")"
-  curl -fL --retry 5 --retry-delay 2 --progress-bar -o "$tmp" "$voice_url"
-  if [ "$voice_url" = "$DEFAULT_VOICE_URL" ]; then
+  if [ -f "$source_voice" ]; then
+    got=$(sha256_file "$source_voice")
+    if [ "$got" != "$DEFAULT_VOICE_SHA" ]; then
+      printf 'replacing voice source (hash mismatch)\n'
+      rm -f "$source_voice"
+    fi
+  fi
+  if [ ! -f "$source_voice" ]; then
+    tmp="${source_voice}.partial"
+    rm -f "$tmp"
+    printf 'get voice %s\n' "$(basename "$source_voice")"
+    curl -fL --retry 5 --retry-delay 2 --progress-bar -o "$tmp" "$voice_url"
     got=$(sha256_file "$tmp")
     if [ "$got" != "$DEFAULT_VOICE_SHA" ]; then
       rm -f "$tmp"
       die "voice hash mismatch for the default CC0 clip"
     fi
+    mv "$tmp" "$source_voice"
+  else
+    printf 'ok  voice source %s\n' "$(basename "$source_voice")"
   fi
-  mv "$tmp" "$voice_path"
+  source_sha=$(sha256_file "$source_voice")
+  stamp="${voice_path}.source-sha"
+  have_stamp=""
+  if [ -f "$stamp" ]; then
+    have_stamp=$(cat "$stamp")
+  fi
+  if [ -f "$voice_path" ] && [ "$have_stamp" = "$source_sha" ]; then
+    printf 'ok  voice %s (24 kHz)\n' "$voice"
+  else
+    printf 'converting voice to 24 kHz\n'
+    mkdir -p "$(dirname "$voice_path")"
+    # Keep a .wav suffix. ffmpeg refuses to mux when the name ends in .partial.
+    tmp="${voice_path}.tmp.wav"
+    rm -f "$tmp"
+    if command -v ffmpeg >/dev/null 2>&1; then
+      ffmpeg -y -loglevel error -f wav -i "$source_voice" -ac 1 -ar 24000 -c:a pcm_s16le -f wav "$tmp"
+    elif command -v sox >/dev/null 2>&1; then
+      sox "$source_voice" -c 1 -r 24000 -b 16 -e signed-integer "$tmp"
+    else
+      java -cp "$ROOT/build/classes:$ROOT/deps/kotlin/kotlinc/lib/kotlin-stdlib.jar:$ROOT/deps/sherpa/sherpa-onnx-jvm-${SHERPA_VERSION}.jar" \
+        EmberVoiceSpikeKt --resample "$source_voice" "$tmp"
+    fi
+    mv "$tmp" "$voice_path"
+    printf '%s\n' "$source_sha" > "$stamp"
+  fi
+else
+  if [ -f "$voice_path" ]; then
+    printf 'ok  voice %s\n' "$voice"
+  else
+    mkdir -p "$(dirname "$voice_path")"
+    tmp="${voice_path}.partial"
+    rm -f "$tmp"
+    printf 'get voice %s\n' "$(basename "$voice_path")"
+    curl -fL --retry 5 --retry-delay 2 --progress-bar -o "$tmp" "$voice_url"
+    mv "$tmp" "$voice_path"
+    printf 'note: custom voice_url is saved as downloaded. PocketTTS resamples it on every call unless it is already 24 kHz mono PCM.\n'
+  fi
 fi
 
 printf '\nsetup done (%s-%s, Java %s, sherpa-onnx %s).\n' "$plat" "$cpu" "$(java_major)" "$SHERPA_VERSION"

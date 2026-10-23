@@ -38,6 +38,8 @@ data class Config(
     val numSteps: Int,
     val temperature: String,
     val chunkSize: String,
+    val maxCharInSentence: Int,
+    val sweepChunkSizes: List<Int>,
     val warmRuns: Int,
     val passTtfaMs: Double,
     val passRtf: Double,
@@ -69,6 +71,7 @@ data class LineSummary(
     val rtfP10: Double,
     val ttfaPass: Boolean,
     val rtfPass: Boolean,
+    val audioMax: Double = 0.0,
 )
 
 class RssSampler {
@@ -116,6 +119,10 @@ class RssSampler {
 
 fun main(args: Array<String>) {
     try {
+        if (args.size == 3 && args[0] == "--resample") {
+            resampleWav(File(args[1]), File(args[2]), 24000)
+            return
+        }
         runHarness(args)
     } catch (e: HarnessException) {
         System.err.println("error: ${e.message}")
@@ -127,8 +134,11 @@ private data class Cli(
     val configPath: String,
     val play: Boolean,
     val selfCheck: Boolean,
+    val sweep: Boolean,
     val warmRuns: Int?,
     val only: String?,
+    val chunkSize: Int?,
+    val maxChar: Int?,
     val debug: Boolean,
     val help: Boolean,
 )
@@ -139,12 +149,13 @@ private fun runHarness(args: Array<String>) {
         printHelp()
         return
     }
-    val config = loadConfig(File(cli.configPath))
+    val loaded = loadConfig(File(cli.configPath))
     if (cli.selfCheck) {
-        selfCheck(config)
-        println("self-check: ok (${config.lines.size} lines, say_limit is ${sayLimit(config).text.length} characters)")
+        selfCheck(loaded)
+        println("self-check: ok (${loaded.lines.size} lines, say_limit is ${sayLimit(loaded).text.length} characters)")
         return
     }
+    val config = applyOverrides(loaded, cli)
     val warmRuns = cli.warmRuns ?: config.warmRuns
     if (warmRuns < 1) {
         throw HarnessException("--warm-runs must be at least 1")
@@ -173,14 +184,35 @@ private fun runHarness(args: Array<String>) {
             "voice ${config.voice.name}: ${voiceWave.sampleRate} Hz, " +
                 "${fmt(voiceWave.samples.size / voiceWave.sampleRate.toDouble(), 2)} s, ${config.voiceLicense}",
         )
+        if (voiceWave.sampleRate != 24000) {
+            log(
+                "note: PocketTTS speaks at 24000 Hz, so this clip is resampled on every call. " +
+                    "./setup.sh converts the default voice once.",
+            )
+        }
 
         val modelStart = System.nanoTime()
         tts = loadTts(config, cli.debug)
         val modelLoadMs = nanosToMs(System.nanoTime() - modelStart)
         val rssAfterLoad = currentRssKb()
         log("model loaded in ${fmtMs(modelLoadMs)} ms (sample rate ${tts.sampleRate} Hz)")
+        printPieceNotes(config, lines)
 
         val engine = tts
+        if (cli.sweep) {
+            runSweep(
+                config = config,
+                lines = lines,
+                voice = voiceWave,
+                tts = engine,
+                warmRuns = warmRuns,
+                nativeMs = nativeMs,
+                modelLoadMs = modelLoadMs,
+                rssAfterLoadKb = rssAfterLoad,
+                sampler = sampler,
+            )
+            return
+        }
         val cold = speak(engine, lines[0], voiceWave, config, "cold")
         log(
             "cold ${lines[0].id}: TTFA ${fmtMs(cold.ttfaMs)} ms, synth ${fmtMs(cold.synthMs)} ms, " +
@@ -321,6 +353,7 @@ private fun generationConfig(config: Config, voice: VoiceWave): GenerationConfig
     val extra = HashMap<String, String>()
     extra["temperature"] = config.temperature
     extra["chunk_size"] = config.chunkSize
+    extra["max_char_in_sentence"] = config.maxCharInSentence.toString()
     val gen = GenerationConfig()
     gen.referenceAudio = voice.samples
     gen.referenceSampleRate = voice.sampleRate
@@ -412,6 +445,7 @@ private fun summarize(line: LineSpec, runs: List<RunResult>, config: Config): Li
         rtfP10 = percentile(runs.map { it.rtf }, 10.0),
         ttfaPass = ttfaMedian <= config.passTtfaMs,
         rtfPass = rtfMedian >= config.passRtf,
+        audioMax = runs.maxOf { it.audioSeconds },
     )
 }
 
@@ -433,7 +467,10 @@ private fun printReport(
     println("host: ${System.getProperty("os.name")} ${System.getProperty("os.arch")}  ${cpuBrand()}")
     println("java: ${System.getProperty("java.version")}   heap max ${fmt(Runtime.getRuntime().maxMemory() / 1048576.0, 0)} MiB")
     println("voice: ${config.voice.path} (${config.voiceLicense}, ${config.voiceSource})")
-    println("steps: ${config.numSteps}   threads: ${config.numThreads}   temperature: ${config.temperature}   chunk_size: ${config.chunkSize}")
+    println(
+        "steps: ${config.numSteps}   threads: ${config.numThreads}   temperature: ${config.temperature}   " +
+            "chunk_size: ${config.chunkSize}   max_char: ${config.maxCharInSentence}",
+    )
     println("warm runs: $warmRuns per line, after one discarded warmup. Cold start is load plus the first line only.")
     println()
     println("native lib load:        ${fmtMs(nativeMs)} ms  (not part of cold start)")
@@ -478,6 +515,7 @@ private fun printReport(
         )
     }
     println()
+    printTailNotes(summaries)
     println("streaming: $streamingNote")
     val failed = summaries.filter { !it.ttfaPass || !it.rtfPass }
     if (failed.isEmpty()) {
@@ -557,6 +595,7 @@ private fun renderJson(
     sb.append("    \"num_steps\": ${config.numSteps},\n")
     sb.append("    \"temperature\": ${jsonString(config.temperature)},\n")
     sb.append("    \"chunk_size\": ${jsonString(config.chunkSize)},\n")
+    sb.append("    \"max_char_in_sentence\": ${config.maxCharInSentence},\n")
     sb.append("    \"warm_runs\": $warmRuns,\n")
     sb.append("    \"heap_max_bytes\": ${Runtime.getRuntime().maxMemory()}\n")
     sb.append("  },\n")
@@ -770,6 +809,8 @@ private fun loadConfig(path: File): Config {
         numSteps = req("num_steps").toInt(),
         temperature = req("temperature"),
         chunkSize = req("chunk_size"),
+        maxCharInSentence = (values["max_char_in_sentence"] ?: "200").toInt(),
+        sweepChunkSizes = parseChunkSizes(values["sweep_chunk_sizes"] ?: "2,4,6,10,15"),
         warmRuns = req("warm_runs").toInt(),
         passTtfaMs = req("pass_warm_ttfa_ms").toDouble(),
         passRtf = req("pass_warm_rtf").toDouble(),
@@ -836,6 +877,24 @@ private fun selfCheck(config: Config) {
         rtfPass = 1.5 >= config.passRtf,
     )
     expect(pass.ttfaPass && pass.rtfPass, "pass bar is inclusive")
+    val buildPieces = pocketPieces(config.lines[0].text, 200, 30)
+    expect(buildPieces.size == 1, "build_passed should be one piece, got ${buildPieces.size}")
+    val summaryPieces = pocketPieces(config.lines[4].text, 200, 30)
+    expect(
+        summaryPieces.first() == "Here's the summary: I refactored PetSession.",
+        "summary first piece was '${summaryPieces.first()}'",
+    )
+    val sayPieces = pocketPieces(limit.text, 200, 30)
+    expect(sayPieces.size == 2, "say_limit pieces ${sayPieces.size}")
+    expect(sayPieces[0].length == 196, "say_limit first piece is ${sayPieces[0].length} chars")
+    val sayAt80 = pocketPieces(limit.text, 80, 30)
+    expect(sayAt80.size == 3, "say_limit at 80 chars is ${sayAt80.size} pieces")
+    expect(sayAt80[0].length == 78, "say_limit first piece at 80 is ${sayAt80[0].length} chars")
+    val sayAt120 = pocketPieces(limit.text, 120, 30)
+    expect(sayAt120.size == 2, "say_limit at 120 chars is ${sayAt120.size} pieces")
+    expect(sayAt120[0].length == 116, "say_limit first piece at 120 is ${sayAt120[0].length} chars")
+    val summaryAt120 = pocketPieces(config.lines[4].text, 120, 30)
+    expect(summaryAt120 == summaryPieces, "max 120 must not re-cut summary")
 }
 
 private fun sayLimit(config: Config): LineSpec = config.lines.first { it.id == "say_limit" }
@@ -848,8 +907,11 @@ private fun parseArgs(args: Array<String>): Cli {
     var config = "config/harness.conf"
     var play = false
     var selfCheck = false
+    var sweep = false
     var warmRuns: Int? = null
     var only: String? = null
+    var chunkSize: Int? = null
+    var maxChar: Int? = null
     var debug = false
     var help = false
     var i = 0
@@ -858,6 +920,7 @@ private fun parseArgs(args: Array<String>): Cli {
             "--help", "-h" -> help = true
             "--play" -> play = true
             "--self-check" -> selfCheck = true
+            "--sweep" -> sweep = true
             "--debug" -> debug = true
             "--config" -> {
                 i += 1
@@ -873,11 +936,19 @@ private fun parseArgs(args: Array<String>): Cli {
                 i += 1
                 only = argValue(args, i, "--only")
             }
+            "--chunk-size" -> {
+                i += 1
+                chunkSize = positiveInt(argValue(args, i, "--chunk-size"), "--chunk-size")
+            }
+            "--max-char" -> {
+                i += 1
+                maxChar = positiveInt(argValue(args, i, "--max-char"), "--max-char")
+            }
             else -> throw HarnessException("unknown argument $arg (try --help)")
         }
         i += 1
     }
-    return Cli(config, play, selfCheck, warmRuns, only, debug, help)
+    return Cli(config, play, selfCheck, sweep, warmRuns, only, chunkSize, maxChar, debug, help)
 }
 
 private fun argValue(args: Array<String>, index: Int, flag: String): String {
@@ -888,14 +959,18 @@ private fun argValue(args: Array<String>, index: Int, flag: String): String {
 private fun printHelp() {
     println(
         """
-        Usage: ./run.sh [--play] [--only LINE_ID] [--warm-runs N] [--debug]
+        Usage: ./run.sh [--play] [--only LINE_ID] [--warm-runs N] [--chunk-size N] [--max-char N]
+               ./run.sh --sweep [--warm-runs N]
                ./run.sh --self-check
 
         Times the lines in config/harness.conf with sherpa-onnx PocketTTS.
-        --play        play each saved wav (afplay on macOS)
-        --only ID     time one line id
-        --warm-runs N override the config warm-run count
-        --self-check  check the fixed lines and the percentile math, then exit
+        --play          play each saved wav (afplay on macOS)
+        --only ID       time one line id
+        --warm-runs N   override the config warm-run count
+        --chunk-size N  override chunk_size for this process
+        --max-char N    override max_char_in_sentence for this process
+        --sweep         time every sweep_chunk_sizes value in one process
+        --self-check    check the fixed lines, the splitter, and the percentile math
         """.trimIndent(),
     )
 }
@@ -1037,4 +1112,498 @@ private fun configPathVersion(config: Config): String {
 private fun log(message: String) {
     System.err.println(message)
     System.err.flush()
+}
+
+private fun positiveInt(raw: String, flag: String): Int {
+    val value = raw.toIntOrNull() ?: throw HarnessException("$flag needs an integer, got $raw")
+    if (value < 1) throw HarnessException("$flag must be at least 1, got $value")
+    return value
+}
+
+private fun parseChunkSizes(raw: String): List<Int> {
+    val sizes = raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }.map {
+        it.toIntOrNull() ?: throw HarnessException("sweep_chunk_sizes has '$it', expected integers")
+    }
+    if (sizes.isEmpty()) throw HarnessException("sweep_chunk_sizes is empty")
+    if (sizes.any { it < 1 }) throw HarnessException("chunk_size must be at least 1 (0 would divide by zero in sherpa-onnx)")
+    return sizes
+}
+
+private fun applyOverrides(config: Config, cli: Cli): Config {
+    var next = config
+    if (cli.chunkSize != null) next = next.copy(chunkSize = cli.chunkSize.toString())
+    if (cli.maxChar != null) next = next.copy(maxCharInSentence = cli.maxChar)
+    return next
+}
+
+private fun printPieceNotes(config: Config, lines: List<LineSpec>) {
+    println(
+        "Text pieces: sherpa-onnx splits on . ! ? (so PetSession.kt breaks at the period), " +
+            "merges pieces under 30 characters, then cuts anything over " +
+            "${config.maxCharInSentence} characters at the previous space.",
+    )
+    println("The language model finishes the first piece before the first audio callback. TTFA tracks that piece.")
+    for (line in lines) {
+        val parts = pocketPieces(line.text, config.maxCharInSentence, 30)
+        val lens = parts.joinToString(" + ") { it.length.toString() }
+        println("  ${line.id}: $lens chars")
+    }
+    println()
+}
+
+private fun printTailNotes(summaries: List<LineSummary>) {
+    for (summary in summaries) {
+        if (summary.audioMedian > 0.0 && summary.audioMax > summary.audioMedian * 2.0) {
+            println(
+                "tail: ${summary.line.id} warm audio reached ${fmt(summary.audioMax, 2)} s " +
+                    "(median ${fmt(summary.audioMedian, 2)} s). TTFA includes the whole first text piece, " +
+                    "because the decoder callback starts only after the language model hits end-of-speech. " +
+                    "Temperature 0.7 sometimes delays that. The audio itself is long, so this is not a GC pause.",
+            )
+        }
+    }
+}
+
+private fun runSweep(
+    config: Config,
+    lines: List<LineSpec>,
+    voice: VoiceWave,
+    tts: OfflineTts,
+    warmRuns: Int,
+    nativeMs: Double,
+    modelLoadMs: Double,
+    rssAfterLoadKb: Long,
+    sampler: RssSampler,
+) {
+    println()
+    println("Chunk-size sweep: ${config.sweepChunkSizes.joinToString(", ")}")
+    println("Each value: one discarded warmup, then $warmRuns measured runs. RTF bar is ${fmt(config.passRtf, 1)}x.")
+    println("chunk_size is decoder frames after the language model has finished the first text piece (80 ms of audio each).")
+    println()
+    val blocks = ArrayList<Pair<Int, List<LineSummary>>>()
+    for (size in config.sweepChunkSizes) {
+        val sized = config.copy(chunkSize = size.toString())
+        log("sweep chunk_size=$size")
+        val summaries = ArrayList<LineSummary>()
+        for (line in lines) {
+            speak(tts, line, voice, sized, "warmup")
+            val measured = ArrayList<RunResult>()
+            for (n in 1..warmRuns) {
+                val run = speak(tts, line, voice, sized, "warm")
+                measured.add(run)
+                log(
+                    "sweep chunk $size ${line.id} $n/$warmRuns: TTFA ${fmtMs(run.ttfaMs)} ms, " +
+                        "RTF ${fmt(run.rtf, 2)}x, audio ${fmt(run.audioSeconds, 2)} s",
+                )
+            }
+            summaries.add(summarize(line, measured, sized))
+        }
+        blocks.add(size to summaries)
+        println("chunk_size $size")
+        println(
+            String.format(
+                Locale.US,
+                "%-16s %5s %8s %8s %8s %8s %8s %6s %6s",
+                "line", "chars", "TTFAmed", "TTFAp90", "RTFmed", "RTFp10", "audiomax", "TTFA", "RTF",
+            ),
+        )
+        for (summary in summaries) {
+            println(
+                String.format(
+                    Locale.US,
+                    "%-16s %5d %8.0f %8.0f %8.2f %8.2f %8.2f %6s %6s",
+                    summary.line.id,
+                    summary.line.text.length,
+                    summary.ttfaMedian,
+                    summary.ttfaP90,
+                    summary.rtfMedian,
+                    summary.rtfP10,
+                    summary.audioMax,
+                    passFail(summary.ttfaPass),
+                    passFail(summary.rtfPass),
+                ),
+            )
+        }
+        val minRtf = summaries.minBy { it.rtfMedian }
+        val worstTtfa = summaries.maxBy { it.ttfaMedian }
+        println(
+            "  min warm RTF ${fmt(minRtf.rtfMedian, 2)}x (${minRtf.line.id}), " +
+                "worst warm TTFA ${fmtMs(worstTtfa.ttfaMedian)} ms (${worstTtfa.line.id})",
+        )
+        println()
+    }
+    val qualifying = blocks.filter { (_, summaries) -> summaries.all { it.rtfPass } }
+    val picked = qualifying.minByOrNull { it.first }
+    println(
+        if (picked == null) {
+            "Sweep pick: no chunk_size kept every line at or above ${fmt(config.passRtf, 1)}x RTF. Leave chunk_size at ${config.chunkSize}."
+        } else {
+            "Sweep pick: smallest chunk_size with every line's warm median RTF at or above " +
+                "${fmt(config.passRtf, 1)}x is ${picked.first}."
+        },
+    )
+    val peakKb = sampler.stop()
+    val jsonFile = File("results/ember-voice-sweep.json")
+    val csvFile = File("results/ember-voice-sweep.csv")
+    jsonFile.parentFile?.mkdirs()
+    jsonFile.writeText(
+        renderSweepJson(
+            config = config,
+            warmRuns = warmRuns,
+            nativeMs = nativeMs,
+            modelLoadMs = modelLoadMs,
+            rssAfterLoadKb = rssAfterLoadKb,
+            peakKb = peakKb,
+            voice = voice,
+            blocks = blocks,
+            picked = picked?.first,
+        ),
+    )
+    csvFile.writeText(renderSweepCsv(blocks))
+    println("json: ${jsonFile.path}")
+    println("csv:  ${csvFile.path}")
+    println("peak RSS: ${fmtKb(peakKb)}")
+}
+
+private fun renderSweepCsv(blocks: List<Pair<Int, List<LineSummary>>>): String {
+    val sb = StringBuilder()
+    sb.append(
+        "chunk_size,line_id,chars,warm_ttfa_median_ms,warm_ttfa_p90_ms,warm_rtf_median,warm_rtf_p10," +
+            "warm_audio_median_s,warm_audio_max_s,ttfa_pass,rtf_pass\n",
+    )
+    for ((size, summaries) in blocks) {
+        for (summary in summaries) {
+            sb.append(
+                listOf(
+                    size.toString(),
+                    csv(summary.line.id),
+                    summary.line.text.length.toString(),
+                    num(summary.ttfaMedian),
+                    num(summary.ttfaP90),
+                    num(summary.rtfMedian),
+                    num(summary.rtfP10),
+                    num(summary.audioMedian),
+                    num(summary.audioMax),
+                    summary.ttfaPass.toString(),
+                    summary.rtfPass.toString(),
+                ).joinToString(","),
+            )
+            sb.append('\n')
+        }
+    }
+    return sb.toString()
+}
+
+private fun renderSweepJson(
+    config: Config,
+    warmRuns: Int,
+    nativeMs: Double,
+    modelLoadMs: Double,
+    rssAfterLoadKb: Long,
+    peakKb: Long,
+    voice: VoiceWave,
+    blocks: List<Pair<Int, List<LineSummary>>>,
+    picked: Int?,
+): String {
+    val sb = StringBuilder()
+    sb.append("{\n")
+    sb.append("  \"schema\": 1,\n")
+    sb.append("  \"kind\": \"chunk_size_sweep\",\n")
+    sb.append("  \"measured_at\": ${jsonString(Instant.now().toString())},\n")
+    sb.append("  \"label\": \"Linux or Mac numbers from the machine that ran --sweep.\",\n")
+    sb.append("  \"host\": {\n")
+    sb.append("    \"os_name\": ${jsonString(System.getProperty("os.name"))},\n")
+    sb.append("    \"os_arch\": ${jsonString(System.getProperty("os.arch"))},\n")
+    sb.append("    \"cpu\": ${jsonString(cpuBrand())},\n")
+    sb.append("    \"java\": ${jsonString(System.getProperty("java.version"))}\n")
+    sb.append("  },\n")
+    sb.append("  \"voice_sample_rate\": ${voice.sampleRate},\n")
+    sb.append("  \"max_char_in_sentence\": ${config.maxCharInSentence},\n")
+    sb.append("  \"warm_runs\": $warmRuns,\n")
+    sb.append("  \"native_lib_load_ms\": ${num(nativeMs)},\n")
+    sb.append("  \"model_load_ms\": ${num(modelLoadMs)},\n")
+    sb.append("  \"rss_after_model_load_kb\": $rssAfterLoadKb,\n")
+    sb.append("  \"peak_rss_kb\": $peakKb,\n")
+    sb.append("  \"peak_rss_source\": ${jsonString(if (linuxPeakKb() > 0) "max(VmHWM, samples)" else "ps rss samples")},\n")
+    sb.append("  \"external_peak_rss_kb\": null,\n")
+    sb.append("  \"picked_chunk_size\": ${picked?.toString() ?: "null"},\n")
+    sb.append("  \"pass_rtf\": ${num(config.passRtf)},\n")
+    sb.append("  \"sizes\": [\n")
+    blocks.forEachIndexed { index, (size, summaries) ->
+        sb.append("    {\n")
+        sb.append("      \"chunk_size\": $size,\n")
+        sb.append("      \"lines\": [\n")
+        summaries.forEachIndexed { lineIndex, summary ->
+            sb.append("        {\n")
+            sb.append("          \"id\": ${jsonString(summary.line.id)},\n")
+            sb.append("          \"warm_ttfa_median_ms\": ${num(summary.ttfaMedian)},\n")
+            sb.append("          \"warm_ttfa_p90_ms\": ${num(summary.ttfaP90)},\n")
+            sb.append("          \"warm_rtf_median\": ${num(summary.rtfMedian)},\n")
+            sb.append("          \"warm_rtf_p10\": ${num(summary.rtfP10)},\n")
+            sb.append("          \"warm_audio_median_s\": ${num(summary.audioMedian)},\n")
+            sb.append("          \"warm_audio_max_s\": ${num(summary.audioMax)},\n")
+            sb.append("          \"ttfa_pass\": ${summary.ttfaPass},\n")
+            sb.append("          \"rtf_pass\": ${summary.rtfPass}\n")
+            sb.append("        }")
+            if (lineIndex != summaries.lastIndex) sb.append(",")
+            sb.append("\n")
+        }
+        sb.append("      ]\n")
+        sb.append("    }")
+        if (index != blocks.lastIndex) sb.append(",")
+        sb.append("\n")
+    }
+    sb.append("  ]\n")
+    sb.append("}\n")
+    return sb.toString()
+}
+
+/** Same splits sherpa-onnx applies before PocketTTS generation. max/min are character counts. */
+fun pocketPieces(text: String, maxChars: Int, minChars: Int): List<String> {
+    val merged = mergeShortSentences(splitByPunctuation(text), minChars)
+    val pieces = ArrayList<String>()
+    for (sentence in merged) {
+        pieces.addAll(splitLongSentence(sentence, maxChars))
+    }
+    return pieces
+}
+
+private fun splitByPunctuation(text: String): List<String> {
+    val sentences = ArrayList<String>()
+    val cur = StringBuilder()
+    fun flush() {
+        val piece = cur.toString().trim()
+        if (piece.isNotEmpty()) sentences.add(piece)
+        cur.setLength(0)
+    }
+    for (ch in text) {
+        cur.append(ch)
+        if (ch == '.' || ch == '!' || ch == '?' || ch == '。' || ch == '！' || ch == '？') {
+            flush()
+        }
+    }
+    flush()
+    return sentences
+}
+
+private fun isChunkBoundary(ch: Char): Boolean {
+    return ch == '.' || ch == '!' || ch == '?' || ch == '。' || ch == '！' || ch == '？' ||
+        ch == ',' || ch == ';' || ch == ':' || ch == '，' || ch == '；' || ch == '：'
+}
+
+private fun mergeShortSentences(sentences: List<String>, minChars: Int): List<String> {
+    val merged = ArrayList<String>()
+    val buffer = StringBuilder()
+    for (raw in sentences) {
+        val piece = raw.trim()
+        if (piece.isEmpty()) continue
+        if (buffer.isNotEmpty() && needSpaceBetween(buffer.toString(), piece)) {
+            buffer.append(' ')
+        }
+        buffer.append(piece)
+        if (buffer.length >= minChars) {
+            merged.add(buffer.toString().trim())
+            buffer.setLength(0)
+        }
+    }
+    if (buffer.isNotEmpty()) merged.add(buffer.toString().trim())
+    return merged
+}
+
+private fun needSpaceBetween(left: String, right: String): Boolean {
+    if (left.isEmpty() || right.isEmpty()) return false
+    val last = left.last()
+    val first = right.first()
+    if (last.isWhitespace() || first.isWhitespace()) return false
+    if (isChunkBoundary(last) || isChunkBoundary(first)) return false
+    return true
+}
+
+private fun splitLongSentence(sentence: String, maxChars: Int): List<String> {
+    val chunks = ArrayList<String>()
+    val s = sentence.trim()
+    if (s.isEmpty() || maxChars <= 0) return chunks
+    val chars = s.toCharArray()
+    var start = 0
+    while (start < chars.size) {
+        val end = minOf(start + maxChars, chars.size)
+        if (end >= chars.size) {
+            val piece = String(chars, start, chars.size - start).trim()
+            if (piece.isNotEmpty()) chunks.add(piece)
+            break
+        }
+        var splitPos = end
+        var found = false
+        var i = end
+        while (i > start) {
+            val ch = chars[i - 1]
+            if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+                splitPos = i - 1
+                found = true
+                break
+            }
+            if (isChunkBoundary(ch)) {
+                splitPos = i
+                found = true
+                break
+            }
+            i -= 1
+        }
+        if (!found || splitPos <= start) splitPos = end
+        val piece = String(chars, start, splitPos - start).trim()
+        if (piece.isNotEmpty()) chunks.add(piece)
+        start = splitPos
+        while (start < chars.size && (chars[start] == ' ' || chars[start] == '\t')) {
+            start += 1
+        }
+    }
+    return chunks
+}
+
+private fun resampleWav(input: File, output: File, targetRate: Int) {
+    if (!input.isFile) throw HarnessException("voice source not found: ${input.path}")
+    val wav = readWav(input)
+    val mono = if (wav.channels == 1) wav.samples else mixdown(wav.samples, wav.channels)
+    val resampled = if (wav.sampleRate == targetRate) mono else resampleLinear(mono, wav.sampleRate, targetRate)
+    output.parentFile?.mkdirs()
+    writeWav(output, targetRate, resampled)
+    println("resampled ${input.path} (${wav.sampleRate} Hz, ${wav.channels} ch) -> ${output.path} ($targetRate Hz mono)")
+}
+
+private class PcmWav(val sampleRate: Int, val channels: Int, val samples: ShortArray)
+
+private fun readWav(file: File): PcmWav {
+    val bytes = file.readBytes()
+    if (bytes.size < 44) throw HarnessException("wav is too small: ${file.path}")
+    fun tag(at: Int) = String(bytes, at, 4, Charsets.US_ASCII)
+    if (tag(0) != "RIFF" || tag(8) != "WAVE") throw HarnessException("not a wav file: ${file.path}")
+    var pos = 12
+    var rate = 0
+    var channels = 0
+    var bits = 0
+    var audioFormat = 0
+    var data: ByteArray? = null
+    while (pos + 8 <= bytes.size) {
+        val id = tag(pos)
+        val size = le32(bytes, pos + 4)
+        val start = pos + 8
+        if (start + size > bytes.size) throw HarnessException("truncated wav chunk $id in ${file.path}")
+        if (id == "fmt ") {
+            if (size < 16) throw HarnessException("short fmt chunk in ${file.path}")
+            audioFormat = le16(bytes, start)
+            channels = le16(bytes, start + 2)
+            rate = le32(bytes, start + 4)
+            bits = le16(bytes, start + 14)
+        } else if (id == "data") {
+            data = bytes.copyOfRange(start, start + size)
+        }
+        pos = start + size + (size and 1)
+    }
+    if (audioFormat != 1 || bits != 16 || channels < 1 || rate <= 0 || data == null) {
+        throw HarnessException(
+            "need 16-bit PCM wav, found format $audioFormat, $bits-bit, $channels ch, $rate Hz in ${file.path}",
+        )
+    }
+    val samples = ShortArray(data.size / 2)
+    var i = 0
+    while (i < samples.size) {
+        val lo = data[i * 2].toInt() and 0xff
+        val hi = data[i * 2 + 1].toInt()
+        samples[i] = ((hi shl 8) or lo).toShort()
+        i += 1
+    }
+    return PcmWav(rate, channels, samples)
+}
+
+private fun mixdown(interleaved: ShortArray, channels: Int): ShortArray {
+    val frames = interleaved.size / channels
+    val mono = ShortArray(frames)
+    var frame = 0
+    while (frame < frames) {
+        var sum = 0
+        var ch = 0
+        while (ch < channels) {
+            sum += interleaved[frame * channels + ch].toInt()
+            ch += 1
+        }
+        mono[frame] = (sum / channels).toShort()
+        frame += 1
+    }
+    return mono
+}
+
+private fun resampleLinear(input: ShortArray, inRate: Int, outRate: Int): ShortArray {
+    if (input.isEmpty()) return input
+    val outLen = (input.size.toLong() * outRate / inRate).toInt().coerceAtLeast(1)
+    if (input.size == 1 || outLen == 1) {
+        val flat = ShortArray(outLen)
+        var i = 0
+        while (i < outLen) {
+            flat[i] = input[0]
+            i += 1
+        }
+        return flat
+    }
+    val out = ShortArray(outLen)
+    val scale = (input.size - 1).toDouble() / (outLen - 1).toDouble()
+    var i = 0
+    while (i < outLen) {
+        val pos = i * scale
+        val left = pos.toInt().coerceIn(0, input.size - 2)
+        val frac = pos - left
+        val mixed = input[left] * (1.0 - frac) + input[left + 1] * frac
+        out[i] = mixed.toInt().coerceIn(-32768, 32767).toShort()
+        i += 1
+    }
+    return out
+}
+
+private fun writeWav(file: File, sampleRate: Int, samples: ShortArray) {
+    val dataBytes = samples.size * 2
+    val out = ByteArray(44 + dataBytes)
+    fun putTag(at: Int, text: String) {
+        text.forEachIndexed { index, ch -> out[at + index] = ch.code.toByte() }
+    }
+    fun put16(at: Int, value: Int) {
+        out[at] = (value and 0xff).toByte()
+        out[at + 1] = ((value shr 8) and 0xff).toByte()
+    }
+    fun put32(at: Int, value: Int) {
+        out[at] = (value and 0xff).toByte()
+        out[at + 1] = ((value shr 8) and 0xff).toByte()
+        out[at + 2] = ((value shr 16) and 0xff).toByte()
+        out[at + 3] = ((value shr 24) and 0xff).toByte()
+    }
+    putTag(0, "RIFF")
+    put32(4, 36 + dataBytes)
+    putTag(8, "WAVE")
+    putTag(12, "fmt ")
+    put32(16, 16)
+    put16(20, 1)
+    put16(22, 1)
+    put32(24, sampleRate)
+    put32(28, sampleRate * 2)
+    put16(32, 2)
+    put16(34, 16)
+    putTag(36, "data")
+    put32(40, dataBytes)
+    var i = 0
+    while (i < samples.size) {
+        val value = samples[i].toInt()
+        out[44 + i * 2] = (value and 0xff).toByte()
+        out[45 + i * 2] = ((value shr 8) and 0xff).toByte()
+        i += 1
+    }
+    file.writeBytes(out)
+}
+
+private fun le16(bytes: ByteArray, at: Int): Int {
+    return (bytes[at].toInt() and 0xff) or ((bytes[at + 1].toInt() and 0xff) shl 8)
+}
+
+private fun le32(bytes: ByteArray, at: Int): Int {
+    return (bytes[at].toInt() and 0xff) or
+        ((bytes[at + 1].toInt() and 0xff) shl 8) or
+        ((bytes[at + 2].toInt() and 0xff) shl 16) or
+        ((bytes[at + 3].toInt() and 0xff) shl 24)
 }

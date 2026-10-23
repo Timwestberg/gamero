@@ -77,8 +77,7 @@ else
 fi
 set -e
 
-json_file="$ROOT/results/ember-voice-results.json"
-if [ -f "$time_file" ] && [ -f "$json_file" ]; then
+if [ -f "$time_file" ]; then
   if [ "$(uname -s)" = "Darwin" ]; then
     raw=$(awk '/maximum resident set size/ {print $1; exit}' "$time_file")
     case "$raw" in
@@ -92,16 +91,25 @@ if [ -f "$time_file" ] && [ -f "$json_file" ]; then
     esac
   fi
   if [ -n "$kb" ]; then
-    tmp="${json_file}.tmp"
-    awk -v kb="$kb" '
-      !replaced && index($0, "\"external_peak_rss_kb\": null") {
-        sub(/null/, kb)
-        replaced = 1
-      }
-      { print }
-    ' "$json_file" > "$tmp"
-    mv "$tmp" "$json_file"
-    awk -v kb="$kb" 'BEGIN { printf "peak RSS from /usr/bin/time: %s KiB (%.1f MiB)\n", kb, kb / 1024 }'
+    patched=0
+    for json_file in "$ROOT/results/"*.json; do
+      if [ ! -f "$json_file" ]; then
+        continue
+      fi
+      tmp="${json_file}.tmp"
+      awk -v kb="$kb" '
+        !replaced && index($0, "\"external_peak_rss_kb\": null") {
+          sub(/null/, kb)
+          replaced = 1
+        }
+        { print }
+      ' "$json_file" > "$tmp"
+      mv "$tmp" "$json_file"
+      patched=1
+    done
+    if [ "$patched" -eq 1 ]; then
+      awk -v kb="$kb" 'BEGIN { printf "peak RSS from /usr/bin/time: %s KiB (%.1f MiB)\n", kb, kb / 1024 }'
+    fi
   else
     printf 'note: could not parse peak RSS from %s\n' "$time_file" >&2
   fi
