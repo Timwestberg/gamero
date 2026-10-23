@@ -68,4 +68,24 @@ The pass bar printed with the table is warm median TTFA at or under 500 ms and R
 ./run.sh --output results/baseline-linux-vm.json
 ```
 
-Do that only when the baseline itself should move. Later changes compare against the committed file.
+Do that only when the baseline itself should move. Later changes compare against the committed file. The bench branch still has the spike defaults in that file. This branch's `config/bench.conf` is the tuned default below, so `./run.sh` no longer reproduces the baseline unless those knobs are set back.
+
+## Chosen defaults (Linux VM)
+
+Not a Mac. Same host as the baseline. Commit `4219cc4`. `num_steps` 1, temperature 0.3, `chunker=ours`, `first_piece_target_chars` 40, `max_frames_per_character` 0.9, 2 threads, seed 1. Pieces of 24 characters or fewer still get a 24-frame ceiling. Native load 137 ms, model load 512 ms, cold `build_passed` TTFA 373 ms. No runaway in the 10 warm runs. `./compare.sh` against the baseline reports no TTFA regression.
+
+| line | baseline TTFA med / p90 | tuned TTFA med / p90 | tuned RTF | tuned WER |
+| --- | ---: | ---: | ---: | ---: |
+| build_passed | 585 / 1054 | 313 / 333 | 2.07 | 1.00 |
+| task_finished | 931 / 938 | 289 / 295 | 3.30 | 0.00 |
+| sign_in | 781 / 800 | 449 / 454 | 3.31 | 0.06 |
+| deploy_blocked | 974 / 1017 | 486 / 493 | 3.34 | 0.38 |
+| summary | 688 / 701 | 473 / 479 | 3.17 | 0.31 |
+| say_limit | 1631 / 1712 | 469 / 478 | 3.30 | 0.13 |
+| numbers_code | 1379 / 1542 | 426 / 437 | 3.85 | 0.58 |
+| question | 778 / 857 | 465 / 474 | 3.64 | 0.15 |
+| say_cap | 1628 / 1673 | 463 / 502 | 3.88 | 0.11 |
+
+`build_passed` WER is the last of the ten runs, and that draw was the short one (1.22 s, hypothesis "Bunt."). The median audio for that line is 1.87 s. `task_finished` is a clean transcript. `question` says "sweet" for "suite". One thread was slower than two, and four threads was slower and less stable, so the default stays at 2.
+
+Shared contract values to put in server-platform #180, if the placeholders differ: `numSteps` 1, `temperature` 0.3, `seed` 1, `firstPieceTargetChars` 40, `maxFramesPerCharacter` 0.9, `maxDurationRatio` 2. Leave `tiers` as they are. This VM never read that repo, so the harness JSON is still the schema in `SCHEMA.md`, not `ember-voice-benchmark.v1`.
