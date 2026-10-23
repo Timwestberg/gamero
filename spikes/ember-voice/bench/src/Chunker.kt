@@ -209,6 +209,10 @@ private fun cutAt(text: String, minChars: Int, maxChars: Int): Int {
         }
     }
     if (cut <= 0) return limit
+    if (cut < text.length && text[cut].isLetter() && text[cut - 1].isLetter()) {
+        val space = text.lastIndexOf(' ', cut - 1)
+        if (space >= 8) return space
+    }
     return cut
 }
 
