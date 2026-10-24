@@ -68,4 +68,65 @@ fun runVoiceSelfCheck() {
     check(ranLong(VoiceConfig(), "Done!", long)) { "runaway" }
     val short = PieceAudio(FloatArray(24000), 24000, 1.0)
     check(!ranLong(VoiceConfig(), "Done!", short)) { "not a runaway" }
+
+    val oneSecond = prepareReferenceClip(pcm16Wav(24000, 1, 24000) { 1000 })
+    check(oneSecond.samples.size == 24000) { "1s stays 24000" }
+    check(oneSecond.sampleRate == 24000) { "rate" }
+    val ten = prepareReferenceClip(pcm16Wav(32000, 1, 320000) { 1000 })
+    check(ten.samples.size == 240000 && ten.sourceRate == 32000) { "32 kHz 10s -> 24 kHz" }
+    val stereo = prepareReferenceClip(pcm16Wav(24000, 2, 24000) { index -> if (index % 2 == 0) 0 else 2000 })
+    check(stereo.sourceChannels == 2 && stereo.samples.size == 24000) { "stereo mix" }
+    val roundTrip = prepareReferenceClip(referenceClipWavBytes(oneSecond))
+    check(roundTrip.samples.size == oneSecond.samples.size) { "wav round trip" }
+    checkFails("short") { prepareReferenceClip(pcm16Wav(24000, 1, 12000) { 1 }) }
+    checkFails("long") { prepareReferenceClip(pcm16Wav(24000, 1, 24000 * 11) { 1 }) }
+    checkFails("not a wav") { prepareReferenceClip(ByteArray(64) { 0 }) }
+}
+
+private fun checkFails(label: String, block: () -> Unit) {
+    try {
+        block()
+        throw IllegalStateException("$label should have failed")
+    } catch (e: VoiceClipException) {
+        check(e.message?.isNotBlank() == true) { "$label message" }
+    }
+}
+
+private fun pcm16Wav(rate: Int, channels: Int, frames: Int, sample: (Int) -> Int): ByteArray {
+    val dataBytes = frames * channels * 2
+    val out = ByteArray(44 + dataBytes)
+    fun put(at: Int, text: String) {
+        text.forEachIndexed { index, ch -> out[at + index] = ch.code.toByte() }
+    }
+    fun put16(at: Int, value: Int) {
+        out[at] = (value and 0xff).toByte()
+        out[at + 1] = ((value shr 8) and 0xff).toByte()
+    }
+    fun put32(at: Int, value: Int) {
+        out[at] = (value and 0xff).toByte()
+        out[at + 1] = ((value shr 8) and 0xff).toByte()
+        out[at + 2] = ((value shr 16) and 0xff).toByte()
+        out[at + 3] = ((value shr 24) and 0xff).toByte()
+    }
+    put(0, "RIFF")
+    put32(4, 36 + dataBytes)
+    put(8, "WAVE")
+    put(12, "fmt ")
+    put32(16, 16)
+    put16(20, 1)
+    put16(22, channels)
+    put32(24, rate)
+    put32(28, rate * channels * 2)
+    put16(32, channels * 2)
+    put16(34, 16)
+    put(36, "data")
+    put32(40, dataBytes)
+    var i = 0
+    while (i < frames * channels) {
+        val value = sample(i)
+        out[44 + i * 2] = (value and 0xff).toByte()
+        out[45 + i * 2] = ((value shr 8) and 0xff).toByte()
+        i += 1
+    }
+    return out
 }

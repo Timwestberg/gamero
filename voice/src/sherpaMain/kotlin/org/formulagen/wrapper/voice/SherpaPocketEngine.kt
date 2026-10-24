@@ -7,7 +7,6 @@ import com.k2fsa.sherpa.onnx.OfflineTtsCallback
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsPocketModelConfig
-import com.k2fsa.sherpa.onnx.WaveReader
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
 
@@ -40,10 +39,9 @@ class SherpaPocketEngine(private val config: VoiceConfig) : PieceEngine {
         }
         val voice = File(config.voiceWav)
         if (!voice.isFile) throw IllegalStateException("voice file not found: ${voice.path}")
-        val reader = WaveReader(voice.path)
-        voiceSamples = reader.samples
-        voiceRate = reader.sampleRate
-        if (voiceSamples.isEmpty() || voiceRate <= 0) throw IllegalStateException("voice wav is empty: ${voice.path}")
+        val clip = prepareReferenceClip(voice.readBytes())
+        voiceSamples = clip.samples
+        voiceRate = clip.sampleRate
         fun modelPath(name: String) = File(dir, name).path
         val pocket = OfflineTtsPocketModelConfig.builder()
             .setLmFlow(modelPath("lm_flow.int8.onnx"))
@@ -69,6 +67,7 @@ class SherpaPocketEngine(private val config: VoiceConfig) : PieceEngine {
         extra["chunk_size"] = config.chunkSize.toString()
         extra["max_char_in_sentence"] = maxOf(120, text.length).toString()
         extra["seed"] = seed.toString()
+        extra["max_reference_audio_len"] = (voiceSamples.size / voiceRate.toDouble()).toString()
         if (maxFrames > 0) extra["max_frames"] = maxFrames.toString()
         val gen = GenerationConfig()
         gen.referenceAudio = voiceSamples

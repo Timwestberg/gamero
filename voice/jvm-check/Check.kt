@@ -6,8 +6,19 @@ import java.io.File
  * JVM proof for the Mac companion path. Logic checks always run.
  * Pass --speak to synthesize one line when the spike model is on disk.
  * Pass --write-pieces FILE to emit the piece list the iOS runner speaks.
+ * Pass --check-voice FILE to validate a reference clip, or
+ * --prepare-voice IN OUT to write the 24 kHz mono copy.
  */
 fun main(args: Array<String>) {
+    try {
+        runCheck(args)
+    } catch (e: VoiceClipException) {
+        System.err.println("error: ${e.message}")
+        kotlin.system.exitProcess(1)
+    }
+}
+
+private fun runCheck(args: Array<String>) {
     runVoiceSelfCheck()
     println("voice self-check: ok")
     val writeAt = args.indexOf("--write-pieces")
@@ -16,6 +27,24 @@ fun main(args: Array<String>) {
         val corpus = File(arg(args, "--corpus") ?: "../spikes/ember-voice/bench/corpus/ember-voice-corpus.json")
         File(path).writeText(pieceCatalog(corpus))
         println("pieces: $path")
+    }
+    val checkVoice = arg(args, "--check-voice")
+    if (checkVoice != null) {
+        val clip = prepareReferenceClip(File(checkVoice).readBytes())
+        println(
+            "voice: ${"%.2f".format(clip.seconds)} s, ${clip.sourceRate} Hz, " +
+                "${clip.sourceChannels} ch -> ${clip.sampleRate} Hz mono",
+        )
+    }
+    val prepareIn = arg(args, "--prepare-voice")
+    if (prepareIn != null) {
+        val prepareOut = args.getOrNull(args.indexOf("--prepare-voice") + 2)
+            ?: error("--prepare-voice needs an output path")
+        val clip = prepareReferenceClip(File(prepareIn).readBytes())
+        val dest = File(prepareOut)
+        dest.parentFile?.mkdirs()
+        dest.writeBytes(referenceClipWavBytes(clip))
+        println("prepared: ${dest.path} (${"%.2f".format(clip.seconds)} s, ${clip.sampleRate} Hz mono)")
     }
     if ("--speak" in args) {
         val config = VoiceConfig(
