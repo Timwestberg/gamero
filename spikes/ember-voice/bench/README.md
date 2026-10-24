@@ -21,7 +21,16 @@ cd spikes/ember-voice/bench
 ./compare.sh results/baseline-linux-vm.json results/ember-voice-bench.json
 ```
 
-`./run.sh` writes `results/ember-voice-bench.json` (schema in `SCHEMA.md`) and one WAV per line under `results/wav/`. `results/baseline-linux-vm.json` is the committed Linux VM timing baseline. `results/baseline-wer-linux-vm.json` is the same spike defaults scored with median WER. `results/loose-cap-linux-vm.json` is the uncapped intelligibility check. `results/quick-wins-linux-vm.json` is the tuned confirmation. Other result files are gitignored.
+`./run.sh` writes `results/ember-voice-bench.json` (schema in `SCHEMA.md`) and one WAV per line under `results/wav/`. `--voice path.wav` uses another reference clip. Any WAV is resampled to 24 kHz mono. Under 1 second or over 10 seconds is rejected. The default stays the CC0 `voice-donations/0a67_enhanced` clip.
+
+```bash
+./run.sh --voice /path/to/my-clip.wav
+./run.sh --compare-voices ../mac/models/voices/0a67_enhanced-24k.wav /path/to/my-clip.wav
+```
+
+`--compare-voices` runs the corpus twice and writes `results/voice-compare/summary.json` with TTFA, RTF, and median WER side by side, plus a WAV directory for each clip. A user-recorded clip needs written consent. Do not use Expresso or the `test_wavs` clips.
+
+`results/baseline-linux-vm.json` is the committed Linux VM timing baseline. `results/baseline-wer-linux-vm.json` is the same spike defaults scored with median WER. `results/loose-cap-linux-vm.json` is the uncapped intelligibility check. `results/quick-wins-linux-vm.json` is the tuned confirmation. Other result files are gitignored.
 
 `--matrix` takes one or more `key=a,b` axes and runs the cartesian product in one process. Keys: `chunk_size`, `max_char_in_sentence`, `num_threads`, `num_steps`, `temperature`, `provider`, `model_dir`, `seed`, `chunker`, `warmup`, `max_frames`, `first_piece_target_chars`, `max_frames_per_character`, `frame_intercept`, `frame_floor`, `short_piece_chars`, `short_piece_min_frames`, `silence_ms`. `--set` applies to every cell. The summary is `results/matrix-summary.json`.
 
