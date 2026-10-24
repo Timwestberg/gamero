@@ -11,13 +11,15 @@ final class BenchTests: XCTestCase {
         }
         let catalog = try JSONDecoder().decode(BenchCatalog.self, from: Data(contentsOf: piecesURL))
         let config = try JSONDecoder().decode(BenchConfig.self, from: Data(contentsOf: configURL))
-        if config.model_dir.isEmpty || config.voice_wav.isEmpty {
+        let bundledVoice = bundle.url(forResource: "reference-voice", withExtension: "wav")?.path
+        let voicePath = bundledVoice ?? config.voice_wav
+        if config.model_dir.isEmpty || voicePath.isEmpty {
             XCTFail("bench-config.json has empty paths. Run voice/ios-bench/run.sh on the Mac.")
             return
         }
         let synth: BenchSynthesizer
         if config.backend == "fluid-audio" {
-            guard let engine = ember_voice_fluid_create(config.voice_wav, Float(catalog.temperature), Int32(catalog.seed)) else {
+            guard let engine = ember_voice_fluid_create(voicePath, Float(catalog.temperature), Int32(catalog.seed)) else {
                 XCTFail("FluidAudio is not linked. Add the package, or leave the backend as sherpa.")
                 return
             }
@@ -26,7 +28,7 @@ final class BenchTests: XCTestCase {
         } else {
             synth = SherpaSynthesizer(
                 modelDir: config.model_dir,
-                voiceWav: config.voice_wav,
+                voiceWav: voicePath,
                 threads: Int32(config.threads)
             )
         }

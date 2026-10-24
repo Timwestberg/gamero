@@ -14,8 +14,13 @@ import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.FloatVar
 import kotlinx.cinterop.StableRef
+import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.asStableRef
 import kotlinx.cinterop.staticCFunction
+import kotlinx.cinterop.usePinned
+import platform.Foundation.NSData
+import platform.Foundation.NSTemporaryDirectory
+import platform.posix.memcpy
 
 /**
  * iOS calls ember_voice_bridge.h. Swift includes the sherpa-onnx xcframework
@@ -35,7 +40,7 @@ actual fun openPieceEngine(config: VoiceConfig): PieceEngine {
 
 @OptIn(ExperimentalForeignApi::class)
 private class SherpaIosPieceEngine(private val config: VoiceConfig) : PieceEngine {
-    private val handle = ember_voice_sherpa_create(config.modelDir, config.voiceWav, config.numThreads)
+    private val handle = ember_voice_sherpa_create(config.modelDir, preparedVoiceWav(config.voiceWav), config.numThreads)
         ?: throw IllegalStateException("sherpa-onnx iOS engine did not load. Link the xcframework and the bridge.")
     override val sampleRate: Int = ember_voice_sherpa_sample_rate(handle)
 
@@ -62,7 +67,7 @@ private class SherpaIosPieceEngine(private val config: VoiceConfig) : PieceEngin
 
 @OptIn(ExperimentalForeignApi::class)
 private class FluidAudioPieceEngine(config: VoiceConfig) : PieceEngine {
-    private val handle = ember_voice_fluid_create(config.voiceWav, config.temperature.toFloat(), config.seed)
+    private val handle = ember_voice_fluid_create(preparedVoiceWav(config.voiceWav), config.temperature.toFloat(), config.seed)
         ?: throw IllegalStateException("FluidAudio is not linked. It is an optional iOS backend.")
     override val sampleRate: Int = ember_voice_fluid_sample_rate(handle)
 
@@ -75,6 +80,28 @@ private class FluidAudioPieceEngine(config: VoiceConfig) : PieceEngine {
     override fun release() {
         ember_voice_fluid_destroy(handle)
     }
+}
+
+@OptIn(ExperimentalForeignApi::class)
+private fun preparedVoiceWav(path: String): String {
+    val data = NSData.dataWithContentsOfFile(path) ?: throw VoiceClipException("voice file not found: $path")
+    val count = data.length.toInt()
+    val bytes = ByteArray(count)
+    if (count > 0) {
+        val raw = data.bytes ?: throw VoiceClipException("voice file is empty: $path")
+        bytes.usePinned { pinned ->
+            memcpy(pinned.addressOf(0), raw, data.length)
+        }
+    }
+    val clip = prepareReferenceClip(bytes)
+    val wav = referenceClipWavBytes(clip)
+    val dir = NSTemporaryDirectory() ?: "/tmp"
+    val out = dir.trimEnd('/') + "/ember-voice-reference.wav"
+    val wrote = wav.usePinned { pinned ->
+        NSData.dataWithBytes(pinned.addressOf(0), wav.size.toULong()).writeToFile(out, true)
+    }
+    if (!wrote) throw VoiceClipException("could not write the prepared voice clip")
+    return out
 }
 
 private class SampleBox {

@@ -2,4 +2,5 @@ build/
 libs/*.aar
 libs/*.jar
 ios-bench/results/
+ios-bench/EmberVoiceBench/reference-voice.wav
 *.xcframework

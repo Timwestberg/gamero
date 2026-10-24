@@ -21,6 +21,7 @@ struct EmberSherpaEngine {
     std::string scores;
     double last_ttfa_ms;
     int32_t last_samples;
+    double reference_seconds;
 };
 
 struct EmberCallbackBox {
@@ -85,7 +86,17 @@ extern "C" void *ember_voice_sherpa_create(const char *model_dir, const char *vo
         return NULL;
     }
     const SherpaOnnxWave *wave = SherpaOnnxReadWave(voice_wav);
-    if (wave == NULL) {
+    if (wave == NULL || wave->sample_rate <= 0 || wave->num_samples <= 0) {
+        if (wave != NULL) SherpaOnnxFreeWave(wave);
+        SherpaOnnxDestroyOfflineTts(tts);
+        delete engine;
+        return NULL;
+    }
+    double seconds = (double)wave->num_samples / (double)wave->sample_rate;
+    if (seconds < 1.0 || seconds > 10.0005) {
+        fprintf(stderr, "voice clip is too %s (%.2f s). It needs to be between 1 and 10 seconds.\n",
+                seconds < 1.0 ? "short" : "long", seconds);
+        SherpaOnnxFreeWave(wave);
         SherpaOnnxDestroyOfflineTts(tts);
         delete engine;
         return NULL;
@@ -94,6 +105,7 @@ extern "C" void *ember_voice_sherpa_create(const char *model_dir, const char *vo
     engine->wave = wave;
     engine->last_ttfa_ms = 0;
     engine->last_samples = 0;
+    engine->reference_seconds = seconds;
     return engine;
 }
 
@@ -138,12 +150,13 @@ extern "C" int32_t ember_voice_sherpa_speak(
     snprintf(
         extra,
         sizeof(extra),
-        "{\"temperature\":%.4f,\"chunk_size\":%d,\"seed\":%d,\"max_frames\":%d,\"max_char_in_sentence\":%d}",
+        "{\"temperature\":%.4f,\"chunk_size\":%d,\"seed\":%d,\"max_frames\":%d,\"max_char_in_sentence\":%d,\"max_reference_audio_len\":%.4f}",
         temperature,
         chunk_size,
         seed,
         max_frames,
-        sentence);
+        sentence,
+        sherpa->reference_seconds);
     SherpaOnnxGenerationConfig gen;
     memset(&gen, 0, sizeof(gen));
     gen.reference_audio = sherpa->wave->samples;

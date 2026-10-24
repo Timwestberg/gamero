@@ -15,6 +15,7 @@
 		B10000000000000000000006 /* BenchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000006 /* BenchTests.swift */; };
 		B10000000000000000000007 /* pieces.json in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000007 /* pieces.json */; };
 		B10000000000000000000008 /* bench-config.json in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000008 /* bench-config.json */; };
+		B10000000000000000000009 /* reference-voice.wav in Resources */ = {isa = PBXBuildFile; fileRef = F1000000000000000000000A /* reference-voice.wav */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -36,6 +37,7 @@
 		F10000000000000000000006 /* BenchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchTests.swift; sourceTree = "<group>"; };
 		F10000000000000000000007 /* pieces.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = pieces.json; sourceTree = "<group>"; };
 		F10000000000000000000008 /* bench-config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = bench-config.json; sourceTree = "<group>"; };
+		F1000000000000000000000A /* reference-voice.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = "reference-voice.wav"; sourceTree = "<group>"; };
 		F10000000000000000000009 /* EmberVoiceBench-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "EmberVoiceBench-Bridging-Header.h"; sourceTree = "<group>"; };
 		P10000000000000000000001 /* EmberVoiceBench.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EmberVoiceBench.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		P10000000000000000000002 /* EmberVoiceBenchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EmberVoiceBenchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -79,6 +81,7 @@
 				F10000000000000000000009 /* EmberVoiceBench-Bridging-Header.h */,
 				F10000000000000000000007 /* pieces.json */,
 				F10000000000000000000008 /* bench-config.json */,
+				F1000000000000000000000A /* reference-voice.wav */,
 			);
 			path = EmberVoiceBench;
 			sourceTree = "<group>";
@@ -188,6 +191,7 @@
 			files = (
 				B10000000000000000000007 /* pieces.json in Resources */,
 				B10000000000000000000008 /* bench-config.json in Resources */,
+				B10000000000000000000009 /* reference-voice.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

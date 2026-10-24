@@ -9,6 +9,7 @@
 #   SHERPA_ONNX_XCFRAMEWORK=/path/to/sherpa-onnx.xcframework
 #   EMBER_VOICE_MODEL_DIR=/path/to/sherpa-onnx-pocket-tts-int8-2026-01-26
 #   EMBER_VOICE_WAV=/path/to/0a67_enhanced-24k.wav
+#   ./run.sh --voice /path/to/my-clip.wav
 #   EMBER_VOICE_BACKEND=sherpa          # or fluid-audio
 #   DEVELOPMENT_TEAM=XXXXXXXXXX
 set -eu
@@ -45,7 +46,26 @@ select_destinations() {
   '
 }
 
-if [ "${1:-}" = "--self-check" ]; then
+VOICE_WAV=${EMBER_VOICE_WAV:-$ROOT/spikes/ember-voice/mac/models/voices/0a67_enhanced-24k.wav}
+self_check=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --self-check)
+      self_check=1
+      shift
+      ;;
+    --voice)
+      [ $# -ge 2 ] || die "--voice needs a wav path"
+      VOICE_WAV=$2
+      shift 2
+      ;;
+    *)
+      die "unknown argument $1"
+      ;;
+  esac
+done
+
+if [ "$self_check" -eq 1 ]; then
   sample=$(printf '%s\n' \
     '== Devices ==' \
     'MacBook Pro (AAAA)' \
@@ -66,15 +86,17 @@ if [ "${1:-}" = "--self-check" ]; then
   exit 0
 fi
 
-command -v xcodebuild >/dev/null 2>&1 || die "xcodebuild is not on this machine. Run this on the Mac that has the phones."
-command -v xcrun >/dev/null 2>&1 || die "xcrun is not on this machine."
-
 MODEL_DIR=${EMBER_VOICE_MODEL_DIR:-$ROOT/spikes/ember-voice/mac/models/sherpa-onnx-pocket-tts-int8-2026-01-26}
-VOICE_WAV=${EMBER_VOICE_WAV:-$ROOT/spikes/ember-voice/mac/models/voices/0a67_enhanced-24k.wav}
 BACKEND=${EMBER_VOICE_BACKEND:-sherpa}
 THREADS=${EMBER_VOICE_THREADS:-2}
 [ -d "$MODEL_DIR" ] || die "model dir not found: $MODEL_DIR"
 [ -f "$VOICE_WAV" ] || die "voice wav not found: $VOICE_WAV"
+PREPARED="$HERE/EmberVoiceBench/reference-voice.wav"
+"$ROOT/voice/jvm-check.sh" --prepare-voice "$VOICE_WAV" "$PREPARED"
+VOICE_WAV="$PREPARED"
+
+command -v xcodebuild >/dev/null 2>&1 || die "xcodebuild is not on this machine. Run this on the Mac that has the phones."
+command -v xcrun >/dev/null 2>&1 || die "xcrun is not on this machine."
 
 XC=${SHERPA_ONNX_XCFRAMEWORK:-}
 [ -n "$XC" ] || die "set SHERPA_ONNX_XCFRAMEWORK to the sherpa-onnx 2.0.0 iOS xcframework"
