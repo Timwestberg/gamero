@@ -112,7 +112,8 @@ internal class EmbeddedCompanionWindow(
         scope.launch {
             game.contextId.collect { context ->
                 if (context != null) {
-                    attached = MacGameLayer.attach(canvas, context)
+                    // Loading the layer bridge can throw a LinkageError; it must reach fail(), not the app's fatal handler.
+                    attached = try { MacGameLayer.attach(canvas, context) } catch (_: Exception) { false } catch (_: LinkageError) { false }
                     if (!attached) fail("Could not attach the native game surface")
                     else {
                         status.isVisible = false
