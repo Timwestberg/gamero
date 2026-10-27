@@ -7,6 +7,7 @@ import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.Clip
 import org.formulagen.wrapper.bridge.ChatVoice
+import org.formulagen.wrapper.bridge.VoiceState
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.voice.EmberVoice
@@ -36,7 +37,7 @@ internal class DesktopSpeech(
     private var clip: Clip? = null
     private var generation = 0
     private var closed = false
-    private val notInstalled = ChatVoice("unavailable", "Local voice is not installed. Text chat is available.")
+    private val notInstalled = ChatVoice(VoiceState.UNAVAILABLE, "Local voice is not installed. Text chat is available.")
     /** Set once the native runtime fails to link; a later attempt would only fail again. */
     private var unavailable: ChatVoice? = if (config == null) notInstalled else null
     private var state = unavailable ?: ChatVoice()
@@ -51,7 +52,7 @@ internal class DesktopSpeech(
         val spoken = speechText(text)
         if (spoken.isBlank()) return@synchronized
         val ticket = generation
-        state = ChatVoice("preparing")
+        state = ChatVoice(VoiceState.PREPARING)
         worker.execute {
             try {
                 synchronized(gate) { if (closed || ticket != generation) return@execute }
@@ -63,7 +64,7 @@ internal class DesktopSpeech(
                     player.open(AudioFormat(audio.sampleRate.toFloat(), 16, 1, true, false), pcm, 0, pcm.size)
                     synchronized(gate) {
                         if (closed || ticket != generation) return@execute
-                        clip = player; state = ChatVoice("speaking", if (text.length > MAX_SPOKEN_CHARS) "Reading the beginning of this reply. The full reply is shown above." else null)
+                        clip = player; state = ChatVoice(VoiceState.SPEAKING, if (text.length > MAX_SPOKEN_CHARS) "Reading the beginning of this reply. The full reply is shown above." else null)
                         player.start()
                     }
                     val deadline = System.nanoTime() + (player.microsecondLength + 5_000_000L) * 1000
@@ -77,10 +78,10 @@ internal class DesktopSpeech(
                 // UnsatisfiedLinkError or ExceptionInInitializerError: the native runtime cannot load on this Mac.
                 val linkage = error is LinkageError
                 synchronized(gate) {
-                    if (linkage) unavailable = ChatVoice("unavailable", "Local voice could not start on this Mac. Text chat is available.")
+                    if (linkage) unavailable = ChatVoice(VoiceState.UNAVAILABLE, "Local voice could not start on this Mac. Text chat is available.")
                     if (ticket == generation) clip = null
                     if (!closed && (linkage || ticket == generation)) {
-                        state = unavailable ?: ChatVoice("error", "Voice playback failed. Your text reply is still available.")
+                        state = unavailable ?: ChatVoice(VoiceState.ERROR, "Voice playback failed. Your text reply is still available.")
                     }
                 }
                 if (error is VirtualMachineError) throw error

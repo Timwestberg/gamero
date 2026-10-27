@@ -7,6 +7,7 @@ import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.formulagen.wrapper.bridge.ChatLimits
 import org.formulagen.wrapper.bridge.ChatMessage
 
 @Serializable
@@ -18,9 +19,9 @@ internal class ChatHistory(private val file: Path) {
         if (!Files.exists(file)) return ChatRecord()
         require(Files.size(file) <= 3_000_000)
         return Json.decodeFromString<ChatRecord>(Files.readString(file)).also { record ->
-            require(record.version == 1 && record.messages.size <= 40)
+            require(record.version == 1 && record.messages.size <= ChatLimits.HISTORY)
             record.threadId?.let { require(UUID.fromString(it).toString() == it) }
-            record.messages.forEach { require(it.role in setOf("user", "assistant") && it.text.length <= 16000); UUID.fromString(it.id) }
+            record.messages.forEach { require(it.text.length <= ChatLimits.REPLY); UUID.fromString(it.id) }
         }
     }
 

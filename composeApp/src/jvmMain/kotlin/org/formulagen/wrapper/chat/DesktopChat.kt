@@ -27,7 +27,7 @@ internal class DesktopChat(
     private var ended: Pair<ChatScope, ChatSnapshot>? = null
     private var closed = false
     private class Session(val scope: ChatScope, val runtime: CodexRuntime, val history: ChatHistory, var record: ChatRecord) {
-        var state = "checking"
+        var state = ChatState.CHECKING
         var notice: String? = "Checking Codex connection…"
         var rpc: CodexAccountRpc? = null
         var resumed = false
@@ -44,11 +44,11 @@ internal class DesktopChat(
     override suspend fun open(scope: ChatScope): ChatSnapshot = synchronized(gate) {
         check(!closed)
         val old = active
-        if (old?.scope == scope && old.state !in setOf("error", "disconnected")) return@synchronized view(old)
+        if (old?.scope == scope && old.state !in setOf(ChatState.ERROR, ChatState.DISCONNECTED)) return@synchronized view(old)
         invalidateLocked(keepEnded = false)
         ended = null
         if (executable == null) {
-            return@synchronized ChatSnapshot("error", notice = "Install Codex on this Mac and restart Hovel.", voice = speech.status())
+            return@synchronized ChatSnapshot(ChatState.ERROR, notice = "Install Codex on this Mac and restart Hovel.", voice = speech.status())
                 .also { ended = scope to it }
         }
         val home = codexProfileHome(providerRoot, scope.profile)
@@ -70,20 +70,20 @@ internal class DesktopChat(
     override suspend fun send(args: ChatSend): ChatSnapshot = synchronized(gate) {
         val session = current(args.scope())
         if (session.record.messages.any { it.id == args.requestId }) return@synchronized view(session)
-        if (session.checking || session.state == "responding") throw BridgeBusyException()
-        check(session.state in setOf("ready", "cancelled"))
+        if (session.checking || session.state == ChatState.RESPONDING) throw BridgeBusyException()
+        check(session.state in setOf(ChatState.READY, ChatState.CANCELLED))
         speech.stop()
-        val messages = (session.record.messages + ChatMessage(args.requestId, "user", args.text.trimEcma()) +
-            ChatMessage(UUID.randomUUID().toString(), "assistant", "")).takeLast(40)
+        val messages = (session.record.messages + ChatMessage(args.requestId, ChatRole.USER, args.text.trimEcma()) +
+            ChatMessage(UUID.randomUUID().toString(), ChatRole.ASSISTANT, "")).takeLast(ChatLimits.HISTORY)
         val next = session.record.copy(messages = messages)
         session.history.write(next)
-        session.record = next; session.state = "responding"; session.notice = null
+        session.record = next; session.state = ChatState.RESPONDING; session.notice = null
         session.speak = args.speak; session.itemId = null; session.turnId = null; session.awaitingTurn.clear()
         val generation = ++session.generation
         worker.execute { attempt(session, generation) { startTurn(session, generation, args.text.trimEcma()) } }
         timer.schedule({ synchronized(gate) {
-            if (live(session, generation) && session.state == "responding") {
-                end(session, "error", "The reply took too long. Your message is saved; retry when you are ready.")
+            if (live(session, generation) && session.state == ChatState.RESPONDING) {
+                end(session, ChatState.ERROR, "The reply took too long. Your message is saved; retry when you are ready.")
             }
         } }, 3, TimeUnit.MINUTES)
         view(session)
@@ -92,7 +92,7 @@ internal class DesktopChat(
     /** Stop closes the owned provider process, including any still-starting turn. */
     override suspend fun stop(scope: ChatScope): ChatSnapshot = synchronized(gate) {
         val session = current(scope)
-        end(session, "cancelled", "Reply stopped.")
+        end(session, ChatState.CANCELLED, "Reply stopped.")
         view(session)
     }
 
@@ -130,13 +130,13 @@ internal class DesktopChat(
             check(live(session, generation))
             val account = result["account"] as? JsonObject
             if (account?.get("type") != JsonPrimitive("chatgpt")) {
-                session.state = "disconnected"; session.notice = "Connect Codex in Profile → Providers to message your companion."
+                session.state = ChatState.DISCONNECTED; session.notice = "Connect Codex in Profile → Providers to message your companion."
                 session.checking = false
                 dropRpc(session)
                 error("ChatGPT account required")
             }
             session.checking = false
-            if (session.state != "responding") { session.state = "ready"; session.notice = null }
+            if (session.state != ChatState.RESPONDING) { session.state = ChatState.READY; session.notice = null }
         }
         return rpc
     }
@@ -160,7 +160,7 @@ internal class DesktopChat(
             putJsonArray("input") { add(buildJsonObject { put("type", "text"); put("text", text) }) }
         })
         synchronized(gate) {
-            if (live(session, generation) && session.state == "responding") {
+            if (live(session, generation) && session.state == ChatState.RESPONDING) {
                 session.turnId = started.getValue("turn").jsonObject.getValue("id").jsonPrimitive.content
                 val buffered = session.awaitingTurn.toList(); session.awaitingTurn.clear()
                 buffered.forEach { (method, params) -> receive(session, session.rpcEpoch, method, params) }
@@ -183,14 +183,14 @@ internal class DesktopChat(
     private fun receive(session: Session, epoch: Int, method: String, params: JsonObject) = synchronized(gate) {
         if (!live(session) || epoch != session.rpcEpoch) return@synchronized
         if (method in setOf("request/refused", "transport/closed")) {
-            if (session.state == "responding") end(session, "error", "The reply stopped. Try again when Codex is ready.")
+            if (session.state == ChatState.RESPONDING) end(session, ChatState.ERROR, "The reply stopped. Try again when Codex is ready.")
             // A dead app-server is never reused: the next send starts a new one and resumes the thread again.
             else if (method == "transport/closed") dropRpc(session)
             return@synchronized
         }
-        if (session.state != "responding" || params["threadId"] != JsonPrimitive(session.record.threadId)) return@synchronized
+        if (session.state != ChatState.RESPONDING || params["threadId"] != JsonPrimitive(session.record.threadId)) return@synchronized
         if (session.turnId == null) {
-            if (session.awaitingTurn.size >= 512) end(session, "error", "The reply could not be synchronized. Reopen this chat to try again.")
+            if (session.awaitingTurn.size >= 512) end(session, ChatState.ERROR, "The reply could not be synchronized. Reopen this chat to try again.")
             else session.awaitingTurn += method to params
             return@synchronized
         }
@@ -210,22 +210,22 @@ internal class DesktopChat(
             }
             "turn/completed" -> {
                 val status = turn?.get("status")?.jsonPrimitive?.content
-                session.state = when (status) { "completed" -> "ready"; "interrupted" -> "cancelled"; else -> "error" }
-                session.notice = if (session.state == "error") "Codex could not finish this reply. Check your connection or plan allowance." else null
+                session.state = when (status) { "completed" -> ChatState.READY; "interrupted" -> ChatState.CANCELLED; else -> ChatState.ERROR }
+                session.notice = if (session.state == ChatState.ERROR) "Codex could not finish this reply. Check your connection or plan allowance." else null
                 session.turnId = null
                 runCatching { session.history.write(session.record) }.onFailure {
                     session.notice = "This reply could not be saved. Keep this chat open and try again later."
                 }
-                if (session.state == "ready" && session.speak) speech.speak(session.record.messages.last().text)
+                if (session.state == ChatState.READY && session.speak) speech.speak(session.record.messages.last().text)
             }
-            "error" -> if (params["willRetry"] != JsonPrimitive(true)) end(session, "error", "Codex could not finish this reply. Check Providers and try again.")
+            "error" -> if (params["willRetry"] != JsonPrimitive(true)) end(session, ChatState.ERROR, "Codex could not finish this reply. Check Providers and try again.")
         }
     }
 
     private fun updateReply(session: Session, text: String) {
         val messages = session.record.messages
-        if (messages.lastOrNull()?.role != "assistant") return
-        session.record = session.record.copy(messages = messages.dropLast(1) + messages.last().copy(text = text.take(16000)))
+        if (messages.lastOrNull()?.role != ChatRole.ASSISTANT) return
+        session.record = session.record.copy(messages = messages.dropLast(1) + messages.last().copy(text = text.take(ChatLimits.REPLY)))
     }
 
     /**
@@ -235,13 +235,13 @@ internal class DesktopChat(
     private fun attempt(session: Session, generation: Int, work: () -> Unit) {
         try { work() } catch (error: Throwable) {
             synchronized(gate) {
-                if (live(session, generation) && session.state != "disconnected") end(session, "error", "Codex could not complete the request. Reconnect or retry when ready.")
+                if (live(session, generation) && session.state != ChatState.DISCONNECTED) end(session, ChatState.ERROR, "Codex could not complete the request. Reconnect or retry when ready.")
             }
             if (error is VirtualMachineError) throw error
         }
     }
 
-    private fun end(session: Session, state: String, notice: String) {
+    private fun end(session: Session, state: ChatState, notice: String) {
         session.generation++; session.state = state; session.notice = notice; session.checking = false
         session.turnId = null; session.awaitingTurn.clear(); session.speak = false
         dropRpc(session); speech.stop()
@@ -259,7 +259,7 @@ internal class DesktopChat(
     private fun invalidateLocked(keepEnded: Boolean) {
         val session = active; active = null
         session?.let {
-            end(it, "error", "This chat was closed. Reconnect to continue.")
+            end(it, ChatState.ERROR, "This chat was closed. Reconnect to continue.")
             if (keepEnded) ended = it.scope to view(it)
         }
         speech.stop()

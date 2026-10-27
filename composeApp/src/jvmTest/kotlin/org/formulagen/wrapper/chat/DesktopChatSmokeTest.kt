@@ -4,6 +4,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.*
+import org.formulagen.wrapper.bridge.VoiceState
 import org.formulagen.wrapper.providers.CodexRuntime
 import kotlin.test.*
 
@@ -30,11 +31,11 @@ class DesktopChatSmokeTest {
             val started=System.nanoTime()
             speech.speak("Hello. I am ready to chat with you.")
             val deadline=started + TimeUnit.MINUTES.toNanos(2)
-            while (speech.status().state == "preparing" && System.nanoTime()<deadline) Thread.sleep(20)
-            assertEquals("speaking",speech.status().state, speech.status().notice)
+            while (speech.status().state == VoiceState.PREPARING && System.nanoTime()<deadline) Thread.sleep(20)
+            assertEquals(VoiceState.SPEAKING,speech.status().state, speech.status().notice)
             println("CHAT_VOICE_SMOKE: playback started after ${(System.nanoTime()-started)/1_000_000} ms")
             Thread.sleep(250)
-            speech.stop(); assertEquals("idle",speech.status().state)
+            speech.stop(); assertEquals(VoiceState.IDLE,speech.status().state)
             println("CHAT_VOICE_SMOKE: desktop audio stopped")
         }
     }
