@@ -47,6 +47,9 @@ import org.formulagen.wrapper.chat.DesktopSpeech
 import org.formulagen.wrapper.chat.desktopVoiceConfig
 import org.formulagen.wrapper.bridge.ChatMethods
 import org.formulagen.wrapper.bridge.Capability
+import org.formulagen.wrapper.bridge.GameMethods
+import org.formulagen.wrapper.bridge.PetMethods
+import org.formulagen.wrapper.bridge.ProviderMethods
 
 private class DesktopResources : AutoCloseable {
     val browser = AtomicReference<org.cef.browser.CefBrowser?>(null)
@@ -184,7 +187,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
         else File(home, ".local/share/gamero")
     }
     val games = remember {
-        if (System.getenv("HOVEL_GAME_PROJECT") != null) DesktopGameLauncher(window, System.getenv()) {
+        if (System.getenv("HOVEL_GAME_PROJECT") != null) DesktopGameLauncher(window, System.getenv(), support.toPath()) {
             resources.browser.get()?.executeJavaScript("window.dispatchEvent(new Event('gameroGameClosed'))", url, 0)
         }.also { resources.games = it } else null
     }
@@ -197,11 +200,11 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
         val origin = URI(url).let { URI(it.scheme, null, it.host, it.port, null, null, null).toASCIIString() }
         support.toPath().resolve("providers").resolve(HovelCompanion.sha256(origin))
     }
-    val providers = remember {
-        DesktopProviders(providerRoot, codexExecutable).also { resources.providers = it }
-    }
     val chat = remember {
         DesktopChat(providerRoot, codexExecutable, DesktopSpeech(desktopVoiceConfig(System.getenv()))).also { resources.chat = it }
+    }
+    val providers = remember {
+        DesktopProviders(providerRoot, codexExecutable, onDisconnect = chat::invalidate).also { resources.providers = it }
     }
     val companion = remember {
         if (isHovelProduct() && System.getProperty("os.name").contains("Mac")) {
@@ -270,21 +273,17 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                     product = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME,
                     trustedUrl = url,
                     capabilities = desktopHostCapabilities(),
-                    products = if (isHovelProduct()) hovelBridgePacks(companion, chat) else listOf(ChatMethods.pack(Capability.Supported(chat))),
+                    products = if (isHovelProduct()) hovelBridgePacks(companion, chat, providers, pet, games) else listOf(
+                        ChatMethods.pack(Capability.Supported(chat)), ProviderMethods.pack(Capability.Supported(providers)),
+                        PetMethods.pack(Capability.Supported(pet)),
+                        GameMethods.pack(games?.let { Capability.Supported(it) } ?: Capability.Unsupported)),
                     onInvalidate = {
                         companion?.invalidatePending()
                         chat.invalidate()
                         EventQueue.invokeLater { games?.close() }
                     },
-                    dispatch = { method, args ->
-                        if (method.startsWith("pet.")) pet.dispatch(method, args)
-                        else if (method.startsWith("providers.")) {
-                            if (method == "providers.disconnect") chat.invalidate()
-                            providers.dispatch(method, args)
-                        }
-                        else if (method.startsWith("games.")) requireNotNull(games).dispatch(method, args)
-                        else requireNotNull(companion).dispatch(method, args)
-                    },
+                    // Version 1 carries only the legacy companion protocol; everything else is host-bridge v2.
+                    dispatch = companion?.let { it::dispatch },
                 )
             })
         }

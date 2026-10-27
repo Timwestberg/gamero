@@ -8,10 +8,11 @@ import java.time.Instant
 import java.time.ZoneOffset
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
+import org.formulagen.wrapper.bridge.*
 import kotlin.test.*
 
 class ProviderConnectionsTest {
-    private class Rpc : CodexAppServer {
+    private open class Rpc : CodexAppServer {
         val calls = mutableListOf<String>()
         var account: JsonElement = JsonNull
         var outcome: Boolean? = null
@@ -35,42 +36,41 @@ class ProviderConnectionsTest {
         override fun loginResult(loginId: String) = outcome
         override fun close() { closed = true }
     }
-    private fun JsonObject.state() = getValue("state").jsonPrimitive.content
     private fun chatgpt() = buildJsonObject { put("type", "chatgpt"); put("email", "player@example.test"); put("planType", "plus") }
 
     @Test fun browserLaunchIsPendingUntilAccountReadConfirmsChatgpt() {
         val rpc = Rpc()
         val opened = mutableListOf<URI>()
         val connection = CodexConnection(rpc, { opened += it })
-        assertEquals("disconnected", connection.dispatch("status").state())
-        val pending = connection.dispatch("connect")
-        assertEquals("signing-in", pending.state())
-        assertFalse(pending.toString().contains("authUrl"))
+        assertEquals(ProviderState.DISCONNECTED, connection.perform(ProviderAction.STATUS).state)
+        val pending = connection.perform(ProviderAction.CONNECT)
+        assertEquals(ProviderState.SIGNING_IN, pending.state)
+        assertFalse(pending.toString().contains("auth.openai.com"))
         assertEquals("auth.openai.com", opened.single().host)
-        connection.dispatch("connect")
+        connection.perform(ProviderAction.CONNECT)
         assertEquals(1, rpc.calls.count { it == "account/login/start" })
-        connection.dispatch("reopen")
+        connection.perform(ProviderAction.REOPEN)
         assertEquals(2, opened.size)
-        assertEquals("signing-in", connection.dispatch("status").state())
+        assertEquals(ProviderState.SIGNING_IN, connection.perform(ProviderAction.STATUS).state)
         rpc.account = chatgpt(); rpc.outcome = true
-        val connected = connection.dispatch("status")
-        assertEquals("connected", connected.state())
-        assertEquals("player@example.test", connected["accountLabel"]?.jsonPrimitive?.content)
-        assertEquals("plus", connected["plan"]?.jsonPrimitive?.content)
-        assertEquals("disconnected", connection.dispatch("disconnect").state())
+        val connected = connection.perform(ProviderAction.STATUS)
+        assertEquals(ProviderState.CONNECTED, connected.state)
+        assertEquals("player@example.test", connected.accountLabel)
+        assertEquals("plus", connected.plan)
+        assertEquals(ProviderState.DISCONNECTED, connection.perform(ProviderAction.DISCONNECT).state)
         connection.close(); assertTrue(rpc.closed)
     }
 
     @Test fun cancellationFailureAndBrowserFailureStayTruthful() {
         val rpc = Rpc()
         val connection = CodexConnection(rpc, { error("Browser not available") })
-        assertEquals("signing-in", connection.dispatch("connect").state())
-        assertEquals("disconnected", connection.dispatch("cancel").state())
+        assertEquals(ProviderState.SIGNING_IN, connection.perform(ProviderAction.CONNECT).state)
+        assertEquals(ProviderState.DISCONNECTED, connection.perform(ProviderAction.CANCEL).state)
         assertTrue(rpc.calls.contains("account/login/cancel"))
-        connection.dispatch("connect"); rpc.outcome = false
-        assertEquals("error", connection.dispatch("status").state())
+        connection.perform(ProviderAction.CONNECT); rpc.outcome = false
+        assertEquals(ProviderState.ERROR, connection.perform(ProviderAction.STATUS).state)
         rpc.account = buildJsonObject { put("type", "apiKey") }
-        assertFails { connection.dispatch("status") }
+        assertFails { connection.perform(ProviderAction.STATUS) }
     }
 
     @Test fun expiredLoginCancelsInsteadOfPollingForever() {
@@ -82,9 +82,9 @@ class ProviderConnectionsTest {
             override fun instant() = instant
         }
         val connection = CodexConnection(rpc, {}, clock)
-        connection.dispatch("connect")
+        connection.perform(ProviderAction.CONNECT)
         instant = instant.plusSeconds(601)
-        assertEquals("error", connection.dispatch("status").state())
+        assertEquals(ProviderState.ERROR, connection.perform(ProviderAction.STATUS).state)
         assertTrue(rpc.calls.contains("account/login/cancel"))
     }
 
@@ -92,7 +92,7 @@ class ProviderConnectionsTest {
         for (url in listOf("http://auth.openai.com/test", "https://auth.openai.com.evil.test/", "file:///tmp/test", "https://user@auth.openai.com/", "https://auth.openai.com:444/")) {
             val rpc = Rpc().also { it.authUrl = url }
             var opened = false
-            assertFails { CodexConnection(rpc, { opened = true }).dispatch("connect") }
+            assertFails { CodexConnection(rpc, { opened = true }).perform(ProviderAction.CONNECT) }
             assertFalse(opened)
         }
     }
@@ -114,27 +114,40 @@ class ProviderConnectionsTest {
         } finally { root.toFile().deleteRecursively() }
     }
 
-    @Test fun registryRejectsArbitraryRoutingAndClosesThePreviousProfile() = runBlocking {
+    @Test fun registryClosesThePreviousProfileAndSignsChatsOutFirst() = runBlocking {
         val root = Files.createTempDirectory("hovel-provider-registry")
         val processes = mutableListOf<Rpc>()
-        val registry = DesktopProviders(root, Path.of("/bin/echo"), {}, { _, open ->
-            val rpc = Rpc().also { processes += it }
-            CodexConnection(rpc, open)
-        })
-        fun args(profile: String = "local") = buildJsonObject { put("providerId", "codex"); put("profile", profile) }
+        val events = mutableListOf<String>()
+        val registry = DesktopProviders(root, Path.of("/bin/echo"), openBrowser = {}, onDisconnect = { events += "chat invalidated" },
+            createConnection = { _, open ->
+                val rpc = object : Rpc() { override fun call(method: String, params: JsonObject) = super.call(method, params).also { events += method } }
+                processes += rpc
+                CodexConnection(rpc, open)
+            })
+        fun scope(profile: String = "local") = ProviderScope(profile, ProviderId.CODEX)
         try {
-            assertFails { registry.dispatch("providers.execute", args()) }
-            assertFails { registry.dispatch("providers.status", buildJsonObject { put("providerId", "unknown"); put("profile", "local") }) }
-            assertFails { registry.dispatch("providers.status", buildJsonObject { put("providerId", "codex"); put("profile", "local"); put("path", "/tmp") }) }
+            assertFails { registry.perform(ProviderAction.STATUS, scope("../../.codex")) }
             assertTrue(processes.isEmpty())
-            assertEquals("disconnected", registry.dispatch("providers.status", args()).state())
-            registry.dispatch("providers.connect", args())
-            registry.dispatch("providers.status", args(LOGIN_ID))
+            assertEquals(ProviderState.DISCONNECTED, registry.perform(ProviderAction.STATUS, scope()).state)
+            registry.perform(ProviderAction.CONNECT, scope())
+            registry.perform(ProviderAction.STATUS, scope(LOGIN_ID))
             assertEquals(2, processes.size)
             assertTrue(processes.first().closed)
             assertFalse(processes.last().closed)
+            events.clear()
+            registry.perform(ProviderAction.DISCONNECT, scope(LOGIN_ID))
+            assertEquals(listOf("chat invalidated", "account/logout", "account/read"), events)
         } finally { registry.close(); root.toFile().deleteRecursively() }
         assertTrue(processes.last().closed)
+    }
+
+    @Test fun registryWithoutCodexIsUnavailable() = runBlocking<Unit> {
+        val root = Files.createTempDirectory("hovel-provider-none")
+        DesktopProviders(root, null).use { registry ->
+            val status = registry.perform(ProviderAction.CONNECT, ProviderScope("local", ProviderId.CODEX))
+            assertEquals(ProviderStatus(ProviderId.CODEX, ProviderState.UNAVAILABLE, message = "Install Codex on this Mac, then restart Hovel to connect."), status)
+        }
+        root.toFile().deleteRecursively()
     }
 
     companion object { private const val LOGIN_ID = "30000000-0000-4000-8000-000000000003" }

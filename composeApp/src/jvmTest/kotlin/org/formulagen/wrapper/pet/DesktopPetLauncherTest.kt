@@ -2,7 +2,7 @@ package org.formulagen.wrapper.pet
 
 import java.nio.file.Files
 import kotlinx.coroutines.*
-import kotlinx.serialization.json.*
+import org.formulagen.wrapper.bridge.PetState
 import kotlin.test.*
 
 class DesktopPetLauncherTest {
@@ -28,35 +28,34 @@ class DesktopPetLauncherTest {
         val root = installation("echo \$\$ >> starts\necho EMBER_PET_READY\nexec sleep 120")
         val launcher = DesktopPetLauncher(mapOf("HOVEL_PET_PROJECT" to root.toString(),
             "HOVEL_PET_GODOT" to root.resolve("engine").toString()), root.resolve("pet.log"))
-        val args = buildJsonObject {}
         try {
-            assertEquals("stopped", launcher.dispatch("pet.status", args)["state"]?.jsonPrimitive?.content)
-            assertEquals("running", launcher.dispatch("pet.show", args)["state"]?.jsonPrimitive?.content)
-            launcher.dispatch("pet.show", args)
+            assertEquals(PetState.STOPPED, launcher.status().state)
+            assertEquals(PetState.RUNNING, launcher.show().state)
+            launcher.show()
             assertEquals(1, Files.readAllLines(root.resolve("starts")).size)
             val first = ProcessHandle.of(Files.readAllLines(root.resolve("starts")).first().toLong()).get()
             first.destroy()
             withTimeout(3000) { while (first.isAlive) delay(20) }
-            assertEquals("stopped", launcher.dispatch("pet.status", args)["state"]?.jsonPrimitive?.content)
-            launcher.dispatch("pet.show", args)
+            assertEquals(PetState.STOPPED, launcher.status().state)
+            launcher.show()
             val second = ProcessHandle.of(Files.readAllLines(root.resolve("starts")).last().toLong()).get()
-            assertEquals("stopped", launcher.dispatch("pet.hide", args)["state"]?.jsonPrimitive?.content)
+            assertEquals(PetState.STOPPED, launcher.hide().state)
             assertFalse(second.isAlive)
-            launcher.dispatch("pet.show", args)
+            launcher.show()
             val third = ProcessHandle.of(Files.readAllLines(root.resolve("starts")).last().toLong()).get()
             launcher.close()
             assertFalse(third.isAlive)
         } finally { launcher.close(); root.toFile().deleteRecursively() }
     }
 
-    /** Invalid page fields and missing native installation never start a process. */
-    @Test fun rejectsPathsAndUnavailableInstallations() = runBlocking<Unit> {
+    /** A missing native installation never starts a process; page fields are the router's to reject (pet-show-with-path). */
+    @Test fun reportsUnavailableInstallations() = runBlocking<Unit> {
         val root = Files.createTempDirectory("pet-unavailable-test")
         val launcher = DesktopPetLauncher(emptyMap(), root.resolve("pet.log"))
         try {
-            assertEquals("unavailable", launcher.dispatch("pet.show", buildJsonObject {})["state"]?.jsonPrimitive?.content)
-            assertFailsWith<IllegalArgumentException> { launcher.dispatch("pet.show", buildJsonObject { put("path", "/tmp/pet") }) }
-            assertFailsWith<IllegalArgumentException> { launcher.dispatch("pet.exec", buildJsonObject {}) }
+            assertEquals(PetState.UNAVAILABLE, launcher.show().state)
+            assertEquals(PetState.UNAVAILABLE, launcher.status().state)
+            assertEquals(PetState.STOPPED, launcher.hide().state)
         } finally { launcher.close(); root.toFile().deleteRecursively() }
     }
 
@@ -67,8 +66,8 @@ class DesktopPetLauncherTest {
             val launcher = DesktopPetLauncher(mapOf("HOVEL_PET_PROJECT" to root.toString(),
                 "HOVEL_PET_GODOT" to root.resolve("engine").toString()), root.resolve("pet.log"))
             try {
-                assertEquals("error", launcher.dispatch("pet.show", buildJsonObject {})["state"]?.jsonPrimitive?.content)
-                assertEquals("stopped", launcher.dispatch("pet.status", buildJsonObject {})["state"]?.jsonPrimitive?.content)
+                assertEquals(PetState.ERROR, launcher.show().state)
+                assertEquals(PetState.STOPPED, launcher.status().state)
             } finally { launcher.close(); root.toFile().deleteRecursively() }
         }
     }
@@ -79,7 +78,7 @@ class DesktopPetLauncherTest {
         val launcher = DesktopPetLauncher(mapOf("HOVEL_PET_PROJECT" to root.toString(),
             "HOVEL_PET_GODOT" to root.resolve("engine").toString()), root.resolve("pet.log"))
         try {
-            val job = launch(Dispatchers.IO) { launcher.dispatch("pet.show", buildJsonObject {}) }
+            val job = launch(Dispatchers.IO) { launcher.show() }
             withTimeout(3000) { while (!Files.exists(root.resolve("starts"))) delay(20) }
             val child = ProcessHandle.of(Files.readString(root.resolve("starts")).trim().toLong()).get()
             job.cancelAndJoin()
@@ -93,10 +92,10 @@ class DesktopPetLauncherTest {
         val launcher = DesktopPetLauncher(mapOf("HOVEL_PET_PROJECT" to root.toString(),
             "HOVEL_PET_GODOT" to root.resolve("engine").toString()), root.resolve("pet.log"))
         try {
-            assertEquals("running", launcher.dispatch("pet.show", buildJsonObject {})["state"]?.jsonPrimitive?.content)
+            assertEquals(PetState.RUNNING, launcher.show().state)
             val helper = ProcessHandle.of(Files.readString(root.resolve("helper")).trim().toLong()).get()
             assertTrue(helper.isAlive)
-            launcher.dispatch("pet.hide", buildJsonObject {})
+            launcher.hide()
             withTimeout(3000) { while (helper.isAlive) delay(20) }
         } finally { launcher.close(); root.toFile().deleteRecursively() }
     }

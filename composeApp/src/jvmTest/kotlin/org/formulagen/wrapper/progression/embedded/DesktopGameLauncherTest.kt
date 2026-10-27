@@ -1,16 +1,18 @@
 package org.formulagen.wrapper.progression.embedded
 
 import kotlinx.serialization.json.*
+import org.formulagen.wrapper.bridge.*
 import kotlin.test.*
 
 class DesktopGameLauncherTest {
     /** Only the installed ID crosses the bridge; paths and command fields are rejected. */
     @Test fun validatesInstalledGameSelection() {
-        assertTrue(DesktopGameLauncher.accepts(buildJsonObject { put("gameId", "hovel-companions") }))
+        assertEquals(GameLaunchArgs(GameId.HOVEL_COMPANIONS), GameMethods.LAUNCH.decodeArgs(buildJsonObject { put("gameId", "hovel-companions") }))
         for (raw in listOf("{}", "{\"gameId\":\"../../other\"}", "{\"gameId\":1}",
             "{\"gameId\":\"hovel-companions\",\"path\":\"/tmp/game\"}")) {
-            assertFalse(DesktopGameLauncher.accepts(Json.parseToJsonElement(raw).jsonObject))
+            assertNull(GameMethods.LAUNCH.decodeArgs(Json.parseToJsonElement(raw).jsonObject))
         }
+        assertEquals("""{"gameId":"hovel-companions","started":true}""", GameMethods.LAUNCH.encodeResult(GameLaunchResult(GameId.HOVEL_COMPANIONS)).toString())
     }
 
     /** A missing native bridge is a clear launch failure, before any window or game process starts. */

@@ -5,45 +5,56 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.serialization.json.*
+import org.formulagen.wrapper.bridge.PetCapability
+import org.formulagen.wrapper.bridge.PetCompanion
+import org.formulagen.wrapper.bridge.PetLimits
+import org.formulagen.wrapper.bridge.PetState
+import org.formulagen.wrapper.bridge.PetStatus
 import org.formulagen.wrapper.companion.terminateProcessTree
 
-/** Owns the desktop overlay independently of browser navigation and embedded games. */
+/** The `pet.*` capability: owns the desktop overlay independently of browser navigation and embedded games. */
 internal class DesktopPetLauncher(
     private val environment: Map<String, String>,
     private val log: Path,
-) : AutoCloseable {
+) : PetCapability, AutoCloseable {
     private val mutex = Mutex()
     private var process: Process? = null
     private var closed = false
     private val appearance = CompanionAppearanceStore(log.resolveSibling("companion-appearance.json"))
 
-    /** Page requests select an action, never an executable, project or command line. */
-    suspend fun dispatch(method: String, args: JsonObject): JsonObject = mutex.withLock {
+    /** Save the companion the pet shows; a hidden pet stays hidden. */
+    override suspend fun configure(companion: PetCompanion): PetStatus = mutex.withLock {
         check(!closed) { "Pet launcher is closed" }
-        if (method == "pet.configure") {
-            appearance.save(args)
-            return@withLock reply(if (process?.isAlive == true) "running" else "stopped")
-        }
-        require(method in setOf("pet.status", "pet.show", "pet.hide") && args.isEmpty()) { "Unknown pet action" }
-        if (method == "pet.hide") {
-            stop()
-            return@withLock reply("stopped")
-        }
-        if (process?.isAlive == true) return@withLock reply("running")
+        appearance.save(companion)
+        reply(if (process?.isAlive == true) PetState.RUNNING else PetState.STOPPED)
+    }
+
+    override suspend fun status(): PetStatus = inspect(start = false)
+    override suspend fun show(): PetStatus = inspect(start = true)
+
+    override suspend fun hide(): PetStatus = mutex.withLock {
+        check(!closed) { "Pet launcher is closed" }
+        stop()
+        reply(PetState.STOPPED)
+    }
+
+    /** Report the installation's state, and start the pet when [start] asks for it. Native configuration picks every path. */
+    private suspend fun inspect(start: Boolean): PetStatus = mutex.withLock {
+        check(!closed) { "Pet launcher is closed" }
+        if (process?.isAlive == true) return@withLock reply(PetState.RUNNING)
         process = null
         val project = environment["HOVEL_PET_PROJECT"]?.let(Path::of)
         val executable = environment["HOVEL_PET_GODOT"]?.let(Path::of)
         if (!System.getProperty("os.name").contains("Mac")) {
-            return@withLock reply("unavailable", "Ember desktop launch currently requires macOS.")
+            return@withLock reply(PetState.UNAVAILABLE, "Ember desktop launch currently requires macOS.")
         }
         if (project == null || executable == null || !executable.toFile().canExecute() ||
             !project.resolve("project.godot").toFile().isFile ||
             !project.resolve("addons/jvm/jvm.gdextension").toFile().isFile ||
             !project.resolve("build/libs/ember-desktop-pet.jar").toFile().isFile) {
-            return@withLock reply("unavailable", "Prepare the Ember desktop pet, then restart Hovel.")
+            return@withLock reply(PetState.UNAVAILABLE, "Prepare the Ember desktop pet, then restart Hovel.")
         }
-        if (method == "pet.status") return@withLock reply("stopped")
+        if (!start) return@withLock reply(PetState.STOPPED)
         try {
             val version = ProcessBuilder(executable.toString(), "--version").redirectErrorStream(true).start()
             try {
@@ -67,14 +78,14 @@ internal class DesktopPetLauncher(
                     delay(50)
                 }
             }
-            reply("running")
+            reply(PetState.RUNNING)
         } catch (error: CancellationException) {
             stop()
-            if (error is TimeoutCancellationException) reply("error", "Ember did not become ready. Check the desktop pet log.")
+            if (error is TimeoutCancellationException) reply(PetState.ERROR, "Ember did not become ready. Check the desktop pet log.")
             else throw error
         } catch (error: Exception) {
             stop()
-            reply("error", if (error is IllegalStateException) error.message ?: "Ember could not start."
+            reply(PetState.ERROR, if (error is IllegalStateException) error.message ?: "Ember could not start."
                 else "Ember could not start. Check the desktop pet log.")
         }
     }
@@ -89,12 +100,8 @@ internal class DesktopPetLauncher(
     override fun close() = runBlocking { mutex.withLock { closed = true; stop() } }
 
     /** Keep process and filesystem details inside the native host. */
-    private fun reply(state: String, message: String? = null) = buildJsonObject {
-        put("state", state)
-        appearance.identity()?.let { profile ->
-            profile["id"]?.let { put("companionId", it) }
-            profile["name"]?.let { put("name", it) }
-        }
-        message?.let { put("message", it) }
+    private fun reply(state: PetState, message: String? = null): PetStatus {
+        val saved = appearance.saved()
+        return PetStatus(state, companionId = saved?.id, name = saved?.name, message = message?.take(PetLimits.MESSAGE))
     }
 }
