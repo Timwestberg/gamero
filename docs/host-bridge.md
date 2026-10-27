@@ -67,10 +67,13 @@ Follow these steps in order. You do not edit the router, the transports or any
 other capability. `Haptics.kt` is the smallest complete example of a method
 capability; `Lifecycle.kt` is the example of an event capability.
 
-1. **Contract (server-platform).** In `event-contracts/src/host-bridge/capabilities.ts`,
-   add each method to `HOST_BRIDGE_METHODS` (zod `args` and `result`, with
-   `z.strictObject`, and a `capability` name) or each event to
-   `HOST_BRIDGE_EVENTS` (`capability` and `data`). Every existing entry has a
+1. **Contract (server-platform).** Give the capability its own file,
+   `event-contracts/src/host-bridge/<capability>.ts`, as `chat.ts` does: its
+   zod schemas and one method map (`CHAT_METHODS`), each entry with `args` and
+   `result` (`z.strictObject`) and a `capability` name. Rules that several
+   capabilities share, such as the profile ID and companion name, live in
+   `shared.ts`. Spread the map into `HOST_BRIDGE_METHODS` in `capabilities.ts`
+   (events go in `HOST_BRIDGE_EVENTS`, with `capability` and `data`). Every existing entry has a
    `capability` key, but the type does not require one, so check it yourself.
    Use the same `capability` value as the `CapabilityBinder` name in step 2.
    Two existing capabilities do not match yet and are a known gap: the
@@ -123,8 +126,9 @@ capability; `Lifecycle.kt` is the example of an event capability.
      binder.pack(capability)` to the object, as `CompanionMethods.pack` does.
      Then add the pack to each platform's Hovel pack list, `Unsupported` where
      the platform has none. There are three lists, with different names:
-     - desktop: `hovelBridgePacks(companion)` in
-       `jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelCompanion.kt`;
+     - desktop: `hovelBridgePacks(companion, chat)` in
+       `jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelCompanion.kt`
+       (`main.kt` passes the chat pack alone for the non-Hovel product);
      - Android: `hovelBridgePacks()` in
        `androidMain/kotlin/org/formulagen/wrapper/hovel/HovelAndroid.kt`;
      - iOS: `iosHovelBridgePacks()` in `iosMain/.../IosHostCapabilities.kt`.

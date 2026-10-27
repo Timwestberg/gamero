@@ -6,7 +6,7 @@ For the app entry path, use [Play from the web catalog](catalog-launch.README.md
 
 ## Launch
 
-Install Java 21 and Xcode command-line tools. Import the sibling `game-platform-companions/games/ember-tower` project with Godot **4.8.beta1.official.4d10419ca** first, as required by the existing companion launcher. Then double-click `Play Embedded Companions.command`, or run:
+Install Java 21 and Xcode command-line tools. Import the sibling `game-platform/games/ember-tower` project with Godot **4.8.beta1.official.4d10419ca** first, as required by the existing companion launcher. Then double-click `Play Embedded Companions.command`, or run:
 
 ```sh
 ./'Play Embedded Companions.command'
@@ -20,7 +20,7 @@ Every launch defaults to a new temporary save and prints `HOVEL_EMBEDDED_SAVE <p
 HOVEL_COMPANION_SAVE=/absolute/playtest/save.json ./'Play Embedded Companions.command'
 ```
 
-Override `HOVEL_GAME_PROJECT` for another checkout of the same companion prototype. `JAVA_HOME` selects the JDK. Close this prototype before refreshing its bundle. The existing `:composeApp:runCompanions` launcher remains available.
+Override `HOVEL_GAME_PROJECT` for another checkout of the same companion prototype. `JAVA_HOME` selects the JDK (default: `java_home -v 21`). Both come from `scripts/dev-env.sh`; see [every setting](README.md#desktop-companion-settings). Close this prototype before refreshing its bundle. The existing `:composeApp:runCompanions` launcher remains available.
 
 ## Play and extend
 
