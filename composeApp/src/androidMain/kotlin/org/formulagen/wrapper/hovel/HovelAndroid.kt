@@ -64,8 +64,14 @@ internal fun hovelAutoEnter(debuggable: Boolean, extra: String?): Boolean = debu
 internal fun hovelAutoEnter(intent: Intent?, context: Context): Boolean =
     hovelAutoEnter((context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0, intent?.getStringExtra(AUTO_ENTER_KEY))
 
-/** Hovel's capability packs for the host bridge. Android has no companion, so its methods answer `unsupported`. */
-internal fun hovelBridgePacks(): List<CapabilityPack> = listOf(CompanionMethods.pack(Capability.Unsupported))
+/** Hovel's capability packs for the host bridge. Android has none of the desktop product capabilities, so their methods answer `unsupported`. */
+internal fun hovelBridgePacks(): List<CapabilityPack> = listOf(
+    CompanionMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.ChatMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.ProviderMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.PetMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.GameMethods.pack(Capability.Unsupported),
+)
 
 /** Plays the Hovel launch and start screen, then opens [url] once the player steps inside. */
 @Composable

@@ -32,7 +32,8 @@ class HovelHostSession(
             CodexCliProvider.Readiness.AUTH_REQUIRED -> "auth-required"
             CodexCliProvider.Readiness.UNAVAILABLE -> "unavailable"
         }))
-        status(if (readiness == CodexCliProvider.Readiness.READY) "Connected · Codex ready" else "Connected · Sign in to Codex using ChatGPT")
+        status(if (readiness == CodexCliProvider.Readiness.READY) "Connected · Codex ready" else "Connected · Open Profile → Providers to connect Codex")
+
         if (working.get()) return
         val task = response.getValue("tasks").jsonArray.map { it.jsonObject }.firstOrNull {
             val state = it.getValue("progress").jsonObject.getValue("state").jsonPrimitive.content

@@ -1,0 +1,17 @@
+{
+  "silence_ms": 40,
+  "num_steps": 1,
+  "temperature": 0.3,
+  "seed": 1,
+  "lines": [
+    {"id": "build_passed", "text": "Done! Your build passed.", "pieces": [{"text": "Done!", "max_frames": 36}, {"text": "Your build passed.", "max_frames": 36}]},
+    {"id": "task_finished", "text": "I finished the task. Three files changed and all tests are green.", "pieces": [{"text": "I finished the task.", "max_frames": 36}, {"text": "Three files changed and all tests are green.", "max_frames": 40}]},
+    {"id": "sign_in", "text": "Heads up, Codex needs you to sign in before I can keep going on this one.", "pieces": [{"text": "Heads up, Codex needs you to sign in", "max_frames": 33}, {"text": "before I can keep going on this one.", "max_frames": 33}]},
+    {"id": "deploy_blocked", "text": "The deploy is blocked: the API returned error 503 at 2:45 PM. I'll retry in 30 seconds, or you can check the logs.", "pieces": [{"text": "The deploy is blocked: the API returned", "max_frames": 36}, {"text": "error five hundred three at two forty-five PM. I'll retry in thirty seconds, or you can check the logs.", "max_frames": 87}]},
+    {"id": "summary", "text": "Here's the summary: I refactored PetSession.kt, moved the socket code into PetBridge, updated the README, and added two tests. Everything builds, but the voice settings still need a final review from you before merge.", "pieces": [{"text": "Here's the summary: I refactored Pet", "max_frames": 33}, {"text": "Session dot kt, moved the socket code into PetBridge, updated the README, and added two tests.", "max_frames": 80}, {"text": "Everything builds, but the voice settings still need a final review from you before merge.", "max_frames": 76}]},
+    {"id": "say_limit", "text": "This is the longest note the pet is allowed to say, just under the two hundred forty character cap, so we can hear a full status update: the build is green, two tests were added, and now the voice settings need your review before merge.", "pieces": [{"text": "This is the longest note the pet is", "max_frames": 32}, {"text": "allowed to say, just under the two hundred forty character cap, so we can hear a full status update: the build is green,", "max_frames": 100}, {"text": "two tests were added, and now the voice settings need your review before merge.", "max_frames": 68}]},
+    {"id": "numbers_code", "text": "PetBridge.kt returned error 503 at 2:45 PM after 30 seconds.", "pieces": [{"text": "Pet Bridge dot kt returned error", "max_frames": 30}, {"text": "five hundred three at two forty-five PM after thirty seconds.", "max_frames": 53}]},
+    {"id": "question", "text": "Should I rerun the suite, or is this ready for you to merge?", "pieces": [{"text": "Should I rerun the suite, or is this", "max_frames": 33}, {"text": "ready for you to merge?", "max_frames": 36}]},
+    {"id": "say_cap", "text": "This is the longest note the pet is allowed to say with no punctuation at all so the chunker has to find its own clause breaks the build is green two tests were added and the voice settings still need your review before merge today extra go", "pieces": [{"text": "This is the longest note the pet is", "max_frames": 32}, {"text": "allowed to say with no punctuation at all so the chunker has to find its own clause breaks the build is green two tests were added", "max_frames": 108}, {"text": "and the voice settings still need your review before merge today extra go", "max_frames": 63}]}
+  ]
+}
