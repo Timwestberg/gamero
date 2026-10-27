@@ -2,11 +2,11 @@ package org.formulagen.wrapper.chat
 
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.providers.CodexRuntime
-import org.formulagen.wrapper.providers.StdioCodexAccountRpc
+import org.formulagen.wrapper.providers.StdioCodexAppServer
 
 /** Keep conversation capabilities separate from the approved workspace-task runtime. */
 internal fun chatCodex(runtime: CodexRuntime, receive: (String, JsonObject) -> Unit) =
-    StdioCodexAccountRpc(runtime,
+    StdioCodexAppServer(runtime,
         allowedMethods = setOf("account/read", "thread/start", "thread/resume", "turn/start", "turn/interrupt"),
         arguments = chatProcessArguments(), onNotification = receive, timeoutSeconds = 15)
 

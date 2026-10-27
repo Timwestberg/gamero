@@ -15,7 +15,7 @@ internal class DesktopChat(
     private val providerRoot: Path,
     private val executable: Path?,
     private val speech: ChatSpeech,
-    private val createRpc: (CodexRuntime, (String, JsonObject) -> Unit) -> CodexAccountRpc = ::chatCodex,
+    private val createRpc: (CodexRuntime, (String, JsonObject) -> Unit) -> CodexAppServer = ::chatCodex,
 ) : ChatCapability, AutoCloseable {
     private val gate = Any()
     private val worker = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-chat"))
@@ -29,7 +29,7 @@ internal class DesktopChat(
     private class Session(val scope: ChatScope, val runtime: CodexRuntime, val history: ChatHistory, var record: ChatRecord) {
         var state = ChatState.CHECKING
         var notice: String? = "Checking Codex connection…"
-        var rpc: CodexAccountRpc? = null
+        var rpc: CodexAppServer? = null
         var resumed = false
         var generation = 0
         var turnId: String? = null
@@ -115,7 +115,7 @@ internal class DesktopChat(
     private fun view(session: Session) = ChatSnapshot(session.state, session.record.messages, session.notice, speech.status())
 
     /** Keep account verification off the UI thread and never substitute an API key. */
-    private fun ensureAccount(session: Session, generation: Int): CodexAccountRpc {
+    private fun ensureAccount(session: Session, generation: Int): CodexAppServer {
         val rpc = synchronized(gate) { check(live(session, generation)); session.rpc } ?: run {
             session.runtime.prepare()
             val epoch = synchronized(gate) { check(live(session, generation)); ++session.rpcEpoch }
@@ -169,7 +169,7 @@ internal class DesktopChat(
     }
 
     /** Resume this companion's thread; if Codex no longer has it, start a fresh one, which the caller saves. */
-    private fun openThread(rpc: CodexAccountRpc, session: Session, cwd: String): String {
+    private fun openThread(rpc: CodexAppServer, session: Session, cwd: String): String {
         val saved = session.record.threadId
         val resumed = saved?.let {
             try { rpc.call("thread/resume", chatThreadParams(session.scope.name, cwd, it)) }

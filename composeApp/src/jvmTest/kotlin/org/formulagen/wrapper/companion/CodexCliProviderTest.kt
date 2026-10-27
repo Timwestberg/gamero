@@ -5,6 +5,8 @@ import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
 import kotlin.test.*
 import org.junit.Test
+import org.formulagen.wrapper.providers.codexProcess
+import org.formulagen.wrapper.providers.scrubCodexEnvironment
 
 class CodexCliProviderTest {
     @Test fun profileTasksUseTheSameIsolatedKeyringAsProviderSettings() {
@@ -15,7 +17,24 @@ class CodexCliProviderTest {
             val command = provider.builder(listOf("login", "status"))
             assertEquals(home.toString(), command.environment()["CODEX_HOME"])
             assertTrue(command.command().contains("cli_auth_credentials_store=\"keyring\""))
-            assertTrue(command.command().contains("forced_login_method=\"chatgpt\""))
+            assertEquals(1, command.command().count { it == "forced_login_method=\"chatgpt\"" })
+        } finally { directory.toFile().deleteRecursively() }
+    }
+
+    @Test fun everyCodexChildIsChatgptOnlyWithoutInheritedCredentials() {
+        val directory = Files.createTempDirectory("hovel-codex-environment")
+        try {
+            val home = directory.resolve("home")
+            val echo = java.nio.file.Path.of("/bin/echo")
+            assertEquals(listOf("/bin/echo", "-c", "forced_login_method=\"chatgpt\"", "-c", "cli_auth_credentials_store=\"keyring\"", "exec"),
+                codexProcess(echo, listOf("exec"), directory, home).command())
+            assertEquals(listOf("/bin/echo", "-c", "forced_login_method=\"chatgpt\"", "exec"), codexProcess(echo, listOf("exec"), directory).command())
+            val inherited = mapOf("OPENAI_API_KEY" to "k", "ACCESS_TOKEN" to "t", "CODEX_API_KEY" to "k", "CODEX_SANDBOX" to "s",
+                "CODEX_CA_CERTIFICATE" to "ca", "CODEX_HOME" to "/user/codex", "PATH" to "/bin")
+            val isolated = inherited.toMutableMap().also { scrubCodexEnvironment(it, home) }
+            assertEquals(mapOf("CODEX_CA_CERTIFICATE" to "ca", "CODEX_HOME" to home.toAbsolutePath().toString(), "PATH" to "/bin"), isolated)
+            val userLogin = inherited.toMutableMap().also { scrubCodexEnvironment(it, null) }
+            assertEquals(mapOf("CODEX_CA_CERTIFICATE" to "ca", "CODEX_HOME" to "/user/codex", "PATH" to "/bin"), userLogin)
         } finally { directory.toFile().deleteRecursively() }
     }
 
@@ -24,11 +43,13 @@ class CodexCliProviderTest {
         val executable = directory.resolve("codex")
         Files.writeString(executable, """
             #!/bin/sh
+            printf '%s\n' "${'$'}@" > all-arguments.txt
+            while [ "${'$'}1" = -c ]; do shift 2; done
             if [ "${'$'}1" = login ]; then
               echo '$auth'
               exit 0
             fi
-            printf '%s\n' "${'$'}@" > arguments.txt
+            mv all-arguments.txt arguments.txt
             cat > input.txt
             while [ "${'$'}#" -gt 0 ]; do
               if [ "${'$'}1" = --output-last-message ]; then shift; printf 'fixture result' > "${'$'}1"; fi

@@ -11,20 +11,25 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
-/** Account-only protocol seam; callers never receive tokens or arbitrary RPC access. */
-internal interface CodexAccountRpc : AutoCloseable {
+/**
+ * One Codex app-server child over bounded stdio JSON-RPC. Its policy is the allowed-method list
+ * each owner passes: Providers gets [StdioCodexAppServer.ACCOUNT_METHODS], chat gets account and
+ * conversation methods (chatCodex). Server requests such as tool approvals are always refused,
+ * and callers never receive tokens.
+ */
+internal interface CodexAppServer : AutoCloseable {
     fun call(method: String, params: JsonObject = buildJsonObject {}): JsonObject
     fun loginResult(loginId: String): Boolean?
 }
 
-/** Correlate bounded stdio requests and own the lifetime of one installed Codex child. */
-internal class StdioCodexAccountRpc(
+/** Correlate bounded stdio requests and own the lifetime of one installed Codex app-server child. */
+internal class StdioCodexAppServer(
     runtime: CodexRuntime,
     private val allowedMethods: Set<String> = ACCOUNT_METHODS,
     arguments: List<String> = emptyList(),
     private val onNotification: (String, JsonObject) -> Unit = { _, _ -> },
     private val timeoutSeconds: Long = 5,
-) : CodexAccountRpc {
+) : CodexAppServer {
     private val process = runtime.builder(arguments + listOf("app-server", "--listen", "stdio://"))
         .redirectError(ProcessBuilder.Redirect.DISCARD).start()
     private val writer = process.outputStream.bufferedWriter()
@@ -34,7 +39,7 @@ internal class StdioCodexAccountRpc(
     private val completion = AtomicReference<Pair<String, Boolean>?>()
 
     init {
-        Thread.ofPlatform().daemon().name("hovel-codex-accounts").start {
+        Thread.ofPlatform().daemon().name("hovel-codex-app-server").start {
             try {
                 process.inputStream.bufferedReader().use { reader ->
                     while (true) {
@@ -81,7 +86,7 @@ internal class StdioCodexAccountRpc(
     /** Bound each call below the web bridge deadline; failures terminate ambiguous sessions. */
     override fun call(method: String, params: JsonObject): JsonObject {
         require(method == "initialize" || method in allowedMethods)
-        check(!closed.get() && process.isAlive) { "Codex account process is unavailable" }
+        check(!closed.get() && process.isAlive) { "Codex app-server is unavailable" }
         val id = sequence.incrementAndGet()
         val future = CompletableFuture<JsonObject>()
         pending[id] = future
@@ -91,8 +96,8 @@ internal class StdioCodexAccountRpc(
         } catch (error: ExecutionException) {
             // An error reply leaves the app-server usable; a timeout or a stopped process does not.
             (error.cause as? CodexRequestRejected)?.let { throw it }
-            close(); throw IllegalStateException("Codex did not complete the account request", error)
-        } catch (error: Exception) { close(); throw IllegalStateException("Codex did not complete the account request", error) }
+            close(); throw IllegalStateException("Codex did not complete the request", error)
+        } catch (error: Exception) { close(); throw IllegalStateException("Codex did not complete the request", error) }
         finally { pending.remove(id) }
     }
 
@@ -106,7 +111,7 @@ internal class StdioCodexAccountRpc(
 
     /** Release waiters immediately if the subprocess exits or its protocol breaks. */
     private fun failPending() {
-        pending.values.forEach { it.completeExceptionally(IllegalStateException("Codex account process stopped")) }
+        pending.values.forEach { it.completeExceptionally(IllegalStateException("Codex app-server stopped")) }
         pending.clear()
     }
 

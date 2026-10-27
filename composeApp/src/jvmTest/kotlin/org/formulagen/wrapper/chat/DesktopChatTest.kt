@@ -9,7 +9,7 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.providers.CodexAccountRpc
+import org.formulagen.wrapper.providers.CodexAppServer
 import org.formulagen.wrapper.providers.CodexRequestRejected
 import kotlin.test.*
 
@@ -26,7 +26,7 @@ class DesktopChatTest {
         override fun stop() { stops++ }
         override fun close() = Unit
     }
-    private inner class Rpc(val notify: (String, JsonObject) -> Unit) : CodexAccountRpc {
+    private inner class Rpc(val notify: (String, JsonObject) -> Unit) : CodexAppServer {
         val calls = CopyOnWriteArrayList<String>()
         val params = CopyOnWriteArrayList<JsonObject>()
         var connected = true

@@ -12,7 +12,7 @@ internal interface ProviderConnection : AutoCloseable {
 
 /** Codex owns OAuth and tokens; this adapter exposes only display state and explicit actions. */
 internal class CodexConnection(
-    private val rpc: CodexAccountRpc,
+    private val rpc: CodexAppServer,
     private val openBrowser: (URI) -> Unit,
     private val clock: Clock = Clock.systemUTC(),
 ) : ProviderConnection {

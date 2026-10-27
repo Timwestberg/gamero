@@ -5,13 +5,13 @@ import java.nio.file.attribute.PosixFilePermissions
 import kotlinx.serialization.json.*
 import kotlin.test.*
 
-class StdioCodexAccountRpcTest {
+class StdioCodexAppServerTest {
     @Test fun subprocessExitFailsInitializationInsteadOfClaimingAnAccount() {
         val root = Files.createTempDirectory("hovel-codex-exit")
         try {
             val runtime = CodexRuntime(java.nio.file.Path.of("/usr/bin/false"), root.resolve("private"))
             runtime.prepare()
-            assertFails { StdioCodexAccountRpc(runtime) }
+            assertFails { StdioCodexAppServer(runtime) }
         } finally { root.toFile().deleteRecursively() }
     }
 
@@ -33,7 +33,7 @@ class StdioCodexAccountRpcTest {
         val runtime = CodexRuntime(executable, root.resolve("private"))
         runtime.prepare()
         try {
-            StdioCodexAccountRpc(runtime).use { rpc ->
+            StdioCodexAppServer(runtime).use { rpc ->
                 assertEquals(JsonNull, rpc.call("account/read")["account"])
                 rpc.call("account/login/start")
                 assertEquals(false, rpc.loginResult("login-fixture"))
@@ -66,7 +66,7 @@ class StdioCodexAccountRpcTest {
         val runtime = CodexRuntime(executable, root.resolve("private")); runtime.prepare()
         val notifications = java.util.concurrent.CopyOnWriteArrayList<String>()
         try {
-            StdioCodexAccountRpc(runtime, onNotification = { method, _ -> notifications += method }).use { rpc ->
+            StdioCodexAppServer(runtime, onNotification = { method, _ -> notifications += method }).use { rpc ->
                 assertEquals(JsonPrimitive(true), rpc.call("account/read")["rejected"])
                 assertContains(notifications, "request/refused")
             }
@@ -95,7 +95,7 @@ class StdioCodexAccountRpcTest {
         val runtime = CodexRuntime(executable, root.resolve("private")); runtime.prepare()
         val notifications = java.util.concurrent.CopyOnWriteArrayList<String>()
         try {
-            StdioCodexAccountRpc(runtime, onNotification = { method, _ -> notifications += method }).use { rpc ->
+            StdioCodexAppServer(runtime, onNotification = { method, _ -> notifications += method }).use { rpc ->
                 assertEquals(JsonNull, rpc.call("account/read")["account"])
                 assertEquals(JsonNull, rpc.call("account/read")["account"])
                 assertEquals(listOf("turn/completed", "turn/completed"), notifications.toList())
@@ -120,7 +120,7 @@ class StdioCodexAccountRpcTest {
         Files.setPosixFilePermissions(executable, PosixFilePermissions.fromString("rwx------"))
         val runtime = CodexRuntime(executable, root.resolve("private")); runtime.prepare()
         try {
-            StdioCodexAccountRpc(runtime, allowedMethods = setOf("thread/resume", "thread/start")).use { rpc ->
+            StdioCodexAppServer(runtime, allowedMethods = setOf("thread/resume", "thread/start")).use { rpc ->
                 assertFailsWith<CodexRequestRejected> { rpc.call("thread/resume") }
                 assertEquals(JsonPrimitive("fresh"), rpc.call("thread/start")["thread"]?.jsonObject?.get("id"))
             }

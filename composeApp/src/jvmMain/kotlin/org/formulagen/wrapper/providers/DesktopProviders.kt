@@ -14,7 +14,7 @@ internal class DesktopProviders(
     private val executable: Path?,
     private val openBrowser: (URI) -> Unit = { Desktop.getDesktop().browse(it) },
     private val createConnection: (CodexRuntime, (URI) -> Unit) -> ProviderConnection = { runtime, open ->
-        runtime.prepare(); CodexConnection(StdioCodexAccountRpc(runtime), open)
+        runtime.prepare(); CodexConnection(StdioCodexAppServer(runtime), open)
     },
 ) : AutoCloseable {
     private val mutex = Mutex()

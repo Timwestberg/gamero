@@ -11,7 +11,7 @@ import kotlinx.serialization.json.*
 import kotlin.test.*
 
 class ProviderConnectionsTest {
-    private class Rpc : CodexAccountRpc {
+    private class Rpc : CodexAppServer {
         val calls = mutableListOf<String>()
         var account: JsonElement = JsonNull
         var outcome: Boolean? = null
