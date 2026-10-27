@@ -8,6 +8,10 @@ export HOVEL_PET_PROJECT="${HOVEL_PET_PROJECT:-$PLATFORM/ember-desktop-pet}"
 export HOVEL_PET_GODOT="${HOVEL_PET_GODOT:-/Applications/Godot.app/Contents/MacOS/Godot}"
 export HOVEL_VOICE_MODEL="${HOVEL_VOICE_MODEL:-$ROOT/spikes/ember-voice/mac/models/sherpa-onnx-pocket-tts-int8-2026-01-26}"
 export HOVEL_VOICE_REFERENCE="${HOVEL_VOICE_REFERENCE:-$ROOT/spikes/ember-voice/mac/models/voices/0a67_enhanced-24k.wav}"
+if ! compgen -G "$ROOT/spikes/ember-voice/mac/deps/sherpa/sherpa-onnx-jvm-*.jar" >/dev/null \
+  || [[ ! -d "$HOVEL_VOICE_MODEL" || ! -f "$HOVEL_VOICE_REFERENCE" ]]; then
+  echo 'Spoken replies are off: voice files are missing. Run scripts/fetch-voice.sh to enable them.' >&2
+fi
 if [[ -d "$ROOT/../server-platform-companion-chat/event-contracts" ]]; then
   export GAME_PLATFORM_CONTRACTS_ROOT="${GAME_PLATFORM_CONTRACTS_ROOT:-$ROOT/../server-platform-companion-chat/event-contracts}"
 fi

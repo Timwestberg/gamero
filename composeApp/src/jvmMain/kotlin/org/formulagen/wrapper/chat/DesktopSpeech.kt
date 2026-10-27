@@ -7,9 +7,12 @@ import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.Clip
 import org.formulagen.wrapper.bridge.ChatVoice
+import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.voice.EmberVoice
 import org.formulagen.wrapper.voice.VoiceConfig
 import org.formulagen.wrapper.voice.openPieceEngine
+import org.formulagen.wrapper.voice.pocketEngineLinked
 
 /** Chat owns when to speak; an audio failure must not discard its text. */
 internal interface ChatSpeech : AutoCloseable {
@@ -102,9 +105,12 @@ internal fun pcm16(samples: FloatArray): ByteArray = ByteArray(samples.size * 2)
 }
 
 /** Host configuration supplies model paths; no path or reference clip comes from the page. */
-internal fun desktopVoiceConfig(environment: Map<String, String>): VoiceConfig? {
-    val directory = environment["HOVEL_VOICE_MODEL"]?.let(Path::of) ?: return null
-    val voice = environment["HOVEL_VOICE_REFERENCE"]?.let(Path::of) ?: return null
-    if (!Files.isDirectory(directory) || !Files.isRegularFile(voice)) return null
+internal fun desktopVoiceConfig(environment: Map<String, String>, engineLinked: Boolean = pocketEngineLinked()): VoiceConfig? {
+    val directory = environment["HOVEL_VOICE_MODEL"]?.let(Path::of)
+    val voice = environment["HOVEL_VOICE_REFERENCE"]?.let(Path::of)
+    if (!engineLinked || directory == null || voice == null || !Files.isDirectory(directory) || !Files.isRegularFile(voice)) {
+        log(LogLevel.Warn, "voice", "Spoken replies are off. Run scripts/fetch-voice.sh, then rebuild.")
+        return null
+    }
     return VoiceConfig(modelDir = directory.toAbsolutePath().toString(), voiceWav = voice.toAbsolutePath().toString())
 }

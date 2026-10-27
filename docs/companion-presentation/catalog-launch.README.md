@@ -3,6 +3,7 @@
 ```sh
 export JAVA_HOME="<JDK 21>/Contents/Home"
 export GAMERO_BROWSER_JAVA_HOME="<installed JBR with JCEF>/Contents/Home"
+scripts/fetch-voice.sh   # once, for spoken chat replies
 ./'Play From Catalog.command'
 ```
 

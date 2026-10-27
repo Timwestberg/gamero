@@ -132,4 +132,16 @@ class DesktopChatTest {
         assertContains(chatProcessArguments(),"web_search=\"disabled\"")
         DesktopSpeech(null).use { speech -> speech.speak("Hello"); assertEquals("unavailable",speech.status().state) }
     }
+
+    @Test fun voiceIsUnavailableUntilTheEngineAndFilesArePresent() {
+        val model = Files.createTempDirectory("voice-model")
+        val clip = Files.createTempFile(model, "voice", ".wav")
+        val env = mapOf("HOVEL_VOICE_MODEL" to model.toString(), "HOVEL_VOICE_REFERENCE" to clip.toString())
+        try {
+            assertNotNull(desktopVoiceConfig(env, engineLinked = true))
+            assertNull(desktopVoiceConfig(env, engineLinked = false))
+            assertNull(desktopVoiceConfig(env - "HOVEL_VOICE_REFERENCE", engineLinked = true))
+            assertNull(desktopVoiceConfig(env + ("HOVEL_VOICE_MODEL" to model.resolve("missing").toString()), engineLinked = true))
+        } finally { model.toFile().deleteRecursively() }
+    }
 }
