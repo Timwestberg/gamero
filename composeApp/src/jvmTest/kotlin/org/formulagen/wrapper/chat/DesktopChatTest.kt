@@ -216,6 +216,31 @@ class DesktopChatTest {
         DesktopSpeech(null).use { speech -> speech.speak("Hello"); assertEquals("unavailable",speech.status().state) }
     }
 
+    @Test fun aVoiceRuntimeThatCannotLinkReportsUnavailableAndKeepsTheWorker() {
+        var opens = 0
+        val config = org.formulagen.wrapper.voice.VoiceConfig(modelDir = "/missing", voiceWav = "/missing.wav")
+        DesktopSpeech(config) { opens++; throw UnsatisfiedLinkError("no sherpa-onnx-jni in java.library.path") }.use { speech ->
+            speech.speak("Hello")
+            await { speech.status().state == "unavailable" }
+            assertEquals("Local voice could not start on this Mac. Text chat is available.", speech.status().notice)
+            speech.stop(); assertEquals("unavailable", speech.status().state)
+            speech.speak("Hello again"); Thread.sleep(50)
+            assertEquals("unavailable", speech.status().state)
+            assertEquals(1, opens)
+        }
+    }
+
+    @Test fun workerThreadsLogEscapedFailuresInsteadOfReachingTheDefaultHandler() {
+        val reached = java.util.concurrent.atomic.AtomicBoolean()
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { _, _ -> reached.set(true) }
+        try {
+            val thread = loggingDaemonThreads("hovel-test").newThread { throw ExceptionInInitializerError("native load") }
+            thread.start(); thread.join(5000)
+            assertTrue(thread.isDaemon); assertFalse(reached.get())
+        } finally { Thread.setDefaultUncaughtExceptionHandler(previous) }
+    }
+
     @Test fun voiceIsUnavailableUntilTheEngineAndFilesArePresent() {
         val model = Files.createTempDirectory("voice-model")
         val clip = Files.createTempFile(model, "voice", ".wav")

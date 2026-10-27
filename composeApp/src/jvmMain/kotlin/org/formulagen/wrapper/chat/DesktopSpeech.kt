@@ -10,6 +10,7 @@ import org.formulagen.wrapper.bridge.ChatVoice
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.voice.EmberVoice
+import org.formulagen.wrapper.voice.PieceEngine
 import org.formulagen.wrapper.voice.VoiceConfig
 import org.formulagen.wrapper.voice.openPieceEngine
 import org.formulagen.wrapper.voice.pocketEngineLinked
@@ -21,16 +22,24 @@ internal interface ChatSpeech : AutoCloseable {
     fun stop()
 }
 
-/** One serialized PocketTTS engine, with independently cancellable desktop playback. */
-internal class DesktopSpeech(private val config: VoiceConfig?) : ChatSpeech {
+/**
+ * One serialized PocketTTS engine, with independently cancellable desktop playback.
+ * [openEngine] loads the native runtime on first use; tests replace it.
+ */
+internal class DesktopSpeech(
+    private val config: VoiceConfig?,
+    private val openEngine: (VoiceConfig) -> PieceEngine = ::openPieceEngine,
+) : ChatSpeech {
     private val gate = Any()
-    private val worker = Executors.newSingleThreadExecutor { task -> Thread(task, "hovel-voice").apply { isDaemon = true } }
+    private val worker = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-voice"))
     private var engine: EmberVoice? = null
     private var clip: Clip? = null
     private var generation = 0
     private var closed = false
-    private val unavailable = ChatVoice("unavailable", "Local voice is not installed. Text chat is available.")
-    private var state = if (config == null) unavailable else ChatVoice()
+    private val notInstalled = ChatVoice("unavailable", "Local voice is not installed. Text chat is available.")
+    /** Set once the native runtime fails to link; a later attempt would only fail again. */
+    private var unavailable: ChatVoice? = if (config == null) notInstalled else null
+    private var state = unavailable ?: ChatVoice()
 
     override fun status(): ChatVoice = synchronized(gate) { state }
 
@@ -38,7 +47,7 @@ internal class DesktopSpeech(private val config: VoiceConfig?) : ChatSpeech {
     override fun speak(text: String) = synchronized(gate) {
         if (closed) return@synchronized
         stopLocked()
-        if (config == null) { state = unavailable; return@synchronized }
+        if (config == null || unavailable != null) return@synchronized
         val spoken = speechText(text)
         if (spoken.isBlank()) return@synchronized
         val ticket = generation
@@ -46,7 +55,7 @@ internal class DesktopSpeech(private val config: VoiceConfig?) : ChatSpeech {
         worker.execute {
             try {
                 synchronized(gate) { if (closed || ticket != generation) return@execute }
-                val voice = engine ?: EmberVoice(openPieceEngine(config), config).also { engine = it }
+                val voice = engine ?: EmberVoice(openEngine(config), config).also { engine = it }
                 val audio = voice.speak(spoken)
                 val pcm = pcm16(audio.samples)
                 val player = AudioSystem.getClip()
@@ -64,10 +73,17 @@ internal class DesktopSpeech(private val config: VoiceConfig?) : ChatSpeech {
                     }
                 } finally { player.stop(); player.close() }
                 synchronized(gate) { if (ticket == generation) { clip = null; state = ChatVoice() } }
-            } catch (_: Exception) {
+            } catch (error: Throwable) {
+                // UnsatisfiedLinkError or ExceptionInInitializerError: the native runtime cannot load on this Mac.
+                val linkage = error is LinkageError
                 synchronized(gate) {
-                    if (ticket == generation && !closed) { clip = null; state = ChatVoice("error", "Voice playback failed. Your text reply is still available.") }
+                    if (linkage) unavailable = ChatVoice("unavailable", "Local voice could not start on this Mac. Text chat is available.")
+                    if (ticket == generation) clip = null
+                    if (!closed && (linkage || ticket == generation)) {
+                        state = unavailable ?: ChatVoice("error", "Voice playback failed. Your text reply is still available.")
+                    }
                 }
+                if (error is VirtualMachineError) throw error
             }
         }
     }
@@ -77,7 +93,7 @@ internal class DesktopSpeech(private val config: VoiceConfig?) : ChatSpeech {
     private fun stopLocked() {
         generation++
         clip?.let { runCatching { it.stop(); it.close() } }; clip = null
-        state = if (config == null) unavailable else ChatVoice()
+        state = unavailable ?: ChatVoice()
     }
 
     /** Release only after the serialized engine has finished any in-flight synthesis. */
