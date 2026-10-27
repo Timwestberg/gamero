@@ -305,6 +305,7 @@ private fun readVoice(path: File): VoiceWave {
                 "voice-donations/, not the Expresso files under the model's test_wavs/.",
         )
     }
+    refuseNonCommercialVoice(path.path)
     val reader = WaveReader(path.path)
     if (reader.samples.isEmpty() || reader.sampleRate <= 0) {
         throw HarnessException("voice wav has no samples: ${path.path}")
@@ -895,12 +896,49 @@ private fun selfCheck(config: Config) {
     expect(sayAt120[0].length == 116, "say_limit first piece at 120 is ${sayAt120[0].length} chars")
     val summaryAt120 = pocketPieces(config.lines[4].text, 120, 30)
     expect(summaryAt120 == summaryPieces, "max 120 must not re-cut summary")
+    refuseNonCommercialVoice(config.voice.path)
+    expectThrows("expresso path") { refuseNonCommercialVoice("models/expresso/ex03.wav") }
+    expectThrows("test_wavs path") { refuseNonCommercialVoice("models/sherpa/test_wavs/bria.wav") }
+    val badWav = File("build/self-check-bad-wav.wav")
+    badWav.parentFile?.mkdirs()
+    val bad = ByteArray(44)
+    "RIFF".forEachIndexed { index, ch -> bad[index] = ch.code.toByte() }
+    bad[4] = 36
+    "WAVE".forEachIndexed { index, ch -> bad[8 + index] = ch.code.toByte() }
+    "fmt ".forEachIndexed { index, ch -> bad[12 + index] = ch.code.toByte() }
+    bad[16] = 0xff.toByte()
+    bad[17] = 0xff.toByte()
+    bad[18] = 0xff.toByte()
+    bad[19] = 0xff.toByte()
+    badWav.writeBytes(bad)
+    expectThrows("negative wav chunk") { readWav(badWav) }
+    badWav.delete()
+}
+
+private fun expectThrows(label: String, block: () -> Unit) {
+    try {
+        block()
+        throw HarnessException("self-check failed: $label should have failed")
+    } catch (e: HarnessException) {
+        if (e.message?.contains("should have failed") == true) throw e
+    }
 }
 
 private fun sayLimit(config: Config): LineSpec = config.lines.first { it.id == "say_limit" }
 
 private fun expect(condition: Boolean, message: String) {
     if (!condition) throw HarnessException("self-check failed: $message")
+}
+
+/** Expresso and the model's test_wavs clips are CC-BY-NC. This harness only speaks CC0 or other permissive clips. */
+internal fun refuseNonCommercialVoice(path: String) {
+    val lowered = path.replace('\\', '/').lowercase()
+    if (lowered.contains("expresso") || lowered.contains("test_wavs")) {
+        throw HarnessException(
+            "voice must be CC0 or another permissive license. " +
+                "Expresso and test_wavs are CC-BY-NC and cannot be used ($path).",
+        )
+    }
 }
 
 private fun parseArgs(args: Array<String>): Cli {
@@ -1487,7 +1525,9 @@ private fun readWav(file: File): PcmWav {
         val id = tag(pos)
         val size = le32(bytes, pos + 4)
         val start = pos + 8
-        if (start + size > bytes.size) throw HarnessException("truncated wav chunk $id in ${file.path}")
+        if (size < 0 || start.toLong() + size.toLong() > bytes.size) {
+            throw HarnessException("truncated wav chunk $id in ${file.path}")
+        }
         if (id == "fmt ") {
             if (size < 16) throw HarnessException("short fmt chunk in ${file.path}")
             audioFormat = le16(bytes, start)

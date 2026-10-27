@@ -90,9 +90,11 @@ if [ -f "$time_file" ]; then
       ''|*[!0-9]*) kb="" ;;
     esac
   fi
-  if [ -n "$kb" ]; then
+    if [ -n "$kb" ]; then
     patched=0
-    for json_file in "$ROOT/results/"*.json; do
+    # Only the files this process wrote. Older results/*.json keep their own peak.
+    for json_name in ember-voice-results.json ember-voice-sweep.json; do
+      json_file="$ROOT/results/$json_name"
       if [ ! -f "$json_file" ]; then
         continue
       fi

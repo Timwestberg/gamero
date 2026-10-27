@@ -55,6 +55,12 @@ voice_url=$(conf_get voice_url "$CONF")
 if [ -z "$model_dir" ] || [ -z "$voice" ] || [ -z "$voice_url" ]; then
   die "config needs model_dir, voice, and voice_url"
 fi
+voice_probe=$(printf '%s %s' "$voice" "$voice_url" | tr '[:upper:]' '[:lower:]')
+case "$voice_probe" in
+  *expresso*|*test_wavs*)
+    die "voice must be CC0 or another permissive license. Expresso and test_wavs are CC-BY-NC."
+    ;;
+esac
 
 plat=$(platform_id)
 cpu=$(arch_id)

@@ -74,7 +74,7 @@ voice_url=https://huggingface.co/kyutai/tts-voices/resolve/main/voice-donations/
 
 `setup.sh` downloads `voice_url` only when `voice` is missing. To force a new download, delete the old wav or use a new `voice` path. A file you already have on disk works too: set `voice` to that path and leave the file in place.
 
-Stay inside `voice-donations/` (or another CC0 set such as `voice-zero/`). Do not use Expresso. The clips under `models/.../test_wavs/` (including `bria.wav`) and anything under `expresso/` are CC-BY-NC.
+Stay inside `voice-donations/` (or another CC0 set such as `voice-zero/`). Do not use Expresso. The clips under `models/.../test_wavs/` (including `bria.wav`) and anything under `expresso/` are CC-BY-NC. `setup.sh` and `run.sh` refuse a voice path or URL that contains `expresso` or `test_wavs`.
 
 `num_steps`, `num_threads`, `temperature`, `chunk_size`, and `max_char_in_sentence` are in the same config file. The engine defaults match sherpa-onnx's PocketTTS example: 5 flow steps, 2 threads, temperature 0.7. Fewer `num_steps` is faster and lower quality.
 
