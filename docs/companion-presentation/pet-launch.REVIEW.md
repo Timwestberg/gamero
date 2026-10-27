@@ -15,7 +15,7 @@ None for the requested local launch path.
 ## Notes
 - One native host owns one pet. Independently launched pets are not adopted or terminated.
 - The native installation and engine are configured outside the page. A separate executable preserves the existing desktop-overlay behavior and 4.7.2 engine boundary.
-- The shared v1 transport remains a compatibility adapter for this checkout. Move the lifecycle methods into a v2 capability pack when the native host adopts that protocol.
+- The lifecycle methods are now the host-bridge v2 `pet` capability (`PetCapability`, implemented by `DesktopPetLauncher`); the v1 route is removed.
 
 ## What works
 - Hovel and the catalog share one injectable pet control and service.

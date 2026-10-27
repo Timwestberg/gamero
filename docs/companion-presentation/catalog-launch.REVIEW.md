@@ -15,7 +15,7 @@ None for the approved local test path. This does not approve production packagin
 - Web launch responses are bounded and validated, and plain browsers display an actionable error.
 
 ## Notes
-- This native checkout predates the shared v2 host bridge. The documented v1 adapter is temporary compatibility work; migrate to a games capability pack when the shared native kit is integrated. Adding a new native game currently requires a native allowlist/configuration entry as well as a catalog record.
+- `games.launch` is now a host-bridge v2 capability (`GameCapability`); the v1 adapter is removed and the web `nativeGames` adapter should call the shared client. Adding a new native game requires a `gameId` in the contract and native configuration as well as a catalog record.
 - The catalog fixture is explicit local data. Production catalog publication and native result-service integration are separate work.
 - Existing CALayerHost and Godot editor embedding limits still apply.
 

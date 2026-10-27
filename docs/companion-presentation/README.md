@@ -46,12 +46,12 @@ CompanionPresentation(state, onSelect, onAction, onRetry, scene = scene)
 
 ## Native chat, voice and providers
 
-The desktop host answers the `chat.*` host-bridge methods and the `providers.*` account actions natively; the page never sees a token, path or command line.
+The desktop host answers the `chat.*` and `providers.*` host-bridge v2 methods natively; the page never sees a token, path or command line. `DesktopServices.kt` builds these services with the pet and game launchers.
 
 - `bridge/ChatCapability.kt` (commonMain): the `chat.*` contract types, `ChatLimits` and argument validation. `bridge/SharedRules.kt` holds the profile ID and companion-name rules both chat and pet use.
 - `chat/DesktopChat.kt`: one chat view's lease, its Codex app-server, turns and the saved thread. `chat/ChatCodex.kt` is the conversation-only Codex configuration; `chat/ChatHistory.kt` the per-companion record under the profile's Codex home.
 - `chat/DesktopSpeech.kt`: spoken replies through the `:voice` module (PocketTTS via sherpa-onnx), with independent stop.
-- `providers/CodexAppServer.kt`: bounded stdio JSON-RPC to one Codex app-server, limited to each owner's method list. `providers/CodexRuntime.kt` owns how every Codex child is started (`codexProcess`) and each profile's private Codex home. `providers/CodexConnection.kt` and `providers/DesktopProviders.kt` are the Providers account flow.
+- `providers/CodexAppServer.kt`: bounded stdio JSON-RPC to one Codex app-server, limited to each owner's method list. `providers/CodexRuntime.kt` owns how every Codex child is started (`codexProcess`) and each profile's private Codex home. `providers/CodexConnection.kt` and `providers/DesktopProviders.kt` are the Providers account flow behind `bridge/ProviderCapability.kt`.
 
 Behavior and the web side live with the catalog app in game-platform: [companion chat](../../../game-platform/docs/launcher/companion-chat.README.md) ([architecture](../../../game-platform/docs/launcher/companion-chat.ARCH.md), [tests](../../../game-platform/docs/launcher/companion-chat.TEST.md)) and [providers](../../../game-platform/docs/launcher/providers.README.md) ([architecture](../../../game-platform/docs/launcher/providers.ARCH.md), [tests](../../../game-platform/docs/launcher/providers.TEST.md)). Those docs are on game-platform's companions branch until it merges.
 
@@ -64,7 +64,7 @@ Every environment variable the desktop companion path reads. The launchers take 
 | `JAVA_HOME` | `/usr/libexec/java_home -v 21` | `dev-env.sh`, Gradle, the packaging scripts | JDK for builds, jpackage and the embed library's JNI headers; the runtime of the standalone embedded app. |
 | `GAMERO_BROWSER_JAVA_HOME` | none; Play From Catalog requires it | `build.gradle.kts`, `package-catalog-macos.sh` | JetBrains Runtime with JCEF that the catalog app bundles and runs on. |
 | `GAME_PLATFORM_SIBLING_ROOT` | the folder above this checkout | `dev-env.sh`, game-platform's Vite config | Folder that holds the `game-platform` and `server-platform` checkouts; base of the next two defaults. |
-| `HOVEL_GAME_PROJECT` | `$GAME_PLATFORM_SIBLING_ROOT/game-platform/games/ember-tower` | `dev-env.sh`, `main.kt`, `DesktopGameLauncher`, `EmbeddedCompanionWindow`, `CompanionMain`, tests | Companion game project. Its `scripts/godot.sh` must report Godot `4.8.beta1.official.4d10419ca`. Unset in the app, `games.launch` fails; unset in tests, real-Godot tests skip. |
+| `HOVEL_GAME_PROJECT` | `$GAME_PLATFORM_SIBLING_ROOT/game-platform/games/ember-tower` | `dev-env.sh`, `main.kt`, `DesktopGameLauncher`, `EmbeddedCompanionWindow`, `CompanionMain`, tests | Companion game project. Its `scripts/godot.sh` must report Godot `4.8.beta1.official.4d10419ca`. Unset in the app, `games.launch` answers `unsupported`; unset in tests, real-Godot tests skip. |
 | `GAME_PLATFORM_CONTRACTS_ROOT` | `$GAME_PLATFORM_SIBLING_ROOT/server-platform/event-contracts` | `dev-env.sh`, the catalog's Vite server | Event-contracts checkout the web catalog builds against. Play From Catalog stops if it is missing. |
 | `GAMERO_CATALOG_PORT` | `8133` | Play From Catalog, game-platform `companionLauncher.ts` | Loopback port of the catalog server; Play From Catalog sets `GAMERO_WEB_URL` from it. |
 | `HOVEL_EMBED_LIBRARY` | `build/embedded-godot/libhovel_embed.dylib`, always | `DesktopGameLauncher`, `MacGameLayer` | JAWT layer bridge for the embedded game. A missing file fails the launch with a log line instead of a crash. |

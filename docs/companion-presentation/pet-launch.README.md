@@ -22,8 +22,8 @@ Both variables can be overridden before launch. The pet uses its existing transp
 ## Extend or reuse
 
 - UI: render `PetLaunchControl`; inject its `pet` service for isolated UI tests.
-- Transport: `createNativePet(host)` validates replies and shares `requestDesktopAction` with game launches. Do not open another v1 document watch for each feature.
-- Native: `DesktopPetLauncher` owns process lifecycle. Status, show and hide accept only empty arguments; `pet.configure` accepts one validated companion profile and writes the appearance file the pet reads. Project and executable stay in native configuration.
+- Transport: the page calls `pet.*` through the shared `@formulagen/host-bridge` client (host-bridge v2). The desktop no longer answers `pet.*` over v1.
+- Native: `DesktopPetLauncher` implements `PetCapability` and owns process lifecycle. Status, show and hide accept only empty arguments; `pet.configure` accepts one validated companion profile and writes the appearance file the pet reads. Project and executable stay in native configuration.
 - Hiding stops the process. Showing starts the existing pet project again; ephemeral pet menu choices follow that project's existing persistence behavior.
 - Navigation leaves a ready pet alive. Closing the host stops its owned pet. Independently launched pets are outside this host's ownership.
 
