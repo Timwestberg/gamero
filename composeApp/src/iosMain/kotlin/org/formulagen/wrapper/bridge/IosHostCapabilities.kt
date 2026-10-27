@@ -14,4 +14,4 @@ internal fun iosHostCapabilities(appVersion: String): HostCapabilities = HostCap
 )
 
 /** Hovel's capability packs on iOS. iOS has no companion, so its methods answer `unsupported`. */
-internal fun iosHovelBridgePacks(): List<CapabilityPack> = listOf(CompanionMethods.pack(Capability.Unsupported))
+internal fun iosHovelBridgePacks(): List<CapabilityPack> = listOf(CompanionMethods.pack(Capability.Unsupported), ChatMethods.pack(Capability.Unsupported))

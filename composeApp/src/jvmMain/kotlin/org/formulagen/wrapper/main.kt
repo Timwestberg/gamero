@@ -36,6 +36,17 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import org.cef.CefClient
+import javax.swing.JFrame
+import org.formulagen.wrapper.progression.embedded.DesktopGameLauncher
+import org.formulagen.wrapper.pet.DesktopPetLauncher
+import org.formulagen.wrapper.providers.DesktopProviders
+import org.formulagen.wrapper.providers.codexProfileHome
+import org.formulagen.wrapper.providers.findCodexExecutable
+import org.formulagen.wrapper.chat.DesktopChat
+import org.formulagen.wrapper.chat.DesktopSpeech
+import org.formulagen.wrapper.chat.desktopVoiceConfig
+import org.formulagen.wrapper.bridge.ChatMethods
+import org.formulagen.wrapper.bridge.Capability
 
 private class DesktopResources : AutoCloseable {
     val browser = AtomicReference<org.cef.browser.CefBrowser?>(null)
@@ -55,6 +66,10 @@ private class DesktopResources : AutoCloseable {
         browser.set(target)
     }
 
+    var games: DesktopGameLauncher? = null
+    var pet: DesktopPetLauncher? = null
+    var providers: DesktopProviders? = null
+    var chat: DesktopChat? = null
     var bridge: NativeBridge? = null
     var companion: HovelCompanion? = null
     override fun close() {
@@ -62,7 +77,12 @@ private class DesktopResources : AutoCloseable {
         browser.set(null)
         keyboardClient?.removeKeyboardHandler()
         keyboardClient = null
-        try { bridge?.close() } finally { companion?.close() }
+        EventQueue.invokeAndWait { games?.close() }
+        try { bridge?.close() } finally {
+            try { pet?.close() } finally {
+                try { chat?.close() } finally { try { providers?.close() } finally { companion?.close() } }
+            }
+        }
     }
 }
 
@@ -99,12 +119,12 @@ fun main(args: Array<String>) {
     )
     try {
         application(exitProcessOnExit = false) {
-            exitAction.set(::exitApplication)
+            exitAction.set { resources.games?.close(); exitApplication() }
             val url = remember { desktopWebUrl(args, desktopSetting(System.getenv("GAMERO_WEB_URL"), System.getProperty("gamero.webUrl"))) }
             CompositionLocalProvider(LocalWindowExceptionHandlerFactory provides object : WindowExceptionHandlerFactory {
                 override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler = failure
             }) {
-                Window(onCloseRequest = ::exitApplication, title = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME) {
+                Window(onCloseRequest = { resources.games?.close(); exitApplication() }, title = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME) {
                     DisposableEffect(window) {
                         // Read AWT state on its event thread, never from the CEF callback thread.
                         val listener = object : WindowAdapter() {
@@ -137,7 +157,7 @@ fun main(args: Array<String>) {
                         if (url == null) {
                             Text("Set GAMERO_WEB_URL to an HTTPS app URL (or HTTP localhost for development).", Modifier.padding(24.dp))
                         } else {
-                            DesktopBrowser(url, lifecycle, resources, failure)
+                            DesktopBrowser(url, lifecycle, resources, failure, window)
                         }
                     }
                 }
@@ -154,7 +174,7 @@ fun main(args: Array<String>) {
 
 @OptIn(KCEFAcknowledge::class)
 @Composable
-private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: DesktopResources, runtimeFailure: DesktopFailure) {
+private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: DesktopResources, runtimeFailure: DesktopFailure, window: JFrame) {
     var start by remember { mutableStateOf(false) }
     var initialized by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
@@ -163,12 +183,33 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
         if (System.getProperty("os.name").contains("Mac")) File(home, "Library/Application Support/Gamero")
         else File(home, ".local/share/gamero")
     }
+    val games = remember {
+        if (System.getenv("HOVEL_GAME_PROJECT") != null) DesktopGameLauncher(window, System.getenv()) {
+            resources.browser.get()?.executeJavaScript("window.dispatchEvent(new Event('gameroGameClosed'))", url, 0)
+        }.also { resources.games = it } else null
+    }
+    val pet = remember {
+        DesktopPetLauncher(System.getenv(), support.toPath().resolve("ember-pet.log"))
+            .also { resources.pet = it }
+    }
+    val codexExecutable = remember { findCodexExecutable(System.getenv()) }
+    val providerRoot = remember {
+        val origin = URI(url).let { URI(it.scheme, null, it.host, it.port, null, null, null).toASCIIString() }
+        support.toPath().resolve("providers").resolve(HovelCompanion.sha256(origin))
+    }
+    val providers = remember {
+        DesktopProviders(providerRoot, codexExecutable).also { resources.providers = it }
+    }
+    val chat = remember {
+        DesktopChat(providerRoot, codexExecutable, DesktopSpeech(desktopVoiceConfig(System.getenv()))).also { resources.chat = it }
+    }
     val companion = remember {
         if (isHovelProduct() && System.getProperty("os.name").contains("Mac")) {
-            val executable = System.getenv("GAMERO_CODEX_PATH")?.let(Path::of)
+            val executable = codexExecutable
             val workspace = System.getenv("GAMERO_WORKSPACE")?.let(Path::of)
             if (executable != null && workspace != null) {
-                HovelCompanion(url, support.toPath().resolve("hovel-${HovelCompanion.sha256(url)}"), executable, workspace)
+                HovelCompanion(url, support.toPath().resolve("hovel-${HovelCompanion.sha256(url)}"), executable, workspace,
+                    codexHomeForOwner = { codexProfileHome(providerRoot, it) })
                     .also { resources.companion = it }
             } else null
         } else null
@@ -229,9 +270,21 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                     product = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME,
                     trustedUrl = url,
                     capabilities = desktopHostCapabilities(),
-                    products = if (isHovelProduct()) hovelBridgePacks(companion) else emptyList(),
-                    onInvalidate = { companion?.invalidatePending() },
-                    dispatch = companion?.let { it::dispatch },
+                    products = if (isHovelProduct()) hovelBridgePacks(companion, chat) else listOf(ChatMethods.pack(Capability.Supported(chat))),
+                    onInvalidate = {
+                        companion?.invalidatePending()
+                        chat.invalidate()
+                        EventQueue.invokeLater { games?.close() }
+                    },
+                    dispatch = { method, args ->
+                        if (method.startsWith("pet.")) pet.dispatch(method, args)
+                        else if (method.startsWith("providers.")) {
+                            if (method == "providers.disconnect") chat.invalidate()
+                            providers.dispatch(method, args)
+                        }
+                        else if (method.startsWith("games.")) requireNotNull(games).dispatch(method, args)
+                        else requireNotNull(companion).dispatch(method, args)
+                    },
                 )
             })
         }

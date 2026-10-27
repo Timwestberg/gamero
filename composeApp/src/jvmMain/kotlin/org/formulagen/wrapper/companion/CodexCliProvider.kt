@@ -3,9 +3,10 @@ package org.formulagen.wrapper.companion
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
+import org.formulagen.wrapper.providers.CodexRuntime
 
 /** Provider authentication remains wholly in supported, user-installed Codex tooling. */
-class CodexCliProvider(private val executable: Path, workspace: Path, outputDirectory: Path) : TaskProvider {
+class CodexCliProvider(private val executable: Path, workspace: Path, outputDirectory: Path, private val codexHome: Path? = null) : TaskProvider {
     private val outputDirectory = outputDirectory.toAbsolutePath().normalize()
     private val workspace = workspace.toRealPath()
     init {
@@ -86,7 +87,9 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
         } // Retain output even on ambiguous failure for explicit local reconciliation.
     }
 
-    internal fun builder(arguments: List<String>): ProcessBuilder = ProcessBuilder(listOf(executable.toString()) + arguments)
+    internal fun builder(arguments: List<String>): ProcessBuilder = codexHome?.let {
+        CodexRuntime(executable, it).also { runtime -> runtime.prepare() }.builder(arguments, workspace)
+    } ?: ProcessBuilder(listOf(executable.toString()) + arguments)
         .directory(workspace.toFile()).apply {
             // Do not route the user's invocation to an API-key billing path.
             environment().keys.removeIf { it.startsWith("OPENAI_") || it == "CODEX_API_KEY" }

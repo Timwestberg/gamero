@@ -71,13 +71,13 @@ class JcefHostBridgeTest {
     private val watch = """{"version":2,"method":"watchContext","args":{}}"""
     private fun call(contextId: String) = """{"version":2,"contextId":"$contextId","method":"host.info","args":{}}"""
 
-    private fun TestScope.transport(lifecycle: Capability<Lifecycle> = Capability.Unsupported) = JcefHostBridge(
+    private fun TestScope.transport(lifecycle: Capability<Lifecycle> = Capability.Unsupported, onEnd: () -> Unit = {}) = JcefHostBridge(
         HostBridge(
             product = "Hovel",
             trustedUrl = trusted,
             capabilities = HostCapabilities(HostPlatform.DESKTOP, "1.0.0", Capability.Unsupported, Capability.Unsupported, lifecycle),
             context = backgroundScope.coroutineContext,
-        ),
+        ), onEnd,
     )
 
     private fun TestScope.settle() {
@@ -162,6 +162,19 @@ class JcefHostBridgeTest {
         pause()
         settle()
         assertEquals(1, first.successes.size, "the older watch got an event for a context it never held")
+    }
+
+    @Test
+    fun contextReplacementAndCancellationReleaseProductSessionsExactlyOnce() = runTest {
+        var ended = 0
+        val transport = transport(onEnd = { ended++ })
+        ask(transport, watch, persistent = true, queryId = 1)
+        ask(transport, watch, persistent = true, queryId = 2)
+        assertEquals(1, ended)
+        transport.onQueryCanceled(1)
+        assertEquals(1, ended)
+        assertTrue(transport.onQueryCanceled(2))
+        assertEquals(2, ended)
     }
 
     private fun TestScope.assertContextOpen(transport: JcefHostBridge, watchAnswers: Answers) {

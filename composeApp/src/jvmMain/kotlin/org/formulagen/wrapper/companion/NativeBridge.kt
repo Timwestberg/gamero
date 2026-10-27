@@ -30,7 +30,7 @@ class NativeBridge(
     private val gate = Any()
     private val origin = TrustedOrigin(trustedUrl)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val hostBridge = JcefHostBridge(product, trustedUrl, capabilities, products)
+    private val hostBridge = JcefHostBridge(product, trustedUrl, capabilities, products, onInvalidate)
     private val pending = ConcurrentHashMap<Long, Job>()
     private val closed = AtomicBoolean(false)
     private var watchId: Long? = null

@@ -53,6 +53,15 @@ kotlin {
     
     }
     jvm()
+    @OptIn(ExperimentalKotlinGradlePluginApi::class)
+    applyDefaultHierarchyTemplate {
+        common {
+            group("skia") {
+                withJvm()
+                withIos()
+            }
+        }
+    }
     
     sourceSets {
         if (mobileTargets) getByName("androidMain").dependencies {
@@ -84,8 +93,12 @@ kotlin {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutinesTest)
         }
-        jvmTest.dependencies { implementation(libs.kotlin.testJunit) }
+        jvmTest.dependencies {
+            implementation(libs.kotlin.testJunit)
+            implementation("org.jetbrains.compose.ui:ui-test:1.12.1")
+        }
         jvmMain.dependencies {
+            implementation(project(":voice"))
             // Upgrade the WebView's old 2.5.0 transitive dependencies to the stable Maven Central release.
             implementation("org.jogamp.gluegen:gluegen-rt:2.6.0")
             implementation("org.jogamp.jogl:jogl-all:2.6.0")
@@ -196,4 +209,69 @@ tasks.withType<JavaExec>().configureEach {
     if (System.getProperty("os.name").contains("Mac")) {
         jvmArgs("--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED", "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
     }
+}
+
+// Native companion prototype: common Compose screens without starting JCEF.
+tasks.register<JavaExec>("runCompanions") {
+    val target = kotlin.targets.getByName("jvm")
+    val compilation = target.compilations.getByName("main")
+    dependsOn("jvmMainClasses")
+    mainClass.set("org.formulagen.wrapper.progression.CompanionMainKt")
+    classpath = files(compilation.output.allOutputs, compilation.runtimeDependencyFiles)
+    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+}
+
+// Inspect the real material without launching a game or modifying a companion.
+tasks.register<JavaExec>("runCompanionGlassPreview") {
+    val compilation = kotlin.targets.getByName("jvm").compilations.getByName("main")
+    dependsOn("jvmMainClasses")
+    mainClass.set("org.formulagen.wrapper.progression.GlassPreviewMainKt")
+    classpath = files(compilation.output.allOutputs, compilation.runtimeDependencyFiles)
+    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+}
+
+// macOS development proof: Godot's remote layer inside the Compose host window.
+tasks.register<JavaExec>("runEmbeddedCompanions") {
+    val compilation = kotlin.targets.getByName("jvm").compilations.getByName("main")
+    dependsOn("jvmMainClasses")
+    mainClass.set("org.formulagen.wrapper.progression.embedded.EmbeddedCompanionMainKt")
+    classpath = files(compilation.output.allOutputs, compilation.runtimeDependencyFiles)
+    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+}
+
+// A named local app makes native-window inspection and manual testing unambiguous.
+val embeddedCompilation = kotlin.targets.getByName("jvm").compilations.getByName("main")
+val embeddedRuntimeNames = providers.provider { requireNotNull(embeddedCompilation.runtimeDependencyFiles).files
+    .filter { it.extension == "jar" }.sortedBy { it.absolutePath }
+    .mapIndexed { index, file -> file to "$index-${file.name}" }.toMap() }
+val embeddedJar = tasks.register<Jar>("embeddedCompanionJar") {
+    dependsOn("jvmMainClasses")
+    archiveFileName.set("hovel-embedded.jar")
+    destinationDirectory.set(layout.buildDirectory.dir("embedded-package"))
+    from(embeddedCompilation.output.allOutputs)
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest.attributes["Main-Class"] = "org.formulagen.wrapper.progression.embedded.EmbeddedCompanionMainKt"
+    manifest.attributes["Class-Path"] = embeddedRuntimeNames.get().values.joinToString(" ")
+}
+tasks.register<Sync>("prepareEmbeddedCompanionApp") {
+    dependsOn(embeddedJar)
+    into(layout.buildDirectory.dir("embedded-input"))
+    from(embeddedJar.flatMap { it.archiveFile })
+    embeddedRuntimeNames.get().forEach { (file, uniqueName) -> from(file) { rename { uniqueName } } }
+}
+
+val catalogJar = tasks.register<Jar>("catalogLauncherJar") {
+    dependsOn("jvmMainClasses")
+    archiveFileName.set("gamero-catalog.jar")
+    destinationDirectory.set(layout.buildDirectory.dir("catalog-package"))
+    from(embeddedCompilation.output.allOutputs)
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest.attributes["Main-Class"] = "org.formulagen.wrapper.MainKt"
+    manifest.attributes["Class-Path"] = embeddedRuntimeNames.get().values.joinToString(" ")
+}
+tasks.register<Sync>("prepareCatalogLauncherApp") {
+    dependsOn(catalogJar)
+    into(layout.buildDirectory.dir("catalog-input"))
+    from(catalogJar.flatMap { it.archiveFile })
+    embeddedRuntimeNames.get().forEach { (file, uniqueName) -> from(file) { rename { uniqueName } } }
 }

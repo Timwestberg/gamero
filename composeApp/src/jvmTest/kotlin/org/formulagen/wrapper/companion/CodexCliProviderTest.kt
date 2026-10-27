@@ -7,6 +7,18 @@ import kotlin.test.*
 import org.junit.Test
 
 class CodexCliProviderTest {
+    @Test fun profileTasksUseTheSameIsolatedKeyringAsProviderSettings() {
+        val directory = Files.createTempDirectory("hovel-codex-profile")
+        try {
+            val home = directory.resolve("provider-account")
+            val provider = CodexCliProvider(java.nio.file.Path.of("/bin/echo"), directory, directory.resolve("output"), home)
+            val command = provider.builder(listOf("login", "status"))
+            assertEquals(home.toString(), command.environment()["CODEX_HOME"])
+            assertTrue(command.command().contains("cli_auth_credentials_store=\"keyring\""))
+            assertTrue(command.command().contains("forced_login_method=\"chatgpt\""))
+        } finally { directory.toFile().deleteRecursively() }
+    }
+
     private fun fixture(auth: String = "Logged in using ChatGPT", exit: Int = 0): Pair<CodexCliProvider, java.nio.file.Path> {
         val directory = Files.createTempDirectory("fake-codex")
         val executable = directory.resolve("codex")

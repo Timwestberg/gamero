@@ -58,6 +58,9 @@ kotlin {
         jvmMain.dependencies {
             if (sherpaJar.isFile) {
                 implementation(files(sherpaJar))
+                runtimeOnly(fileTree(rootProject.file("spikes/ember-voice/mac/deps/sherpa")) {
+                    include("sherpa-onnx-native-lib-*.jar")
+                })
             }
         }
         if (mobileTargets) {
