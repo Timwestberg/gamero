@@ -177,6 +177,19 @@ class JcefHostBridgeTest {
         assertEquals(2, ended)
     }
 
+    @Test
+    fun aCancelledCallDoesNotEndTheContext() = runTest {
+        var ended = 0
+        val transport = transport(onEnd = { ended++ })
+        val watchAnswers = ask(transport, watch, persistent = true, queryId = 1)
+        val contextId = Json.parseToJsonElement(watchAnswers.successes.single()).jsonObject.getValue("contextId").jsonPrimitive.content
+        transport.onQuery(call(contextId), false, true, trusted, 2, Answers())
+        assertEquals(false, transport.onQueryCanceled(2), "a call is not a watch")
+        settle()
+        assertEquals(0, ended)
+        assertEquals(null, ask(transport, call(contextId), queryId = 3).code())
+    }
+
     private fun TestScope.assertContextOpen(transport: JcefHostBridge, watchAnswers: Answers) {
         val contextId = Json.parseToJsonElement(watchAnswers.successes.single()).jsonObject.getValue("contextId").jsonPrimitive.content
         assertEquals(null, ask(transport, call(contextId), queryId = 3).code(), "the cancelled watch ended the newer context")

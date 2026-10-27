@@ -277,13 +277,14 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                         ChatMethods.pack(Capability.Supported(chat)), ProviderMethods.pack(Capability.Supported(providers)),
                         PetMethods.pack(Capability.Supported(pet)),
                         GameMethods.pack(games?.let { Capability.Supported(it) } ?: Capability.Unsupported)),
-                    onInvalidate = {
+                    onContextEnded = {
                         companion?.invalidatePending()
                         chat.invalidate()
                         EventQueue.invokeLater { games?.close() }
                     },
+                    onCompanionCallEnded = { companion?.invalidatePending() },
                     // Version 1 carries only the legacy companion protocol; everything else is host-bridge v2.
-                    dispatch = companion?.let { it::dispatch },
+                    companion = companion?.let { it::dispatch },
                 )
             })
         }
