@@ -28,7 +28,7 @@ internal fun LiquidGlassSurface(
     var origin by remember { mutableStateOf(Offset.Zero) }
     val material = remember(backdrop?.image, reducedEffects) {
         if (reducedEffects) null else backdrop?.let {
-            runCatching { LiquidGlassRenderer(it.image) }.getOrElse { error ->
+            runCatching { liquidGlassRenderer(it.image) }.getOrElse { error ->
                 println("Hovel glass unavailable: ${error.message}")
                 null
             }

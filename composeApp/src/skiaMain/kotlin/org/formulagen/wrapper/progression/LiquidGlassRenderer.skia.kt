@@ -11,6 +11,9 @@ import org.jetbrains.skia.RuntimeEffect
 import org.jetbrains.skia.RuntimeShaderBuilder
 import org.jetbrains.skia.Shader
 
+/** Skia runs the shader on every desktop and iOS version this app supports. */
+internal actual fun liquidGlassRenderer(backdrop: ImageBitmap): LiquidGlassRenderer? = LiquidGlassRenderer(backdrop)
+
 /** Desktop and iOS share the same Skia material implementation. */
 internal actual class LiquidGlassRenderer actual constructor(backdrop: ImageBitmap) {
     private val effect = RuntimeEffect.makeForShader(LIQUID_GLASS_SHADER)

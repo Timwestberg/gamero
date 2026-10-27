@@ -18,6 +18,9 @@ internal expect class LiquidGlassRenderer(backdrop: ImageBitmap) {
     fun close()
 }
 
+/** The platform's material, or null where it cannot run the shader (Android before 13); the panel then keeps its plain tint. */
+internal expect fun liquidGlassRenderer(backdrop: ImageBitmap): LiquidGlassRenderer?
+
 /** One shader source for Android AGSL and desktop/iOS SkSL. */
 internal const val LIQUID_GLASS_SHADER = """
 uniform shader scene;

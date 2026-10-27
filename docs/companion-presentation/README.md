@@ -30,7 +30,7 @@ Double-click `Preview Companion Glass.command`, or run `./gradlew :composeApp:ru
 
 ## Dedicated glass screen
 
-Android minimum is API 33. The upgrade card uses the same refraction shader on Android (AGSL) and desktop/iOS (SkSL). The screen supplies its own artwork; even when hosted above the embedded game, the glass does not sample Godot frames.
+The app's Android minimum stays API 24. The upgrade card uses the same refraction shader on Android 13+ (API 33, AGSL) and desktop/iOS (SkSL); on Android 7–12 the card keeps its plain tinted panel without refraction. The screen supplies its own artwork; even when hosted above the embedded game, the glass does not sample Godot frames.
 
 ```kotlin
 val scene = PresentationScene("MY GAME") {
