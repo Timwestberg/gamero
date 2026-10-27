@@ -1,0 +1,52 @@
+{
+  "version": "1.0.0",
+  "id": "ember-voice",
+  "sync": "Local copy in gamero. The shared corpus is server-platform event-contracts/src/voice/fixtures/corpus/ember-voice-corpus.v1.json (schema ember-voice-corpus.v1, draft PR 180, branch cursor/ember-voice-contract-c987). The first six lines and the 236-character say_limit line are the same text. This file still uses the harness field names until that private repo can be read and the names copied exactly.",
+  "lines": [
+    {
+      "id": "build_passed",
+      "categories": ["very_short"],
+      "text": "Done! Your build passed."
+    },
+    {
+      "id": "task_finished",
+      "categories": ["multi_sentence"],
+      "text": "I finished the task. Three files changed and all tests are green."
+    },
+    {
+      "id": "sign_in",
+      "categories": ["status"],
+      "text": "Heads up, Codex needs you to sign in before I can keep going on this one."
+    },
+    {
+      "id": "deploy_blocked",
+      "categories": ["numbers", "multi_sentence"],
+      "text": "The deploy is blocked: the API returned error 503 at 2:45 PM. I'll retry in 30 seconds, or you can check the logs."
+    },
+    {
+      "id": "summary",
+      "categories": ["code", "multi_sentence"],
+      "text": "Here's the summary: I refactored PetSession.kt, moved the socket code into PetBridge, updated the README, and added two tests. Everything builds, but the voice settings still need a final review from you before merge."
+    },
+    {
+      "id": "say_limit",
+      "categories": ["long"],
+      "text": "This is the longest note the pet is allowed to say, just under the two hundred forty character cap, so we can hear a full status update: the build is green, two tests were added, and now the voice settings need your review before merge."
+    },
+    {
+      "id": "numbers_code",
+      "categories": ["numbers", "code"],
+      "text": "PetBridge.kt returned error 503 at 2:45 PM after 30 seconds."
+    },
+    {
+      "id": "question",
+      "categories": ["question"],
+      "text": "Should I rerun the suite, or is this ready for you to merge?"
+    },
+    {
+      "id": "say_cap",
+      "categories": ["punctuation_free"],
+      "text": "This is the longest note the pet is allowed to say with no punctuation at all so the chunker has to find its own clause breaks the build is green two tests were added and the voice settings still need your review before merge today extra go"
+    }
+  ]
+}

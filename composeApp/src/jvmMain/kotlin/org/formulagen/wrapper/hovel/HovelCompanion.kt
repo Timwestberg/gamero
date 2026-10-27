@@ -34,8 +34,9 @@ class HovelCompanion(
     private val executable: Path,
     private val workspace: Path,
     private val credentials: HostCredentials = MacHostCredentials(),
+    private val codexHomeForOwner: ((String) -> Path)? = null,
 ) : AutoCloseable {
-    var status by mutableStateOf("Connect this Mac from Hovel. Sign in with your ChatGPT subscription in the configured Codex CLI.")
+    var status by mutableStateOf("Connect Codex in Profile → Providers, then connect this Mac from Hovel.")
         private set
     var approval by mutableStateOf<ConnectionApproval?>(null)
         private set
@@ -95,7 +96,7 @@ class HovelCompanion(
                             val transport = HovelHttpTransport(URI("$origin/api/hovel/v1/hovel"), registered.ownerId, registered.id, token)
                             val journal = ExecutionJournal(directory.resolve("journal-${registered.id}"), registered.id)
                             try {
-                                val provider = CodexCliProvider(executable, workspace, directory.resolve("output-${registered.id}"))
+                                val provider = CodexCliProvider(executable, workspace, directory.resolve("output-${registered.id}"), codexHomeForOwner?.invoke(registered.ownerId))
                                 session = HovelHostSession(registered.id, journal, provider, transport) { status = it }.also { it.start() }
                             } catch (error: Exception) { journal.close(); throw error }
                         }
@@ -168,14 +169,6 @@ class HovelCompanion(
         fun sha256(value: String): String = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
     }
 }
-
-/**
- * Hovel's capability packs for the host bridge. The companion is supported only
- * when it is configured on this Mac; otherwise its methods answer `unsupported`.
- */
-fun hovelBridgePacks(companion: HovelCompanion?): List<CapabilityPack> = listOf(
-    CompanionMethods.pack(companion?.let { Capability.Supported(HovelCompanionCapability(it)) } ?: Capability.Unsupported),
-)
 
 /** Hovel's companion as a `host-bridge.v2` capability. Validation and single-flight stay in [HovelCompanion.dispatch]. */
 class HovelCompanionCapability(private val companion: HovelCompanion) : CompanionCapability {

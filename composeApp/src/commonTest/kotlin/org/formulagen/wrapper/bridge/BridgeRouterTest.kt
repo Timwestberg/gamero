@@ -59,6 +59,10 @@ class BridgeRouterTest {
 
     /** Hovel's product set: the companion, supported only where the parity table says. */
     private fun hovelPacks(platform: HostPlatform, fakes: Fakes = Fakes()): List<CapabilityPack> = listOf(
+        ChatMethods.pack(supported(platform, "chat.open", FakeChatCapability())),
+        ProviderMethods.pack(supported(platform, "providers.status", FakeProviderCapability())),
+        PetMethods.pack(supported(platform, "pet.status", FakePetCapability())),
+        GameMethods.pack(supported(platform, "games.launch", FakeGameCapability())),
         CompanionMethods.pack(supported(platform, "companion.capabilities", object : CompanionCapability {
             override suspend fun prepareConnection(ownerId: String) = fakes.prepare(ownerId)
             override suspend fun activateConnection(ownerId: String, hostId: String) = JsonObject(emptyMap())

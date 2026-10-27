@@ -16,34 +16,37 @@ All paths below are under
 | --- | --- | --- |
 | `NativeBridge` | [companion/NativeBridge.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/companion/NativeBridge.kt) | JCEF message router. Checks the browser and frame, then hands every query to `JcefHostBridge`. Knows nothing about Hovel. |
 | `JcefHostBridge` | [bridge/JcefHostBridge.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/bridge/JcefHostBridge.kt) | The desktop transport of the shared `host-bridge.v2` router (`commonMain/.../bridge/`). |
+| `DesktopServices` | [DesktopServices.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt) | Builds the companion with the other desktop services, registers their v2 packs, releases what a page owned and closes them in reverse order. |
 | `TrustedOrigin` | `commonMain/.../bridge/TrustedOrigin.kt` | Compares the frame's origin, read from JCEF, with the configured app URL. |
 | `HovelCompanion` | [hovel/HovelCompanion.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelCompanion.kt) | Runs the `companion.*` bridge methods, shows the approval dialog, owns the registration file, starts the host session. |
 | `MacHostCredentials` | [companion/MacHostCredentials.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/companion/MacHostCredentials.kt) | Stores and reads the host bearer token in the macOS Keychain. |
 | `HovelHttpTransport` | [hovel/HovelHostAdapter.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostAdapter.kt) | The only HTTP client that sends the host token to the server. |
 | `HovelHostSession` | [hovel/HovelHostSession.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostSession.kt) | Heartbeat loop and a single task worker. |
 
-The wiring lives in [main.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/main.kt).
+`DesktopServices.create` builds the services; [main.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/main.kt) attaches them to the WebView.
 
 ## When the companion exists
 
-`main.kt` creates a `HovelCompanion` only when all of these hold (lines 166-174):
+`DesktopServices.create` creates a `HovelCompanion` only when all of these hold:
 
 - `GAMERO_PRODUCT` (or `-Dgamero.product`) is `hovel`.
 - The OS is macOS.
-- `GAMERO_CODEX_PATH` and `GAMERO_WORKSPACE` are both set. These two are read
-  only from the environment; unlike `GAMERO_PRODUCT` they have no `-D` fallback.
+- A Codex executable is found (`GAMERO_CODEX_PATH`, else `codex` on `PATH` or
+  an installed location) and `GAMERO_WORKSPACE` is set. These are read only from
+  the environment; unlike `GAMERO_PRODUCT` they have no `-D` fallback.
 
-Otherwise there is no companion, but a `NativeBridge` is still attached for
-every product (main.kt line 227), so the page can reach the shared bridge. When
-the product is `hovel` but there is no companion, the window shows a hint to set
-the two variables (line 222). On other products it shows nothing. The
-companion's data directory is
-`~/Library/Application Support/Gamero/hovel-<sha256 of the app URL>` (line 171),
-so each configured app URL gets its own registration, journal and output.
+Otherwise there is no companion and its `companion.*` methods answer
+`unsupported`, but a `NativeBridge` is still attached for every product, so the
+page can reach the shared bridge. When the product is `hovel` but there is no
+companion, the window shows a hint to set the two variables. On other products
+it shows nothing. The companion's data directory is
+`~/Library/Application Support/Gamero/hovel-<sha256 of the app URL>`, so each
+configured app URL gets its own registration, journal and output.
 
 A new `NativeBridge` is attached each time the WebView is created, and the old
-one is closed first (lines 224-235). On app close, `DesktopResources.close`
-closes the bridge, then the companion (line 65).
+one is closed first. On app close, `DesktopResources.close` closes the bridge,
+then `DesktopServices`, which closes the game, the companion, the pet,
+providers and chat in that order.
 
 ## Bridge trust rules
 
@@ -87,16 +90,18 @@ still pending has no context yet; its context is declined when the reply
 arrives. A newer `watchContext` replaces the context; cancelling the older watch
 afterwards leaves the newer context open.
 
-Which cancels also clear a pending registration
-(`HovelCompanion.invalidatePending`):
+Which cancels release what the page owned (`DesktopServices.invalidate`, which
+ends the chat view, closes the game and clears a pending registration through
+`HovelCompanion.invalidatePending`):
 
-- A reload or navigation cancelling the open watch clears it.
+- A reload or navigation cancelling the open watch releases it.
+- A newer `watchContext` replacing the open context releases it.
 - Cancelling an older watch after the newer one is answered does not.
 - Cancelling a still-pending watch (the client's timeout), or the open watch
-  before a newer watch is answered, also clears it. This fails closed: the page
-  must call `companion.prepareConnection` again.
+  before a newer watch is answered, also releases it. This fails closed: the
+  page must call `companion.prepareConnection` again.
 
-Closing the bridge also clears it. Errors inside a method never reach the page in
+Closing the bridge also releases it. Errors inside a method never reach the page in
 detail: the page sees `failed` (or `busy`, or `declined` when the person said
 no).
 
@@ -215,10 +220,10 @@ launch boundary, and waits up to 3 and 5 seconds for them to end.
 | `invalid` | Not a `host-bridge.v2` request (version 1 included), over 64 Ki characters, or on the wrong query kind. |
 | `expired` | Missing or old `contextId`, or a reload happened. |
 | `failed` | A bridge method threw. The page never sees the reason. |
-| Status line "Connection failed. Check the native configuration, Keychain approval and server." | A `prepareConnection` or `activateConnection` failure, other than a cancellation (HovelCompanion.kt line 111). Failures before that point (a closed companion, or a second call while one is pending) leave the status line unchanged and reach the page only as `failed` or `busy`. This status replaces the specific error, so the causes below never reach the window. |
-| (not shown) "This native profile belongs to another account" | Thrown when `registration.json` has a different `ownerId` (HovelCompanion.kt line 131). Users see only `failed` and the "Connection failed" status line above; check `registration.json` in the data directory. |
+| Status line "Connection failed. Check the native configuration, Keychain approval and server." | A `prepareConnection` or `activateConnection` failure, other than a cancellation (HovelCompanion.kt line 112). Failures before that point (a closed companion, or a second call while one is pending) leave the status line unchanged and reach the page only as `failed` or `busy`. This status replaces the specific error, so the causes below never reach the window. |
+| (not shown) "This native profile belongs to another account" | Thrown when `registration.json` has a different `ownerId` (HovelCompanion.kt line 132). Users see only `failed` and the "Connection failed" status line above; check `registration.json` in the data directory. |
 | Status line "Server unavailable; tasks remain on this computer" | A heartbeat failed. The session keeps retrying every 10 seconds. |
-| Status line "Task needs reconciliation on this computer; no automatic host change" | Any exception from `ExecutionCoordinator.accept`, including network errors and a server 409, not only a stopped task (HovelHostSession.kt line 49). See the journal before retrying. |
+| Status line "Task needs reconciliation on this computer; no automatic host change" | Any exception from `ExecutionCoordinator.accept`, including network errors and a server 409, not only a stopped task (HovelHostSession.kt line 50). See the journal before retrying. |
 
 ## Tests
 

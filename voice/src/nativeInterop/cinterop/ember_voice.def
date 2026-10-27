@@ -1,0 +1,4 @@
+package = ember.voice.bridge
+headers = ember_voice_bridge.h
+headerFilter = ember_voice_bridge.*
+linkerOpts = -lc++

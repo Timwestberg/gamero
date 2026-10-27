@@ -43,9 +43,9 @@ internal fun classifyJcefQuery(request: String, persistent: Boolean): JcefQueryK
  * [NativeBridge][org.formulagen.wrapper.companion.NativeBridge] checks the
  * browser and frame, then calls this from the CEF UI thread.
  */
-class JcefHostBridge(private val bridge: HostBridge) : AutoCloseable {
-    constructor(product: String, trustedUrl: String, capabilities: HostCapabilities, products: List<CapabilityPack>) :
-        this(HostBridge(product, trustedUrl, capabilities, products, Dispatchers.IO))
+class JcefHostBridge(private val bridge: HostBridge, private val onContextEnded: () -> Unit = {}) : AutoCloseable {
+    constructor(product: String, trustedUrl: String, capabilities: HostCapabilities, products: List<CapabilityPack>, onContextEnded: () -> Unit = {}) :
+        this(HostBridge(product, trustedUrl, capabilities, products, Dispatchers.IO), onContextEnded)
 
     /** Guards [watchQuery] and [pendingWatches]: the router's thread and the CEF UI thread both change them. */
     private val lock = Any()
@@ -78,7 +78,13 @@ class JcefHostBridge(private val bridge: HostBridge) : AutoCloseable {
             override fun event(json: String) = callback.success(json)
 
             override fun opened(contextId: String): Boolean = synchronized(lock) {
-                // A watch that JCEF cancelled before this reply declines, so the bridge ends only its context.
+                // Replacing a document context also releases its product sessions.
+                if (watchContext != null) {
+                    watchQuery = NONE
+                    watchContext = null
+                    onContextEnded()
+                }
+                // A cancelled watch cannot retain its new context.
                 if (!pendingWatches.remove(queryId)) return false
                 watchQuery = queryId
                 watchContext = contextId
@@ -99,7 +105,7 @@ class JcefHostBridge(private val bridge: HostBridge) : AutoCloseable {
             watchQuery = NONE
             watchContext.also { watchContext = null }
         }
-        if (contextId != null) bridge.endContext(contextId)
+        if (contextId != null) { bridge.endContext(contextId); onContextEnded() }
         return true
     }
 

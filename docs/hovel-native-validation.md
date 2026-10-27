@@ -73,8 +73,11 @@ Use the application's actual account sign-in; do not create substitute credentia
 
 Set GAMERO_WEB_URL to that Hovel account UI and relaunch with the same native
 configuration above. The registered profile is scoped to this configured URL.
-Codex must already report `Logged in using ChatGPT` through supported `codex login
-status`. User-managed sign-in is `codex login`; no provider token enters Hovel.
+Open **Profile → Providers → Connect Codex** in that same Hovel account. Complete
+the supported browser sign-in and wait for Connected. The profile connection uses
+an isolated Codex home and the OS keyring; the approved task adapter uses that same
+home. The global Codex app/CLI login is separate, and no provider token enters the
+web view or Hovel service. Provider connection alone does not register this computer.
 
 **Approval gate for the coordinator:** the validator's read-only browser permission
 does not itself authorize storing a host credential or launching a provider task.

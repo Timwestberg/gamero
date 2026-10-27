@@ -20,17 +20,19 @@ class NativeBridge(
     capabilities: HostCapabilities,
     products: List<CapabilityPack>,
     /**
-     * Called when [JcefHostBridge.onQueryCanceled] reports that the cancelled query was
-     * the open watch or a still-pending one, and on [close]. A reload or navigation
-     * cancelling the open watch calls it. Cancelling an older watch after the newer one
-     * is answered does not. Cancelling a still-pending watch (the client's timeout), or
-     * the open one before a newer watch is answered, also calls it; that fails closed,
-     * and the page must call `companion.prepareConnection` again.
+     * Releases what the page owned (`DesktopServices.invalidate`). Called when the page's
+     * document context ends or is replaced, when [JcefHostBridge.onQueryCanceled] reports
+     * that the cancelled query was the open watch or a still-pending one, and on [close].
+     * A reload or navigation cancelling the open watch calls it. Cancelling an older watch
+     * after the newer one is answered does not. Cancelling a still-pending watch (the
+     * client's timeout), or the open one before a newer watch is answered, also calls it;
+     * that fails closed, and the page must call `companion.prepareConnection` again. It
+     * must be idempotent: one cancel can reach it twice.
      */
     private val onInvalidate: () -> Unit,
 ) : AutoCloseable {
     private val gate = Any()
-    private val hostBridge = JcefHostBridge(product, trustedUrl, capabilities, products)
+    private val hostBridge = JcefHostBridge(product, trustedUrl, capabilities, products, onInvalidate)
     private val closed = AtomicBoolean(false)
     private val handler = object : CefMessageRouterHandlerAdapter() {
         override fun onQuery(source: CefBrowser, frame: CefFrame, queryId: Long, request: String, persistent: Boolean, callback: CefQueryCallback): Boolean = synchronized(gate) {
