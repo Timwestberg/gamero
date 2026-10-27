@@ -706,14 +706,20 @@ private fun speakChunked(
     var sampleRate = voice.sampleRate
     for ((index, piece) in pieces.withIndex()) {
         var attempt = synthesizePiece(tts, piece, voice, config, "$id#$index", null)
+        var spentMs = attempt.synthMs
+        var retried = false
         if (framesFor(config, piece) > 0 && pieceRanLong(config, piece, attempt.audioSeconds)) {
             val retrySeed = nextSeed(config.seed)
             val second = synthesizePiece(tts, piece, voice, config, "$id#$index", retrySeed)
+            retried = true
+            spentMs += second.synthMs
             log("regenerated $id piece $index (${fmt(attempt.audioSeconds)} s -> ${fmt(second.audioSeconds)} s)")
             if (second.audioSeconds <= attempt.audioSeconds) attempt = second
         }
         if (index == 0) {
-            ttfaMs = attempt.ttfaMs
+            // The first piece is buffered until a runaway retry, if any, finishes.
+            // TTFA is then the time until that audio can be heard, not the discarded callback.
+            ttfaMs = firstAudibleMs(attempt.ttfaMs, retried, spentMs)
             firstChunkSamples = attempt.firstChunkSamples
         }
         callbackCount += attempt.callbackCount
@@ -760,7 +766,13 @@ private data class PieceAudio(
     val audioSeconds: Double,
     val callbackCount: Int,
     val firstChunkSamples: Int,
+    val synthMs: Double,
 )
+
+/** No retry: the engine's first callback. A retry is buffered, so both takes count. */
+fun firstAudibleMs(callbackMs: Double, retried: Boolean, spentMs: Double): Double {
+    return if (retried) spentMs else callbackMs
+}
 
 private fun synthesizePiece(
     tts: OfflineTts,
@@ -797,7 +809,15 @@ private fun synthesizePiece(
         "piece $id chars ${text.length} max_frames ${framesFor(config, text)} " +
             "audio ${fmt(audioSeconds)} s ttfa ${fmtMs(ttfaMs)} ms",
     )
-    return PieceAudio(samples, sampleRate, ttfaMs, audioSeconds, callbackCount.get(), firstChunkSamples.get())
+    return PieceAudio(
+        samples,
+        sampleRate,
+        ttfaMs,
+        audioSeconds,
+        callbackCount.get(),
+        firstChunkSamples.get(),
+        totalMs,
+    )
 }
 
 private fun speakSherpa(
@@ -1186,6 +1206,8 @@ private fun selfCheck(config: BenchConfig) {
     check(summary.hypothesis == "done your build passed", "median hypothesis ${summary.hypothesis}")
     val pair = medianWer(listOf(WerScore(0.0, 2, 0, "a"), WerScore(1.0, 2, 2, "b")))
     check(pair.wer == 0.5 && pair.hypothesis == "b", "upper central draw ${pair.wer} ${pair.hypothesis}")
+    check(firstAudibleMs(12.0, false, 40.0) == 12.0, "ttfa stays the callback without a retry")
+    check(firstAudibleMs(20.0, true, 150.0) == 150.0, "a buffered retry counts both takes")
     refuseNonCommercialVoice(config.voice.path)
     checkFails("expresso") { refuseNonCommercialVoice("voices/expresso/ex03.wav") }
     checkFails("test_wavs") { refuseNonCommercialVoice("models/test_wavs/bria.wav") }
