@@ -93,7 +93,7 @@ The shared result schema is `ember-voice-benchmark.v1` in server-platform draft 
 
 `ttfa_ms` is the time from the synthesis call to the first callback that contains samples. `total_ms` is the time until that call returns. `rtf` is audio seconds / synthesis seconds. Higher RTF is faster.
 
-`expected_audio_s` is `max(min_expected_audio_s, chars / chars_per_second)`. A warm run counts as a runaway when its audio is longer than `runaway_factor` times that value.
+`expected_audio_s` is `max(min_expected_audio_s, chars / chars_per_second)`. With `chunker` `ours`, chars is the length of each normalized piece sent to the model (after number, time, and filename normalization) and the line value is the sum of those piece expectations. Measured audio includes `silence_ms` of silence between those pieces. Sherpa's own splitter sends the raw line as one call, so chars stays the raw line length, and that path does not insert our silence or apply the frame ceiling. A warm run counts as a runaway when its measured audio is longer than `runaway_factor` times the expected value.
 
 Percentiles are nearest-rank. With 10 samples, p99 is the worst sample and p90 is the 9th. Median of an even count is the average of the two middle values.
 
@@ -101,7 +101,7 @@ Percentiles are nearest-rank. With 10 samples, p99 is the worst sample and p90 i
 
 Version strings, when this harness compares them, use release ordering: `2.0.0-rc1` is lower than `2.0.0`. Build metadata after `+` is ignored.
 
-`chunker` `ours` cuts the first piece on a clause boundary inside 30..`first_piece_target_chars` (the whole first sentence when it already fits), then packs later pieces to `later_piece_max_chars`. The frame ceiling for a piece is `max(frame_floor, frame_intercept + max_frames_per_character * chars)` when any of those three is positive. A piece of `short_piece_chars` or fewer is raised to `short_piece_min_frames` when that is higher. All of those at 0 leaves sherpa-onnx's own frame cap (500). A positive `max_frames` replaces the curve for every piece. A piece that is still longer than `runaway_factor` times its expected audio is generated once more and the shorter take is kept. `silence_ms` is silence inserted between our pieces. Sherpa's splitter ignores the curve.
+`chunker` `ours` cuts the first piece on a clause boundary inside 30..`first_piece_target_chars` (the whole first sentence when it already fits), then packs later pieces to `later_piece_max_chars`. The frame ceiling for a piece is `ceil(max(frame_floor, frame_intercept + max_frames_per_character * chars))` when any of those three is positive. `4 + 0.8 * 28` is 26.4 and ceils to 27. A piece of `short_piece_chars` or fewer is raised to `short_piece_min_frames` when that is higher. All of those at 0 leaves sherpa-onnx's own frame cap (500). A positive `max_frames` replaces the curve for every piece. A piece that is still longer than `runaway_factor` times its expected audio is generated once more and the shorter take is kept. `silence_ms` is silence inserted between our pieces. Sherpa's splitter ignores the curve.
 
 `./compare.sh baseline.json candidate.json` compares warm `ttfa_ms.samples` per line with a one-sided Mann–Whitney test (candidate slower). It exits 1 when a line's median TTFA is more than 10% higher and the test's p-value is under 0.05. Exact p-values are used when both samples have at most 10 values and no ties. Otherwise it uses the normal approximation with a tie correction and a continuity correction.
 

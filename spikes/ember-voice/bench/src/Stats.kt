@@ -167,8 +167,9 @@ fun medianWer(draws: List<WerScore>): WerScore {
 
 /**
  * PocketTTS frame ceiling for one piece. 0 means leave sherpa-onnx's default alone.
- * A positive ceiling is max(floor, intercept + slope * chars), and a piece of at most
- * [shortChars] characters is raised to [shortMinFrames] when that floor is higher.
+ * A positive ceiling is ceil(max(floor, intercept + slope * chars)). 4 + 0.8 * 28 is
+ * 26.4 and ceils to 27. A piece of at most [shortChars] characters is raised to
+ * [shortMinFrames] when that floor is higher.
  */
 fun frameBudget(
     chars: Int,

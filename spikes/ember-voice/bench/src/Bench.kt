@@ -454,7 +454,7 @@ private fun renderLine(
     val rtf = sampleStats(runs.map { it.rtf })
     val audio = sampleStats(runs.map { it.audioSeconds })
     val cpu = sampleStats(runs.map { it.cpuPercent })
-    val expected = expectedAudioSeconds(line.text.length, config.charsPerSecond, config.minExpectedAudioS)
+    val expected = expectedUtteranceSeconds(config, line.text)
     val sb = StringBuilder()
     sb.append("    {\n")
     sb.append("      \"id\": ${jsonString(line.id)},\n")
@@ -738,6 +738,20 @@ private fun pieceRanLong(config: BenchConfig, piece: String, audioSeconds: Doubl
     return audioSeconds > config.runawayFactor * expected
 }
 
+/**
+ * Our chunker sends normalized pieces. Each piece's expectation is
+ * max(min, chars/15), and the line is the sum. Sherpa's splitter sends the
+ * raw line as one call and skips that sum, the silence we insert, and the frame ceiling.
+ */
+private fun expectedUtteranceSeconds(config: BenchConfig, text: String): Double {
+    if (config.chunker != "ours") {
+        return expectedAudioSeconds(text.length, config.charsPerSecond, config.minExpectedAudioS)
+    }
+    val pieces = speechPieces(text, config.firstPieceTargetChars, config.laterPieceMaxChars)
+    if (pieces.isEmpty()) return config.minExpectedAudioS
+    return pieces.sumOf { expectedAudioSeconds(it.length, config.charsPerSecond, config.minExpectedAudioS) }
+}
+
 private fun nextSeed(seed: String): String {
     val value = seed.toIntOrNull() ?: return seed + "1"
     return (value + 1).toString()
@@ -861,7 +875,7 @@ private fun finishSpeak(
     val totalMs = nanosToMs(totalNs)
     val audioSeconds = samples.size / sampleRate.toDouble()
     val rtf = if (totalMs > 0.0) audioSeconds / (totalMs / 1000.0) else 0.0
-    val expected = expectedAudioSeconds(text.length, config.charsPerSecond, config.minExpectedAudioS)
+    val expected = expectedUtteranceSeconds(config, text)
     return SpeakResult(
         ttfaMs = ttfaMs,
         totalMs = totalMs,
@@ -1198,6 +1212,22 @@ private fun selfCheck(config: BenchConfig) {
     check(frameBudget(40, 10.0, 0.5, 8, 24, 32) == 30, "40 chars is intercept plus slope")
     check(frameBudget(100, 10.0, 0.5, 8, 24, 32) == 60, "long piece follows the slope")
     check(frameBudget(40, 0.0, 0.0, 0, 24, 0) == 0, "cap stays off")
+    check(frameBudget(28, 4.0, 0.8, 12, 24, 36) == 27, "ceil(4 + 0.8 * 28) is 27")
+    val buildPieces = speechPieces("Done! Your build passed.", 40, 140)
+    check(buildPieces == listOf("Done!", "Your build passed."), "default first cut $buildPieces")
+    val summed = buildPieces.sumOf { expectedAudioSeconds(it.length, 15.0, 0.8) }
+    check(summed == 2.0, "normalized piece expectations sum to 2.0, got $summed")
+    check(
+        expectedUtteranceSeconds(config.copy(chunker = "ours"), "Done! Your build passed.") == summed,
+        "ours expected audio uses the normalized pieces",
+    )
+    check(
+        expectedUtteranceSeconds(config.copy(chunker = "sherpa"), "Done! Your build passed.") == 1.6,
+        "sherpa splitter keeps the raw line length",
+    )
+    check(framesFor(config.copy(chunker = "sherpa", maxFrames = 0), "x".repeat(28)) == 0, "sherpa skips the frame ceiling")
+    val gapped = concatAudio(listOf(FloatArray(100), FloatArray(100)), 24000 * 40 / 1000)
+    check(gapped.size == 1160, "40 ms of silence is part of the measured audio ${gapped.size}")
     val bad = WerScore(1.0, 4, 4, "Bunt.")
     val ok = WerScore(0.0, 4, 0, "done your build passed")
     val draws = List(9) { ok } + listOf(bad)
