@@ -1,26 +1,26 @@
 #!/bin/bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-JDK="${JAVA_HOME:-$(/usr/libexec/java_home -v 21)}"
-export JAVA_HOME="$JDK"
+source "$ROOT/scripts/dev-env.sh"
 cd "$ROOT"
 bash scripts/build-embedded-macos.sh
 ./gradlew :composeApp:prepareEmbeddedCompanionApp --console=plain
+INPUT="$ROOT/composeApp/build/embedded-input"
 STAMP="$ROOT/build/embedded-godot/latest-app.txt"
 if [[ -f "$STAMP" ]]; then
   APP="$(cat "$STAMP")"
   if [[ "$APP" == "$ROOT/build/embedded-godot/"* && -d "$APP/Contents/app" ]]; then
     # Refresh a development bundle without copying the entire JDK every launch.
-    cp "$ROOT/composeApp/build/embedded-input/"*.jar "$APP/Contents/app/"
+    # Remove the old jars first so a renamed dependency cannot stay on the classpath.
+    find "$APP/Contents/app" -maxdepth 1 -name '*.jar' -delete
+    cp "$INPUT/"*.jar "$APP/Contents/app/"
     exit 0
   fi
 fi
+load_desktop_java_options
 DEST="$(mktemp -d "$ROOT/build/embedded-godot/app.XXXXXX")"
-"$JDK/bin/jpackage" --type app-image --name 'Hovel Embedded' --app-version 1.0.0 \
-  --input "$ROOT/composeApp/build/embedded-input" --main-jar hovel-embedded.jar \
-  --dest "$DEST" --runtime-image "$JDK" --mac-package-identifier com.hovel.embedded.prototype \
-  --java-options '--add-opens=java.desktop/sun.awt=ALL-UNNAMED' \
-  --java-options '--add-opens=java.desktop/java.awt.peer=ALL-UNNAMED' \
-  --java-options '--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED' \
-  --java-options '--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED'
+"$JAVA_HOME/bin/jpackage" --type app-image --name 'Hovel Embedded' --app-version 1.0.0 \
+  --input "$INPUT" --main-jar hovel-embedded.jar \
+  --dest "$DEST" --runtime-image "$JAVA_HOME" --mac-package-identifier com.hovel.embedded.prototype \
+  "${JAVA_OPTIONS[@]}"
 printf '%s\n' "$DEST/Hovel Embedded.app" > "$STAMP"

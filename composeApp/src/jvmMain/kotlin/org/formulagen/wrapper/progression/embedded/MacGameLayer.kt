@@ -8,7 +8,11 @@ import java.awt.Canvas
  * load it from HOVEL_EMBED_LIBRARY; [DesktopGameLauncher.installedGame] checks the file first.
  */
 internal object MacGameLayer {
-    init { System.load(requireNotNull(System.getenv("HOVEL_EMBED_LIBRARY")) { "Set HOVEL_EMBED_LIBRARY to the built embed library" }) }
+    init {
+        // The library leaves JAWT_GetAWT unbound (scripts/build-embedded-macos.sh): load the running runtime's jawt first.
+        System.loadLibrary("jawt")
+        System.load(requireNotNull(System.getenv("HOVEL_EMBED_LIBRARY")) { "Set HOVEL_EMBED_LIBRARY to the built embed library" })
+    }
     /** Attach the engine's remote layer to this realized component. */
     external fun attach(canvas: Canvas, contextId: Long): Boolean
     /** Release the remote layer before disposing the host component. */
