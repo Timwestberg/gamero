@@ -3,7 +3,7 @@ package org.formulagen.wrapper.providers
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
-import java.util.UUID
+import org.formulagen.wrapper.bridge.SharedRules
 
 /** Shared authentication settings for the account UI and approved Codex task execution. */
 class CodexRuntime(val executable: Path, val home: Path) {
@@ -26,7 +26,7 @@ class CodexRuntime(val executable: Path, val home: Path) {
 
 /** Profiles select fixed native-owned folders, never browser-supplied paths. */
 internal fun codexProfileHome(root: Path, profile: String): Path {
-    require(profile == "local" || runCatching { UUID.fromString(profile).toString() == profile }.getOrDefault(false))
+    require(SharedRules.isProfileId(profile)) { "Invalid profile" }
     return root.resolve(profile).resolve("codex")
 }
 

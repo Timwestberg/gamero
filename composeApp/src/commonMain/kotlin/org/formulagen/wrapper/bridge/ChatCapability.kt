@@ -33,9 +33,9 @@ data class ChatSnapshot(val state: String = "ready", val messages: List<ChatMess
 
 /** Mirrors event-contracts/host-bridge/chat.ts. */
 object ChatMethods {
-    private fun valid(scope: ChatScope) = (scope.profile == "local" || BridgeProtocol.UUID_PATTERN.matches(scope.profile)) &&
+    private fun valid(scope: ChatScope) = SharedRules.isProfileId(scope.profile) &&
         BridgeProtocol.UUID_PATTERN.matches(scope.companionId) && BridgeProtocol.UUID_PATTERN.matches(scope.sessionId) &&
-        scope.name.trim().length in 1..40
+        SharedRules.isCompanionName(scope.name)
     private fun method(name: String) = BridgeMethod("chat.$name", ChatScope.serializer(), ChatSnapshot.serializer(), accepts = ::valid)
     val OPEN = method("open")
     val SNAPSHOT = method("snapshot")
@@ -43,7 +43,7 @@ object ChatMethods {
     val STOP_SPEAKING = method("stopSpeaking")
     val CLOSE = BridgeMethod("chat.close", ChatScope.serializer(), NoResult.serializer(), accepts = ::valid)
     val SEND = BridgeMethod("chat.send", ChatSend.serializer(), ChatSnapshot.serializer()) {
-        valid(it.scope()) && BridgeProtocol.UUID_PATTERN.matches(it.requestId) && it.text.trim().length in 1..4000
+        valid(it.scope()) && BridgeProtocol.UUID_PATTERN.matches(it.requestId) && it.text.trimEcma().length in 1..4000
     }
     fun pack(chat: Capability<ChatCapability>): CapabilityPack = binder.pack(chat)
     internal val binder = CapabilityBinder("chat", listOf<CapabilityHandler<ChatCapability>>(

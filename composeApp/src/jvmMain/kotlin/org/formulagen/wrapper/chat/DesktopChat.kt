@@ -73,14 +73,14 @@ internal class DesktopChat(
         if (session.checking || session.state == "responding") throw BridgeBusyException()
         check(session.state in setOf("ready", "cancelled"))
         speech.stop()
-        val messages = (session.record.messages + ChatMessage(args.requestId, "user", args.text.trim()) +
+        val messages = (session.record.messages + ChatMessage(args.requestId, "user", args.text.trimEcma()) +
             ChatMessage(UUID.randomUUID().toString(), "assistant", "")).takeLast(40)
         val next = session.record.copy(messages = messages)
         session.history.write(next)
         session.record = next; session.state = "responding"; session.notice = null
         session.speak = args.speak; session.itemId = null; session.turnId = null; session.awaitingTurn.clear()
         val generation = ++session.generation
-        worker.execute { attempt(session, generation) { startTurn(session, generation, args.text.trim()) } }
+        worker.execute { attempt(session, generation) { startTurn(session, generation, args.text.trimEcma()) } }
         timer.schedule({ synchronized(gate) {
             if (live(session, generation) && session.state == "responding") {
                 end(session, "error", "The reply took too long. Your message is saved; retry when you are ready.")

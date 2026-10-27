@@ -5,6 +5,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.UUID
 import kotlinx.serialization.json.*
+import org.formulagen.wrapper.bridge.SharedRules
 
 /** Own the fixed active-appearance file, never a path supplied by the browser. */
 internal class CompanionAppearanceStore(val path: Path) {
@@ -31,8 +32,7 @@ internal class CompanionAppearanceStore(val path: Path) {
         val id = companion["id"] as? JsonPrimitive
         require(id?.isString == true && runCatching { UUID.fromString(id.content).toString() == id.content.lowercase() }.getOrDefault(false)) { "Invalid companion ID" }
         val name = companion["name"] as? JsonPrimitive
-        require(name?.isString == true && name.content == name.content.trim() && name.content.length in 1..40 &&
-            name.content.none { it.code < 32 || it.code == 127 }) { "Invalid companion name" }
+        require(name?.isString == true && SharedRules.isCompanionName(name.content)) { "Invalid companion name" }
         val appearance = companion["appearance"] as? JsonObject ?: error("Expected appearance")
         require(appearance.keys == colors && appearance.values.all {
             it is JsonPrimitive && it.isString && it.content.matches(Regex("#[0-9a-fA-F]{6}"))
