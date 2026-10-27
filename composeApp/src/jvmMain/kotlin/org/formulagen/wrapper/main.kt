@@ -25,11 +25,8 @@ import kotlin.system.exitProcess
 import org.formulagen.wrapper.bridge.desktopHostCapabilities
 import org.formulagen.wrapper.companion.NativeBridge
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
-import org.formulagen.wrapper.hovel.hovelBridgePacks
-import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.hovel.HovelLaunchScreen
 import org.formulagen.wrapper.hovel.HovelStartState
-import java.nio.file.Path
 import java.awt.EventQueue
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicBoolean
@@ -37,19 +34,6 @@ import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import org.cef.CefClient
 import javax.swing.JFrame
-import org.formulagen.wrapper.progression.embedded.DesktopGameLauncher
-import org.formulagen.wrapper.pet.DesktopPetLauncher
-import org.formulagen.wrapper.providers.DesktopProviders
-import org.formulagen.wrapper.providers.codexProfileHome
-import org.formulagen.wrapper.providers.findCodexExecutable
-import org.formulagen.wrapper.chat.DesktopChat
-import org.formulagen.wrapper.chat.DesktopSpeech
-import org.formulagen.wrapper.chat.desktopVoiceConfig
-import org.formulagen.wrapper.bridge.ChatMethods
-import org.formulagen.wrapper.bridge.Capability
-import org.formulagen.wrapper.bridge.GameMethods
-import org.formulagen.wrapper.bridge.PetMethods
-import org.formulagen.wrapper.bridge.ProviderMethods
 
 private class DesktopResources : AutoCloseable {
     val browser = AtomicReference<org.cef.browser.CefBrowser?>(null)
@@ -69,23 +53,15 @@ private class DesktopResources : AutoCloseable {
         browser.set(target)
     }
 
-    var games: DesktopGameLauncher? = null
-    var pet: DesktopPetLauncher? = null
-    var providers: DesktopProviders? = null
-    var chat: DesktopChat? = null
+    var services: DesktopServices? = null
     var bridge: NativeBridge? = null
-    var companion: HovelCompanion? = null
     override fun close() {
         windowActive.set(false)
         browser.set(null)
         keyboardClient?.removeKeyboardHandler()
         keyboardClient = null
-        EventQueue.invokeAndWait { games?.close() }
-        try { bridge?.close() } finally {
-            try { pet?.close() } finally {
-                try { chat?.close() } finally { try { providers?.close() } finally { companion?.close() } }
-            }
-        }
+        // The bridge stops taking requests before the services it calls go away.
+        try { bridge?.close() } finally { services?.close() }
     }
 }
 
@@ -122,12 +98,12 @@ fun main(args: Array<String>) {
     )
     try {
         application(exitProcessOnExit = false) {
-            exitAction.set { resources.games?.close(); exitApplication() }
+            exitAction.set { resources.services?.closeGame(); exitApplication() }
             val url = remember { desktopWebUrl(args, desktopSetting(System.getenv("GAMERO_WEB_URL"), System.getProperty("gamero.webUrl"))) }
             CompositionLocalProvider(LocalWindowExceptionHandlerFactory provides object : WindowExceptionHandlerFactory {
                 override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler = failure
             }) {
-                Window(onCloseRequest = { resources.games?.close(); exitApplication() }, title = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME) {
+                Window(onCloseRequest = { resources.services?.closeGame(); exitApplication() }, title = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME) {
                     DisposableEffect(window) {
                         // Read AWT state on its event thread, never from the CEF callback thread.
                         val listener = object : WindowAdapter() {
@@ -186,37 +162,13 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
         if (System.getProperty("os.name").contains("Mac")) File(home, "Library/Application Support/Gamero")
         else File(home, ".local/share/gamero")
     }
-    val games = remember {
-        if (System.getenv("HOVEL_GAME_PROJECT") != null) DesktopGameLauncher(window, System.getenv(), support.toPath()) {
+    val product = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME
+    val services = remember {
+        DesktopServices.create(url, support.toPath(), System.getenv(), product, window) {
             resources.browser.get()?.executeJavaScript("window.dispatchEvent(new Event('gameroGameClosed'))", url, 0)
-        }.also { resources.games = it } else null
+        }.also { resources.services = it }
     }
-    val pet = remember {
-        DesktopPetLauncher(System.getenv(), support.toPath().resolve("ember-pet.log"))
-            .also { resources.pet = it }
-    }
-    val codexExecutable = remember { findCodexExecutable(System.getenv()) }
-    val providerRoot = remember {
-        val origin = URI(url).let { URI(it.scheme, null, it.host, it.port, null, null, null).toASCIIString() }
-        support.toPath().resolve("providers").resolve(HovelCompanion.sha256(origin))
-    }
-    val chat = remember {
-        DesktopChat(providerRoot, codexExecutable, DesktopSpeech(desktopVoiceConfig(System.getenv()))).also { resources.chat = it }
-    }
-    val providers = remember {
-        DesktopProviders(providerRoot, codexExecutable, onDisconnect = chat::invalidate).also { resources.providers = it }
-    }
-    val companion = remember {
-        if (isHovelProduct() && System.getProperty("os.name").contains("Mac")) {
-            val executable = codexExecutable
-            val workspace = System.getenv("GAMERO_WORKSPACE")?.let(Path::of)
-            if (executable != null && workspace != null) {
-                HovelCompanion(url, support.toPath().resolve("hovel-${HovelCompanion.sha256(url)}"), executable, workspace,
-                    codexHomeForOwner = { codexProfileHome(providerRoot, it) })
-                    .also { resources.companion = it }
-            } else null
-        } else null
-    }
+    val companion = services.companion
     LaunchedEffect(start) {
         if (!start) return@LaunchedEffect
         lifecycle.start {
@@ -270,20 +222,12 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                 resources.bridge?.close()
                 resources.bridge = NativeBridge(
                     browser = browser,
-                    product = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME,
+                    product = product,
                     trustedUrl = url,
                     capabilities = desktopHostCapabilities(),
-                    products = if (isHovelProduct()) hovelBridgePacks(companion, chat, providers, pet, games) else listOf(
-                        ChatMethods.pack(Capability.Supported(chat)), ProviderMethods.pack(Capability.Supported(providers)),
-                        PetMethods.pack(Capability.Supported(pet)),
-                        GameMethods.pack(games?.let { Capability.Supported(it) } ?: Capability.Unsupported)),
-                    onContextEnded = {
-                        companion?.invalidatePending()
-                        chat.invalidate()
-                        EventQueue.invokeLater { games?.close() }
-                    },
+                    products = services.packs(product),
+                    onContextEnded = services::invalidate,
                     onCompanionCallEnded = { companion?.invalidatePending() },
-                    // Version 1 carries only the legacy companion protocol; everything else is host-bridge v2.
                     companion = companion?.let { it::dispatch },
                 )
             })

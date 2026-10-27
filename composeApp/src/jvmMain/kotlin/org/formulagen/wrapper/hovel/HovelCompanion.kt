@@ -174,24 +174,6 @@ class HovelCompanion(
     }
 }
 
-/**
- * Hovel's capability packs for the host bridge on desktop. The companion is supported only
- * when it is configured on this Mac; any missing service's methods answer `unsupported`.
- */
-fun hovelBridgePacks(
-    companion: HovelCompanion?,
-    chat: org.formulagen.wrapper.bridge.ChatCapability? = null,
-    providers: org.formulagen.wrapper.bridge.ProviderCapability? = null,
-    pet: org.formulagen.wrapper.bridge.PetCapability? = null,
-    games: org.formulagen.wrapper.bridge.GameCapability? = null,
-): List<CapabilityPack> = listOf(
-    CompanionMethods.pack(companion?.let { Capability.Supported(HovelCompanionCapability(it)) } ?: Capability.Unsupported),
-    org.formulagen.wrapper.bridge.ChatMethods.pack(chat?.let { Capability.Supported(it) } ?: Capability.Unsupported),
-    org.formulagen.wrapper.bridge.ProviderMethods.pack(providers?.let { Capability.Supported(it) } ?: Capability.Unsupported),
-    org.formulagen.wrapper.bridge.PetMethods.pack(pet?.let { Capability.Supported(it) } ?: Capability.Unsupported),
-    org.formulagen.wrapper.bridge.GameMethods.pack(games?.let { Capability.Supported(it) } ?: Capability.Unsupported),
-)
-
 /** Hovel's companion as a `host-bridge.v2` capability. Validation and single-flight stay in [HovelCompanion.dispatch]. */
 class HovelCompanionCapability(private val companion: HovelCompanion) : CompanionCapability {
     override suspend fun prepareConnection(ownerId: String): CompanionRegistration {

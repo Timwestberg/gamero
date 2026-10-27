@@ -7,7 +7,8 @@ import kotlinx.coroutines.cancel
 import org.formulagen.wrapper.companion.HostCredentials
 import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
-import org.formulagen.wrapper.hovel.hovelBridgePacks
+import org.formulagen.wrapper.desktopProductPacks
+import org.formulagen.wrapper.hovel.HovelCompanionCapability
 import java.nio.file.Files
 import kotlin.test.Test
 
@@ -27,7 +28,8 @@ class DesktopParityTest {
         val router = BridgeRouter(
             product = HOVEL_PRODUCT,
             capabilities = desktopHostCapabilities(),
-            products = hovelBridgePacks(companion, FakeChatCapability(), FakeProviderCapability(), FakePetCapability(), FakeGameCapability()),
+            products = desktopProductPacks(HOVEL_PRODUCT, HovelCompanionCapability(companion), FakeChatCapability(),
+                FakeProviderCapability(), FakePetCapability(), FakeGameCapability()),
             scope = scope,
             transport = {},
         )
