@@ -71,17 +71,19 @@ public func emberVoiceFluidSpeak(
     _ engine: UnsafeMutableRawPointer?,
     _ text: UnsafePointer<CChar>?,
     _ maxFrames: Int32,
+    _ seed: Int32,
     _ callback: EmberVoiceSamplesFn?,
     _ arg: UnsafeMutableRawPointer?
 ) -> Int32 {
 #if canImport(FluidAudio)
-    guard let engine, let text, let callback else { return 0 }
+    guard let engine, let text else { return 0 }
     let box = Unmanaged<FluidBox>.fromOpaque(engine).takeUnretainedValue()
-    return box.speak(text: String(cString: text), maxFrames: maxFrames, callback: callback, arg: arg)
+    return box.speak(text: String(cString: text), maxFrames: maxFrames, seed: seed, callback: callback, arg: arg)
 #else
     _ = engine
     _ = text
     _ = maxFrames
+    _ = seed
     _ = callback
     _ = arg
     return 0
@@ -109,42 +111,68 @@ final class FluidBox {
         self.seed = seed
     }
 
-    func speak(text: String, maxFrames: Int32, callback: EmberVoiceSamplesFn?, arg: UnsafeMutableRawPointer?) -> Int32 {
-        // maxFrames is the same ceiling the sherpa path uses. FluidAudio's
-        // streaming call does not take a frame cap today; the piece list is
-        // already cut to the sizes in pieces.json.
-        _ = maxFrames
-        _ = voiceWav
-        _ = temperature
-        _ = seed
-        let group = DispatchGroup()
-        group.enter()
+    func speak(
+        text: String,
+        maxFrames: Int32,
+        seed: Int32,
+        callback: EmberVoiceSamplesFn?,
+        arg: UnsafeMutableRawPointer?
+    ) -> Int32 {
+        let sem = DispatchSemaphore(value: 0)
         var produced = 0
         var failed = false
+        var errorText = ""
         let started = Date()
         var first: Date?
-        Task {
+        let cap = maxFrames > 0 ? Int(maxFrames) * 1920 : Int.max
+        let voiceURL = URL(fileURLWithPath: voiceWav)
+        let temperature = self.temperature
+        Task.detached {
+            defer { sem.signal() }
             do {
-                let manager = try PocketTtsManager()
-                let stream = manager.synthesizeStreaming(text)
-                for try await frame in stream {
+                let manager = PocketTtsManager()
+                try await manager.initialize()
+                // Clone the caller's clip. Do not fall through to the bundled
+                // named voice; that clip is not the CC0 reference this app speaks.
+                let voiceData = try await manager.cloneVoice(from: voiceURL)
+                let session = try await manager.makeSession(
+                    voiceData: voiceData,
+                    temperature: temperature,
+                    seed: UInt64(UInt32(bitPattern: seed))
+                )
+                session.enqueue(text)
+                session.finish()
+                for try await frame in session.frames {
                     let samples = frame.samples
                     if samples.isEmpty { continue }
                     if first == nil { first = Date() }
-                    produced += samples.count
-                    let keep = samples.withUnsafeBufferPointer { buffer -> Int32 in
-                        guard let base = buffer.baseAddress, let callback else { return 1 }
-                        return callback(base, Int32(buffer.count), arg)
+                    let room = cap - produced
+                    if room <= 0 {
+                        session.cancel()
+                        break
                     }
-                    if keep == 0 { break }
+                    let count = min(samples.count, room)
+                    let keep = samples.withUnsafeBufferPointer { buffer -> Int32 in
+                        guard let base = buffer.baseAddress else { return 1 }
+                        return callback?(base, Int32(count), arg) ?? 1
+                    }
+                    produced += count
+                    if keep == 0 || produced >= cap {
+                        session.cancel()
+                        break
+                    }
                 }
             } catch {
                 failed = true
+                errorText = String(describing: error)
             }
-            group.leave()
         }
-        group.wait()
-        lastSamples = Int32(produced)
+        sem.wait()
+        if failed {
+            let line = "ember voice: FluidAudio failed: \(errorText)\n"
+            FileHandle.standardError.write(Data(line.utf8))
+        }
+        lastSamples = Int32(clamping: produced)
         lastTtfaMs = (first ?? Date()).timeIntervalSince(started) * 1000.0
         return (!failed && produced > 0) ? 1 : 0
     }

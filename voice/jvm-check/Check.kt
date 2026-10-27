@@ -30,6 +30,7 @@ private fun runCheck(args: Array<String>) {
     }
     val checkVoice = arg(args, "--check-voice")
     if (checkVoice != null) {
+        refuseNonCommercialVoice(checkVoice)
         val clip = prepareReferenceClip(File(checkVoice).readBytes())
         println(
             "voice: ${"%.2f".format(clip.seconds)} s, ${clip.sourceRate} Hz, " +
@@ -40,6 +41,7 @@ private fun runCheck(args: Array<String>) {
     if (prepareIn != null) {
         val prepareOut = args.getOrNull(args.indexOf("--prepare-voice") + 2)
             ?: error("--prepare-voice needs an output path")
+        refuseNonCommercialVoice(prepareIn)
         val clip = prepareReferenceClip(File(prepareIn).readBytes())
         val dest = File(prepareOut)
         dest.parentFile?.mkdirs()
@@ -47,9 +49,11 @@ private fun runCheck(args: Array<String>) {
         println("prepared: ${dest.path} (${"%.2f".format(clip.seconds)} s, ${clip.sampleRate} Hz mono)")
     }
     if ("--speak" in args) {
+        val voiceWav = arg(args, "--voice") ?: "../spikes/ember-voice/mac/models/voices/0a67_enhanced-24k.wav"
+        refuseNonCommercialVoice(voiceWav)
         val config = VoiceConfig(
             modelDir = arg(args, "--model") ?: "../spikes/ember-voice/mac/models/sherpa-onnx-pocket-tts-int8-2026-01-26",
-            voiceWav = arg(args, "--voice") ?: "../spikes/ember-voice/mac/models/voices/0a67_enhanced-24k.wav",
+            voiceWav = voiceWav,
         )
         val voice = EmberVoice(SherpaPocketEngine(config), config)
         try {

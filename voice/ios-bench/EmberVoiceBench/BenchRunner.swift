@@ -24,12 +24,30 @@ public struct BenchConfig: Decodable {
     let model_dir: String
     let voice_wav: String
     let threads: Int
+    let chunk_size: Int
 }
 
 public struct PieceTake {
     let ttfaMs: Double
+    let synthMs: Double
     let samples: Int
     let sampleRate: Int
+}
+
+/// No retry: the engine's first callback. A retry is buffered, so both takes count.
+public func firstAudibleMs(callbackMs: Double, retried: Bool, spentMs: Double) -> Double {
+    retried ? spentMs : callbackMs
+}
+
+/// max(0.8 s, chars/15). chars is the normalized piece already stored in the catalog.
+public func expectedAudioSeconds(chars: Int) -> Double {
+    max(0.8, Double(chars) / 15.0)
+}
+
+public func pieceRanLong(chars: Int, samples: Int, sampleRate: Int) -> Bool {
+    guard sampleRate > 0 else { return false }
+    let seconds = Double(samples) / Double(sampleRate)
+    return seconds > 2.0 * expectedAudioSeconds(chars: chars)
 }
 
 public protocol BenchSynthesizer {
@@ -53,14 +71,28 @@ public func runBench(catalog: BenchCatalog, synth: BenchSynthesizer) -> [BenchLi
         var rate = 24000
         var ttfa = 0.0
         for (index, piece) in line.pieces.enumerated() {
-            let take = synth.speak(
+            var take = synth.speak(
                 text: piece.text,
                 maxFrames: piece.max_frames,
                 seed: catalog.seed,
                 steps: catalog.num_steps,
                 temperature: Float(catalog.temperature)
             )
-            if index == 0 { ttfa = take.ttfaMs }
+            var spent = take.synthMs
+            var retried = false
+            if piece.max_frames > 0 && pieceRanLong(chars: piece.text.count, samples: take.samples, sampleRate: take.sampleRate) {
+                let second = synth.speak(
+                    text: piece.text,
+                    maxFrames: piece.max_frames,
+                    seed: catalog.seed + 1,
+                    steps: catalog.num_steps,
+                    temperature: Float(catalog.temperature)
+                )
+                retried = true
+                spent += second.synthMs
+                if second.samples <= take.samples { take = second }
+            }
+            if index == 0 { ttfa = firstAudibleMs(callbackMs: take.ttfaMs, retried: retried, spentMs: spent) }
             samples += take.samples
             rate = take.sampleRate
             if index + 1 < line.pieces.count {

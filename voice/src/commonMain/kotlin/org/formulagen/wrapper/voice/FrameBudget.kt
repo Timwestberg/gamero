@@ -5,7 +5,8 @@ import kotlin.math.max
 
 /**
  * PocketTTS frame ceiling for one piece. 0 means leave the engine default alone.
- * A positive ceiling is max(floor, intercept + slope * chars). A piece of at most
+ * A positive ceiling is ceil(max(floor, intercept + slope * chars)).
+ * 4 + 0.8 * 28 is 26.4 and ceils to 27. A piece of at most
  * [shortChars] characters is raised to [shortMinFrames] when that floor is higher.
  * 36 frames is 2.88 s at 80 ms per frame.
  */

@@ -5,8 +5,10 @@ import Foundation
 /// finishes the piece.
 public final class SherpaSynthesizer: BenchSynthesizer {
     private let engine: OpaquePointer
+    private let chunkSize: Int32
 
-    init(modelDir: String, voiceWav: String, threads: Int32) {
+    init(modelDir: String, voiceWav: String, threads: Int32, chunkSize: Int32) {
+        self.chunkSize = chunkSize
         guard let created = ember_voice_sherpa_create(modelDir, voiceWav, threads) else {
             fatalError("sherpa-onnx did not load. Check the model dir, the voice wav, and the xcframework.")
         }
@@ -18,6 +20,7 @@ public final class SherpaSynthesizer: BenchSynthesizer {
     }
 
     public func speak(text: String, maxFrames: Int, seed: Int, steps: Int, temperature: Float) -> PieceTake {
+        let started = Date()
         let code = text.withCString { cText in
             ember_voice_sherpa_speak(
                 UnsafeMutableRawPointer(engine),
@@ -26,11 +29,12 @@ public final class SherpaSynthesizer: BenchSynthesizer {
                 Int32(steps),
                 temperature,
                 Int32(seed),
-                2,
+                chunkSize,
                 nil,
                 nil
             )
         }
+        let synthMs = Date().timeIntervalSince(started) * 1000.0
         if code == 0 {
             fatalError("no audio for \(text)")
         }
@@ -38,6 +42,7 @@ public final class SherpaSynthesizer: BenchSynthesizer {
         let rate = Int(ember_voice_sherpa_sample_rate(raw))
         return PieceTake(
             ttfaMs: ember_voice_sherpa_last_ttfa_ms(raw),
+            synthMs: synthMs,
             samples: Int(ember_voice_sherpa_last_samples(raw)),
             sampleRate: rate > 0 ? rate : 24000
         )

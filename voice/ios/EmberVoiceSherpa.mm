@@ -22,6 +22,7 @@ struct EmberSherpaEngine {
     double last_ttfa_ms;
     int32_t last_samples;
     double reference_seconds;
+    int32_t busy;
 };
 
 struct EmberCallbackBox {
@@ -106,14 +107,21 @@ extern "C" void *ember_voice_sherpa_create(const char *model_dir, const char *vo
     engine->last_ttfa_ms = 0;
     engine->last_samples = 0;
     engine->reference_seconds = seconds;
+    engine->busy = 0;
     return engine;
 }
 
 extern "C" void ember_voice_sherpa_destroy(void *engine) {
     if (engine == NULL) return;
     EmberSherpaEngine *sherpa = (EmberSherpaEngine *)engine;
-    SherpaOnnxFreeWave(sherpa->wave);
-    SherpaOnnxDestroyOfflineTts(sherpa->tts);
+    if (sherpa->wave != NULL) {
+        SherpaOnnxFreeWave(sherpa->wave);
+        sherpa->wave = NULL;
+    }
+    if (sherpa->tts != NULL) {
+        SherpaOnnxDestroyOfflineTts(sherpa->tts);
+        sherpa->tts = NULL;
+    }
     delete sherpa;
 }
 
@@ -144,19 +152,40 @@ extern "C" int32_t ember_voice_sherpa_speak(
     void *arg) {
     if (engine == NULL || text == NULL) return 0;
     EmberSherpaEngine *sherpa = (EmberSherpaEngine *)engine;
-    char extra[256];
-    int chars = text == NULL ? 0 : (int)strlen(text);
+    if (!__sync_bool_compare_and_swap(&sherpa->busy, 0, 1)) {
+        fprintf(stderr, "ember voice: speak is already running\n");
+        return 0;
+    }
+    char extra[320];
+    int chars = (int)strlen(text);
     int sentence = chars > 120 ? chars : 120;
-    snprintf(
-        extra,
-        sizeof(extra),
-        "{\"temperature\":%.4f,\"chunk_size\":%d,\"seed\":%d,\"max_frames\":%d,\"max_char_in_sentence\":%d,\"max_reference_audio_len\":%.4f}",
-        temperature,
-        chunk_size,
-        seed,
-        max_frames,
-        sentence,
-        sherpa->reference_seconds);
+    int written;
+    if (max_frames > 0) {
+        written = snprintf(
+            extra,
+            sizeof(extra),
+            "{\"temperature\":%.4f,\"chunk_size\":%d,\"seed\":%d,\"max_frames\":%d,\"max_char_in_sentence\":%d,\"max_reference_audio_len\":%.4f}",
+            temperature,
+            chunk_size,
+            seed,
+            max_frames,
+            sentence,
+            sherpa->reference_seconds);
+    } else {
+        written = snprintf(
+            extra,
+            sizeof(extra),
+            "{\"temperature\":%.4f,\"chunk_size\":%d,\"seed\":%d,\"max_char_in_sentence\":%d,\"max_reference_audio_len\":%.4f}",
+            temperature,
+            chunk_size,
+            seed,
+            sentence,
+            sherpa->reference_seconds);
+    }
+    if (written < 0 || written >= (int)sizeof(extra)) {
+        sherpa->busy = 0;
+        return 0;
+    }
     SherpaOnnxGenerationConfig gen;
     memset(&gen, 0, sizeof(gen));
     gen.reference_audio = sherpa->wave->samples;
@@ -179,5 +208,6 @@ extern "C" int32_t ember_voice_sherpa_speak(
     else sherpa->last_ttfa_ms = ember_now_ms() - box.started_ms;
     sherpa->last_samples = audio != NULL ? audio->n : box.samples;
     if (audio != NULL) SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
+    sherpa->busy = 0;
     return ok ? 1 : 0;
 }

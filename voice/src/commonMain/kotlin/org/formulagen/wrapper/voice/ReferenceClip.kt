@@ -1,8 +1,9 @@
 package org.formulagen.wrapper.voice
 
 /**
- * A PocketTTS reference clip. Any PCM or float WAV is mixed to mono and
- * resampled to 24 kHz. Shorter than a second is not enough speech to clone.
+ * A PocketTTS reference clip. The shared contract file is 32 kHz, 16-bit
+ * mono PCM, 10 s. Any PCM or float WAV is mixed to mono and resampled to
+ * 24 kHz, which is the synthesis rate. Shorter than a second is not enough speech to clone.
  * Longer than 10 seconds is past the length this sherpa-onnx build keeps
  * (`max_reference_audio_len` 10). The CC0 default clip is exactly 10 seconds,
  * so that length is allowed.
@@ -12,6 +13,19 @@ const val REFERENCE_MIN_SECONDS = 1.0
 const val REFERENCE_MAX_SECONDS = 10.0
 
 class VoiceClipException(message: String) : IllegalArgumentException(message)
+
+private const val MAX_WAV_BYTES = 64 * 1024 * 1024
+
+/** Expresso and the model's test_wavs clips are CC-BY-NC. */
+fun refuseNonCommercialVoice(path: String) {
+    val lowered = path.replace('\\', '/').lowercase()
+    if (lowered.contains("expresso") || lowered.contains("test_wavs")) {
+        throw VoiceClipException(
+            "voice must be CC0 or another permissive license. " +
+                "Expresso and test_wavs are CC-BY-NC and cannot be used ($path).",
+        )
+    }
+}
 
 data class PreparedClip(
     val samples: FloatArray,
@@ -76,6 +90,7 @@ fun referenceClipWavBytes(clip: PreparedClip): ByteArray {
 private class DecodedWav(val sampleRate: Int, val channels: Int, val samples: FloatArray)
 
 private fun decodeWav(bytes: ByteArray): DecodedWav {
+    if (bytes.size > MAX_WAV_BYTES) throw VoiceClipException("wav is too large")
     if (bytes.size < 44) throw VoiceClipException("wav is too small")
     if (tag(bytes, 0) != "RIFF" || tag(bytes, 8) != "WAVE") throw VoiceClipException("not a wav file")
     var pos = 12
@@ -88,7 +103,9 @@ private fun decodeWav(bytes: ByteArray): DecodedWav {
         val id = tag(bytes, pos)
         val size = le32(bytes, pos + 4)
         val start = pos + 8
-        if (size < 0 || start + size > bytes.size) throw VoiceClipException("truncated wav chunk $id")
+        if (size < 0 || size > MAX_WAV_BYTES || start.toLong() + size.toLong() > bytes.size) {
+            throw VoiceClipException("truncated wav chunk $id")
+        }
         if (id == "fmt ") {
             if (size < 16) throw VoiceClipException("short fmt chunk")
             format = le16(bytes, start)

@@ -43,6 +43,20 @@ select_destinations() {
         print name "\t" udid
       }
     }
+    $0 ~ /platform:iOS/ && $0 !~ /Simulator/ && ($0 ~ /iPhone 14 Pro Max/ || $0 ~ /iPad Pro/) {
+      id = ""
+      name = ""
+      if (match($0, /id:[0-9A-Fa-f][0-9A-Fa-f-]+/)) {
+        id = substr($0, RSTART + 3, RLENGTH - 3)
+      }
+      if (match($0, /name:[^},]+/)) {
+        name = substr($0, RSTART + 5, RLENGTH - 5)
+        gsub(/^[ \t]+|[ \t]+$/, "", name)
+      }
+      if (id != "" && (name ~ /iPhone 14 Pro Max/ || name ~ /iPad Pro/)) {
+        print name "\t" id
+      }
+    }
   '
 }
 
@@ -82,6 +96,18 @@ if [ "$self_check" -eq 1 ]; then
   [ "$ipad" = "00008103-BBB" ] || die "ipad match got $ipad"
   printf '%s\n' "$got" | awk -F '\t' '$2 ~ /DDD|EEE|CCC/ { bad = 1 } END { exit bad }' \
     || die "matched a simulator or the wrong phone"
+  xcode_sample=$(printf '%s\n' \
+    '{ platform:iOS, arch:arm64, id:00008110-FFF, name:iPhone 14 Pro Max }' \
+    '{ platform:iOS Simulator, arch:arm64, id:SIMULATOR-1, name:iPhone 14 Pro Max }' \
+    '{ platform:iOS, arch:arm64, id:00008103-A1B2, name:iPad Pro (M4) }' \
+    '{ platform:iOS, arch:arm64, id:00008120-HHH, name:iPhone 15 }')
+  xcode_got=$(printf '%s\n' "$xcode_sample" | select_destinations)
+  xcode_phone=$(printf '%s\n' "$xcode_got" | awk -F '\t' '$1 ~ /iPhone 14 Pro Max/ { print $2; exit }')
+  xcode_ipad=$(printf '%s\n' "$xcode_got" | awk -F '\t' '$1 ~ /iPad Pro/ { print $2; exit }')
+  [ "$xcode_phone" = "00008110-FFF" ] || die "xcodebuild phone match got $xcode_phone"
+  [ "$xcode_ipad" = "00008103-A1B2" ] || die "xcodebuild ipad match got $xcode_ipad"
+  printf '%s\n' "$xcode_got" | awk -F '\t' '$2 ~ /SIMULATOR|HHH/ { bad = 1 } END { exit bad }' \
+    || die "xcodebuild list matched a simulator or the wrong phone"
   echo "ios-bench self-check: ok"
   exit 0
 fi
@@ -106,15 +132,17 @@ HEADER_DIR=$(find "$XC" -name 'c-api.h' -print | head -n 1 | xargs dirname 2>/de
 FRAMEWORK_DIR=$(find "$XC" -type d -name 'sherpa-onnx.framework' -print | head -n 1 | xargs dirname 2>/dev/null || true)
 [ -n "$FRAMEWORK_DIR" ] || die "sherpa-onnx.framework was not inside $XC"
 
-python3 - "$HERE/EmberVoiceBench/bench-config.json" "$BACKEND" "$MODEL_DIR" "$VOICE_WAV" "$THREADS" <<'PY'
+CHUNK=${EMBER_VOICE_CHUNK:-2}
+python3 - "$HERE/EmberVoiceBench/bench-config.json" "$BACKEND" "$MODEL_DIR" "$VOICE_WAV" "$THREADS" "$CHUNK" <<'PY'
 import json, sys
-path, backend, model, wav, threads = sys.argv[1:]
+path, backend, model, wav, threads, chunk = sys.argv[1:]
 with open(path, "w") as f:
     json.dump({
         "backend": backend,
         "model_dir": model,
         "voice_wav": wav,
         "threads": int(threads),
+        "chunk_size": int(chunk),
     }, f, indent=2)
     f.write("\n")
 PY

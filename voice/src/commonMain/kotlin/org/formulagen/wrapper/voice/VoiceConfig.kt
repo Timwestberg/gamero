@@ -27,9 +27,10 @@ data class VoiceConfig(
     val voiceWav: String = "",
 ) {
     val version: String
-        get() = "steps=$numSteps,temp=$temperature,seed=$seed,first=$firstPieceTargetChars," +
-            "frames=$frameFloor+$frameIntercept+$frameSlope,short=$shortPieceMinFrames," +
-            "ratio=$maxDurationRatio,backend=$backend"
+        get() = "steps=$numSteps,temp=$temperature,seed=$seed,threads=$numThreads,chunk=$chunkSize," +
+            "first=$firstPieceTargetChars,later=$laterPieceMaxChars," +
+            "frames=$frameFloor+$frameIntercept+$frameSlope,short=$shortPieceChars/$shortPieceMinFrames," +
+            "ratio=$maxDurationRatio,silence=$silenceMs,backend=$backend"
 
     fun framesFor(chars: Int): Int = frameBudget(
         chars,

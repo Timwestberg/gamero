@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class SherpaPocketEngine(private val config: VoiceConfig) : PieceEngine {
     private val tts: OfflineTts
+    private val released = java.util.concurrent.atomic.AtomicBoolean(false)
     private val voiceSamples: FloatArray
     private val voiceRate: Int
     override val sampleRate: Int
@@ -39,6 +40,7 @@ class SherpaPocketEngine(private val config: VoiceConfig) : PieceEngine {
         }
         val voice = File(config.voiceWav)
         if (!voice.isFile) throw IllegalStateException("voice file not found: ${voice.path}")
+        refuseNonCommercialVoice(voice.path)
         val clip = prepareReferenceClip(voice.readBytes())
         voiceSamples = clip.samples
         voiceRate = clip.sampleRate
@@ -62,6 +64,7 @@ class SherpaPocketEngine(private val config: VoiceConfig) : PieceEngine {
     }
 
     override fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio {
+        if (released.get()) throw IllegalStateException("voice engine was released")
         val extra = HashMap<String, String>()
         extra["temperature"] = config.temperature.toString()
         extra["chunk_size"] = config.chunkSize.toString()
@@ -75,12 +78,15 @@ class SherpaPocketEngine(private val config: VoiceConfig) : PieceEngine {
         gen.numSteps = config.numSteps
         gen.speed = 1.0f
         gen.extra = extra
+        val callbackCount = java.util.concurrent.atomic.AtomicInteger(0)
         val ttfaNs = AtomicLong(-1L)
         val start = System.nanoTime()
         val callback = object : OfflineTtsCallback {
             override fun invoke(samples: FloatArray): Int {
+                val n = callbackCount.incrementAndGet()
                 if (samples.isNotEmpty()) ttfaNs.compareAndSet(-1L, System.nanoTime() - start)
-                return 1
+                val limit = if (maxFrames > 0) maxFrames * 8 else 8192
+                return if (n > limit) 0 else 1
             }
         }
         val audio = tts.generateWithConfigAndCallback(text, gen, callback)
@@ -89,10 +95,13 @@ class SherpaPocketEngine(private val config: VoiceConfig) : PieceEngine {
         if (audio.samples.isEmpty() || audio.sampleRate <= 0) {
             throw IllegalStateException("no audio for \"$text\"")
         }
-        return PieceAudio(audio.samples, audio.sampleRate, ttfaMs)
+        return PieceAudio(audio.samples, audio.sampleRate, ttfaMs, totalMs)
     }
 
     override fun release() {
+        if (!released.compareAndSet(false, true)) return
         tts.release()
     }
 }
+
+internal fun createPocketEngine(config: VoiceConfig): PieceEngine = SherpaPocketEngine(config)

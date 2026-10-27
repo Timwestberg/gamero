@@ -44,6 +44,7 @@ int32_t ember_voice_fluid_speak(
     void *engine,
     const char *text,
     int32_t max_frames,
+    int32_t seed,
     EmberVoiceSamplesFn callback,
     void *arg);
 

@@ -34,4 +34,5 @@ if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
 else
   JAVA=java
 fi
+cd "$HERE"
 exec "$JAVA" -cp "$CP" org.formulagen.wrapper.voice.CheckKt "$@"

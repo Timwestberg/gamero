@@ -43,26 +43,34 @@ kotlin {
         val sherpaMain by creating {
             dependsOn(commonMain.get())
         }
+        val sherpaJar = rootProject.file("spikes/ember-voice/mac/deps/sherpa/sherpa-onnx-jvm-2.0.0.jar")
+        val sherpaAar = file("libs/sherpa-onnx.aar")
         jvmMain {
-            dependsOn(sherpaMain)
+            if (sherpaJar.isFile) {
+                dependsOn(sherpaMain)
+            } else {
+                kotlin.srcDir("src/jvmNoSherpa/kotlin")
+            }
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }
         jvmMain.dependencies {
-            val jar = rootProject.file("spikes/ember-voice/mac/deps/sherpa/sherpa-onnx-jvm-2.0.0.jar")
-            if (jar.isFile) {
-                implementation(files(jar))
+            if (sherpaJar.isFile) {
+                implementation(files(sherpaJar))
             }
         }
         if (mobileTargets) {
             androidMain {
-                dependsOn(sherpaMain)
+                if (sherpaAar.isFile) {
+                    dependsOn(sherpaMain)
+                } else {
+                    kotlin.srcDir("src/androidNoSherpa/kotlin")
+                }
             }
             androidMain.dependencies {
-                val aar = file("libs/sherpa-onnx.aar")
-                if (aar.isFile) {
-                    implementation(files(aar))
+                if (sherpaAar.isFile) {
+                    implementation(files(sherpaAar))
                 }
             }
         }
