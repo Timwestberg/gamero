@@ -51,7 +51,8 @@ internal class CodexConnection(
             login = null
             return reply("error", "Sign-in did not finish. You can try connecting again.")
         }
-        val result = rpc.call("account/read", buildJsonObject { put("refreshToken", true) })
+        // Readiness only: a forced refresh costs a round trip and can race another app-server sharing the keyring login.
+        val result = rpc.call("account/read", buildJsonObject { put("refreshToken", false) })
         require(result.containsKey("account")) { "Invalid Codex account reply" }
         val account = result["account"]
         if (account == JsonNull) {

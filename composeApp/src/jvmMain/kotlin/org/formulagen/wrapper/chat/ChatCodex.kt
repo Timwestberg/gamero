@@ -24,9 +24,13 @@ internal fun chatProcessArguments(): List<String> {
     )
 }
 
-/** A bounded companion identity is data; tool access remains controlled by native configuration. */
+/**
+ * A bounded companion identity is data; tool access remains controlled by native configuration.
+ * A resume asks for thread metadata only: the full turn history of a long conversation would not
+ * fit in one bounded protocol line, and the native record already holds the visible messages.
+ */
 internal fun chatThreadParams(name: String, cwd: String, threadId: String?): JsonObject = buildJsonObject {
-    threadId?.let { put("threadId", it) }
+    threadId?.let { put("threadId", it); put("excludeTurns", true) }
     put("cwd", cwd); put("sandbox", "read-only"); put("approvalPolicy", "never")
     put("baseInstructions", "You are a friendly AI companion in Hovel. Your display name is ${JsonPrimitive(name)}. " +
         "Chat warmly and clearly. Be honest that you are an AI. Keep most replies to a few sentences, suitable for spoken playback. " +

@@ -73,4 +73,57 @@ class StdioCodexAccountRpcTest {
         } finally { root.toFile().deleteRecursively() }
     }
 
+    @Test fun oversizedMessagesAreSkippedWithoutClosingTheTransport() {
+        val reader = java.io.BufferedReader(java.io.StringReader("${"x".repeat(12)}\n\n{\"ok\":1}\n${"y".repeat(20)}"))
+        assertEquals("{\"ok\":1}", readBoundedLine(reader, limit = 10))
+        assertNull(readBoundedLine(reader, limit = 10))
+
+        val root = Files.createTempDirectory("hovel-codex-oversized")
+        val executable = root.resolve("fake-codex")
+        Files.writeString(executable, """
+            #!/usr/bin/python3
+            import sys, json
+            for line in sys.stdin:
+                request = json.loads(line)
+                if 'id' not in request: continue
+                if request['method'] == 'account/read':
+                    print(json.dumps({'method':'item/completed','params':{'text':'z' * (300 * 1024)}}), flush=True)
+                    print(json.dumps({'method':'turn/completed','params':{}}), flush=True)
+                print(json.dumps({'id':request['id'],'result':{'account':None}}), flush=True)
+        """.trimIndent())
+        Files.setPosixFilePermissions(executable, PosixFilePermissions.fromString("rwx------"))
+        val runtime = CodexRuntime(executable, root.resolve("private")); runtime.prepare()
+        val notifications = java.util.concurrent.CopyOnWriteArrayList<String>()
+        try {
+            StdioCodexAccountRpc(runtime, onNotification = { method, _ -> notifications += method }).use { rpc ->
+                assertEquals(JsonNull, rpc.call("account/read")["account"])
+                assertEquals(JsonNull, rpc.call("account/read")["account"])
+                assertEquals(listOf("turn/completed", "turn/completed"), notifications.toList())
+            }
+        } finally { root.toFile().deleteRecursively() }
+    }
+
+    @Test fun anErrorReplyLeavesTheAppServerUsable() {
+        val root = Files.createTempDirectory("hovel-codex-rejected")
+        val executable = root.resolve("fake-codex")
+        Files.writeString(executable, """
+            #!/usr/bin/python3
+            import sys, json
+            for line in sys.stdin:
+                request = json.loads(line)
+                if 'id' not in request: continue
+                if request['method'] == 'thread/resume':
+                    print(json.dumps({'id':request['id'],'error':{'code':-32600,'message':'no rollout found'}}), flush=True)
+                else:
+                    print(json.dumps({'id':request['id'],'result':{'thread':{'id':'fresh'}}}), flush=True)
+        """.trimIndent())
+        Files.setPosixFilePermissions(executable, PosixFilePermissions.fromString("rwx------"))
+        val runtime = CodexRuntime(executable, root.resolve("private")); runtime.prepare()
+        try {
+            StdioCodexAccountRpc(runtime, allowedMethods = setOf("thread/resume", "thread/start")).use { rpc ->
+                assertFailsWith<CodexRequestRejected> { rpc.call("thread/resume") }
+                assertEquals(JsonPrimitive("fresh"), rpc.call("thread/start")["thread"]?.jsonObject?.get("id"))
+            }
+        } finally { root.toFile().deleteRecursively() }
+    }
 }

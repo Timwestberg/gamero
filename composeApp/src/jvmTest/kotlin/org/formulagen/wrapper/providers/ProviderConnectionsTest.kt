@@ -20,7 +20,10 @@ class ProviderConnectionsTest {
         override fun call(method: String, params: JsonObject): JsonObject {
             calls += method
             return when (method) {
-                "account/read" -> buildJsonObject { put("account", account) }
+                "account/read" -> {
+                    assertEquals(JsonPrimitive(false), params["refreshToken"])
+                    buildJsonObject { put("account", account) }
+                }
                 "account/login/start" -> {
                     assertEquals("chatgpt", params["type"]?.jsonPrimitive?.content)
                     buildJsonObject { put("type", "chatgpt"); put("loginId", LOGIN_ID); put("authUrl", authUrl) }

@@ -4,6 +4,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.*
@@ -17,9 +18,13 @@ internal class DesktopChat(
     private val createRpc: (CodexRuntime, (String, JsonObject) -> Unit) -> CodexAccountRpc = ::chatCodex,
 ) : ChatCapability, AutoCloseable {
     private val gate = Any()
-    private val worker = Executors.newSingleThreadExecutor { task -> Thread(task, "hovel-chat").apply { isDaemon = true } }
-    private val timer = Executors.newSingleThreadScheduledExecutor { task -> Thread(task, "hovel-chat-timeout").apply { isDaemon = true } }
+    private val worker = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-chat"))
+    private val timer = Executors.newSingleThreadScheduledExecutor(loggingDaemonThreads("hovel-chat-timeout"))
+    /** Closing an app-server can wait seconds for its process tree, so it never runs under [gate] or on a caller's thread. */
+    private val releaser = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-chat-release"))
     private var active: Session? = null
+    /** The last view the host ended on its own (or could not open), so that view's polls keep showing why. */
+    private var ended: Pair<ChatScope, ChatSnapshot>? = null
     private var closed = false
     private class Session(val scope: ChatScope, val runtime: CodexRuntime, val history: ChatHistory, var record: ChatRecord) {
         var state = "checking"
@@ -40,8 +45,12 @@ internal class DesktopChat(
         check(!closed)
         val old = active
         if (old?.scope == scope && old.state !in setOf("error", "disconnected")) return@synchronized view(old)
-        invalidateLocked()
-        if (executable == null) return@synchronized ChatSnapshot("error", notice = "Install Codex on this Mac and restart Hovel.", voice = speech.status())
+        invalidateLocked(keepEnded = false)
+        ended = null
+        if (executable == null) {
+            return@synchronized ChatSnapshot("error", notice = "Install Codex on this Mac and restart Hovel.", voice = speech.status())
+                .also { ended = scope to it }
+        }
         val home = codexProfileHome(providerRoot, scope.profile)
         val runtime = CodexRuntime(executable, home)
         val id = UUID.fromString(scope.companionId).toString()
@@ -52,8 +61,10 @@ internal class DesktopChat(
         view(session)
     }
 
-    /** Polling cannot reopen an expired lease. */
-    override suspend fun snapshot(scope: ChatScope): ChatSnapshot = synchronized(gate) { view(current(scope)) }
+    /** Polling cannot reopen an expired lease, but a view the host ended keeps reading its final state. */
+    override suspend fun snapshot(scope: ChatScope): ChatSnapshot = synchronized(gate) {
+        ended?.takeIf { !closed && it.first == scope }?.second?.copy(voice = speech.status()) ?: view(current(scope))
+    }
 
     /** Persist the explicit user message before starting any provider work. */
     override suspend fun send(args: ChatSend): ChatSnapshot = synchronized(gate) {
@@ -92,11 +103,12 @@ internal class DesktopChat(
 
     /** An old view cannot close the newly opened companion. */
     override suspend fun closeSession(scope: ChatScope) = synchronized(gate) {
-        if (active?.scope == scope) invalidateLocked()
+        if (active?.scope == scope) invalidateLocked(keepEnded = false)
+        if (ended?.first == scope) ended = null
     }
 
-    /** Called when the document or provider login changes. */
-    fun invalidate() = synchronized(gate) { invalidateLocked() }
+    /** Called when the document or provider login changes. A still-open view reads why and can reconnect. */
+    fun invalidate() = synchronized(gate) { invalidateLocked(keepEnded = true) }
 
     private fun current(scope: ChatScope): Session = checkNotNull(active?.takeIf { !closed && it.scope == scope }) { "Chat view expired" }
     private fun live(session: Session, generation: Int = session.generation) = !closed && active === session && generation == session.generation
@@ -108,16 +120,19 @@ internal class DesktopChat(
             session.runtime.prepare()
             val epoch = synchronized(gate) { check(live(session, generation)); ++session.rpcEpoch }
             val opened = createRpc(session.runtime) { method, params -> receive(session, epoch, method, params) }
-            synchronized(gate) { if (!live(session, generation)) { opened.close(); error("Chat closed") }; session.rpc = opened }
+            val kept = synchronized(gate) { live(session, generation).also { if (it) session.rpc = opened } }
+            if (!kept) { opened.close(); error("Chat closed") }
             opened
         }
-        val result = rpc.call("account/read", buildJsonObject { put("refreshToken", true) })
+        // Readiness only: a forced refresh costs a round trip and can race another app-server sharing the keyring login.
+        val result = rpc.call("account/read", buildJsonObject { put("refreshToken", false) })
         synchronized(gate) {
             check(live(session, generation))
             val account = result["account"] as? JsonObject
             if (account?.get("type") != JsonPrimitive("chatgpt")) {
                 session.state = "disconnected"; session.notice = "Connect Codex in Profile → Providers to message your companion."
                 session.checking = false
+                dropRpc(session)
                 error("ChatGPT account required")
             }
             session.checking = false
@@ -132,9 +147,7 @@ internal class DesktopChat(
         if (!session.resumed) {
             val cwd = session.runtime.home.resolve("conversation-workspace")
             Files.createDirectories(cwd)
-            val thread = session.record.threadId
-            val result = rpc.call(if (thread == null) "thread/start" else "thread/resume", chatThreadParams(session.scope.name, cwd.toString(), thread))
-            val id = result.getValue("thread").jsonObject.getValue("id").jsonPrimitive.content
+            val id = openThread(rpc, session, cwd.toString())
             require(UUID.fromString(id).toString() == id)
             synchronized(gate) {
                 check(live(session, generation))
@@ -155,11 +168,24 @@ internal class DesktopChat(
         }
     }
 
+    /** Resume this companion's thread; if Codex no longer has it, start a fresh one, which the caller saves. */
+    private fun openThread(rpc: CodexAccountRpc, session: Session, cwd: String): String {
+        val saved = session.record.threadId
+        val resumed = saved?.let {
+            try { rpc.call("thread/resume", chatThreadParams(session.scope.name, cwd, it)) }
+            catch (_: CodexRequestRejected) { null }
+        }
+        val result = resumed ?: rpc.call("thread/start", chatThreadParams(session.scope.name, cwd, null))
+        return result.getValue("thread").jsonObject.getValue("id").jsonPrimitive.content
+    }
+
     /** Consume only text and terminal state. Tool requests are rejected by the transport. */
     private fun receive(session: Session, epoch: Int, method: String, params: JsonObject) = synchronized(gate) {
         if (!live(session) || epoch != session.rpcEpoch) return@synchronized
         if (method in setOf("request/refused", "transport/closed")) {
             if (session.state == "responding") end(session, "error", "The reply stopped. Try again when Codex is ready.")
+            // A dead app-server is never reused: the next send starts a new one and resumes the thread again.
+            else if (method == "transport/closed") dropRpc(session)
             return@synchronized
         }
         if (session.state != "responding" || params["threadId"] != JsonPrimitive(session.record.threadId)) return@synchronized
@@ -202,27 +228,51 @@ internal class DesktopChat(
         session.record = session.record.copy(messages = messages.dropLast(1) + messages.last().copy(text = text.take(16000)))
     }
 
-    /** Errors keep the user's text and never automatically send it again. */
+    /**
+     * Errors keep the user's text and never automatically send it again. Any failure, including a
+     * native linkage error, ends the request instead of killing the worker; a VM error is then rethrown.
+     */
     private fun attempt(session: Session, generation: Int, work: () -> Unit) {
-        try { work() } catch (_: Exception) { synchronized(gate) {
-            if (live(session, generation) && session.state != "disconnected") end(session, "error", "Codex could not complete the request. Reconnect or retry when ready.")
-        } }
+        try { work() } catch (error: Throwable) {
+            synchronized(gate) {
+                if (live(session, generation) && session.state != "disconnected") end(session, "error", "Codex could not complete the request. Reconnect or retry when ready.")
+            }
+            if (error is VirtualMachineError) throw error
+        }
     }
 
     private fun end(session: Session, state: String, notice: String) {
-        session.generation++; session.rpcEpoch++; session.state = state; session.notice = notice; session.checking = false
-        session.turnId = null; session.awaitingTurn.clear(); session.resumed = false; session.speak = false
-        val rpc = session.rpc; session.rpc = null; rpc?.close(); speech.stop()
+        session.generation++; session.state = state; session.notice = notice; session.checking = false
+        session.turnId = null; session.awaitingTurn.clear(); session.speak = false
+        dropRpc(session); speech.stop()
         runCatching { session.history.write(session.record) }
     }
 
-    private fun invalidateLocked() {
+    /** Detach the session's app-server so later events are ignored, and close it off the lock. */
+    private fun dropRpc(session: Session) {
+        session.rpcEpoch++; session.resumed = false
+        val rpc = session.rpc ?: return
+        session.rpc = null
+        try { releaser.execute { rpc.close() } } catch (_: RejectedExecutionException) { rpc.close() }
+    }
+
+    private fun invalidateLocked(keepEnded: Boolean) {
         val session = active; active = null
-        session?.let { end(it, "cancelled", "Chat closed.") }
+        session?.let {
+            end(it, "error", "This chat was closed. Reconnect to continue.")
+            if (keepEnded) ended = it.scope to view(it)
+        }
         speech.stop()
     }
 
-    override fun close() = synchronized(gate) {
-        invalidateLocked(); closed = true; timer.shutdownNow(); worker.shutdownNow(); speech.close()
+    /** App exit: stop work, then wait briefly so owned app-servers finish terminating. */
+    override fun close() {
+        synchronized(gate) {
+            if (closed) return
+            invalidateLocked(keepEnded = false); closed = true; ended = null; timer.shutdownNow(); worker.shutdownNow()
+        }
+        releaser.shutdown()
+        releaser.awaitTermination(5, TimeUnit.SECONDS)
+        speech.close()
     }
 }
