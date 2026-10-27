@@ -91,6 +91,7 @@ kotlin {
             implementation("org.jogamp.jogl:jogl-all:2.6.0")
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutinesSwing)
+            implementation(libs.java.websocket)
         }
     }
 }

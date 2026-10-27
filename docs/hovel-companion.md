@@ -20,12 +20,13 @@ All paths below are under
 | `MacHostCredentials` | [companion/MacHostCredentials.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/companion/MacHostCredentials.kt) | Stores and reads the host bearer token in the macOS Keychain. |
 | `HovelHttpTransport` | [hovel/HovelHostAdapter.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostAdapter.kt) | The only HTTP client that sends the host token to the server. |
 | `HovelHostSession` | [hovel/HovelHostSession.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostSession.kt) | Heartbeat loop and a single task worker. |
+| `EmberPetBridge` | [hovel/EmberPetBridge.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/EmberPetBridge.kt) | Loopback WebSocket that drives the Ember desktop pet. Started and stopped with the companion. |
 
 The wiring lives in [main.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/main.kt).
 
 ## When the companion exists
 
-`main.kt` creates a `HovelCompanion` only when all of these hold (lines 163-172):
+`main.kt` creates a `HovelCompanion` only when all of these hold (lines 167-178):
 
 - `GAMERO_PRODUCT` (or `-Dgamero.product`) is `hovel`.
 - The OS is macOS.
@@ -33,14 +34,15 @@ The wiring lives in [main.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wr
   only from the environment; unlike `GAMERO_PRODUCT` they have no `-D` fallback.
 
 Otherwise no bridge is attached. When the product is `hovel` but there is no
-companion, the window shows a hint to set the two variables (main.kt line 218).
+companion, the window shows a hint to set the two variables (main.kt line 229).
 On other products it shows nothing. The companion's data directory is
-`~/Library/Application Support/Gamero/hovel-<sha256 of the app URL>` (line 168),
+`~/Library/Application Support/Gamero/hovel-<sha256 of the app URL>` (line 175),
 so each configured app URL gets its own registration, journal and output.
+That same creation also starts the Ember pet bridge, below.
 
 A new `NativeBridge` is attached each time the WebView is created, and the old
-one is closed first (lines 221-227). On app close, `DesktopResources.close`
-closes the bridge, then the companion (line 62).
+one is closed first (lines 231-239). On app close, `DesktopResources.close`
+closes the bridge, then the companion (line 66).
 
 ## Bridge trust rules
 
@@ -87,7 +89,7 @@ only opens `watchContext`, calls `capabilities` and offers a reload.
 
 ## Bridge methods
 
-`HovelCompanion.dispatch` (HovelCompanion.kt lines 44-108) handles three methods.
+`HovelCompanion.dispatch` (HovelCompanion.kt lines 57-119) handles three methods.
 Any other name fails.
 
 | Method | Args | Returns |
@@ -97,12 +99,12 @@ Any other name fails.
 | `activateConnection` | `ownerId`, `hostId` | host `id`, `connected` true |
 
 Only one non-`capabilities` call runs at a time. A second call while one is
-pending fails with "Another native operation is pending" (line 50). Each call
+pending fails with "Another call to this capability is running" (line 63). Each call
 records the companion's generation when it starts and fails if
 `invalidatePending` or `close` bumps it before the call finishes.
 
 `invalidatePending` also clears the approved registration
-(HovelCompanion.kt line 146). So after any reload, `activateConnection` fails
+(HovelCompanion.kt line 165). So after any reload, `activateConnection` fails
 with "Native approval is required" until the page calls `prepareConnection`
 again.
 
@@ -110,11 +112,11 @@ again.
 
 1. **Approval.** `prepareConnection` sets `approval`, and `main.kt` shows a dialog
    naming the account, the app URL and the workspace, and saying a host
-   credential goes into Keychain and Codex runs read-only (main.kt lines 213-217).
+   credential goes into Keychain and Codex runs read-only (main.kt lines 221-223).
    Cancel, a reload or close fails the call.
 2. **Registration.** `prepareRegistration` makes the data directory `0700`, takes
    a file lock on `registration.lock`, and reads or creates `registration.json`
-   (HovelCompanion.kt lines 110-142).
+   (HovelCompanion.kt lines 131-163).
    - If the file exists it must be at most 4096 bytes and belong to the same
      `ownerId`. A different account is rejected: one native profile serves one
      account. The Keychain entry must still be readable.
@@ -129,7 +131,7 @@ again.
    approved registration. It reads the token from Keychain and starts a
    `HovelHostSession` with a transport, a per-host journal
    (`journal-<hostId>`) and a Codex provider writing to `output-<hostId>`
-   (lines 81-100). A second activation reuses the running session.
+   (lines 94-116). A second activation reuses the running session.
 
 ### Keychain
 
@@ -182,8 +184,110 @@ at a time and launch rules from [desktop-execution.md](desktop-execution.md)
 apply. `ExecutionJournal` also holds a `host.lock` so two companions cannot share
 a journal.
 
-`close()` stops both threads, closes the journal so no stale worker can cross the
+`close()` tells the Ember bridge the companion is offline, stops both threads, closes the journal so no stale worker can cross the
 launch boundary, and waits up to 3 and 5 seconds for them to end.
+
+## Ember desktop pet
+
+The companion can drive the [Ember desktop pet](https://github.com/Timwestberg/game-platform/pull/192)
+(a WebSocket client that reads `EMBER_PET_WS`). The bridge runs only while the
+Hovel companion does: `HovelCompanion` starts it and `close()` stops it. It is
+not created for other products, or when `GAMERO_CODEX_PATH` / `GAMERO_WORKSPACE`
+are unset.
+
+The server binds `127.0.0.1` on a free port. Each launch generates a random
+token. A client is accepted only when the request path is `/` and the query is
+exactly `token=<that token>`. Any other path, parameter, or token is rejected
+before the WebSocket is established. Connections that are not from loopback are
+rejected as well.
+
+While the bridge is up it publishes
+`~/Library/Application Support/Hovel/ember-pet.json` (file mode `0600`, directory
+`0700`):
+
+```json
+{"url":"ws://127.0.0.1:<port>/?token=<token>","pid":<pid>,"version":1}
+```
+
+`close()` deletes that file only when the pid and token are still this launch,
+so a newer companion is not wiped. A crash can leave a stale file; the next
+launch overwrites it.
+
+The file and the socket carry the bridge token and nothing else. The host
+Keychain credential, Codex login, and `OPENAI_*` / `CODEX_API_KEY` values are
+never written there and never sent as frames. Codex itself still strips those
+variables before it starts, as described in
+[desktop-execution.md](desktop-execution.md).
+
+Set `GAMERO_EMBER_PET` to the pet executable to show **Open Ember pet**. The
+button starts that program with `EMBER_PET_WS` set to the discovery URL. The
+URL is an environment value, not a process argument. The child environment
+also has `OPENAI_*` and `CODEX_API_KEY` removed. You can instead launch the pet
+yourself and point `EMBER_PET_WS` at the `url` in the discovery file. Do not
+paste that file into logs or chat: the token is a secret for this launch.
+
+### What the pet is shown
+
+The bridge remembers the latest heartbeat (Codex login plus the server's task
+list) and any local outcome that is newer than that heartbeat. A heartbeat that
+started before the outcome cannot downgrade it. When several tasks qualify, the
+first in server order inside the winning group is the one that is spoken.
+
+| Companion signal | Pet command |
+| --- | --- |
+| `queued`, `claimed`, `running`, or `cloud-accepted` | `{"type":"state","state":"running"}` |
+| `succeeded` | `state` `ready`, then `say` of the result |
+| `failed` or `reconciliation-required` | `state` `blocked`, then a short `say` of the error |
+| Codex `auth-required`, and nothing above applies | `state` `needs_input` |
+| Codex `unavailable`, or the companion is offline | `state` `blocked` |
+| Codex `ready` (or login not known yet) and no task | `state` `none` |
+
+An active task wins over login and over older successes. A failure wins over a
+success. A success wins over login, so the pet can say the result before it
+returns to idle. Every new connection is sent the current `state` first, and
+the current `say` after it when the view still has one. The same view is not
+repeated to clients that are already connected.
+
+`say` text is at most 240 characters. A first paragraph that already fits is
+used as the summary; otherwise the text is cut on a line or word boundary and
+ends with `…`. The uncut result is `full`, omitted when nothing was cut.
+`taskId` is omitted when there is no task. A blank success says "Codex
+finished." A failure with no error text says "Codex task failed." A
+reconciliation with no error text says "This task needs reconciliation on this
+computer."
+
+### Protocol v1
+
+Text frames, JSON objects. This is the same v1 the pet speaks.
+
+Bridge to pet:
+
+```json
+{"type":"state","state":"none"}
+{"type":"say","text":"Ports are closed.","taskId":"<uuid>","full":"Ports are closed.\n\n..."}
+```
+
+`state` is one of `none`, `running`, `needs_input`, `ready`, `blocked`.
+
+Pet to bridge:
+
+```json
+{"type":"hello"}
+{"type":"message","id":"<uuid>","text":"..."}
+```
+
+`hello` and any other unknown `type` are ignored. A `message` is answered with:
+
+```json
+{"type":"message_ack","id":"<same uuid>","status":"unsupported","reason":"Sending from Ember is not wired yet"}
+```
+
+Malformed JSON is logged as a fixed sentence and does not close the socket. The
+log line does not include the payload. The `id` must be a canonical UUID.
+
+`EmberMessageSink` is the only place a future change should handle that text.
+The sink shipped today does not create a Hovel task and does not perform owner
+auth; the owner has not chosen that path yet.
 
 ## Failure messages to know
 
@@ -193,10 +297,10 @@ launch boundary, and waits up to 3 and 5 seconds for them to end.
 | `403 Native context expired` | Missing or old `contextId`, different frame, or a reload happened. |
 | `400 Invalid native protocol` | The request is not a JSON object with `"version": 1` (NativeBridge.kt line 56). |
 | `400 Native action failed; inspect the companion status` | A bridge method threw. The page never sees the reason. |
-| Status line "Connection failed. Check the native configuration, Keychain approval and server." | A `prepareConnection` or `activateConnection` failure, or an unknown method name, other than a cancellation (HovelCompanion.kt line 105). Failures before that point (bad `capabilities` args, a closed companion, "Another native operation is pending") leave the status line unchanged and reach the page only as the generic 400. This status replaces the specific error, so the causes below never reach the window. |
-| (not shown) "This native profile belongs to another account" | Thrown when `registration.json` has a different `ownerId` (HovelCompanion.kt line 124). Users see only the two generic messages above; check `registration.json` in the data directory. |
+| Status line "Connection failed. Check the native configuration, Keychain approval and server." | A `prepareConnection` or `activateConnection` failure, or an unknown method name, other than a cancellation (HovelCompanion.kt line 125). Failures before that point (bad `capabilities` args, a closed companion, "Another call to this capability is running") leave the status line unchanged and reach the page only as the generic 400. This status replaces the specific error, so the causes below never reach the window. |
+| (not shown) "This native profile belongs to another account" | Thrown when `registration.json` has a different `ownerId` (HovelCompanion.kt line 145). Users see only the two generic messages above; check `registration.json` in the data directory. |
 | Status line "Server unavailable; tasks remain on this computer" | A heartbeat failed. The session keeps retrying every 10 seconds. |
-| Status line "Task needs reconciliation on this computer; no automatic host change" | Any exception from `ExecutionCoordinator.accept`, including network errors and a server 409, not only a stopped task (HovelHostSession.kt line 51). See the journal before retrying. |
+| Status line "Task needs reconciliation on this computer; no automatic host change" | Any exception from `ExecutionCoordinator.accept`, including network errors and a server 409, not only a stopped task (HovelHostSession.kt line 64). See the journal before retrying. |
 
 ## Tests
 
@@ -206,6 +310,9 @@ launch boundary, and waits up to 3 and 5 seconds for them to end.
 
 `HovelAdapterTest` covers registration reuse and that the token is not in
 `registration.json`, invalidation during a blocked activation, the transport
-deadline on a stalled body, the origin policy, and host pinning. Live JCEF,
+deadline on a stalled body, the origin policy, and host pinning.
+`EmberPetTest` covers the pet state mapping, say truncation, the launch token,
+the `message_ack` path, the discovery file, and a fixture Codex run reported to
+the bridge. Live JCEF,
 Keychain and Codex need a Mac; follow
 [hovel-native-validation.md](hovel-native-validation.md).

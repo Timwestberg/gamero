@@ -34,6 +34,7 @@ class HovelCompanion(
     private val executable: Path,
     private val workspace: Path,
     private val credentials: HostCredentials = MacHostCredentials(),
+    private val ember: EmberPetBridge? = null,
 ) : AutoCloseable {
     var status by mutableStateOf("Connect this Mac from Hovel. Sign in with your ChatGPT subscription in the configured Codex CLI.")
         private set
@@ -47,6 +48,11 @@ class HovelCompanion(
     private val mutex = kotlinx.coroutines.sync.Mutex()
     private val origin = URI(appUrl).let { URI(it.scheme, null, it.host, it.port, null, null, null).toASCIIString() }
     private val json = Json
+    val emberPetAvailable: Boolean get() = ember?.canLaunch == true
+
+    init { ember?.start() }
+
+    fun launchEmberPet() { ember?.launchPet() }
 
     suspend fun dispatch(method: String, args: JsonObject): JsonObject {
         if (method == "capabilities") {
@@ -100,7 +106,11 @@ class HovelCompanion(
                             val journal = ExecutionJournal(directory.resolve("journal-${registered.id}"), registered.id)
                             try {
                                 val provider = CodexCliProvider(executable, workspace, directory.resolve("output-${registered.id}"))
-                                session = HovelHostSession(registered.id, journal, provider, transport) { status = it }.also { it.start() }
+                                session = HovelHostSession(
+                                    registered.id, journal, provider, transport,
+                                    { status = it },
+                                    { snapshot -> ember?.update(snapshot) },
+                                ).also { it.start() }
                             } catch (error: Exception) { journal.close(); throw error }
                         }
                     }
@@ -166,6 +176,7 @@ class HovelCompanion(
             session.also { session = null }
         }
         active?.close()
+        ember?.close()
     }
 
     companion object {
