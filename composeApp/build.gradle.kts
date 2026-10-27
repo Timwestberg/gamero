@@ -24,6 +24,17 @@ val releaseWebUrl = releaseSetting("gamero.webUrl")
 val releaseVersion = releaseSetting("gamero.version") ?: "1.0.0"
 val releaseBuildNumber = releaseSetting("gamero.buildNumber")?.toInt() ?: 1
 fun signingSetting(name: String): String? = providers.environmentVariable(name).orNull?.takeIf { it.isNotBlank() }
+
+// KCEF's desktop WebView and the embedded game's JAWT bridge reach into AWT internals. The one list
+// for Gradle runs, the packaged app, and the jpackage scripts (via desktopJvmOptions below).
+val desktopAddOpens = buildList {
+    add("--add-opens=java.desktop/sun.awt=ALL-UNNAMED")
+    add("--add-opens=java.desktop/java.awt.peer=ALL-UNNAMED")
+    if (System.getProperty("os.name").contains("Mac")) {
+        add("--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED")
+        add("--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
+    }
+}
 if (mobileTargets) {
     apply(plugin = "com.android.application")
     apply(plugin = "com.google.gms.google-services")
@@ -95,7 +106,7 @@ kotlin {
         }
         jvmTest.dependencies {
             implementation(libs.kotlin.testJunit)
-            implementation("org.jetbrains.compose.ui:ui-test:1.12.1")
+            implementation("org.jetbrains.compose.ui:ui-test:${libs.versions.composeMultiplatform.get()}")
         }
         jvmMain.dependencies {
             implementation(project(":voice"))
@@ -158,10 +169,7 @@ compose.desktop {
     application {
         mainClass = "org.formulagen.wrapper.MainKt"
         providers.environmentVariable("GAMERO_BROWSER_JAVA_HOME").orNull?.let { javaHome = it }
-        jvmArgs += listOf("--add-opens=java.desktop/sun.awt=ALL-UNNAMED", "--add-opens=java.desktop/java.awt.peer=ALL-UNNAMED")
-        if (System.getProperty("os.name").contains("Mac")) {
-            jvmArgs += listOf("--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED", "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
-        }
+        jvmArgs += desktopAddOpens
 
         // A packaged app gets no shell environment, so the release URL and product are baked in.
         releaseProduct?.let { jvmArgs += "-Dgamero.product=$it" }
@@ -204,74 +212,61 @@ compose.desktop {
 }
 
 // Required by the existing KCEF desktop WebView implementation.
-tasks.withType<JavaExec>().configureEach {
-    jvmArgs("--add-opens=java.desktop/sun.awt=ALL-UNNAMED", "--add-opens=java.desktop/java.awt.peer=ALL-UNNAMED")
-    if (System.getProperty("os.name").contains("Mac")) {
-        jvmArgs("--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED", "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
-    }
+tasks.withType<JavaExec>().configureEach { jvmArgs(desktopAddOpens) }
+
+val jvmMainCompilation = kotlin.targets.getByName("jvm").compilations.getByName("main")
+
+/** A development entry point run from the JVM main classes on Java 21. */
+fun registerJvmMain(name: String, mainClass: String) = tasks.register<JavaExec>(name) {
+    dependsOn("jvmMainClasses")
+    this.mainClass.set(mainClass)
+    classpath = files(jvmMainCompilation.output.allOutputs, jvmMainCompilation.runtimeDependencyFiles)
+    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
 }
 
 // Native companion prototype: common Compose screens without starting JCEF.
-tasks.register<JavaExec>("runCompanions") {
-    val target = kotlin.targets.getByName("jvm")
-    val compilation = target.compilations.getByName("main")
-    dependsOn("jvmMainClasses")
-    mainClass.set("org.formulagen.wrapper.progression.CompanionMainKt")
-    classpath = files(compilation.output.allOutputs, compilation.runtimeDependencyFiles)
-    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
-}
-
+registerJvmMain("runCompanions", "org.formulagen.wrapper.progression.CompanionMainKt")
 // Inspect the real material without launching a game or modifying a companion.
-tasks.register<JavaExec>("runCompanionGlassPreview") {
-    val compilation = kotlin.targets.getByName("jvm").compilations.getByName("main")
-    dependsOn("jvmMainClasses")
-    mainClass.set("org.formulagen.wrapper.progression.GlassPreviewMainKt")
-    classpath = files(compilation.output.allOutputs, compilation.runtimeDependencyFiles)
-    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+registerJvmMain("runCompanionGlassPreview", "org.formulagen.wrapper.progression.GlassPreviewMainKt")
+
+// jpackage inputs for the local macOS prototypes. Runtime jars get an index prefix so two
+// dependencies with the same file name cannot overwrite each other.
+val runtimeJarNames = providers.provider { requireNotNull(jvmMainCompilation.runtimeDependencyFiles).files
+    .filter { it.extension == "jar" }.sortedBy { it.absolutePath }
+    .mapIndexed { index, file -> file to "$index-${file.name}" }.toMap() }
+
+// desktopAddOpens, one option per line, for the jpackage scripts (scripts/dev-env.sh reads it).
+val desktopJvmOptions = tasks.register("desktopJvmOptions") {
+    val options = desktopAddOpens
+    val output = layout.buildDirectory.file("desktop-app/jvm-options.txt")
+    inputs.property("options", options)
+    outputs.file(output)
+    doLast { output.get().asFile.writeText(options.joinToString("\n", postfix = "\n")) }
 }
 
-// macOS development proof: Godot's remote layer inside the Compose host window.
-tasks.register<JavaExec>("runEmbeddedCompanions") {
-    val compilation = kotlin.targets.getByName("jvm").compilations.getByName("main")
-    dependsOn("jvmMainClasses")
-    mainClass.set("org.formulagen.wrapper.progression.embedded.EmbeddedCompanionMainKt")
-    classpath = files(compilation.output.allOutputs, compilation.runtimeDependencyFiles)
-    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+/**
+ * `<id>Jar` builds [archive] with [mainClass] and a manifest Class-Path of the runtime jars;
+ * `prepare<Id>App` syncs it and those jars into build/<dir>-input for jpackage.
+ */
+fun registerDesktopAppInput(id: String, dir: String, archive: String, mainClass: String) {
+    val jar = tasks.register<Jar>("${id}Jar") {
+        dependsOn("jvmMainClasses")
+        archiveFileName.set(archive)
+        destinationDirectory.set(layout.buildDirectory.dir("$dir-package"))
+        from(jvmMainCompilation.output.allOutputs)
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+        manifest.attributes["Main-Class"] = mainClass
+        manifest.attributes["Class-Path"] = runtimeJarNames.get().values.joinToString(" ")
+    }
+    tasks.register<Sync>("prepare${id.replaceFirstChar(Char::uppercase)}App") {
+        dependsOn(jar, desktopJvmOptions)
+        into(layout.buildDirectory.dir("$dir-input"))
+        from(jar.flatMap { it.archiveFile })
+        runtimeJarNames.get().forEach { (file, uniqueName) -> from(file) { rename { uniqueName } } }
+    }
 }
 
 // A named local app makes native-window inspection and manual testing unambiguous.
-val embeddedCompilation = kotlin.targets.getByName("jvm").compilations.getByName("main")
-val embeddedRuntimeNames = providers.provider { requireNotNull(embeddedCompilation.runtimeDependencyFiles).files
-    .filter { it.extension == "jar" }.sortedBy { it.absolutePath }
-    .mapIndexed { index, file -> file to "$index-${file.name}" }.toMap() }
-val embeddedJar = tasks.register<Jar>("embeddedCompanionJar") {
-    dependsOn("jvmMainClasses")
-    archiveFileName.set("hovel-embedded.jar")
-    destinationDirectory.set(layout.buildDirectory.dir("embedded-package"))
-    from(embeddedCompilation.output.allOutputs)
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    manifest.attributes["Main-Class"] = "org.formulagen.wrapper.progression.embedded.EmbeddedCompanionMainKt"
-    manifest.attributes["Class-Path"] = embeddedRuntimeNames.get().values.joinToString(" ")
-}
-tasks.register<Sync>("prepareEmbeddedCompanionApp") {
-    dependsOn(embeddedJar)
-    into(layout.buildDirectory.dir("embedded-input"))
-    from(embeddedJar.flatMap { it.archiveFile })
-    embeddedRuntimeNames.get().forEach { (file, uniqueName) -> from(file) { rename { uniqueName } } }
-}
-
-val catalogJar = tasks.register<Jar>("catalogLauncherJar") {
-    dependsOn("jvmMainClasses")
-    archiveFileName.set("gamero-catalog.jar")
-    destinationDirectory.set(layout.buildDirectory.dir("catalog-package"))
-    from(embeddedCompilation.output.allOutputs)
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    manifest.attributes["Main-Class"] = "org.formulagen.wrapper.MainKt"
-    manifest.attributes["Class-Path"] = embeddedRuntimeNames.get().values.joinToString(" ")
-}
-tasks.register<Sync>("prepareCatalogLauncherApp") {
-    dependsOn(catalogJar)
-    into(layout.buildDirectory.dir("catalog-input"))
-    from(catalogJar.flatMap { it.archiveFile })
-    embeddedRuntimeNames.get().forEach { (file, uniqueName) -> from(file) { rename { uniqueName } } }
-}
+registerDesktopAppInput("embeddedCompanion", "embedded", "hovel-embedded.jar",
+    "org.formulagen.wrapper.progression.embedded.EmbeddedCompanionMainKt")
+registerDesktopAppInput("catalogLauncher", "catalog", "gamero-catalog.jar", "org.formulagen.wrapper.MainKt")
