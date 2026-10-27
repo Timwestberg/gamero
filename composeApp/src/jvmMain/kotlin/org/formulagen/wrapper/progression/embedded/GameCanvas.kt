@@ -44,6 +44,29 @@ internal class GameCanvas(private val game: MacEmbeddedGame) : Canvas() {
         }
     }
 
+    /** True while the engine's remote layer is attached to this canvas. */
+    var layerAttached = false
+        private set
+
+    /** Attach the engine's layer. Loading the layer bridge can throw a LinkageError; it reports false, never the app's fatal handler. */
+    fun attachLayer(contextId: Long): Boolean {
+        layerAttached = try { MacGameLayer.attach(this, contextId) } catch (_: Exception) { false } catch (_: LinkageError) { false }
+        return layerAttached
+    }
+
+    /** Release the layer while this canvas still has its native peer; JAWT on a disposed peer crashes the JVM. */
+    fun detachLayer() {
+        if (!layerAttached) return
+        layerAttached = false
+        if (isDisplayable) MacGameLayer.detach(this)
+    }
+
+    /** Every exit path disposes the window, including Cmd+Q, which never reaches the game's close(); release the layer first. */
+    override fun removeNotify() {
+        detachLayer()
+        super.removeNotify()
+    }
+
     /** Clear native and engine state together across modal or focus transitions. */
     fun release() { heldKeys.clear(); buttons = 0; game.releaseInput() }
 

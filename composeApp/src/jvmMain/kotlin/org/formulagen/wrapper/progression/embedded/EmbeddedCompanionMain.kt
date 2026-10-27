@@ -46,7 +46,7 @@ internal class EmbeddedCompanionWindow(
     private val canvas = GameCanvas(game)
     private val overlay = ComposePanel()
     private val status = JLabel("Starting the adventure…", SwingConstants.CENTER)
-    private var attached = false
+    private val attached get() = canvas.layerAttached
     private var closed = false
     private var failed = false
     private val shutdownHook = Thread({
@@ -112,9 +112,7 @@ internal class EmbeddedCompanionWindow(
         scope.launch {
             game.contextId.collect { context ->
                 if (context != null) {
-                    // Loading the layer bridge can throw a LinkageError; it must reach fail(), not the app's fatal handler.
-                    attached = try { MacGameLayer.attach(canvas, context) } catch (_: Exception) { false } catch (_: LinkageError) { false }
-                    if (!attached) fail("Could not attach the native game surface")
+                    if (!canvas.attachLayer(context)) fail("Could not attach the native game surface")
                     else {
                         status.isVisible = false
                         layers.doLayout()
@@ -152,7 +150,7 @@ internal class EmbeddedCompanionWindow(
     private fun fail(message: String) {
         if (failed || closed) return
         failed = true
-        if (attached) { MacGameLayer.detach(canvas); attached = false }
+        canvas.detachLayer()
         canvas.acceptsInput = false
         canvas.isVisible = false
         overlay.isVisible = false
@@ -170,7 +168,7 @@ internal class EmbeddedCompanionWindow(
         if (closed) return
         closed = true
         try {
-            if (attached && canvas.isDisplayable) MacGameLayer.detach(canvas)
+            canvas.detachLayer()
         } finally {
             host.close(); game.close(); scope.cancel()
         }
