@@ -154,6 +154,44 @@ fun wordErrorRate(reference: String, hypothesis: String): WerScore {
 
 data class WerScore(val wer: Double, val referenceWords: Int, val errors: Int, val hypothesis: String)
 
+/**
+ * Median WER across draws. The hypothesis and error count come from the upper of the
+ * two central draws, so the number is not the last sample and the text is a real draw.
+ */
+fun medianWer(draws: List<WerScore>): WerScore {
+    require(draws.isNotEmpty())
+    val med = median(draws.map { it.wer })
+    val sorted = draws.sortedBy { it.wer }
+    return sorted[sorted.size / 2].copy(wer = med)
+}
+
+/**
+ * PocketTTS frame ceiling for one piece. 0 means leave sherpa-onnx's default alone.
+ * A positive ceiling is ceil(max(floor, intercept + slope * chars)). 4 + 0.8 * 28 is
+ * 26.4 and ceils to 27. A piece of at most [shortChars] characters is raised to
+ * [shortMinFrames] when that floor is higher.
+ */
+fun frameBudget(
+    chars: Int,
+    intercept: Double,
+    slope: Double,
+    floor: Int,
+    shortChars: Int,
+    shortMinFrames: Int,
+): Int {
+    val curveOn = slope > 0.0 || intercept > 0.0 || floor > 0
+    val shortOn = shortChars > 0 && chars <= shortChars && shortMinFrames > 0
+    if (!curveOn && !shortOn) return 0
+    var frames = 0
+    if (curveOn) {
+        val linear = intercept + slope * chars.toDouble()
+        frames = ceil(maxOf(floor.toDouble(), linear)).toInt()
+        if (frames < 4) frames = 4
+    }
+    if (shortOn && shortMinFrames > frames) frames = shortMinFrames
+    return frames
+}
+
 fun werTokens(text: String): List<String> {
     val cleaned = StringBuilder()
     for (ch in text.lowercase()) {
