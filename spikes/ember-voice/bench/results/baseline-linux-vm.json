@@ -1,0 +1,256 @@
+{
+  "schema": 1,
+  "kind": "ember-voice-bench",
+  "label": "Linux VM",
+  "measured_at": "2026-10-23T21:46:33.259259674Z",
+  "git_commit": "be9a33e584257ca34ee87485525f3b3e23903d16",
+  "corpus": {
+    "id": "ember-voice",
+    "version": "1.0.0",
+    "path": "corpus/ember-voice-corpus.json"
+  },
+  "device": {
+    "os_name": "Linux",
+    "os_version": "6.12.94+",
+    "os_arch": "amd64",
+    "chip": "Intel(R) Xeon(R) Processor",
+    "logical_cpus": 4
+  },
+  "model": {
+    "name": "sherpa-onnx-pocket-tts-int8-2026-01-26",
+    "dir": "../mac/models/sherpa-onnx-pocket-tts-int8-2026-01-26",
+    "provider": "cpu"
+  },
+  "voice": {
+    "path": "../mac/models/voices/0a67_enhanced-24k.wav",
+    "license": "CC0",
+    "source": "kyutai/tts-voices voice-donations/0a67_enhanced.wav",
+    "sample_rate": 24000
+  },
+  "asr": {
+    "name": "sherpa-onnx-whisper-tiny.en-int8",
+    "used": true
+  },
+  "config": {
+    "num_threads": 2,
+    "num_steps": 5,
+    "temperature": "0.7",
+    "chunk_size": "2",
+    "max_char_in_sentence": 120,
+    "seed": "1",
+    "chunker": "sherpa",
+    "max_frames": 0,
+    "warmup": false,
+    "warm_runs": 10,
+    "chars_per_second": 15.0000,
+    "min_expected_audio_s": 0.8000,
+    "runaway_factor": 2.0000
+  },
+  "native_lib_load_ms": 139.6262,
+  "model_load_ms": 545.8247,
+  "warmup_ms": 0.0000,
+  "peak_rss_kb": 1020608,
+  "peak_rss_source": "max(VmHWM, samples)",
+  "external_peak_rss_kb": 1020532,
+  "cold": {
+    "line_id": "build_passed",
+    "ttfa_ms": 765.3264,
+    "total_ms": 968.7497,
+    "audio_s": 1.6122,
+    "rtf": 1.6642,
+    "cpu_percent": 261.1614,
+    "runaway": false,
+    "callback_count": 16
+  },
+  "lines": [
+    {
+      "id": "build_passed",
+      "categories": ["very_short"],
+      "chars": 24,
+      "text": "Done! Your build passed.",
+      "expected_audio_s": 1.6000,
+      "wav": "results/wav/build_passed.wav",
+      "ttfa_ms": { "median": 585.3344, "p90": 1054.0619, "p99": 1391.4669, "max": 1391.4669, "min": 512.2950, "samples": [1391.4669, 975.0457, 894.2683, 633.3341, 1054.0619, 522.1094, 537.3347, 524.6768, 530.1633, 512.2950] },
+      "total_ms": { "median": 780.7551, "p90": 1421.8750, "p99": 1889.7626, "max": 1889.7626, "min": 681.8517, "samples": [1889.7626, 1314.9138, 1228.3340, 850.2625, 1421.8750, 694.8114, 711.2477, 695.5397, 704.5348, 681.8517] },
+      "rtf": { "median": 2.2407, "p90": 2.4732, "p99": 2.5233, "max": 2.5233, "min": 1.8768, "samples": [2.0245, 1.8768, 2.0886, 1.9405, 2.2081, 2.4635, 2.4159, 2.4732, 2.2732, 2.5233] },
+      "audio_s": { "median": 1.7204, "p90": 3.1397, "p99": 3.8258, "max": 3.8258, "min": 1.6015, "samples": [3.8258, 2.4678, 2.5655, 1.6499, 3.1397, 1.7117, 1.7183, 1.7202, 1.6015, 1.7205] },
+      "cpu_percent": { "median": 274.3979, "p90": 275.3590, "p99": 275.5721, "max": 275.5721, "min": 272.7271, "samples": [274.6377, 274.5427, 272.7271, 272.8569, 273.5824, 273.4555, 275.5721, 274.6069, 275.3590, 274.2532] },
+      "runaway_count": 1,
+      "rss_kb": 784348,
+      "wer": {
+        "wer": 0.5000,
+        "reference_words": 4,
+        "errors": 2,
+        "hypothesis": "your build past."
+      }
+    },
+    {
+      "id": "task_finished",
+      "categories": ["multi_sentence"],
+      "chars": 65,
+      "text": "I finished the task. Three files changed and all tests are green.",
+      "expected_audio_s": 4.3333,
+      "wav": "results/wav/task_finished.wav",
+      "ttfa_ms": { "median": 931.0328, "p90": 937.7771, "p99": 947.6254, "max": 947.6254, "min": 909.3970, "samples": [937.7771, 930.1821, 909.6480, 927.2481, 935.1980, 934.2590, 909.3970, 931.8835, 947.6254, 927.2206] },
+      "total_ms": { "median": 1253.7267, "p90": 1264.5838, "p99": 1266.8768, "max": 1266.8768, "min": 1231.0311, "samples": [1264.5838, 1251.9040, 1231.0311, 1244.7104, 1262.4430, 1255.5494, 1233.3330, 1256.3828, 1266.8768, 1240.1852] },
+      "rtf": { "median": 2.9885, "p90": 3.0419, "p99": 3.0585, "max": 3.0585, "min": 2.9129, "samples": [3.0585, 2.9938, 3.0419, 2.9719, 2.9467, 2.9625, 3.0389, 2.9832, 2.9129, 2.9980] },
+      "audio_s": { "median": 3.7324, "p90": 3.7480, "p99": 3.8677, "max": 3.8677, "min": 3.6903, "samples": [3.8677, 3.7480, 3.7447, 3.6991, 3.7201, 3.7196, 3.7480, 3.7480, 3.6903, 3.7181] },
+      "cpu_percent": { "median": 273.4256, "p90": 273.9593, "p99": 274.1526, "max": 274.1526, "min": 272.4875, "samples": [273.6078, 273.1839, 272.9419, 273.9593, 272.4875, 273.1872, 273.2433, 273.8019, 273.9019, 274.1526] },
+      "runaway_count": 0,
+      "rss_kb": 818408,
+      "wer": {
+        "wer": 0.0000,
+        "reference_words": 12,
+        "errors": 0,
+        "hypothesis": "I finished the task. Three files changed and all tests are green."
+      }
+    },
+    {
+      "id": "sign_in",
+      "categories": ["status"],
+      "chars": 73,
+      "text": "Heads up, Codex needs you to sign in before I can keep going on this one.",
+      "expected_audio_s": 4.8667,
+      "wav": "results/wav/sign_in.wav",
+      "ttfa_ms": { "median": 781.0922, "p90": 800.1685, "p99": 878.0879, "max": 878.0879, "min": 755.6451, "samples": [878.0879, 755.6451, 779.2176, 783.7259, 757.4692, 768.9477, 782.9669, 800.1685, 777.1052, 795.0751] },
+      "total_ms": { "median": 1059.1470, "p90": 1070.1719, "p99": 1148.7761, "max": 1148.7761, "min": 1017.7564, "samples": [1148.7761, 1017.7564, 1060.7935, 1065.2231, 1020.7334, 1041.3078, 1057.5006, 1069.8706, 1040.5830, 1070.1719] },
+      "rtf": { "median": 3.6851, "p90": 3.7645, "p99": 3.7730, "max": 3.7730, "min": 3.4123, "samples": [3.4123, 3.7730, 3.6199, 3.6800, 3.7620, 3.7645, 3.7069, 3.5892, 3.6902, 3.6630] },
+      "audio_s": { "median": 3.8800, "p90": 3.9200, "p99": 3.9200, "max": 3.9200, "min": 3.8400, "samples": [3.9200, 3.8400, 3.8400, 3.9200, 3.8400, 3.9200, 3.9200, 3.8400, 3.8400, 3.9200] },
+      "cpu_percent": { "median": 272.8289, "p90": 273.7878, "p99": 274.2049, "max": 274.2049, "min": 270.3659, "samples": [274.2049, 272.1673, 272.4376, 270.3659, 273.3329, 272.7340, 273.2859, 271.9955, 272.9239, 273.7878] },
+      "runaway_count": 0,
+      "rss_kb": 834052,
+      "wer": {
+        "wer": 0.0625,
+        "reference_words": 16,
+        "errors": 1,
+        "hypothesis": "it's up codex needs you to sign in before I can keep going on this one."
+      }
+    },
+    {
+      "id": "deploy_blocked",
+      "categories": ["numbers", "multi_sentence"],
+      "chars": 114,
+      "text": "The deploy is blocked: the API returned error 503 at 2:45 PM. I'll retry in 30 seconds, or you can check the logs.",
+      "expected_audio_s": 7.6000,
+      "wav": "results/wav/deploy_blocked.wav",
+      "ttfa_ms": { "median": 973.5034, "p90": 1016.7679, "p99": 1108.5273, "max": 1108.5273, "min": 926.6059, "samples": [962.8966, 996.2637, 1011.5510, 941.6182, 1108.5273, 1016.7679, 984.1101, 926.6059, 939.3333, 944.7772] },
+      "total_ms": { "median": 2231.2067, "p90": 2401.4932, "p99": 2439.6664, "max": 2439.6664, "min": 2126.0674, "samples": [2211.1911, 2269.4523, 2306.5799, 2157.6223, 2439.6664, 2401.4932, 2249.7275, 2126.0674, 2180.6945, 2212.6858] },
+      "rtf": { "median": 3.4957, "p90": 3.5889, "p99": 3.6421, "max": 3.6421, "min": 3.1741, "samples": [3.4978, 3.5168, 3.4610, 3.5889, 3.1741, 3.2524, 3.4760, 3.6421, 3.5497, 3.4937] },
+      "audio_s": { "median": 7.7436, "p90": 7.9812, "p99": 7.9830, "max": 7.9830, "min": 7.7305, "samples": [7.7342, 7.9812, 7.9830, 7.7434, 7.7438, 7.8105, 7.8200, 7.7434, 7.7408, 7.7305] },
+      "cpu_percent": { "median": 272.9838, "p90": 274.6277, "p99": 274.9649, "max": 274.9649, "min": 272.0675, "samples": [274.9649, 272.7530, 273.5652, 273.4492, 274.6277, 273.1634, 272.4774, 272.8041, 272.3903, 272.0675] },
+      "runaway_count": 0,
+      "rss_kb": 872720,
+      "wer": {
+        "wer": 0.2917,
+        "reference_words": 24,
+        "errors": 7,
+        "hypothesis": "the deploy is blocked. The API returned era 503 at 245PS. Are we trying 30 seconds or you can check the logs?"
+      }
+    },
+    {
+      "id": "summary",
+      "categories": ["code", "multi_sentence"],
+      "chars": 217,
+      "text": "Here's the summary: I refactored PetSession.kt, moved the socket code into PetBridge, updated the README, and added two tests. Everything builds, but the voice settings still need a final review from you before merge.",
+      "expected_audio_s": 14.4667,
+      "wav": "results/wav/summary.wav",
+      "ttfa_ms": { "median": 688.1612, "p90": 701.1990, "p99": 721.0833, "max": 721.0833, "min": 676.6514, "samples": [701.1990, 721.0833, 678.2874, 686.6826, 696.8007, 687.5962, 676.6514, 688.3875, 687.9350, 691.2616] },
+      "total_ms": { "median": 3784.5592, "p90": 3891.9021, "p99": 5479.0836, "max": 5479.0836, "min": 3690.8557, "samples": [3845.1960, 3690.8557, 3755.8322, 3760.6128, 3783.8056, 3831.5743, 5479.0836, 3785.3129, 3755.6891, 3891.9021] },
+      "rtf": { "median": 3.1595, "p90": 3.1962, "p99": 3.1982, "max": 3.1982, "min": 2.9729, "samples": [3.1218, 3.1586, 3.1962, 3.1955, 3.1716, 3.1439, 2.9729, 3.1435, 3.1982, 3.1605] },
+      "audio_s": { "median": 12.0078, "p90": 12.3003, "p99": 16.2888, "max": 16.2888, "min": 11.6579, "samples": [12.0041, 11.6579, 12.0043, 12.0171, 12.0008, 12.0462, 16.2888, 11.8992, 12.0114, 12.3003] },
+      "cpu_percent": { "median": 273.1120, "p90": 273.5168, "p99": 273.5341, "max": 273.5341, "min": 272.2946, "samples": [273.3281, 272.2946, 272.9089, 272.5620, 273.5341, 273.5168, 273.0384, 272.3685, 273.1856, 273.3882] },
+      "runaway_count": 0,
+      "rss_kb": 942012,
+      "wer": {
+        "wer": 1.0571,
+        "reference_words": 35,
+        "errors": 37,
+        "hypothesis": "I refactored Pet Session. T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-T-"
+      }
+    },
+    {
+      "id": "say_limit",
+      "categories": ["long"],
+      "chars": 236,
+      "text": "This is the longest note the pet is allowed to say, just under the two hundred forty character cap, so we can hear a full status update: the build is green, two tests were added, and now the voice settings need your review before merge.",
+      "expected_audio_s": 15.7333,
+      "wav": "results/wav/say_limit.wav",
+      "ttfa_ms": { "median": 1630.8339, "p90": 1711.5005, "p99": 1727.7059, "max": 1727.7059, "min": 1593.6610, "samples": [1655.0175, 1597.3447, 1593.6610, 1711.5005, 1629.3957, 1629.9540, 1631.7139, 1674.2413, 1621.7225, 1727.7059] },
+      "total_ms": { "median": 3859.0300, "p90": 3932.7625, "p99": 4662.9962, "max": 4662.9962, "min": 3756.8062, "samples": [3864.9630, 3758.1370, 3756.8062, 3917.2213, 3853.0970, 3830.7955, 3829.7372, 4662.9962, 3913.1212, 3932.7625] },
+      "rtf": { "median": 3.3906, "p90": 3.5354, "p99": 3.5438, "max": 3.5438, "min": 3.0502, "samples": [3.3765, 3.2930, 3.5438, 3.4582, 3.3920, 3.4369, 3.5354, 3.0502, 3.3892, 3.3575] },
+      "audio_s": { "median": 13.2333, "p90": 13.5464, "p99": 14.2230, "max": 14.2230, "min": 12.3756, "samples": [13.0500, 12.3756, 13.3135, 13.5464, 13.0697, 13.1661, 13.5397, 14.2230, 13.2622, 13.2044] },
+      "cpu_percent": { "median": 273.1681, "p90": 273.8057, "p99": 273.8533, "max": 273.8533, "min": 272.3425, "samples": [272.9651, 272.7415, 273.3705, 273.1528, 273.8057, 272.7893, 272.3425, 273.4293, 273.1835, 273.8533] },
+      "runaway_count": 0,
+      "rss_kb": 951444,
+      "wer": {
+        "wer": 0.2667,
+        "reference_words": 45,
+        "errors": 12,
+        "hypothesis": "This is the longest note the pet is allowed to say. Just under the 240 character cap so we can hear of 40 character cap so we can hear of status update. The build is green, two tests were added and now the voice settings need to review before merge."
+      }
+    },
+    {
+      "id": "numbers_code",
+      "categories": ["numbers", "code"],
+      "chars": 60,
+      "text": "PetBridge.kt returned error 503 at 2:45 PM after 30 seconds.",
+      "expected_audio_s": 4.0000,
+      "wav": "results/wav/numbers_code.wav",
+      "ttfa_ms": { "median": 1378.6561, "p90": 1541.6492, "p99": 1821.5587, "max": 1821.5587, "min": 1276.5419, "samples": [1821.5587, 1364.4563, 1276.5419, 1403.8680, 1541.6492, 1498.7651, 1323.7609, 1392.8559, 1307.6981, 1298.0864] },
+      "total_ms": { "median": 1845.5968, "p90": 2015.4503, "p99": 2359.8708, "max": 2359.8708, "min": 1699.1082, "samples": [2359.8708, 1829.8314, 1699.1082, 1861.3622, 2015.4503, 1987.6977, 1768.7754, 1861.8342, 1729.2321, 1823.6357] },
+      "rtf": { "median": 3.1141, "p90": 3.1724, "p99": 3.2470, "max": 3.2470, "min": 2.4515, "samples": [2.4515, 3.1617, 3.2470, 3.0045, 2.8075, 2.9091, 3.1210, 3.1073, 3.1420, 3.1724] },
+      "audio_s": { "median": 5.7204, "p90": 5.7853, "p99": 5.7853, "max": 5.7853, "min": 5.4333, "samples": [5.7853, 5.7853, 5.5170, 5.5924, 5.6584, 5.7824, 5.5203, 5.7853, 5.4333, 5.7853] },
+      "cpu_percent": { "median": 273.9582, "p90": 275.2667, "p99": 275.8689, "max": 275.8689, "min": 270.3391, "samples": [271.6250, 273.7957, 274.2615, 273.9929, 275.8689, 274.6897, 273.6356, 273.9234, 275.2667, 270.3391] },
+      "runaway_count": 0,
+      "rss_kb": 955320,
+      "wer": {
+        "wer": 0.5000,
+        "reference_words": 12,
+        "errors": 6,
+        "hypothesis": "Petridge, Kate returned air 53 at 2.45pm after 30 seconds."
+      }
+    },
+    {
+      "id": "question",
+      "categories": ["question"],
+      "chars": 60,
+      "text": "Should I rerun the suite, or is this ready for you to merge?",
+      "expected_audio_s": 4.0000,
+      "wav": "results/wav/question.wav",
+      "ttfa_ms": { "median": 777.7843, "p90": 856.9290, "p99": 878.9748, "max": 878.9748, "min": 721.8844, "samples": [721.8844, 777.6322, 777.9364, 787.7901, 856.9290, 733.9878, 793.9829, 731.0228, 878.9748, 749.0349] },
+      "total_ms": { "median": 1023.9444, "p90": 1141.1028, "p99": 1148.0897, "max": 1148.0897, "min": 962.4656, "samples": [962.4656, 1022.6826, 1025.2061, 1036.2308, 1141.1028, 980.4856, 1037.5938, 976.7045, 1148.0897, 990.7827] },
+      "rtf": { "median": 3.2183, "p90": 3.3738, "p99": 3.4353, "max": 3.4353, "min": 3.0505, "samples": [3.3738, 3.1696, 3.1596, 3.1336, 3.4353, 3.3118, 3.1296, 3.3247, 3.0505, 3.2669] },
+      "audio_s": { "median": 3.2472, "p90": 3.5022, "p99": 3.9200, "max": 3.9200, "min": 3.2368, "samples": [3.2472, 3.2415, 3.2393, 3.2472, 3.9200, 3.2472, 3.2472, 3.2472, 3.5022, 3.2368] },
+      "cpu_percent": { "median": 274.0807, "p90": 274.6740, "p99": 275.2398, "max": 275.2398, "min": 273.3340, "samples": [274.2955, 273.7897, 274.0912, 274.0702, 273.4197, 273.3340, 274.6740, 273.3683, 275.2398, 274.5304] },
+      "runaway_count": 0,
+      "rss_kb": 972856,
+      "wer": {
+        "wer": 0.0000,
+        "reference_words": 13,
+        "errors": 0,
+        "hypothesis": "Should I rerun the suite or is this ready for you to merge?"
+      }
+    },
+    {
+      "id": "say_cap",
+      "categories": ["punctuation_free"],
+      "chars": 240,
+      "text": "This is the longest note the pet is allowed to say with no punctuation at all so the chunker has to find its own clause breaks the build is green two tests were added and the voice settings still need your review before merge today extra go",
+      "expected_audio_s": 16.0000,
+      "wav": "results/wav/say_cap.wav",
+      "ttfa_ms": { "median": 1628.2726, "p90": 1672.5569, "p99": 1675.7977, "max": 1675.7977, "min": 1332.5990, "samples": [1455.5511, 1631.4988, 1672.5569, 1332.5990, 1631.7175, 1526.5805, 1625.0463, 1675.7977, 1547.2883, 1635.3579] },
+      "total_ms": { "median": 4140.8970, "p90": 4302.4824, "p99": 4408.7489, "max": 4408.7489, "min": 3874.4025, "samples": [4058.1489, 4253.8887, 4302.4824, 3874.4025, 4021.9754, 4144.9094, 4012.0211, 4136.8846, 4159.8258, 4408.7489] },
+      "rtf": { "median": 3.4164, "p90": 3.6666, "p99": 3.6826, "max": 3.6826, "min": 3.2304, "samples": [3.2304, 3.4203, 3.4124, 3.3837, 3.6666, 3.4272, 3.6826, 3.5810, 3.3996, 3.3158] },
+      "audio_s": { "median": 14.5841, "p90": 14.7746, "p99": 14.8140, "max": 14.8140, "min": 13.1096, "samples": [13.1096, 14.5496, 14.6819, 13.1096, 14.7472, 14.2054, 14.7746, 14.8140, 14.1415, 14.6187] },
+      "cpu_percent": { "median": 273.1134, "p90": 273.6775, "p99": 273.7701, "max": 273.7701, "min": 272.5029, "samples": [273.7701, 273.1618, 272.8657, 273.0744, 272.5029, 272.8648, 273.6775, 273.1524, 272.8480, 273.5470] },
+      "runaway_count": 0,
+      "rss_kb": 1020604,
+      "wer": {
+        "wer": 0.2553,
+        "reference_words": 47,
+        "errors": 12,
+        "hypothesis": "This is the longest note the pet is allowed to say with no punctuation at all so the chunker has to find its own clothes so the chunker has to find its own clothes. Brakes the build is green two tests were added and the voice settings still need your review before merged today. Extra Go."
+      }
+    }
+  ]
+}

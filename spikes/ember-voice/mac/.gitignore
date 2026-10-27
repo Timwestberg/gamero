@@ -1,0 +1,6 @@
+# Downloaded by setup.sh. Do not commit weights, jars, or timing output.
+deps/
+models/
+build/
+results/
+*.partial

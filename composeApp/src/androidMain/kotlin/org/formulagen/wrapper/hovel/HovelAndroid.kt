@@ -52,8 +52,14 @@ internal fun hovelWebUrl(intent: Intent?, context: Context): String? {
     )
 }
 
-/** Hovel's capability packs for the host bridge. Android has no companion, so its methods answer `unsupported`. */
-internal fun hovelBridgePacks(): List<CapabilityPack> = listOf(CompanionMethods.pack(Capability.Unsupported))
+/** Hovel's capability packs for the host bridge. Android has none of the desktop product capabilities, so their methods answer `unsupported`. */
+internal fun hovelBridgePacks(): List<CapabilityPack> = listOf(
+    CompanionMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.ChatMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.ProviderMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.PetMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.GameMethods.pack(Capability.Unsupported),
+)
 
 /** Plays the Hovel launch and start screen, then opens [url] once the player steps inside. */
 @Composable

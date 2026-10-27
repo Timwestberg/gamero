@@ -19,12 +19,13 @@ follows it, such as `.../hovel/` for `kotlin/org/formulagen/wrapper/hovel/`.
 | Router | `commonMain/.../BridgeRouter.kt`, `BridgeCheck.kt` | Every protocol rule: frame and origin, size, envelope, context, method, arguments, error codes. No platform imports. |
 | Method types | `commonMain/.../BridgeMethods.kt` | `BridgeMethod`, `BridgeEvent`, and the router's own `host.*` methods. |
 | Platform set | `commonMain/.../HostCapabilities.kt` | One constructor parameter per platform capability: `Capability.Supported(impl)` or `Capability.Unsupported`. |
-| Capabilities | `commonMain/.../LinkOpener.kt`, `Haptics.kt`, `Lifecycle.kt`, `CompanionCapability.kt` | One file each: the interface, its argument and result types, its methods and its `CapabilityBinder`. |
+| Capabilities | Platform: `commonMain/.../LinkOpener.kt`, `Haptics.kt`, `Lifecycle.kt`. Product: `CompanionCapability.kt`, `ChatCapability.kt`, `ProviderCapability.kt`, `PetCapability.kt`, `GameCapability.kt`; `SharedRules.kt` holds rules several use | One file each: the interface, its argument and result types, its methods and its `CapabilityBinder`. |
+| Desktop product services | `jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt` | Builds the desktop implementations (`DesktopChat`, `DesktopProviders`, `DesktopPetLauncher`, `DesktopGameLauncher`, `HovelCompanion`), registers their packs, ends them per page context and closes them in reverse order. |
 | Platform factories | `jvmMain/.../DesktopHostCapabilities.kt`, `androidMain/.../AndroidHostCapabilities.kt`, `iosMain/.../IosHostCapabilities.kt` | Each platform's choice for every capability. |
 | Shared transport half | `commonMain/.../HostBridge.kt` | What every transport shares: the router, the trusted origin, the document counter, the event channel and the failure log. A platform transport calls its `receive`, and `documentChanged` or `endContext` to end a context. |
 | Transport helpers | `commonMain/.../MessagePortTransport.kt` (Android), `iosMain/.../WebKitHostTransport.kt` (iOS) | The mobile transport rules with no WebView types, so tests can drive them: port frames on Android, document-start messages and events on iOS. |
 | Platform transports | `jvmMain/.../JcefHostBridge.kt`, `androidMain/.../AndroidHostBridge.kt`, `iosMain/.../IosHostBridge.kt` | Move strings between the WebView and the shared half, and report frame facts read from the platform. Nothing else. |
-| Desktop receiver | `jvmMain/kotlin/org/formulagen/wrapper/companion/NativeBridge.kt` | The JCEF message router. It receives each query first, answers a query from another browser or an invalid frame with a 403 failure, and hands version 2 requests to `JcefHostBridge`. See [hovel-companion.md](hovel-companion.md). |
+| Desktop receiver | `jvmMain/kotlin/org/formulagen/wrapper/companion/NativeBridge.kt` | The JCEF message router. It receives each query first, answers a query from another browser or an invalid frame with a 403 failure, and hands version 2 requests to `JcefHostBridge`. The only version 1 traffic left is the Hovel companion's legacy protocol (`LegacyCompanionQueries.kt`). See [hovel-companion.md](hovel-companion.md). |
 | Web client | game-platform `packages/host-bridge` (`@formulagen/host-bridge`) | `capabilities()`, `call(method, args)`, `on(event, handler)`. |
 
 ## Ask before you call: `host.info` and `host.capabilities`
@@ -67,10 +68,13 @@ Follow these steps in order. You do not edit the router, the transports or any
 other capability. `Haptics.kt` is the smallest complete example of a method
 capability; `Lifecycle.kt` is the example of an event capability.
 
-1. **Contract (server-platform).** In `event-contracts/src/host-bridge/capabilities.ts`,
-   add each method to `HOST_BRIDGE_METHODS` (zod `args` and `result`, with
-   `z.strictObject`, and a `capability` name) or each event to
-   `HOST_BRIDGE_EVENTS` (`capability` and `data`). Every existing entry has a
+1. **Contract (server-platform).** Give the capability its own file,
+   `event-contracts/src/host-bridge/<capability>.ts`, as `chat.ts` does: its
+   zod schemas and one method map (`CHAT_METHODS`), each entry with `args` and
+   `result` (`z.strictObject`) and a `capability` name. Rules that several
+   capabilities share, such as the profile ID and companion name, live in
+   `shared.ts`. Spread the map into `HOST_BRIDGE_METHODS` in `capabilities.ts`
+   (events go in `HOST_BRIDGE_EVENTS`, with `capability` and `data`). Every existing entry has a
    `capability` key, but the type does not require one, so check it yourself.
    Use the same `capability` value as the `CapabilityBinder` name in step 2.
    Two existing capabilities do not match yet and are a known gap: the
@@ -123,8 +127,10 @@ capability; `Lifecycle.kt` is the example of an event capability.
      binder.pack(capability)` to the object, as `CompanionMethods.pack` does.
      Then add the pack to each platform's Hovel pack list, `Unsupported` where
      the platform has none. There are three lists, with different names:
-     - desktop: `hovelBridgePacks(companion)` in
-       `jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelCompanion.kt`;
+     - desktop: `desktopProductPacks(product, companion, chat, providers, pet, games)`
+       in `jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt`. Every
+       desktop product registers chat, providers, pet and games (the catalog
+       app is the Gamero product); Hovel adds its companion;
      - Android: `hovelBridgePacks()` in
        `androidMain/kotlin/org/formulagen/wrapper/hovel/HovelAndroid.kt`;
      - iOS: `iosHovelBridgePacks()` in `iosMain/.../IosHostCapabilities.kt`.
