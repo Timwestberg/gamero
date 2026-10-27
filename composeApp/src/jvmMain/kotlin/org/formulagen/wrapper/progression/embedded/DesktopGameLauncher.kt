@@ -1,7 +1,6 @@
 package org.formulagen.wrapper.progression.embedded
 
 import java.nio.file.Path
-import java.util.concurrent.CopyOnWriteArrayList
 import javax.swing.JFrame
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -15,8 +14,8 @@ import org.formulagen.wrapper.logger.log
 /**
  * The `games` capability. The page selects an installed game ID; native configuration owns all
  * paths. [support] is the app's support folder, which holds the default progression save. When the
- * player returns, every [observeClosed] listener hears which game closed, so the router can send
- * `games.closed`.
+ * player returns from a launch that opened, every [observe] listener hears which game closed, so the
+ * router can send `games.closed`.
  */
 internal class DesktopGameLauncher(
     private val frame: JFrame,
@@ -24,7 +23,7 @@ internal class DesktopGameLauncher(
     private val support: Path,
 ) : GameCapability, AutoCloseable {
     private var active: EmbeddedCompanionWindow? = null
-    private val closedListeners = CopyOnWriteArrayList<(GameId) -> Unit>()
+    private val closedListeners = GameClosedListeners()
 
     /** The router has accepted only a known game ID; one adventure is open at a time. */
     override suspend fun launch(gameId: GameId): GameLaunchResult = withContext(Dispatchers.Main) {
@@ -37,20 +36,20 @@ internal class DesktopGameLauncher(
         }
         val save = environment["HOVEL_COMPANION_SAVE"] ?: support.resolve("companions").resolve("save.json").toString()
         Path.of(save).parent.toFile().mkdirs()
-        val launch = EmbeddedCompanionWindow(frame, environment + ("HOVEL_COMPANION_SAVE" to save)) {
-            active = null
-            closedListeners.forEach { it(gameId) }
+        closedListeners.track(gameId) { returned ->
+            val launch = EmbeddedCompanionWindow(frame, environment + ("HOVEL_COMPANION_SAVE" to save)) {
+                active = null
+                returned()
+            }
+            active = launch
+            // A failed show closes the surface, whose return then reports nothing: the page gets `failed`.
+            try { launch.show() }
+            catch (error: Exception) { launch.close(); throw error }
         }
-        active = launch
-        try { launch.show() }
-        catch (error: Exception) { launch.close(); throw error }
         GameLaunchResult(gameId)
     }
 
-    override fun observeClosed(onClosed: (GameId) -> Unit): AutoCloseable {
-        closedListeners += onClosed
-        return AutoCloseable { closedListeners -= onClosed }
-    }
+    override fun observe(onClosed: (GameId) -> Unit): AutoCloseable = closedListeners.observe(onClosed)
 
     /** The caller closes the launch surface on the AWT event thread. */
     override fun close() { active?.close(); active = null }

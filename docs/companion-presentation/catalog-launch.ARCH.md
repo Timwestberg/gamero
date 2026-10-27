@@ -8,7 +8,7 @@ interface RuntimeSelection { id: string; runtime?: 'web' | 'native' }
 // games.launch args: { gameId: 'hovel-companions' }
 // result: { gameId: 'hovel-companions', started: true }
 // A launch while a game is open answers `busy`; a host without the game answers `unsupported`.
-// event games.closed: { gameId: 'hovel-companions' } when the player returns; desktop only.
+// event games.closed: { gameId: 'hovel-companions' } when the player returns from a launch that opened; desktop only.
 ```
 
 The web App branches at startRuntime. Native entries call launchNativeGame and never create a web gameplay session or iframe. The page waits for the host-bridge v2 `games.closed` event (`{ gameId }`, desktop only) before restoring the catalog. Ordinary web games retain their current flow.

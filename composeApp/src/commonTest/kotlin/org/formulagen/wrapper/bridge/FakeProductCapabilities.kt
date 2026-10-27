@@ -14,11 +14,11 @@ class FakePetCapability : PetCapability {
 }
 
 class FakeGameCapability : GameCapability {
-    /** The listener the router subscribed; call it to simulate the player returning. */
-    var closed: (GameId) -> Unit = {}
+    /** The listener the router subscribed, or null when none is; call it to simulate the player returning. */
+    var closed: ((GameId) -> Unit)? = null
     override suspend fun launch(gameId: GameId) = GameLaunchResult(gameId)
-    override fun observeClosed(onClosed: (GameId) -> Unit): AutoCloseable {
+    override fun observe(onClosed: (GameId) -> Unit): AutoCloseable {
         closed = onClosed
-        return AutoCloseable { closed = {} }
+        return AutoCloseable { closed = null }
     }
 }

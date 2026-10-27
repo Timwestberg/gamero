@@ -10,8 +10,11 @@ import kotlinx.serialization.Serializable
 interface GameCapability {
     suspend fun launch(gameId: GameId): GameLaunchResult
 
-    /** Calls [onClosed] once per launch, when the player returns from that game. */
-    fun observeClosed(onClosed: (GameId) -> Unit): AutoCloseable
+    /**
+     * Calls [onClosed] at most once per launch that opened, when the player returns from that game.
+     * A launch that throws calls nothing.
+     */
+    fun observe(onClosed: (GameId) -> Unit): AutoCloseable
 }
 
 @Serializable
@@ -28,7 +31,7 @@ data class GameLaunchResult(val gameId: GameId, val started: Boolean = true)
 @Serializable
 data class GameClosed(val gameId: GameId)
 
-/** Mirrors event-contracts/host-bridge/games.ts. */
+/** Methods and events of the games capability. Mirrors games.ts. */
 object GameMethods {
     val LAUNCH = BridgeMethod("games.launch", GameLaunchArgs.serializer(), GameLaunchResult.serializer())
     val CLOSED = BridgeEvent("games.closed", GameClosed.serializer())
@@ -41,6 +44,8 @@ object GameMethods {
             LAUNCH.handle { games, args -> games.launch(args.gameId) },
         ),
         events = listOf(CLOSED),
-        observe = { games, events -> games.observeClosed { gameId -> events.emit(CLOSED, GameClosed(gameId)) } },
+        observe = { games, events ->
+            games.observe(onClosed = { gameId -> events.emit(CLOSED, GameClosed(gameId)) })
+        },
     )
 }
