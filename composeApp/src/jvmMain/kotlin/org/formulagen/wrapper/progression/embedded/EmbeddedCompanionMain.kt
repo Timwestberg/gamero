@@ -134,7 +134,9 @@ internal class EmbeddedCompanionWindow(
             }
         }
         scope.launch { game.failure.collect { it?.let(::fail) } }
-        scope.launch { host.exitCode.collect { if (it != null && !closed) fail("Adventure ended (exit $it). Close this window to finish.") } }
+        // In the catalog the window is the whole app, so point at Back, which stays above the status.
+        val leave = if (onReturn == null) "Close this window to finish." else "Choose Back to games to return."
+        scope.launch { host.exitCode.collect { if (it != null && !closed) fail("Adventure ended (exit $it). $leave") } }
         println("HOVEL_EMBEDDED_SAVE ${environment["HOVEL_COMPANION_SAVE"]}")
         Runtime.getRuntime().addShutdownHook(shutdownHook)
         host.start()

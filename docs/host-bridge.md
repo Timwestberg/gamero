@@ -67,30 +67,40 @@ Code: `BridgeMethods.HOST_INFO` and `BridgeMethods.HOST_CAPABILITIES` in
 Follow these steps in order. You do not edit the router, the transports or any
 other capability. `Haptics.kt` is the smallest complete example of a method
 capability; `Lifecycle.kt` is the example of an event capability.
+`GameCapability.kt` is the example of a capability with both, and of a product
+event: `games.launch` opens a game and `games.closed` says the player is back.
 
 1. **Contract (server-platform).** Give the capability its own file,
    `event-contracts/src/host-bridge/<capability>.ts`, as `chat.ts` does: its
    zod schemas and one method map (`CHAT_METHODS`), each entry with `args` and
-   `result` (`z.strictObject`) and a `capability` name. Rules that several
-   capabilities share, such as the profile ID and companion name, live in
-   `shared.ts`. Spread the map into `HOST_BRIDGE_METHODS` in `capabilities.ts`
-   (events go in `HOST_BRIDGE_EVENTS`, with `capability` and `data`). Every existing entry has a
-   `capability` key, but the type does not require one, so check it yourself.
-   Use the same `capability` value as the `CapabilityBinder` name in step 2.
-   Two existing capabilities do not match yet and are a known gap: the
-   contract says `haptic` and `link`, the Kotlin binders say `haptics` and
-   `links`. Add a row for each
-   one to every platform column of `HOST_BRIDGE_PARITY`, and copy the table to
-   `fixtures/parity.json`. Add router fixtures under `fixtures/router/`: at
-   least one valid call, one call with bad arguments, and one call on a
-   platform that marks it `unsupported`. Run `pnpm --filter
+   `result` (`z.strictObject`) and a `capability` name. A capability with
+   events adds an event map to the same file, as `games.ts` does with
+   `GAME_EVENTS`: each entry has a `capability` name and a `data` schema. Rules
+   that several capabilities share, such as the profile ID and companion name,
+   live in `shared.ts`. Spread the method map into `HOST_BRIDGE_METHODS` and the
+   event map into `HOST_BRIDGE_EVENTS`, both in `capabilities.ts`. Every
+   existing entry has a `capability` key, but the type does not require one, so
+   check it yourself. Use the same `capability` value as the `CapabilityBinder`
+   name in step 2. Two existing capabilities do not match yet and are a known
+   gap: the contract says `haptic` and `link`, the Kotlin binders say `haptics`
+   and `links`. Add a row for each method and event to every platform column of
+   `HOST_BRIDGE_PARITY`, and copy the table to `fixtures/parity.json`. For each
+   method, add router fixtures under `fixtures/router/`: at least one valid
+   call, one call with bad arguments, and one call on a platform that marks it
+   `unsupported`. For each event, add an envelope fixture instead,
+   `fixtures/envelopes/event-<area>-<name>.json`, as `event-games-closed.json`
+   is; router fixtures are requests, and a page never sends an event. A valid
+   event fixture must also match the event's `data` schema. Run `pnpm --filter
    @formulagen/event-contracts test`. This is its own PR, and it merges first.
 
 2. **Interface (gamero `commonMain/.../bridge/`).** Add one file named after
    the capability. It holds:
    - a `fun interface` (or `interface`) whose bridge methods are `suspend`.
      Event-only capabilities instead have a non-suspending `observe` that
-     returns an `AutoCloseable`, as `Lifecycle` does;
+     returns an `AutoCloseable`, as `Lifecycle` does. A capability with both
+     keeps its `suspend` methods and adds `observe(...)`, so it is a plain
+     `interface`, as `GameCapability` is. Give `observe` one named handler per
+     event (`onPause`, `onResume`, `onClosed`);
    - `@Serializable` argument and result types whose field names match the zod
      schema. Use `NoArgs` and `NoResult` for `{}`;
    - an `object` with one `BridgeMethod` (or `BridgeEvent`) per wire name, and
@@ -100,11 +110,14 @@ capability; `Lifecycle.kt` is the example of an event capability.
      `METHOD.handle { capability: YourInterface, args -> ... }`. An event
      capability passes `handlers = emptyList()`, `events = listOf(...)` with
      every event it emits, and
-     `observe = { impl, sink -> impl.observe(...) }`, which emits through
-     `sink.emit(EVENT, data)` and returns the `AutoCloseable`. The router calls
-     `observe` once, when it is built, not once per context. An event the
-     binder did not list in `events` is dropped and reported to the router's
-     `onFailure`; the page never gets it.
+     `observe = { impl, sink -> impl.observe(onX = { ... }) }`, which binds each
+     handler with a named argument, emits through `sink.emit(EVENT, data)` and
+     returns the `AutoCloseable`. A capability with both passes its `handlers`
+     and also `events` and `observe`, as `GameMethods.binder` does. The router
+     calls `observe` once, when it is built, not once per context, and closes
+     the result in its own `close()`. An event the binder did not list in
+     `events` is dropped and reported to the router's `onFailure`; the page
+     never gets it.
 
    Put any rule a serializer cannot express in the method's `accepts`, as
    `LinkMethods.OPEN` does for HTTPS. The router checks it before your code
@@ -155,9 +168,18 @@ capability; `Lifecycle.kt` is the example of an event capability.
    `TransportContractTest`, `JcefTransportContractTest`), pass
    `Capability.Unsupported`.
 
+   For an event, the fake's `observe` stores the listener it gets and clears it
+   when the handle is closed, as `FakeGameCapability` does. A test opens a
+   context with `watchContext`, calls the stored listener, and asserts the
+   envelope the router posted (`aClosedGameIsSentAsGamesClosedOnDesktop`). Then
+   add the event to `envelopesMatchTheValidFixtures`, which checks that the
+   Kotlin encoding equals the envelope fixture from step 1.
+
 6. **Fixtures.** Run `tools/sync-host-bridge-fixtures.py ../server-platform`
    to regenerate `commonTest/.../HostBridgeFixtures.kt` from the merged
-   contract, then the router tests. `--check` fails when the copy is stale.
+   contract, then the router tests. `--check` fails when the copy is stale. The
+   `Source` line names the last server-platform commit that changed the
+   fixtures, not the contract's head.
 
 7. **Parity tests.** `DesktopParityTest`, `AndroidParityTest` and
    `IosParityTest` check each factory against its column of the parity table.
@@ -166,8 +188,11 @@ capability; `Lifecycle.kt` is the example of an event capability.
    it; the test fails if you forget.
 
 8. **Web.** Callers use `bridge.call('area.verb', args)` from
-   `@formulagen/host-bridge` and handle `unsupported`. The client takes its
-   method and event types from the contract, so its source needs no change.
+   `@formulagen/host-bridge` and handle `unsupported`. A page hears an event
+   with `bridge.on('area.event', handler)`, which returns a function that
+   unsubscribes; call it when the page no longer needs the event. The client
+   takes its method and event types from the contract, so its source needs no
+   change.
    The app still has to build against the merged contract: game-platform
    reads `@formulagen/event-contracts` from the sibling `../event-contracts`
    checkout through a `file:` dependency. Update that checkout, run

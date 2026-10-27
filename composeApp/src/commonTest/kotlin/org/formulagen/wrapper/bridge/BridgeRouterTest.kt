@@ -21,6 +21,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -35,6 +37,7 @@ class BridgeRouterTest {
         val played = mutableListOf<HapticEffect>()
         var pause: () -> Unit = {}
         var resume: () -> Unit = {}
+        val games = FakeGameCapability()
         var prepare: suspend (String) -> CompanionRegistration = {
             CompanionRegistration("00000000-0000-4000-8000-000000000002", "Mac", "a".repeat(64))
         }
@@ -62,7 +65,7 @@ class BridgeRouterTest {
         ChatMethods.pack(supported(platform, "chat.open", FakeChatCapability())),
         ProviderMethods.pack(supported(platform, "providers.status", FakeProviderCapability())),
         PetMethods.pack(supported(platform, "pet.status", FakePetCapability())),
-        GameMethods.pack(supported(platform, "games.launch", FakeGameCapability())),
+        GameMethods.pack(supported(platform, "games.launch", fakes.games)),
         CompanionMethods.pack(supported(platform, "companion.capabilities", object : CompanionCapability {
             override suspend fun prepareConnection(ownerId: String) = fakes.prepare(ownerId)
             override suspend fun activateConnection(ownerId: String, hostId: String) = JsonObject(emptyMap())
@@ -163,6 +166,10 @@ class BridgeRouterTest {
         val cut = Json.parseToJsonElement(BridgeEnvelopes.failure(BridgeErrorCode.FAILED, long)).jsonObject.getValue("error").jsonObject.getValue("message").jsonPrimitive.content
         assertEquals(long.take(BridgeProtocol.MAX_ERROR_MESSAGE_CHARS), cut)
         assertEquals(fixture("event-pause.json"), Json.parseToJsonElement(BridgeEnvelopes.event(LifecycleEvents.PAUSE.name, bridgeJson.encodeToJsonElement(NoData.serializer(), NoData))))
+        assertEquals(
+            fixture("event-games-closed.json"),
+            Json.parseToJsonElement(BridgeEnvelopes.event(GameMethods.CLOSED.name, bridgeJson.encodeToJsonElement(GameClosed.serializer(), GameClosed(GameId.HOVEL_COMPANIONS)))),
+        )
         assertEquals(fixture("watch-context-reply.json"), Json.parseToJsonElement(BridgeEnvelopes.watchContextReply(HostBridgeFixtures.CONTEXT_ID)))
     }
 
@@ -344,6 +351,37 @@ class BridgeRouterTest {
         settle()
         assertEquals(listOf("""{"version":2,"event":"lifecycle.resume","data":{}}"""), posted)
         router.close()
+    }
+
+    @Test
+    fun aClosedGameIsSentAsGamesClosedOnDesktop() = runTest {
+        val fakes = Fakes()
+        val posted = mutableListOf<String>()
+        val router = router(HostPlatform.DESKTOP, fakes, posted)
+        call(router, watch)
+        fakes.games.closed!!(GameId.HOVEL_COMPANIONS)
+        settle()
+        assertEquals(listOf("""{"version":2,"event":"games.closed","data":{"gameId":"hovel-companions"}}"""), posted)
+        router.close()
+    }
+
+    @Test
+    fun anUnsupportedGamesCapabilityNeverListensForClosedGames() = runTest {
+        val fakes = Fakes()
+        val router = router(HostPlatform.IOS, fakes)
+        call(router, watch)
+        assertNull(fakes.games.closed)
+        router.close()
+    }
+
+    /** Desktop builds a router per WebView while the game launcher outlives them, so a closed router must stop listening. */
+    @Test
+    fun closingTheRouterReleasesTheGamesSubscription() = runTest {
+        val fakes = Fakes()
+        val router = router(HostPlatform.DESKTOP, fakes)
+        assertNotNull(fakes.games.closed)
+        router.close()
+        assertNull(fakes.games.closed)
     }
 
     @Test
