@@ -117,7 +117,7 @@ fun CompanionPresentation(
                             }
                             Spacer(Modifier.height(24.dp))
                             Row(Modifier.align(Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                CompanionPortrait(snapshot.companion.name, snapshot.companion.id, acknowledge || snapshot.view == "saved")
+                                CompanionPortrait(snapshot.companion.name, glassColor(snapshot.companion.color), acknowledge || snapshot.view == "saved")
                                 Column {
                                     Text(snapshot.companion.name, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
                                     Text(if (snapshot.view == "growth" && snapshot.offer != null) "LEVEL ${snapshot.offer.level - 1} → ${snapshot.offer.level}" else "LEVEL ${snapshot.companion.level}",
@@ -203,7 +203,7 @@ fun CompanionPresentation(
 /** Selectable preview card, with readable focus and selection beyond color alone. */
 @Composable
 internal fun UpgradeCard(option: UpgradeOption, selected: Boolean, enabled: Boolean, reduced: Boolean, modifier: Modifier, onSelect: () -> Unit) {
-    val color = runCatching { Color((0xFF000000L or option.color.removePrefix("#").toLong(16)).toInt()) }.getOrDefault(CompanionGlass.amber)
+    val color = glassColor(option.color)
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val hovered by interaction.collectIsHoveredAsState()

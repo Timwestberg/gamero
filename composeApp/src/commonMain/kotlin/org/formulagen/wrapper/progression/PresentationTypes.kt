@@ -32,8 +32,9 @@ object PresentationProtocol {
     }
 }
 
+/** [color] is an optional `rrggbb` accent the game chooses for this companion, like [UpgradeOption.color]. */
 @Serializable
-data class CompanionIdentity(val id: String, val name: String, val level: Int, val xp: Long)
+data class CompanionIdentity(val id: String, val name: String, val level: Int, val xp: Long, val color: String? = null)
 @Serializable
 data class UpgradeOption(val id: String, val name: String, val description: String, val increase: String, val color: String, val before: String, val after: String)
 @Serializable

@@ -25,10 +25,13 @@ object CompanionGlass {
     val radius = 24.dp
 }
 
-/** Small illustrated robot portrait, tinted by companion and brightened after saving. */
+/** A game-supplied `rrggbb` (or `#rrggbb`) accent, or [fallback] when it is missing or malformed. */
+internal fun glassColor(hex: String?, fallback: Color = CompanionGlass.amber): Color =
+    hex?.removePrefix("#")?.takeIf { it.length == 6 }?.toLongOrNull(16)?.let { Color((0xFF000000L or it).toInt()) } ?: fallback
+
+/** Small illustrated robot portrait in the companion's [tint], brightened after saving. */
 @Composable
-fun CompanionPortrait(name: String, id: String, acknowledged: Boolean, modifier: Modifier = Modifier) {
-    val tint = if (id == "ash") CompanionGlass.plum else CompanionGlass.amber
+fun CompanionPortrait(name: String, tint: Color, acknowledged: Boolean, modifier: Modifier = Modifier) {
     Canvas(modifier.size(58.dp).semantics { contentDescription = "$name portrait" }) {
         val w = size.width
         drawCircle(tint.copy(alpha = .12f))
