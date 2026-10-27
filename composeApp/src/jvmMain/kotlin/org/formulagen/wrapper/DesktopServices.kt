@@ -65,7 +65,7 @@ internal class DesktopServices private constructor(
     companion object {
         /**
          * Build every service for [appUrl]. [support] is the app's support folder; [window] hosts the
-         * embedded game; [onGameClosed] tells the page that the player returned from a game.
+         * embedded game, whose return reaches the page as the `games.closed` bridge event.
          */
         fun create(
             appUrl: String,
@@ -73,7 +73,6 @@ internal class DesktopServices private constructor(
             environment: Map<String, String>,
             product: String,
             window: JFrame?,
-            onGameClosed: () -> Unit,
         ): DesktopServices {
             val owned = mutableListOf<AutoCloseable>()
             fun <T : AutoCloseable> own(service: T): T = service.also { owned += it }
@@ -91,7 +90,7 @@ internal class DesktopServices private constructor(
                         codexHomeForOwner = { codexProfileHome(providerRoot, it) }))
                 } else null
                 val games = if (window != null && environment["HOVEL_GAME_PROJECT"] != null) {
-                    DesktopGameLauncher(window, environment, support, onGameClosed).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }
+                    DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }
                 } else null
                 return DesktopServices(chat, providers, pet, companion, games, owned.toList())
             } catch (error: Throwable) {

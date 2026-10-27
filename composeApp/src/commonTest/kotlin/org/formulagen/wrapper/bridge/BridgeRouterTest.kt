@@ -35,6 +35,7 @@ class BridgeRouterTest {
         val played = mutableListOf<HapticEffect>()
         var pause: () -> Unit = {}
         var resume: () -> Unit = {}
+        val games = FakeGameCapability()
         var prepare: suspend (String) -> CompanionRegistration = {
             CompanionRegistration("00000000-0000-4000-8000-000000000002", "Mac", "a".repeat(64))
         }
@@ -62,7 +63,7 @@ class BridgeRouterTest {
         ChatMethods.pack(supported(platform, "chat.open", FakeChatCapability())),
         ProviderMethods.pack(supported(platform, "providers.status", FakeProviderCapability())),
         PetMethods.pack(supported(platform, "pet.status", FakePetCapability())),
-        GameMethods.pack(supported(platform, "games.launch", FakeGameCapability())),
+        GameMethods.pack(supported(platform, "games.launch", fakes.games)),
         CompanionMethods.pack(supported(platform, "companion.capabilities", object : CompanionCapability {
             override suspend fun prepareConnection(ownerId: String) = fakes.prepare(ownerId)
             override suspend fun activateConnection(ownerId: String, hostId: String) = JsonObject(emptyMap())
@@ -343,6 +344,30 @@ class BridgeRouterTest {
         fakes.resume()
         settle()
         assertEquals(listOf("""{"version":2,"event":"lifecycle.resume","data":{}}"""), posted)
+        router.close()
+    }
+
+    @Test
+    fun aClosedGameIsSentAsGamesClosedOnDesktop() = runTest {
+        val fakes = Fakes()
+        val posted = mutableListOf<String>()
+        val router = router(HostPlatform.DESKTOP, fakes, posted)
+        call(router, watch)
+        fakes.games.closed(GameId.HOVEL_COMPANIONS)
+        settle()
+        assertEquals(listOf("""{"version":2,"event":"games.closed","data":{"gameId":"hovel-companions"}}"""), posted)
+        router.close()
+    }
+
+    @Test
+    fun anUnsupportedGamesCapabilityNeverListensForClosedGames() = runTest {
+        val fakes = Fakes()
+        val posted = mutableListOf<String>()
+        val router = router(HostPlatform.IOS, fakes, posted)
+        call(router, watch)
+        fakes.games.closed(GameId.HOVEL_COMPANIONS)
+        settle()
+        assertEquals(emptyList(), posted)
         router.close()
     }
 

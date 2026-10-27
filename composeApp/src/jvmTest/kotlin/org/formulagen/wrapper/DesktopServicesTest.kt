@@ -28,7 +28,7 @@ class DesktopServicesTest {
     @Test fun packsEveryDesktopCapabilityForEachProduct() = runBlocking<Unit> {
         val support = Files.createTempDirectory("desktop-services")
         val services = DesktopServices.create("http://127.0.0.1:8133/", support, mapOf("GAMERO_CODEX_PATH" to "/missing/codex"),
-            GAMERO_PRODUCT_NAME, window = null) {}
+            GAMERO_PRODUCT_NAME, window = null)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val product = listOf("chat.open", "providers.status", "pet.configure", "pet.show", "games.launch")

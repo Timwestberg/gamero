@@ -8,9 +8,10 @@ interface RuntimeSelection { id: string; runtime?: 'web' | 'native' }
 // games.launch args: { gameId: 'hovel-companions' }
 // result: { gameId: 'hovel-companions', started: true }
 // A launch while a game is open answers `busy`; a host without the game answers `unsupported`.
+// event games.closed: { gameId: 'hovel-companions' } when the player returns; desktop only.
 ```
 
-The web App branches at startRuntime. Native entries call launchNativeGame and never create a web gameplay session or iframe. The page waits for the native gameroGameClosed event before restoring the catalog. Ordinary web games retain their current flow.
+The web App branches at startRuntime. Native entries call launchNativeGame and never create a web gameplay session or iframe. The page waits for the host-bridge v2 `games.closed` event (`{ gameId }`, desktop only) before restoring the catalog. Ordinary web games retain their current flow.
 
 The shared v2 router checks the frame, origin, context and arguments; an unknown game ID or an extra field is `invalid` before native code runs. DesktopGameLauncher (the desktop `GameCapability`, built by DesktopServices) chooses paths from native configuration and checks that the game and the embed library exist before it changes the window. It mounts EmbeddedCompanionWindow into the current JFrame's layered pane, hiding but retaining the web content. Returning removes that surface, restores the browser, and stops its game and sockets. The standalone entry point uses the same surface.
 

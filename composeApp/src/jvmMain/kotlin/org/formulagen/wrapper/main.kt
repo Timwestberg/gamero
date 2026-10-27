@@ -164,9 +164,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
     }
     val product = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME
     val services = remember {
-        DesktopServices.create(url, support.toPath(), System.getenv(), product, window) {
-            resources.browser.get()?.executeJavaScript("window.dispatchEvent(new Event('gameroGameClosed'))", url, 0)
-        }.also { resources.services = it }
+        DesktopServices.create(url, support.toPath(), System.getenv(), product, window).also { resources.services = it }
     }
     val companion = services.companion
     LaunchedEffect(start) {
