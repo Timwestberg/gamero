@@ -8,6 +8,32 @@ import kotlin.test.*
 import org.junit.Assume.assumeTrue
 
 class CompanionHostTest {
+    /** Closing never waits on the caller's thread, and a game that ignores SIGTERM is still killed. */
+    @Test fun closeStopsAGameThatIgnoresTermination() = runBlocking {
+        assumeTrue(!System.getProperty("os.name").contains("Windows"))
+        val project = Files.createTempDirectory("hovel-stubborn-game")
+        Files.createDirectories(project.resolve("scripts"))
+        project.resolve("scripts/godot.sh").toFile().apply {
+            writeText("#!/bin/sh\ntrap '' TERM\necho \$\$ > \"\$HOVEL_PRESENTATION_SESSION.pid\"\nexec sleep 60\n")
+            setExecutable(true)
+        }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val host = DesktopCompanionHost(project, scope, PresentationController { "stop" }, emptyMap())
+        try {
+            host.start()
+            val pid = withTimeout(5000) {
+                while (Files.list(project).use { files -> files.noneMatch { it.toString().endsWith(".pid") } }) delay(20)
+                Files.list(project).use { files -> files.filter { it.toString().endsWith(".pid") }.findFirst().get() }
+            }
+            delay(100) // let the TERM disposition install before close signals it
+            val game = ProcessHandle.of(Files.readString(pid).trim().toLong()).get()
+            val started = System.nanoTime()
+            host.close()
+            assertTrue(System.nanoTime() - started < 1_000_000_000L, "close() must not wait for the game")
+            withTimeout(5000) { while (game.isAlive) delay(20) }
+        } finally { host.close(); scope.cancel(); project.toFile().deleteRecursively() }
+    }
+
     /** Earn XP in the real scene, confirm in Kotlin and verify the saved receipt. */
     @Test fun realGodotRoundTrip() = roundTrip(false)
 

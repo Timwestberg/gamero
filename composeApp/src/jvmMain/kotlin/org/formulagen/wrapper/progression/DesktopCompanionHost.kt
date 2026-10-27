@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.encodeToString
+import org.formulagen.wrapper.companion.terminateProcessTreeInBackground
 
 /** Private desktop adapter; the child game alone owns its progression save. */
 class DesktopCompanionHost(
@@ -134,12 +135,16 @@ class DesktopCompanionHost(
         error("Presentation message is too large")
     }
 
-    /** Release the child and session socket when the application exits. */
+    /**
+     * Release the game and session socket. Callers are often on the UI thread, so the game's
+     * process tree is signalled now and force-killed after the grace period in the background.
+     */
     override fun close() {
-        synchronized(lifecycle) {
+        val process = synchronized(lifecycle) {
             closed = true
-            game?.destroy()
+            game
         }
+        process?.let { terminateProcessTreeInBackground(it, "hovel-game-stop") }
         socket?.close()
         server.close()
         job?.cancel()

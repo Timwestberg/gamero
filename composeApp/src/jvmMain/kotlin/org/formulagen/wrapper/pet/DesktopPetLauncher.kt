@@ -6,6 +6,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
+import org.formulagen.wrapper.companion.terminateProcessTree
 
 /** Owns the desktop overlay independently of browser navigation and embedded games. */
 internal class DesktopPetLauncher(
@@ -78,15 +79,9 @@ internal class DesktopPetLauncher(
         }
     }
 
-    /** Stop only the child owned by this host, including after incomplete startup. */
+    /** Stop only the child owned by this host and anything it started, including after incomplete startup. */
     private fun stop() {
-        process?.let {
-            it.destroy()
-            if (!it.waitFor(2, TimeUnit.SECONDS)) {
-                it.destroyForcibly()
-                it.waitFor(2, TimeUnit.SECONDS)
-            }
-        }
+        process?.let { terminateProcessTree(it) }
         process = null
     }
 

@@ -93,18 +93,3 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
         CodexRuntime(executable, it).also { runtime -> runtime.prepare() }.builder(arguments, workspace)
     } ?: codexProcess(executable, arguments, workspace)
 }
-
-/** Retain observed handles so parent exit cannot hide a still-running child. */
-internal fun terminateProcessTree(process: Process, observed: Set<ProcessHandle> = emptySet()) {
-    val descendants = observed.toMutableSet()
-    process.descendants().use { handles -> handles.forEach { descendants.add(it) } }
-    descendants.forEach { if (it.isAlive) it.destroy() }
-    if (process.isAlive) process.destroy()
-    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
-    try {
-        while ((process.isAlive || descendants.any { it.isAlive }) && System.nanoTime() < deadline) Thread.sleep(20)
-    } finally {
-        descendants.forEach { if (it.isAlive) it.destroyForcibly() }
-        if (process.isAlive) process.destroyForcibly()
-    }
-}

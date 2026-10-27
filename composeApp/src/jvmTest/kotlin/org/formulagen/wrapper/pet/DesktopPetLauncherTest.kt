@@ -86,4 +86,18 @@ class DesktopPetLauncherTest {
             assertFalse(child.isAlive)
         } finally { launcher.close(); root.toFile().deleteRecursively() }
     }
+
+    /** Hiding stops the pet's own child processes too, not only the engine. */
+    @Test fun hidingStopsEverythingThePetStarted() = runBlocking<Unit> {
+        val root = installation("sleep 120 &\necho \$! > helper\necho EMBER_PET_READY\nexec sleep 120")
+        val launcher = DesktopPetLauncher(mapOf("HOVEL_PET_PROJECT" to root.toString(),
+            "HOVEL_PET_GODOT" to root.resolve("engine").toString()), root.resolve("pet.log"))
+        try {
+            assertEquals("running", launcher.dispatch("pet.show", buildJsonObject {})["state"]?.jsonPrimitive?.content)
+            val helper = ProcessHandle.of(Files.readString(root.resolve("helper")).trim().toLong()).get()
+            assertTrue(helper.isAlive)
+            launcher.dispatch("pet.hide", buildJsonObject {})
+            withTimeout(3000) { while (helper.isAlive) delay(20) }
+        } finally { launcher.close(); root.toFile().deleteRecursively() }
+    }
 }
