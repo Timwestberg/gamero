@@ -104,4 +104,6 @@ class SherpaPocketEngine(private val config: VoiceConfig) : PieceEngine {
     }
 }
 
+internal const val POCKET_ENGINE_LINKED = true
+
 internal fun createPocketEngine(config: VoiceConfig): PieceEngine = SherpaPocketEngine(config)

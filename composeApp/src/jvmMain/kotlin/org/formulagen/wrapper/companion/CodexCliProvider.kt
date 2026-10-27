@@ -3,9 +3,11 @@ package org.formulagen.wrapper.companion
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
+import org.formulagen.wrapper.providers.CodexRuntime
+import org.formulagen.wrapper.providers.codexProcess
 
 /** Provider authentication remains wholly in supported, user-installed Codex tooling. */
-class CodexCliProvider(private val executable: Path, workspace: Path, outputDirectory: Path) : TaskProvider {
+class CodexCliProvider(private val executable: Path, workspace: Path, outputDirectory: Path, private val codexHome: Path? = null) : TaskProvider {
     private val outputDirectory = outputDirectory.toAbsolutePath().normalize()
     private val workspace = workspace.toRealPath()
     init {
@@ -52,8 +54,8 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
         Files.createFile(output, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
             java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")))
         run {
-            // v1 is deliberately read-only. No inherited API key or paid Hovel API inference.
-            val command = listOf("-a", "never", "-c", "forced_login_method=\"chatgpt\"", "exec", "--ignore-user-config", "--ephemeral",
+            // v1 is deliberately read-only. builder() adds the ChatGPT-only login and environment rules.
+            val command = listOf("-a", "never", "exec", "--ignore-user-config", "--ephemeral",
                 "--sandbox", "read-only", "--skip-git-repo-check", "--color", "never",
                 "--output-last-message", output.toString(), "-")
             val process = builder(command).redirectOutput(ProcessBuilder.Redirect.DISCARD)
@@ -86,24 +88,8 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
         } // Retain output even on ambiguous failure for explicit local reconciliation.
     }
 
-    internal fun builder(arguments: List<String>): ProcessBuilder = ProcessBuilder(listOf(executable.toString()) + arguments)
-        .directory(workspace.toFile()).apply {
-            // Do not route the user's invocation to an API-key billing path.
-            environment().keys.removeIf { it.startsWith("OPENAI_") || it == "CODEX_API_KEY" }
-        }
-}
-
-/** Retain observed handles so parent exit cannot hide a still-running child. */
-internal fun terminateProcessTree(process: Process, observed: Set<ProcessHandle> = emptySet()) {
-    val descendants = observed.toMutableSet()
-    process.descendants().use { handles -> handles.forEach { descendants.add(it) } }
-    descendants.forEach { if (it.isAlive) it.destroy() }
-    if (process.isAlive) process.destroy()
-    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
-    try {
-        while ((process.isAlive || descendants.any { it.isAlive }) && System.nanoTime() < deadline) Thread.sleep(20)
-    } finally {
-        descendants.forEach { if (it.isAlive) it.destroyForcibly() }
-        if (process.isAlive) process.destroyForcibly()
-    }
+    /** The profile's isolated login when there is one, else the user's own Codex login; [codexProcess] owns the rules. */
+    internal fun builder(arguments: List<String>): ProcessBuilder = codexHome?.let {
+        CodexRuntime(executable, it).also { runtime -> runtime.prepare() }.builder(arguments, workspace)
+    } ?: codexProcess(executable, arguments, workspace)
 }
