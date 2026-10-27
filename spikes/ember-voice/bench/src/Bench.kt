@@ -329,7 +329,7 @@ private fun measure(config: BenchConfig, lines: List<CorpusLine>, cli: Cli): Str
             log("warmup dummy: ${fmtMs(warmupMs)} ms (not counted)")
         }
         printPieceNotes(config, lines)
-        val cold = speak(engine, lines[0].text, voice, config, lines[0].id)
+        val cold = speak(engine, lines[0].text, voice, config, lines[0].id).withoutSamples()
         log("cold ${lines[0].id}: TTFA ${fmtMs(cold.ttfaMs)} ms, total ${fmtMs(cold.totalMs)} ms, RTF ${fmt(cold.rtf)}")
         println()
         println("Ember voice bench  ${hostLabel()}  ${config.modelName}")
@@ -352,14 +352,16 @@ private fun measure(config: BenchConfig, lines: List<CorpusLine>, cli: Cli): Str
         )
         val lineDocs = ArrayList<String>()
         for (line in lines) {
-            val discard = speak(engine, line.text, voice, config, line.id)
+            val discard = speak(engine, line.text, voice, config, line.id).withoutSamples()
             log("discarded warmup ${line.id}: ${fmtMs(discard.totalMs)} ms")
             val runs = ArrayList<SpeakResult>()
             var kept: SpeakResult? = null
             val wav = File("results/wav/${safeId(line.id)}.wav")
             for (n in 1..warmRuns) {
                 val run = speak(engine, line.text, voice, config, line.id)
-                runs.add(run)
+                // Keep the waveform only for the saved take. The other runs
+                // would otherwise sit in the list and inflate peak RSS.
+                runs.add(if (n == warmRuns) run else run.withoutSamples())
                 if (n == warmRuns) kept = run
                 log(
                     "warm ${line.id} $n/$warmRuns: TTFA ${fmtMs(run.ttfaMs)} ms, " +
@@ -556,6 +558,7 @@ private class VoiceWave(val samples: FloatArray, val sampleRate: Int)
 
 private fun readVoice(path: File): VoiceWave {
     if (!path.isFile) throw BenchException("voice file not found: ${path.path}. Run ./setup.sh.")
+    refuseNonCommercialVoice(path.path)
     val reader = WaveReader(path.path)
     if (reader.samples.isEmpty() || reader.sampleRate <= 0) throw BenchException("voice wav is empty: ${path.path}")
     return VoiceWave(reader.samples, reader.sampleRate)
@@ -627,7 +630,9 @@ private fun speak(tts: OfflineTts, text: String, voice: VoiceWave, config: Bench
             if (samples.isNotEmpty() && ttfaNs.compareAndSet(-1L, System.nanoTime() - start)) {
                 firstChunkSamples.set(samples.size)
             }
-            return 1
+            // Stop a callback loop if the engine ignores max_frames. A normal
+            // line is a few hundred callbacks; 8192 is far past that.
+            return if (callbackCount.get() > 8192) 0 else 1
         }
     }
     val audio = tts.generateWithConfigAndCallback(text, gen, callback)
@@ -905,6 +910,30 @@ private fun selfCheck(config: BenchConfig) {
     check(roundTrip.str() == "a\"b\\c", "json string")
     check(expectedAudioSeconds(24, 15.0, 0.8) == 1.6, "expected audio")
     check(expectedAudioSeconds(4, 15.0, 0.8) == 0.8, "expected floor")
+    refuseNonCommercialVoice(config.voice.path)
+    checkFails("expresso") { refuseNonCommercialVoice("voices/expresso/ex03.wav") }
+    checkFails("test_wavs") { refuseNonCommercialVoice("models/test_wavs/bria.wav") }
+}
+
+private fun SpeakResult.withoutSamples(): SpeakResult = copy(samples = FloatArray(0))
+
+private fun refuseNonCommercialVoice(path: String) {
+    val lowered = path.replace('\\', '/').lowercase()
+    if (lowered.contains("expresso") || lowered.contains("test_wavs")) {
+        throw BenchException(
+            "voice must be CC0 or another permissive license. " +
+                "Expresso and test_wavs are CC-BY-NC and cannot be used ($path).",
+        )
+    }
+}
+
+private fun checkFails(label: String, block: () -> Unit) {
+    try {
+        block()
+        throw BenchException("self-check failed: $label should have failed")
+    } catch (e: BenchException) {
+        if (e.message?.contains("should have failed") == true) throw e
+    }
 }
 
 private fun check(condition: Boolean, message: String) {

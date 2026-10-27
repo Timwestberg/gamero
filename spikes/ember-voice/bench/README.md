@@ -34,7 +34,8 @@ cd spikes/ember-voice/bench
 - Fixed `seed` and `temperature` from `config/bench.conf`. PocketTTS reads the seed from `GenerationConfig.extra`. With `num_threads` above 1, ONNX can still change a run by a few tens of milliseconds, so the compare tool uses the samples instead of assuming bitwise repeats.
 - One cold synthesis of the first line, then one discarded warmup per line, then `warm_runs` measured runs (10).
 - TTFA is the synthesis call to the first audio callback. Total time is until the call returns. RTF is audio seconds / synthesis seconds.
-- Expected audio is `max(0.8 s, characters / 15)`. A run is a runaway when the audio is longer than twice that. The count is in the JSON. This harness records it. The runaway guard that caps frames is a later change.
+- Expected audio is `max(0.8 s, characters / 15)`. A run is a runaway when the audio is longer than twice that. The count is in the JSON. This harness records it. The runaway guard that caps frames is a later change. A callback loop past 8192 chunks is stopped so a missed frame cap cannot grow the audio without a bound.
+- The voice path is refused when it contains `expresso` or `test_wavs`. Those clips are CC-BY-NC. Warm runs keep only the last waveform; earlier takes are dropped so they do not sit in the result list and raise peak RSS.
 - RSS is the process high-water mark (`VmHWM` on Linux, `ps` samples on macOS) plus `/usr/bin/time` when that binary exists.
 - CPU percent is process CPU time over wall time for that call (`getProcessCpuTime` on HotSpot).
 - WER transcribes the last warm WAV with Whisper tiny.en int8 and scores it against the corpus text after lowercasing and stripping punctuation. It is one draw per line.
