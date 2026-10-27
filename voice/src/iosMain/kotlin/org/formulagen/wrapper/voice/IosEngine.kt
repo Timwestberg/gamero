@@ -48,15 +48,21 @@ private class SherpaIosPieceEngine(private val config: VoiceConfig) : PieceEngin
         val wav = preparedVoiceWav(config.voiceWav)
         val created = ember_voice_sherpa_create(config.modelDir, wav, config.numThreads)
         removeFile(wav)
-        handle = created ?: throw IllegalStateException("sherpa-onnx iOS engine did not load. Link the xcframework and the bridge.")
+        if (created == null) {
+            throw IllegalStateException("sherpa-onnx iOS engine did not load. Link the xcframework and the bridge.")
+        }
         val rate = ember_voice_sherpa_sample_rate(created)
-        if (rate <= 0) throw IllegalStateException("sherpa-onnx iOS engine reported no sample rate")
+        if (rate <= 0) {
+            ember_voice_sherpa_destroy(created)
+            throw IllegalStateException("sherpa-onnx iOS engine reported no sample rate")
+        }
+        handle = created
         sampleRate = rate
     }
 
     override fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio {
         val current = handle ?: throw IllegalStateException("voice engine was released")
-        return collect(text, sampleRate) { callback, arg ->
+        return collect(text, sampleRate, maxFrames) { callback, arg ->
             ember_voice_sherpa_speak(
                 current,
                 text,
@@ -81,13 +87,28 @@ private class SherpaIosPieceEngine(private val config: VoiceConfig) : PieceEngin
 @OptIn(ExperimentalForeignApi::class)
 private class FluidAudioPieceEngine(config: VoiceConfig) : PieceEngine {
     private val wav = preparedVoiceWav(config.voiceWav)
-    private var handle: COpaquePointer? = ember_voice_fluid_create(wav, config.temperature.toFloat(), config.seed)
-        ?: throw IllegalStateException("FluidAudio is not linked. It is an optional iOS backend.")
-    override val sampleRate: Int = ember_voice_fluid_sample_rate(handle)
+    private var handle: COpaquePointer?
+    override val sampleRate: Int
+
+    init {
+        val created = ember_voice_fluid_create(wav, config.temperature.toFloat(), config.seed)
+        if (created == null) {
+            removeFile(wav)
+            throw IllegalStateException("FluidAudio is not linked. It is an optional iOS backend.")
+        }
+        val rate = ember_voice_fluid_sample_rate(created)
+        if (rate <= 0) {
+            ember_voice_fluid_destroy(created)
+            removeFile(wav)
+            throw IllegalStateException("FluidAudio reported no sample rate")
+        }
+        handle = created
+        sampleRate = rate
+    }
 
     override fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio {
         val current = handle ?: throw IllegalStateException("voice engine was released")
-        return collect(text, sampleRate) { callback, arg ->
+        return collect(text, sampleRate, maxFrames) { callback, arg ->
             ember_voice_fluid_speak(current, text, maxFrames, seed, callback, arg)
         }
     }
@@ -129,8 +150,9 @@ private fun removeFile(path: String) {
     NSFileManager.defaultManager.removeItemAtPath(path, null)
 }
 
-private class SampleBox {
+private class SampleBox(val limit: Int) {
     val buf = SampleBuf()
+    var callbacks = 0
     var firstCallbackNs: Long = -1L
     val startedNs: Long = kotlin.system.getTimeNanos()
 }
@@ -161,10 +183,12 @@ private class SampleBuf {
 private fun collect(
     text: String,
     sampleRate: Int,
+    maxFrames: Int,
     call: (CPointer<CFunction<(CPointer<FloatVar>?, Int, COpaquePointer?) -> Int>>?, COpaquePointer?) -> Int,
 ): PieceAudio {
     if (sampleRate <= 0) throw IllegalStateException("voice engine has no sample rate")
-    val box = SampleBox()
+    val limit = if (maxFrames > 0) maxFrames * 8 else 8192
+    val box = SampleBox(limit)
     val ref = StableRef.create(box)
     try {
         val code = call(sampleCallback, ref.asCPointer())
@@ -183,9 +207,12 @@ private fun collect(
 
 @OptIn(ExperimentalForeignApi::class)
 private val sampleCallback = staticCFunction<CPointer<FloatVar>?, Int, COpaquePointer?, Int> { samples, n, arg ->
-    if (arg == null || samples == null || n <= 0) return@staticCFunction 1
+    if (arg == null) return@staticCFunction 1
     val target = arg.asStableRef<SampleBox>().get()
-    if (target.firstCallbackNs < 0) target.firstCallbackNs = kotlin.system.getTimeNanos()
-    target.buf.append(samples, n)
-    1
+    target.callbacks += 1
+    if (samples != null && n > 0) {
+        if (target.firstCallbackNs < 0) target.firstCallbackNs = kotlin.system.getTimeNanos()
+        target.buf.append(samples, n)
+    }
+    if (target.callbacks > target.limit) 0 else 1
 }
