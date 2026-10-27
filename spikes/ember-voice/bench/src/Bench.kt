@@ -910,6 +910,14 @@ private fun selfCheck(config: BenchConfig) {
     check(roundTrip.str() == "a\"b\\c", "json string")
     check(expectedAudioSeconds(24, 15.0, 0.8) == 1.6, "expected audio")
     check(expectedAudioSeconds(4, 15.0, 0.8) == 0.8, "expected floor")
+    check(werTokens("It's the A1.") == listOf("it's", "the", "a1"), "wer tokens ${werTokens("It's the A1.")}")
+    check(werTokens("don\u2019t stop") == listOf("don", "t", "stop"), "curly apostrophe splits")
+    check(wordErrorRate("", "").wer == 0.0, "empty reference and hypothesis")
+    check(wordErrorRate("", "hello").wer == 1.0, "empty reference scores 1")
+    check(compareVersions("2.0.0-rc1", "2.0.0") < 0, "pre-release is lower than the release")
+    check(compareVersions("2.0.0", "2.0.0-rc1") > 0, "release is higher than its pre-release")
+    check(compareVersions("2.0.0-rc1", "2.0.0-rc2") < 0, "rc1 before rc2")
+    check(compareVersions("2.0.0+build", "2.0.0") == 0, "build metadata is not part of the order")
     refuseNonCommercialVoice(config.voice.path)
     checkFails("expresso") { refuseNonCommercialVoice("voices/expresso/ex03.wav") }
     checkFails("test_wavs") { refuseNonCommercialVoice("models/test_wavs/bria.wav") }

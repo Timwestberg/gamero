@@ -85,7 +85,9 @@ The shared result schema is `ember-voice-benchmark.v1` in server-platform draft 
 
 Percentiles are nearest-rank. With 10 samples, p99 is the worst sample and p90 is the 9th. Median of an even count is the average of the two middle values.
 
-`wer` is word error rate of the last warm WAV against the corpus text, after lowercasing and stripping punctuation. It is one draw, not a median. `null` when ASR was skipped (`--no-wer`).
+`wer` is word error rate of the last warm WAV against the corpus text. Tokens are runs of letters, digits, and ASCII apostrophes after lowercasing. The rate is the edit distance divided by the reference token count. An empty reference scores 0 when the hypothesis is also empty and 1 otherwise. It is one draw, not a median. `null` when ASR was skipped (`--no-wer`).
+
+Version strings, when this harness compares them, use release ordering: `2.0.0-rc1` is lower than `2.0.0`. Build metadata after `+` is ignored.
 
 `./compare.sh baseline.json candidate.json` compares warm `ttfa_ms.samples` per line with a one-sided Mann–Whitney test (candidate slower). It exits 1 when a line's median TTFA is more than 10% higher and the test's p-value is under 0.05. Exact p-values are used when both samples have at most 10 values and no ties. Otherwise it uses the normal approximation with a tie correction and a continuity correction.
 
