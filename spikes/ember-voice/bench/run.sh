@@ -24,9 +24,13 @@ if [ ! -f "$NATIVE_JAR" ]; then
   die "native library for ${plat}-${cpu} is missing. Run ./setup.sh on this machine."
 fi
 
+CLIP="$ROOT/../../../voice/src/commonMain/kotlin/org/formulagen/wrapper/voice/ReferenceClip.kt"
+if [ ! -f "$CLIP" ]; then
+  die "missing $CLIP"
+fi
 out_class="$ROOT/build/classes/ember/voice/bench/BenchKt.class"
 newest_src="$out_class"
-for src in "$ROOT"/src/*.kt; do
+for src in "$ROOT"/src/*.kt "$CLIP"; do
   if [ ! -f "$out_class" ] || [ "$src" -nt "$newest_src" ]; then
     newest_src="$src"
   fi
@@ -35,7 +39,7 @@ if [ ! -f "$out_class" ] || [ "$newest_src" != "$out_class" ]; then
   printf 'compiling harness\n'
   mkdir -p "$ROOT/build/classes"
   # shellcheck disable=SC2086
-  "$KOTLINC" -jvm-target 17 -cp "$JVM_JAR" -d "$ROOT/build/classes" "$ROOT"/src/*.kt
+  "$KOTLINC" -jvm-target 17 -cp "$JVM_JAR" -d "$ROOT/build/classes" "$ROOT"/src/*.kt "$CLIP"
 fi
 
 CP="$ROOT/build/classes:$STDLIB:$JVM_JAR:$NATIVE_JAR"
@@ -59,6 +63,7 @@ fi
 mkdir -p "$ROOT/results"
 output="results/ember-voice-bench.json"
 matrix=0
+compare_voices=0
 prev=""
 for arg in "$@"; do
   if [ "$prev" = "--output" ]; then
@@ -67,9 +72,14 @@ for arg in "$@"; do
   if [ "$arg" = "--matrix" ]; then
     matrix=1
   fi
+  if [ "$arg" = "--compare-voices" ]; then
+    compare_voices=1
+  fi
   prev=$arg
 done
-if [ "$matrix" -eq 1 ] && [ "$output" = "results/ember-voice-bench.json" ]; then
+if [ "$compare_voices" -eq 1 ] && [ "$output" = "results/ember-voice-bench.json" ]; then
+  output="results/voice-compare/summary.json"
+elif [ "$matrix" -eq 1 ] && [ "$output" = "results/ember-voice-bench.json" ]; then
   output="results/matrix-summary.json"
 fi
 

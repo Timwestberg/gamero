@@ -11,8 +11,9 @@ import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsPocketModelConfig
 import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
-import com.k2fsa.sherpa.onnx.WaveReader
 import com.k2fsa.sherpa.onnx.WaveWriter
+import org.formulagen.wrapper.voice.VoiceClipException
+import org.formulagen.wrapper.voice.prepareReferenceClip
 import java.io.File
 import java.time.Instant
 import java.util.Locale
@@ -95,11 +96,17 @@ fun main(args: Array<String>) {
             return
         }
         val selected = selectLines(config, cli.only)
-        if (cli.matrix.isNotEmpty()) {
-            runMatrix(config, selected, cli)
+        if (cli.voice != null && cli.compareVoices != null) {
+            throw BenchException("pass the two clips to --compare-voices")
+        }
+        if (cli.voice != null) requireClip(cli.voice)
+        val voiced = if (cli.voice != null) withVoice(config, cli.voice) else config
+        if (cli.compareVoices != null) {
+            runVoiceCompare(voiced, selected, cli)
+        } else if (cli.matrix.isNotEmpty()) {
+            runMatrix(voiced, selected, cli)
         } else {
-            val overridden = applyMap(config, cli.set)
-            runOnce(overridden, selected, cli, cli.output)
+            runOnce(applyMap(voiced, cli.set), selected, cli, cli.output)
         }
     } catch (e: BenchException) {
         System.err.println("error: ${e.message}")
@@ -122,6 +129,8 @@ private data class Cli(
     val wer: Boolean,
     val output: String,
     val gitCommit: String,
+    val voice: String?,
+    val compareVoices: Pair<String, String>?,
 )
 
 private fun parseArgs(args: Array<String>): Cli {
@@ -136,6 +145,8 @@ private fun parseArgs(args: Array<String>): Cli {
     var wer = true
     var output = ""
     var gitCommit = "unknown"
+    var voice: String? = null
+    var compareVoices: Pair<String, String>? = null
     var i = 0
     while (i < args.size) {
         when (val arg = args[i]) {
@@ -181,14 +192,30 @@ private fun parseArgs(args: Array<String>): Cli {
                 i += 1
                 gitCommit = need(args, i, "--git-commit")
             }
+            "--voice" -> {
+                i += 1
+                voice = need(args, i, "--voice")
+            }
+            "--compare-voices" -> {
+                val a = need(args, i + 1, "--compare-voices")
+                val b = need(args, i + 2, "--compare-voices")
+                compareVoices = a to b
+                i += 2
+            }
             else -> throw BenchException("unknown argument $arg (try --help)")
         }
         i += 1
     }
     if (output.isEmpty()) {
-        output = if (matrix.isNotEmpty()) "results/matrix-summary.json" else "results/ember-voice-bench.json"
+        output = when {
+            compareVoices != null -> "results/voice-compare/summary.json"
+            matrix.isNotEmpty() -> "results/matrix-summary.json"
+            else -> "results/ember-voice-bench.json"
+        }
     }
-    return Cli(config, help, selfCheck, compare, matrix, set, only, warmRuns, wer, output, gitCommit)
+    return Cli(
+        config, help, selfCheck, compare, matrix, set, only, warmRuns, wer, output, gitCommit, voice, compareVoices,
+    )
 }
 
 private fun need(args: Array<String>, index: Int, flag: String): String {
@@ -209,6 +236,8 @@ private fun printHelp() {
     println(
         """
         Usage: ./run.sh [--output FILE] [--only ID] [--warm-runs N] [--no-wer]
+               ./run.sh --voice path.wav
+               ./run.sh --compare-voices path-a.wav path-b.wav
                ./run.sh --set key=value [--set key=value]
                ./run.sh --matrix key=a,b [--matrix key=c,d]
                ./compare.sh baseline.json candidate.json
@@ -219,6 +248,12 @@ private fun printHelp() {
                        temperature, provider, model_dir, seed, chunker, warmup, max_frames,
                        first_piece_target_chars, max_frames_per_character, frame_intercept,
                        frame_floor, short_piece_chars, short_piece_min_frames, silence_ms
+        --voice PATH   reference clip. Any WAV is resampled to 24 kHz mono.
+                       Under 1 s or over 10 s is rejected. The default stays
+                       the CC0 voice-donations/0a67_enhanced clip.
+        --compare-voices A B
+                       run the corpus on two clips and write TTFA, RTF, and
+                       median WER side by side, plus a WAV set for each.
         --no-wer       skip the offline ASR intelligibility check
         Compare exits 1 when a line's warm TTFA median regresses by more than 10%
         and a one-sided Mann-Whitney test says that slowdown is unlikely to be noise (p < 0.05).
@@ -226,8 +261,14 @@ private fun printHelp() {
     )
 }
 
-private fun runOnce(config: BenchConfig, lines: List<CorpusLine>, cli: Cli, output: String) {
-    val doc = measure(config, lines, cli)
+private fun runOnce(
+    config: BenchConfig,
+    lines: List<CorpusLine>,
+    cli: Cli,
+    output: String,
+    wavDir: File = File("results/wav"),
+) {
+    val doc = measure(config, lines, cli, wavDir)
     val file = File(output)
     file.parentFile?.mkdirs()
     file.writeText(doc)
@@ -300,7 +341,12 @@ private fun product(axes: List<Pair<String, List<String>>>): List<Map<String, St
     return acc
 }
 
-private fun measure(config: BenchConfig, lines: List<CorpusLine>, cli: Cli): String {
+private fun measure(
+    config: BenchConfig,
+    lines: List<CorpusLine>,
+    cli: Cli,
+    wavDir: File = File("results/wav"),
+): String {
     if (config.chunker != "sherpa" && config.chunker != "ours") {
         throw BenchException("chunker ${config.chunker} is not implemented in this harness yet")
     }
@@ -369,7 +415,7 @@ private fun measure(config: BenchConfig, lines: List<CorpusLine>, cli: Cli): Str
             log("discarded warmup ${line.id}: ${fmtMs(discard.totalMs)} ms")
             val runs = ArrayList<SpeakResult>()
             var kept: SpeakResult? = null
-            val wav = File("results/wav/${safeId(line.id)}.wav")
+            val wav = File(wavDir, "${safeId(line.id)}.wav")
             val spoken = if (config.chunker == "ours") {
                 speechPieces(line.text, config.firstPieceTargetChars, config.laterPieceMaxChars).joinToString(" ")
             } else {
@@ -611,9 +657,150 @@ private class VoiceWave(val samples: FloatArray, val sampleRate: Int)
 private fun readVoice(path: File): VoiceWave {
     if (!path.isFile) throw BenchException("voice file not found: ${path.path}. Run ./setup.sh.")
     refuseNonCommercialVoice(path.path)
-    val reader = WaveReader(path.path)
-    if (reader.samples.isEmpty() || reader.sampleRate <= 0) throw BenchException("voice wav is empty: ${path.path}")
-    return VoiceWave(reader.samples, reader.sampleRate)
+    try {
+        val clip = prepareReferenceClip(path.readBytes())
+        log(
+            "voice ${path.path}: ${clip.sourceRate} Hz, ${clip.sourceChannels} ch, " +
+                "${fmt(clip.seconds)} s -> ${clip.sampleRate} Hz mono",
+        )
+        return VoiceWave(clip.samples, clip.sampleRate)
+    } catch (e: VoiceClipException) {
+        throw BenchException(e.message ?: "bad voice clip")
+    }
+}
+
+private fun requireClip(path: String) {
+    val file = File(path)
+    if (!file.isFile) throw BenchException("voice file not found: $path")
+    refuseNonCommercialVoice(file.path)
+    try {
+        prepareReferenceClip(file.readBytes())
+    } catch (e: VoiceClipException) {
+        throw BenchException(e.message ?: "bad voice clip")
+    }
+}
+
+private fun withVoice(config: BenchConfig, path: String): BenchConfig {
+    val file = File(path)
+    val same = try {
+        file.canonicalFile == config.voice.canonicalFile
+    } catch (_: Exception) {
+        false
+    }
+    return if (same) config else config.copy(voice = file, voiceSource = file.path, voiceLicense = "user-provided")
+}
+
+private fun runVoiceCompare(config: BenchConfig, lines: List<CorpusLine>, cli: Cli) {
+    val (leftPath, rightPath) = cli.compareVoices ?: throw BenchException("--compare-voices needs two wavs")
+    requireClip(leftPath)
+    requireClip(rightPath)
+    val root = File("results/voice-compare")
+    val used = HashSet<String>()
+    val leftSlug = voiceSlug(leftPath, used)
+    val rightSlug = voiceSlug(rightPath, used)
+    val leftDir = File(root, leftSlug)
+    val rightDir = File(root, rightSlug)
+    println("compare voices")
+    println("  a $leftPath")
+    println("  b $rightPath")
+    val leftJson = File(leftDir, "bench.json")
+    val rightJson = File(rightDir, "bench.json")
+    runOnce(withVoice(config, leftPath), lines, cli.copy(output = leftJson.path), leftJson.path, File(leftDir, "wav"))
+    runOnce(withVoice(config, rightPath), lines, cli.copy(output = rightJson.path), rightJson.path, File(rightDir, "wav"))
+    val left = parseJson(leftJson.readText())
+    val right = parseJson(rightJson.readText())
+    val summary = renderVoiceCompare(leftPath, rightPath, leftSlug, rightSlug, left, right)
+    val out = File(cli.output)
+    out.parentFile?.mkdirs()
+    out.writeText(summary)
+    printVoiceCompare(left, right)
+    println("wav a: ${File(leftDir, "wav").path}")
+    println("wav b: ${File(rightDir, "wav").path}")
+    println("json: ${out.path}")
+}
+
+private fun voiceSlug(path: String, used: MutableSet<String>): String {
+    val base = File(path).name.substringBeforeLast('.').replace(Regex("[^A-Za-z0-9._-]+"), "_").ifEmpty { "voice" }
+    var slug = base
+    var n = 2
+    while (!used.add(slug)) {
+        slug = "$base-$n"
+        n += 1
+    }
+    return slug
+}
+
+private fun renderVoiceCompare(
+    leftPath: String,
+    rightPath: String,
+    leftSlug: String,
+    rightSlug: String,
+    left: Json,
+    right: Json,
+): String {
+    val ids = left.field("lines").arr().map { it.field("id").str() }
+    val sb = StringBuilder()
+    sb.append("{\n")
+    sb.append("  \"schema\": 1,\n")
+    sb.append("  \"kind\": \"ember-voice-compare\",\n")
+    sb.append("  \"external_peak_rss_kb\": null,\n")
+    sb.append("  \"voices\": {\n")
+    sb.append("    \"a\": { \"path\": ${jsonString(leftPath)}, \"slug\": ${jsonString(leftSlug)} },\n")
+    sb.append("    \"b\": { \"path\": ${jsonString(rightPath)}, \"slug\": ${jsonString(rightSlug)} }\n")
+    sb.append("  },\n")
+    sb.append("  \"lines\": [\n")
+    ids.forEachIndexed { index, id ->
+        val a = lineNode(left, id)
+        val b = lineNode(right, id)
+        sb.append("    {\n")
+        sb.append("      \"id\": ${jsonString(id)},\n")
+        sb.append("      \"a\": ${voiceSide(a)},\n")
+        sb.append("      \"b\": ${voiceSide(b)}\n")
+        sb.append("    }")
+        if (index != ids.lastIndex) sb.append(",")
+        sb.append("\n")
+    }
+    sb.append("  ]\n}\n")
+    return sb.toString()
+}
+
+private fun lineNode(doc: Json, id: String): Json {
+    return doc.field("lines").arr().first { it.field("id").str() == id }
+}
+
+private fun voiceSide(line: Json): String {
+    val ttfa = line.field("ttfa_ms").field("median").num()
+    val rtf = line.field("rtf").field("median").num()
+    val wer = line.field("wer")
+    val werText = if (wer is Json.Null) "null" else fmtNum(wer.field("wer").num())
+    return "{ \"ttfa_ms\": ${fmtNum(ttfa)}, \"rtf\": ${fmtNum(rtf)}, \"wer\": $werText }"
+}
+
+private fun printVoiceCompare(left: Json, right: Json) {
+    println()
+    println(String.format(Locale.US, "%-16s %8s %7s %7s %8s %7s %7s", "line", "aTTFA", "aRTF", "aWER", "bTTFA", "bRTF", "bWER"))
+    for (line in left.field("lines").arr()) {
+        val id = line.field("id").str()
+        val other = lineNode(right, id)
+        println(
+            String.format(
+                Locale.US,
+                "%-16s %8.0f %7.2f %7s %8.0f %7.2f %7s",
+                id,
+                line.field("ttfa_ms").field("median").num(),
+                line.field("rtf").field("median").num(),
+                werText(line),
+                other.field("ttfa_ms").field("median").num(),
+                other.field("rtf").field("median").num(),
+                werText(other),
+            ),
+        )
+    }
+}
+
+private fun werText(line: Json): String {
+    val wer = line.field("wer")
+    return if (wer is Json.Null) "n/a" else fmt(wer.field("wer").num())
 }
 
 private fun loadTts(config: BenchConfig): OfflineTts {

@@ -1,0 +1,7 @@
+{
+  "backend": "sherpa",
+  "model_dir": "",
+  "voice_wav": "",
+  "threads": 2,
+  "chunk_size": 2
+}
