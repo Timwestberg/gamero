@@ -13,8 +13,8 @@ import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.closeInReverse
 
 /**
- * Owns one view's conversation lease: its history, request dedupe, the reply watchdog and speech.
- * Each reply runs on the [ChatRuntime] of the member that sends it;
+ * Owns one view's conversation lease: its history, request dedupe, the reply watchdog, speech and
+ * handovers between team members. Each reply runs on the [ChatRuntime] of the member that sends it;
  * workers never mutate a newer view or replay a send. [runtimes] are the runtimes found on this
  * Mac; the chat closes them.
  */
@@ -41,9 +41,13 @@ internal class DesktopChat(
         var speak = false
         /** Runtimes this view has found ready; a lost sign-in removes one, so the next send checks again. */
         val ready = mutableSetOf<RuntimeId>()
+        /** The handover being prepared, and what a cancel returns to. */
+        var handover: PendingHandover? = null
         /** The record before the send in progress, restored when its runtime turns out not to be ready, since nothing reached it. */
         var beforeSend: ChatRecord? = null
     }
+
+    private class PendingHandover(val requestId: String, val from: RuntimeId?, val state: ChatState, val notice: String?)
 
     /** Opening is the only operation allowed to replace an active conversation. */
     override suspend fun open(scope: ChatScope): ChatSnapshot = synchronized(gate) {
@@ -96,14 +100,42 @@ internal class DesktopChat(
         view(session)
     }
 
-    /** Switching members is not offered yet: the answer is the snapshot with a notice, and nothing is recorded. */
+    /**
+     * Make `to` the active member. The same runtime records it at once; another runtime is checked
+     * and, when there is something it missed, handed a summary (or the recent messages) on the worker.
+     */
     override suspend fun handover(args: ChatHandover): ChatSnapshot = synchronized(gate) {
-        view(current(args.scope())).copy(notice = "Switching members is not available yet.")
+        val session = current(args.scope())
+        if (session.record.entries.any { it.id == args.requestId } || session.handover?.requestId == args.requestId) return@synchronized view(session)
+        // A refusal is a snapshot with a notice and no new entry; the page keeps the current member.
+        if (session.state == ChatState.RESPONDING) return@synchronized view(session).copy(notice = "Wait for the reply to finish, or stop it, before switching.")
+        if (session.state == ChatState.HANDING_OVER) return@synchronized view(session).copy(notice = "Another switch is still in progress.")
+        val to = args.to.runtimeId
+        if (to !in runtimes) { session.notice = notInstalled(to); return@synchronized view(session) }
+        val from = args.from
+        val canSummarize = from != null && from.runtimeId in runtimes && session.record.conversations[from.runtimeId] != null
+        val plan = Handovers.plan(session.record, from, args.to, canSummarize)
+        if (plan is HandoverPlan.Record && (to in session.ready || plan.method == HandoverMethod.SAME_CONVERSATION)) {
+            record(session, args, plan.method, null, plan.context)
+            return@synchronized view(session)
+        }
+        session.handover = PendingHandover(args.requestId, from?.runtimeId, session.state, session.notice)
+        session.state = ChatState.HANDING_OVER; session.notice = null
+        val generation = ++session.generation
+        worker.execute { attempt(session, generation, to, onFailure = { restore(session, couldNotComplete(to)) }) { handOver(session, generation, args, plan) } }
+        view(session)
     }
 
-    /** Stop ends the reply gracefully, or ends the runtimes' work when nothing has started. */
+    /** Stop ends the reply gracefully, cancels a handover being prepared, or ends the runtimes' work when nothing has started. */
     override suspend fun stop(scope: ChatScope): ChatSnapshot = synchronized(gate) {
         val session = current(scope)
+        val handover = session.handover
+        if (session.state == ChatState.HANDING_OVER && handover != null) {
+            // The outgoing member stays active and nothing is recorded; its summary is abandoned.
+            restore(session, handover.notice)
+            handover.from?.let { runtimes[it]?.release() }
+            return@synchronized view(session)
+        }
         val turn = session.turn
         end(session, ChatState.CANCELLED, "Reply stopped.", release = turn == null)
         turn?.stop()
@@ -174,6 +206,47 @@ internal class DesktopChat(
             if (!live(session, generation)) return@synchronized false
             if (readiness == Readiness.Ready) { session.ready += runtime.id; true } else { notReady(readiness); false }
         }
+    }
+
+    /** Check the incoming runtime, run the planned summary, and record the handover, unless it was cancelled. */
+    private fun handOver(session: Session, generation: Int, args: ChatHandover, plan: HandoverPlan) {
+        val to = args.to.runtimeId
+        if (!ready(session, generation, runtimes.getValue(to)) { restore(session, notReadyNotice(to, it)) }) return
+        val (method, summary, context) = when (plan) {
+            is HandoverPlan.Record -> Triple(plan.method, null, plan.context)
+            is HandoverPlan.Summarize -> {
+                val from = checkNotNull(args.from)
+                val written = try {
+                    runtimes.getValue(from.runtimeId).summarize(SummaryRequest(session.scope.profile, session.persona, from.modelId, plan.transcript))
+                } catch (error: Exception) {
+                    if (error is InterruptedException) throw error
+                    null
+                }
+                if (written != null) Triple(HandoverMethod.SUMMARY, written, Handovers.summaryContext(from, written))
+                else Triple(HandoverMethod.RECENT_MESSAGES, null, plan.fallback)
+            }
+        }
+        synchronized(gate) { if (live(session, generation)) record(session, args, method, summary, context) }
+    }
+
+    /** Write the handover entry and what the incoming runtime is owed; the chat is then ready for `to`. */
+    private fun record(session: Session, args: ChatHandover, method: HandoverMethod, summary: String?, context: String?) {
+        val to = args.to.runtimeId
+        val record = session.record
+        val owed = context?.let { PendingContext(to, it) } ?: record.pendingContext?.takeIf { it.runtimeId == to }
+        val entry = Handovers.entry(args.requestId, args.from, args.to, method, summary)
+        session.record = record.copy(entries = (record.entries + entry).takeLast(ChatLimits.HISTORY), pendingContext = owed)
+        session.handover = null; session.state = ChatState.READY; session.notice = null
+        runCatching { session.history.write(session.record) }.onFailure {
+            session.notice = "This switch could not be saved. Keep this chat open and try again later."
+        }
+    }
+
+    /** Back to where the chat was before a handover that did not happen. */
+    private fun restore(session: Session, notice: String?) {
+        val handover = session.handover ?: return
+        session.generation++; session.handover = null
+        session.state = handover.state; session.notice = notice
     }
 
     /** One turn's events, applied only while its view and generation are current and the reply is open. */
@@ -251,7 +324,7 @@ internal class DesktopChat(
     /** [release] ends every runtime's work too; a failure a runtime reported, or a graceful stop, has already ended its own. */
     private fun end(session: Session, state: ChatState, notice: String, release: Boolean = true) {
         session.generation++; session.state = state; session.notice = notice
-        session.turn = null; session.speak = false; session.beforeSend = null
+        session.turn = null; session.speak = false; session.handover = null; session.beforeSend = null
         if (release) runtimes.values.forEach { it.release() }
         speech.stop()
         runCatching { session.history.write(session.record) }
