@@ -5,7 +5,7 @@ import java.nio.file.Path
 import java.util.concurrent.Executors
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
-import javax.sound.sampled.Clip
+import javax.sound.sampled.SourceDataLine
 import org.formulagen.wrapper.bridge.ChatVoice
 import org.formulagen.wrapper.bridge.VoiceState
 import org.formulagen.wrapper.logger.LogLevel
@@ -29,12 +29,13 @@ internal interface ChatSpeech : AutoCloseable {
  */
 internal class DesktopSpeech(
     private val config: VoiceConfig?,
+    private val openLine: (Int) -> PcmLine = ::openSpeaker,
     private val openEngine: (VoiceConfig) -> PieceEngine = ::openPieceEngine,
 ) : ChatSpeech {
     private val gate = Any()
     private val worker = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-voice"))
     private var engine: EmberVoice? = null
-    private var clip: Clip? = null
+    private var line: PcmLine? = null
     private var generation = 0
     private var closed = false
     private val notInstalled = ChatVoice(VoiceState.UNAVAILABLE, "Local voice is not installed. Text chat is available.")
@@ -48,7 +49,8 @@ internal class DesktopSpeech(
     override fun speak(text: String) = synchronized(gate) {
         if (closed) return@synchronized
         stopLocked()
-        if (config == null || unavailable != null) return@synchronized
+        val settings = config
+        if (settings == null || unavailable != null) return@synchronized
         val spoken = speechText(text)
         if (spoken.isBlank()) return@synchronized
         val ticket = generation
@@ -56,30 +58,52 @@ internal class DesktopSpeech(
         worker.execute {
             try {
                 synchronized(gate) { if (closed || ticket != generation) return@execute }
-                val voice = engine ?: EmberVoice(openEngine(config), config).also { engine = it }
-                val audio = voice.speak(spoken)
-                val pcm = pcm16(audio.samples)
-                val player = AudioSystem.getClip()
+                val voice = engine ?: EmberVoice(openEngine(settings), settings).also { engine = it }
+                var player: PcmLine? = null
+                var started = false
+                var pending = ByteArray(0)
                 try {
-                    player.open(AudioFormat(audio.sampleRate.toFloat(), 16, 1, true, false), pcm, 0, pcm.size)
-                    synchronized(gate) {
-                        if (closed || ticket != generation) return@execute
-                        clip = player; state = ChatVoice(VoiceState.SPEAKING, if (text.length > MAX_SPOKEN_CHARS) "Reading the beginning of this reply. The full reply is shown above." else null)
-                        player.start()
+                    voice.speakStreaming(spoken) { samples, rate ->
+                        if (synchronized(gate) { closed || ticket != generation }) return@speakStreaming false
+                        val current = player ?: openLine(rate).also { player = it; synchronized(gate) { line = it } }
+                        val pcm = pcm16(samples)
+                        if (!started) {
+                            pending = pending + pcm
+                            val queuedMs = if (rate > 0) pending.size / 2 * 1000 / rate else 0
+                            // The sentence has finished synthesizing. Start once 200 ms is queued,
+                            // or immediately when the sentence is shorter than that.
+                            if (queuedMs >= settings.startAfterMs || pcm.isNotEmpty()) {
+                                if (synchronized(gate) { closed || ticket != generation }) return@speakStreaming false
+                                current.start()
+                                started = true
+                                synchronized(gate) {
+                                    state = ChatVoice(
+                                        VoiceState.SPEAKING,
+                                        if (text.length > MAX_SPOKEN_CHARS) {
+                                            "Reading the beginning of this reply. The full reply is shown above."
+                                        } else {
+                                            null
+                                        },
+                                    )
+                                }
+                                current.write(pending)
+                                pending = ByteArray(0)
+                            }
+                        } else {
+                            current.write(pcm)
+                        }
+                        synchronized(gate) { !closed && ticket == generation }
                     }
-                    val deadline = System.nanoTime() + (player.microsecondLength + 5_000_000L) * 1000
-                    while (synchronized(gate) { !closed && ticket == generation } && player.microsecondPosition < player.microsecondLength) {
-                        check(System.nanoTime() < deadline) { "Audio device stalled" }
-                        Thread.sleep(20)
-                    }
-                } finally { player.stop(); player.close() }
-                synchronized(gate) { if (ticket == generation) { clip = null; state = ChatVoice() } }
+                } finally {
+                    player?.let { runCatching { it.drain(); it.stop(); it.close() } }
+                }
+                synchronized(gate) { if (ticket == generation) { line = null; state = ChatVoice() } }
             } catch (error: Throwable) {
                 // UnsatisfiedLinkError or ExceptionInInitializerError: the native runtime cannot load on this Mac.
                 val linkage = error is LinkageError
                 synchronized(gate) {
                     if (linkage) unavailable = ChatVoice(VoiceState.UNAVAILABLE, "Local voice could not start on this Mac. Text chat is available.")
-                    if (ticket == generation) clip = null
+                    if (ticket == generation) line = null
                     if (!closed && (linkage || ticket == generation)) {
                         state = unavailable ?: ChatVoice(VoiceState.ERROR, "Voice playback failed. Your text reply is still available.")
                     }
@@ -93,7 +117,9 @@ internal class DesktopSpeech(
     override fun stop() = synchronized(gate) { stopLocked() }
     private fun stopLocked() {
         generation++
-        clip?.let { runCatching { it.stop(); it.close() } }; clip = null
+        engine?.cancel()
+        line?.let { runCatching { it.flush(); it.stop(); it.close() } }
+        line = null
         state = unavailable ?: ChatVoice()
     }
 
@@ -119,6 +145,38 @@ internal fun pcm16(samples: FloatArray): ByteArray = ByteArray(samples.size * 2)
         val value = ((if (sample.isFinite()) sample else 0f).coerceIn(-1f, 1f) * 32767).toInt()
         bytes[index * 2] = value.toByte(); bytes[index * 2 + 1] = (value shr 8).toByte()
     }
+}
+
+internal interface PcmLine {
+    fun start()
+    fun write(pcm: ByteArray)
+    fun drain()
+    fun flush()
+    fun stop()
+    fun close()
+}
+
+internal fun openSpeaker(sampleRate: Int): PcmLine {
+    val format = AudioFormat(sampleRate.toFloat(), 16, 1, true, false)
+    val line = AudioSystem.getSourceDataLine(format)
+    line.open(format)
+    return SourcePcmLine(line)
+}
+
+private class SourcePcmLine(private val line: SourceDataLine) : PcmLine {
+    override fun start() = line.start()
+    override fun write(pcm: ByteArray) {
+        var offset = 0
+        while (offset < pcm.size) {
+            val wrote = line.write(pcm, offset, pcm.size - offset)
+            if (wrote <= 0) break
+            offset += wrote
+        }
+    }
+    override fun drain() = line.drain()
+    override fun flush() = line.flush()
+    override fun stop() = line.stop()
+    override fun close() = line.close()
 }
 
 /** Host configuration supplies model paths; no path or reference clip comes from the page. */

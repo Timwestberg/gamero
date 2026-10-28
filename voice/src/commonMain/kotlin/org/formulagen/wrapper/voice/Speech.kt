@@ -47,7 +47,12 @@ interface PieceEngine {
     val sampleRate: Int
     fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio
     fun release()
+    fun requestCancel() {}
+    fun clearCancel() {}
+    fun isCancelled(): Boolean = false
 }
+
+class SpeechCancelled : RuntimeException("speech cancelled")
 
 data class SpeakResult(
     val samples: FloatArray,
@@ -72,16 +77,34 @@ class EmberVoice(
     private val state = AtomicInt(IDLE)
 
     fun speak(text: String, listener: SpeechListener? = null): SpeakResult {
+        return speakStreaming(text, listener) { _, _ -> true }
+    }
+
+    /**
+     * Synthesizes one sentence at a time. [onSentence] is the raw sentence,
+     * before the crossfade. Return false to drop the rest. Playback can start
+     * from the first sentence while the next one is still being generated.
+     */
+    fun speakStreaming(
+        text: String,
+        listener: SpeechListener? = null,
+        onSentence: (FloatArray, Int) -> Boolean,
+    ): SpeakResult {
         if (!state.compareAndSet(IDLE, SPEAKING)) {
             throw IllegalStateException(
                 if (state.load() == RELEASED) "EmberVoice was released" else "EmberVoice is already speaking",
             )
         }
         try {
-            return speakLocked(text, listener)
+            engine.clearCancel()
+            return speakLocked(text, listener, onSentence)
         } finally {
             state.compareAndSet(SPEAKING, IDLE)
         }
+    }
+
+    fun cancel() {
+        engine.requestCancel()
     }
 
     fun release() {
@@ -92,7 +115,11 @@ class EmberVoice(
         engine.release()
     }
 
-    private fun speakLocked(text: String, listener: SpeechListener?): SpeakResult {
+    private fun speakLocked(
+        text: String,
+        listener: SpeechListener?,
+        onSentence: (FloatArray, Int) -> Boolean,
+    ): SpeakResult {
         val events = ArrayList<SpeechEvent>()
         fun emit(event: SpeechEvent) {
             events.add(event)
@@ -109,11 +136,18 @@ class EmberVoice(
         var ttfaMs = 0.0
         var sampleRate = engine.sampleRate
         for ((index, piece) in pieces.withIndex()) {
-            val take = synthesizePiece(engine, config, piece)
+            if (engine.isCancelled()) break
+            val take = try {
+                synthesizePiece(engine, config, piece)
+            } catch (cancelled: SpeechCancelled) {
+                break
+            }
+            if (take.samples.isEmpty() || engine.isCancelled()) break
             if (index == 0) ttfaMs = take.ttfaMs
             sampleRate = take.sampleRate
             emit(SpeechEvent(SPEECH_LEVEL, rms = rms(take.samples)))
             parts.add(take.samples)
+            if (!onSentence(take.samples, take.sampleRate)) break
         }
         val gap = sampleRate * config.silenceBetweenPiecesMs / 1000
         val fade = if (gap == 0) sampleRate * config.crossfadeMs / 1000 else 0
