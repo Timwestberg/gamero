@@ -35,7 +35,10 @@ which would sign the player out of their own Codex; the login check is the
 ChatGPT-only rule instead. It ignores user configuration (`--ignore-user-config`;
 the login still comes from the player's home) and invokes `codex exec` directly
 with stdin, no shell, ephemeral execution, approvals disabled, and a read-only
-sandbox. This initial capability can inspect a
+sandbox. Ignoring the configuration also ignores where the player keeps the login
+(`cli_auth_credentials_store`, `file` by default), so readiness asks
+`codex login status` under the file store and then the keyring, and the task runs
+with `-c cli_auth_credentials_store=<the store the login was found in>`. This initial capability can inspect a
 workspace but cannot promise file-changing work. Missing/incompatible tooling or
 sign-in prevents useful execution; no cloud handoff is implemented.
 

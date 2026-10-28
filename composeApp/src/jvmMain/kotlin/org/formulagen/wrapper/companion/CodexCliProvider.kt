@@ -8,8 +8,13 @@ import org.formulagen.wrapper.providers.codexProcess
 /**
  * Hovel tasks on the player's own Codex sign-in (Codex's default home). Authentication stays
  * wholly in the player's installed Codex: Hovel checks `codex login status` before every task and
- * runs one only on a ChatGPT login. The task itself ignores the player's `config.toml`, so its
- * read-only lockdown is the same whatever the player configured.
+ * runs one only on a ChatGPT login. The task itself ignores the player's `config.toml`
+ * (`--ignore-user-config`), so its read-only lockdown is the same whatever the player configured.
+ *
+ * Ignoring the configuration would also ignore where the player keeps the login
+ * (`cli_auth_credentials_store`, `file` by default): a keyring-only login that `login status`
+ * reports would be invisible to the task. So readiness asks under each store explicitly (the file,
+ * then the keyring) and the task runs with the store its login was found in.
  */
 class CodexCliProvider(private val executable: Path, workspace: Path, outputDirectory: Path) : TaskProvider {
     private val outputDirectory = outputDirectory.toAbsolutePath().normalize()
@@ -23,10 +28,25 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
 
     enum class Readiness { UNAVAILABLE, AUTH_REQUIRED, READY }
 
+    /** Where the ChatGPT login was last found (`file` or `keyring`), which the task then reads. */
+    @Volatile private var credentialStore: String? = null
+
     fun readiness(): Readiness {
+        var answer = Readiness.UNAVAILABLE
+        for (store in CREDENTIAL_STORES) {
+            answer = loginStatus(store)
+            if (answer == Readiness.READY) { credentialStore = store; return answer }
+            if (answer == Readiness.UNAVAILABLE) break
+        }
+        credentialStore = null
+        return answer
+    }
+
+    /** `codex login status` reading the login from [store]. */
+    private fun loginStatus(store: String): Readiness {
         var process: Process? = null
         return try {
-            val probe = builder(listOf("login", "status")).redirectErrorStream(true).start()
+            val probe = builder(listOf("-c", "cli_auth_credentials_store=\"$store\"", "login", "status")).redirectErrorStream(true).start()
             process = probe
             val text = StringBuilder()
             val reader = Thread.ofPlatform().daemon().start {
@@ -53,13 +73,14 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
 
     override fun execute(request: ExecutionRequest): ProviderResult {
         check(readiness() == Readiness.READY) { "Codex ChatGPT sign-in is required" }
+        val store = checkNotNull(credentialStore)
         require(java.util.UUID.fromString(request.id).toString() == request.id)
         val output = outputDirectory.resolve("${request.id}.txt")
         Files.createFile(output, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
             java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")))
         run {
             // v1 is deliberately read-only. The login check above is the ChatGPT-only rule; builder() adds the environment rules.
-            val command = listOf("-a", "never", "exec", "--ignore-user-config", "--ephemeral",
+            val command = listOf("-c", "cli_auth_credentials_store=\"$store\"", "-a", "never", "exec", "--ignore-user-config", "--ephemeral",
                 "--sandbox", "read-only", "--skip-git-repo-check", "--color", "never",
                 "--output-last-message", output.toString(), "-")
             val process = builder(command).redirectOutput(ProcessBuilder.Redirect.DISCARD)
@@ -90,6 +111,11 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
                 terminateProcessTree(process, descendants)
             }
         } // Retain output even on ambiguous failure for explicit local reconciliation.
+    }
+
+    private companion object {
+        /** Where Codex may keep the login, in the order asked: its default, then the macOS keyring. */
+        val CREDENTIAL_STORES = listOf("file", "keyring")
     }
 
     /** The player's own Codex login; [codexProcess] owns the rules. */

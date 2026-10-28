@@ -34,15 +34,19 @@ class CodexCliProviderTest {
         } finally { directory.toFile().deleteRecursively() }
     }
 
-    private fun fixture(auth: String = "Logged in using ChatGPT", exit: Int = 0): Pair<CodexCliProvider, java.nio.file.Path> {
+    private fun fixture(auth: String = "Logged in using ChatGPT", exit: Int = 0, store: String = "file"): Pair<CodexCliProvider, java.nio.file.Path> {
         val directory = Files.createTempDirectory("fake-codex")
         val executable = directory.resolve("codex")
         Files.writeString(executable, """
             #!/bin/sh
             printf '%s\n' "${'$'}@" > all-arguments.txt
-            while [ "${'$'}1" = -c ]; do shift 2; done
+            found=""
+            while [ "${'$'}1" = -c ]; do
+              if [ "${'$'}2" = 'cli_auth_credentials_store="$store"' ]; then found=1; fi
+              shift 2
+            done
             if [ "${'$'}1" = login ]; then
-              echo '$auth'
+              if [ -n "${'$'}found" ]; then echo '$auth'; else echo 'Not logged in'; fi
               exit 0
             fi
             mv all-arguments.txt arguments.txt
@@ -65,7 +69,9 @@ class CodexCliProviderTest {
         assertEquals(ProviderResult(true, "fixture result"), provider.execute(request))
         val args = Files.readAllLines(directory.resolve("arguments.txt"))
         assertTrue(args.containsAll(listOf("never", "--ignore-user-config", "--ephemeral", "read-only")))
-        assertFalse(args.any { it.startsWith("forced_login_method") || it.startsWith("cli_auth_credentials_store") })
+        // The task reads the login where readiness found it; no forced login method, which would log an API key out.
+        assertEquals(listOf("-c", "cli_auth_credentials_store=\"file\""), args.take(2))
+        assertFalse(args.any { it.startsWith("forced_login_method") })
         assertFalse(args.contains(request.prompt))
         assertTrue(Files.readString(directory.resolve("input.txt")).contains(request.prompt))
         assertFalse(Files.exists(directory.resolve("unwanted")))
@@ -96,5 +102,15 @@ class CodexCliProviderTest {
     @Test fun nonzeroProviderExitRemainsFailed() {
         val (provider, _) = fixture(exit = 4)
         assertFalse(provider.execute(ExecutionRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(), "hello")).succeeded)
+    }
+
+    @Test fun aKeyringOnlyLoginIsFoundAndTheTaskReadsItFromTheKeyring() {
+        // `--ignore-user-config` would otherwise read the default file store, where this player has no login.
+        val (provider, directory) = fixture(store = "keyring")
+        assertEquals(CodexCliProvider.Readiness.READY, provider.readiness())
+        assertEquals(ProviderResult(true, "fixture result"), provider.execute(ExecutionRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(), "hello")))
+        assertEquals(listOf("-c", "cli_auth_credentials_store=\"keyring\""), Files.readAllLines(directory.resolve("arguments.txt")).take(2))
+        val (signedOut, _) = fixture(store = "nowhere")
+        assertEquals(CodexCliProvider.Readiness.AUTH_REQUIRED, signedOut.readiness())
     }
 }
