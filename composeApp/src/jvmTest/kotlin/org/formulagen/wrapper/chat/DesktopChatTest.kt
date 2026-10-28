@@ -167,16 +167,23 @@ class DesktopChatTest {
             val again = a.copy(sessionId = UUID.randomUUID().toString())
             chat.open(again); await { state(chat,again).state == ChatState.READY }
             rejectResume = true
-            chat.send(send(again, false)); await { rpcs.size == 2 && rpcs.last().calls.contains("turn/start") }
-            // A view's first send checks the account, and the turn confirms it again before any thread call.
-            assertEquals(listOf("account/read", "account/read", "thread/resume", "thread/start", "turn/start"), rpcs.last().calls.toList())
-            assertEquals(JsonPrimitive(freshThreadId), rpcs.last().params.last()["threadId"])
+            chat.send(send(again, false, text = "Still there?")); await { rpcs.size == 2 && rpcs.last().calls.contains("turn/start") }
+            // A view's first send checks the account and the turn confirms it before any thread call. Codex no longer has
+            // the thread, so the turn starts over in a new one, which hears the recent messages.
+            assertEquals(listOf("account/read", "account/read", "thread/resume", "account/read", "thread/start", "turn/start"), rpcs.last().calls.toList())
+            val turn = rpcs.last().params.last()
+            assertEquals(JsonPrimitive(freshThreadId), turn["threadId"])
+            assertEquals("Earlier in this conversation (the most recent messages):\n<<<\nPerson: Hello\n>>>\n\nStill there?",
+                turn.getValue("input").jsonArray.single().jsonObject.getValue("text").jsonPrimitive.content)
             rpcs.last().delta("Fresh hello"); rpcs.last().complete(); await { state(chat,again).state == ChatState.READY }
             assertEquals("Fresh hello", chat.snapshot(again).messages.last().text)
             val saved = ChatHistory(root.resolve("local/companion-chats/${a.companionId}.json")).read()
             assertEquals(freshThreadId, saved.conversations[RuntimeId.CODEX]?.id)
-            // Codex's first turn is noted as a fresh start, then two messages each.
-            assertEquals(listOf("handover", "user", "assistant", "user", "assistant"), saved.entries.map { it::class.simpleName!!.lowercase() })
+            assertNull(saved.pendingContext)
+            // Codex's first turn is noted as a fresh start, and its new thread as getting the recent messages.
+            assertEquals(listOf("handover", "user", "assistant", "handover", "user", "assistant"), saved.entries.map { it::class.simpleName!!.lowercase() })
+            val note = saved.entries[3] as ChatEntry.Handover
+            assertEquals(listOf(codex, codex, HandoverMethod.RECENT_MESSAGES), listOf(note.from, note.to, note.method))
         }
     }
 

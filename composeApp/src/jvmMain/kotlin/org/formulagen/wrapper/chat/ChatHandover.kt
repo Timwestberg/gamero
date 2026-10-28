@@ -92,17 +92,21 @@ internal object Handovers {
 
     private fun block(source: String, text: String) = "Earlier in this conversation ($source):\n<<<\n$text\n>>>"
 
-    private fun line(entry: ChatEntry): String = when (entry) {
-        is ChatEntry.User -> "Person: ${entry.text}"
-        is ChatEntry.Assistant -> "Companion: ${entry.text}"
-        is ChatEntry.Handover -> ""
+    /** What a message said, or null for a handover note. */
+    private fun said(entry: ChatEntry): String? = when (entry) {
+        is ChatEntry.User -> entry.text
+        is ChatEntry.Assistant -> entry.text
+        is ChatEntry.Handover -> null
     }
+
+    private fun line(entry: ChatEntry): String = (if (entry is ChatEntry.User) "Person: " else "Companion: ") + said(entry)
 
     /** The newest messages that fit, oldest first. The oldest one that does not fit whole keeps its end, marked as shortened. */
     private fun bounded(entries: List<ChatEntry>, count: Int, chars: Int): List<String> {
         val kept = ArrayDeque<String>()
         var room = chars
-        for (entry in entries.filterNot { it is ChatEntry.Handover }.takeLast(count).asReversed()) {
+        // A reply that was stopped before any text, or never came, tells the next member nothing.
+        for (entry in entries.filterNot { said(it).isNullOrBlank() }.takeLast(count).asReversed()) {
             val line = line(entry)
             if (line.length <= room) { kept.addFirst(line); room -= line.length; continue }
             if (room >= MIN_CUT) kept.addFirst("[shortened] …" + line.takeLast(room - 13))

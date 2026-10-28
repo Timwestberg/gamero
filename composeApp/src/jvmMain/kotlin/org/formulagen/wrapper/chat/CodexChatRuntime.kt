@@ -24,8 +24,9 @@ import org.formulagen.wrapper.providers.codexProfileHome
 /**
  * Codex behind [ChatRuntime]. One app-server serves the active profile and is kept between turns;
  * it is dropped on [release], on a closed transport, on a refused tool request and when the account
- * is not ChatGPT, and the next turn starts a new one and resumes the thread again. Stopping a turn
- * closes the app-server, including a turn that is still starting.
+ * is not ChatGPT, and the next turn starts a new one and resumes the thread again. A thread Codex no
+ * longer has is a lost conversation, which the chat starts over with the recent messages. Stopping
+ * a turn closes the app-server, including a turn that is still starting.
  */
 internal class CodexChatRuntime(
     private val providerRoot: Path,
@@ -70,7 +71,7 @@ internal class CodexChatRuntime(
         val model = explicitModel(turn.model) ?: run { events.failed(ChatFailure.ModelUnavailable); return TurnHandle {} }
         val connection = connect(turn.profile)
         if (!chatgpt(connection)) { events.failed(ChatFailure.SignedOut); return TurnHandle {} }
-        val thread = thread(connection, turn, events)
+        val thread = thread(connection, turn, events) ?: run { events.failed(ChatFailure.ConversationLost); return TurnHandle {} }
         // Codex keeps a named model for later turns of a thread, so its default is named to go back to it.
         val sent = model.ifEmpty { if (turn.conversation?.explicitModel == true && thread == turn.conversation.id) defaultModel(connection).orEmpty() else "" }
         val active = Turn(thread, events)
@@ -152,16 +153,14 @@ internal class CodexChatRuntime(
         return false
     }
 
-    /** The companion's thread on this app-server: resumed, or started fresh when Codex no longer has it. */
-    private fun thread(connection: Connection, turn: TurnRequest, events: TurnEvents): String {
+    /** The companion's thread on this app-server: resumed, or new when there is none. Null when Codex no longer has it. */
+    private fun thread(connection: Connection, turn: TurnRequest, events: TurnEvents): String? {
         val saved = turn.conversation?.id
         if (saved != null && synchronized(lock) { connection.thread } == saved) return saved
         val cwd = workspace(connection).toString()
         // Codex applies the persona on every resume, so a thread survives a renamed companion.
-        val resumed = saved?.let {
-            try { connection.rpc.call("thread/resume", chatThreadParams(turn.persona, cwd, it)) } catch (_: CodexRequestRejected) { null }
-        }
-        val result = resumed ?: connection.rpc.call("thread/start", chatThreadParams(turn.persona, cwd, null))
+        val result = if (saved == null) connection.rpc.call("thread/start", chatThreadParams(turn.persona, cwd, null))
+            else try { connection.rpc.call("thread/resume", chatThreadParams(turn.persona, cwd, saved)) } catch (_: CodexRequestRejected) { return null }
         val id = result.getValue("thread").jsonObject.getValue("id").jsonPrimitive.content
         require(UUID.fromString(id).toString() == id)
         synchronized(lock) { current(connection); connection.thread = id }

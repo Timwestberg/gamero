@@ -22,12 +22,16 @@ class CodexChatRuntimeTest {
         var startedThread = ""
         /** What `model/list` answers; null when Codex rejects it. */
         var models: JsonObject? = null
+        /** Codex no longer has the saved thread. */
+        var resumeRejected = false
         @Volatile var closed = false
         override fun call(method: String, params: JsonObject): JsonObject {
             calls += method to params
             return when (method) {
                 "account/read" -> buildJsonObject { putJsonObject("account") { put("type", "chatgpt") } }
-                "thread/start", "thread/resume" -> buildJsonObject { putJsonObject("thread") { put("id", startedThread) } }
+                "thread/resume" -> if (resumeRejected) throw org.formulagen.wrapper.providers.CodexRequestRejected()
+                    else buildJsonObject { putJsonObject("thread") { put("id", startedThread) } }
+                "thread/start" -> buildJsonObject { putJsonObject("thread") { put("id", startedThread) } }
                 "turn/start" -> { onTurn(params); buildJsonObject { putJsonObject("turn") { put("id", "turn-1") } } }
                 "model/list" -> models ?: throw org.formulagen.wrapper.providers.CodexRequestRejected()
                 else -> buildJsonObject {}
@@ -104,6 +108,22 @@ class CodexChatRuntimeTest {
             assertEquals("completed Hi", events.seen.last())
         }
         assertTrue("model/list" in CHAT_CODEX_METHODS)
+    }
+
+    @Test fun aThreadCodexNoLongerHasIsALostConversation() {
+        val root = Files.createTempDirectory("codex-lost-thread")
+        val rpcs = mutableListOf<Rpc>()
+        runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.resumeRejected = true; rpc.onTurn = { complete(rpc, thread, "Hi") } }.use { codex ->
+            val lost = Events()
+            codex.startTurn(request(null, NativeConversation(thread, persona.hash)), lost)
+            assertEquals(listOf("failed ConversationLost"), lost.seen)
+            assertEquals(listOf("account/read", "thread/resume"), rpcs.single().calls.map { it.first })
+            // The chat then starts over without a conversation, in a new thread.
+            val fresh = Events()
+            codex.startTurn(request(null), fresh)
+            assertEquals(listOf("opened $thread", "partial Hi", "completed Hi"), fresh.seen)
+            assertEquals(1, rpcs.single().calls("thread/start").size)
+        }
     }
 
     @Test fun summarizesInAnEphemeralThreadWithoutTouchingTheCompanionThread() {

@@ -311,7 +311,9 @@ internal class DesktopChat(
             val earlier = forgotten.copy(entries = forgotten.entries.take(at))
             val owed = record.pendingContext?.takeIf { it.runtimeId == kind }
             val context = if (owed == null) Handovers.recentMessages(Handovers.unseen(earlier, kind)) else null
-            val note = context?.let { Handovers.entry(UUID.randomUUID().toString(), Handovers.lastAuthor(earlier.entries), member, HandoverMethod.RECENT_MESSAGES) }
+            // From the member that was current before this send's own notes.
+            val from = Handovers.currentMember((session.beforeSend ?: earlier).entries)
+            val note = context?.let { Handovers.entry(UUID.randomUUID().toString(), from, member, HandoverMethod.RECENT_MESSAGES) }
             val entries = (earlier.entries + listOfNotNull(note) + forgotten.entries.drop(at)).takeLast(ChatLimits.HISTORY)
             session.record = forgotten.copy(entries = entries, pendingContext = owed ?: context?.let { PendingContext(kind, it) } ?: record.pendingContext)
             session.turn = null
