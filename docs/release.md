@@ -53,7 +53,29 @@ run, plus the best time seen, to show whether a change made a step faster.
 
 These reach Gradle as `-Pgamero.product`, `-Pgamero.webUrl`, `-Pgamero.version`
 and `-Pgamero.buildNumber` (`composeApp/build.gradle.kts`). Without them,
-development builds behave as before.
+development builds behave as before. `tools/build-release.sh` also passes
+`-Pgamero.release=true`, which marks the desktop app as a release build.
+
+### Release and development builds
+
+Features that are not cleared for players are gated in two ways, and a gate
+fails closed:
+
+- **Development marker.** `-Dgamero.dev=true` marks a local or development
+  launch. Gradle's `JavaExec` run tasks and the local jpackage prototypes
+  (`scripts/package-catalog-macos.sh`, `scripts/package-embedded-macos.sh`, via
+  the `desktopJvmOptions` list) pass it. Release packaging goes through
+  `compose.desktop`'s own JVM options and never does.
+- **Release veto.** `-Pgamero.release=true` bakes `-Dgamero.release=true` into
+  the packaged app, which turns gated features off whatever the environment says.
+
+Claude as a companion runtime is gated this way: it is offered only when the
+app carries the development marker, is not a release build, and
+`HOVEL_CLAUDE_PROVIDER=1` (`claudeProviderEnabled`). Otherwise it has no
+Providers card, every Providers call for it answers `not-offered`, and chat
+says "Claude is not available in this version of Hovel." Flipping it on for
+players waits for Anthropic's confirmation that a companion persona on a
+player's own subscription is allowed.
 
 There is no live Hovel URL yet, so the default is game-platform's local edge,
 which serves the web build at `/hovel.html` on port 8080:

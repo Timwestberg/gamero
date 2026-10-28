@@ -32,6 +32,10 @@ export HOVEL_EMBED_LIBRARY="$GAMERO_ROOT/build/embedded-godot/libhovel_embed.dyl
 # The pinned engine for the embedded game; Godot's embedding is still a beta.
 EMBED_GODOT_VERSION='4.8.beta1.official.4d10419ca'
 
+# Claude as a companion team runtime, on the player's own Claude Code sign-in. Development only:
+# release builds ignore it until Anthropic confirms a companion persona is allowed.
+export HOVEL_CLAUDE_PROVIDER="${HOVEL_CLAUDE_PROVIDER:-1}"
+
 # Local voice for spoken chat replies. scripts/fetch-voice.sh downloads these.
 VOICE_ROOT="$GAMERO_ROOT/spikes/ember-voice/mac"
 export HOVEL_VOICE_MODEL="${HOVEL_VOICE_MODEL:-$VOICE_ROOT/models/sherpa-onnx-pocket-tts-int8-2026-01-26}"

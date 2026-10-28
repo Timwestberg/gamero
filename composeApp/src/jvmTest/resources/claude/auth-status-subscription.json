@@ -1,0 +1,8 @@
+{
+  "loggedIn": true,
+  "authMethod": "claude.ai",
+  "apiProvider": "firstParty",
+  "analyticsDisabled": true,
+  "email": "player@example.test",
+  "subscriptionType": "max"
+}

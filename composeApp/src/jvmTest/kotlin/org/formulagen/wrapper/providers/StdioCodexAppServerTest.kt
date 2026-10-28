@@ -3,6 +3,7 @@ package org.formulagen.wrapper.providers
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 import kotlinx.serialization.json.*
+import org.formulagen.wrapper.process.readBoundedLine
 import kotlin.test.*
 
 class StdioCodexAppServerTest {
