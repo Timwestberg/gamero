@@ -83,7 +83,9 @@ internal class DesktopChat(
         val text = args.text.trimEcma()
         val record = session.record
         val joining = joining(record, args.member)
-        val entries = (record.entries + listOfNotNull(joining?.first) + ChatEntry.User(args.requestId, text) +
+        // A new model for the current member is noted just before the message it answers.
+        val switched = if (joining == null) Handovers.modelChange(record.entries, args.member, UUID.randomUUID().toString()) else null
+        val entries = (record.entries + listOfNotNull(joining?.first, switched) + ChatEntry.User(args.requestId, text) +
             ChatEntry.Assistant(UUID.randomUUID().toString(), args.member, "")).takeLast(ChatLimits.HISTORY)
         val next = record.copy(entries = entries, pendingContext = joining?.second ?: record.pendingContext)
         session.history.write(next)

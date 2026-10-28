@@ -117,6 +117,50 @@ class DesktopChatTeamTest {
         }
     }
 
+    @Test fun changingTheModelInASendIsNotedOnceEachTime() = runBlocking {
+        val claude = Fake(RuntimeId.CLAUDE_CODE)
+        chat(claude).use { chat ->
+            chat.open(scope)
+            turn(chat, claude, sonnet, "Hi", "Hello", session)
+            fun switches() = state(chat).messages.filterIsInstance<ChatEntry.Handover>().filter { it.method == HandoverMethod.SAME_CONVERSATION }
+            turn(chat, claude, sonnet, "Again", "Hello again", session)
+            assertTrue(switches().isEmpty(), "No note while the model is unchanged")
+            turn(chat, claude, opus, "Think harder", "Thinking", session)
+            val entries = chat.snapshot(scope).messages
+            val note = entries[entries.size - 3] as ChatEntry.Handover
+            assertEquals(listOf(sonnet, opus, HandoverMethod.SAME_CONVERSATION, HandoverReason.MANUAL), listOf(note.from, note.to, note.method, note.reason))
+            assertEquals(1, switches().size)
+            assertEquals(session, claude.requests.last().conversation?.id); assertEquals("opus", claude.requests.last().model)
+            assertNull(claude.requests.last().context)
+            turn(chat, claude, opus, "And?", "Done", session)
+            assertEquals(1, switches().size)
+            turn(chat, claude, sonnet, "Back", "Back", session)
+            assertEquals(listOf(opus to sonnet), switches().drop(1).map { it.from to it.to })
+            // A switch recorded by chat.handover is not noted again by the send that follows it.
+            chat.handover(handover(sonnet, opus))
+            turn(chat, claude, opus, "Once more", "Sure", session)
+            assertEquals(3, switches().size)
+        }
+    }
+
+    @Test fun aModelChangeAfterAConversationFromBeforeTeamsIsNoted() = runBlocking {
+        val legacy = root.resolve("local/codex/companion-chats/${scope.companionId}.json")
+        Files.createDirectories(legacy.parent)
+        Files.writeString(legacy, """{"threadId":"$thread","messages":[{"id":"${UUID.randomUUID()}","role":"user","text":"Hi"},""" +
+            """{"id":"${UUID.randomUUID()}","role":"assistant","text":"Hello again"}]}""")
+        val codexRuntime = Fake(RuntimeId.CODEX)
+        val luna = TeamMember(RuntimeId.CODEX, "gpt-6-luna")
+        chat(codexRuntime).use { chat ->
+            chat.open(scope)
+            turn(chat, codexRuntime, luna, "Hello", "Hi", thread)
+            val entries = chat.snapshot(scope).messages
+            assertEquals(listOf("user", "assistant", "handover", "user", "assistant"), entries.map { it::class.simpleName!!.lowercase() })
+            val note = entries[2] as ChatEntry.Handover
+            assertEquals(listOf(codex, luna, HandoverMethod.SAME_CONVERSATION), listOf(note.from, note.to, note.method))
+            assertEquals(thread, codexRuntime.requests.single().conversation?.id); assertNull(codexRuntime.requests.single().context)
+        }
+    }
+
     @Test fun aSwitchAcrossRuntimesHandsOverASummaryByTheOutgoingMember() = runBlocking {
         val codexRuntime = Fake(RuntimeId.CODEX); val claude = Fake(RuntimeId.CLAUDE_CODE)
         chat(codexRuntime, claude).use { chat ->

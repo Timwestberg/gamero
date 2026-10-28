@@ -51,6 +51,21 @@ internal object Handovers {
     /** The member that wrote the last reply, or null when nobody has replied. */
     fun lastAuthor(entries: List<ChatEntry>): TeamMember? = entries.filterIsInstance<ChatEntry.Assistant>().lastOrNull()?.author
 
+    /** The conversation's current member: the `to` of the last handover, else the author of the last reply. */
+    fun currentMember(entries: List<ChatEntry>): TeamMember? =
+        entries.filterIsInstance<ChatEntry.Handover>().lastOrNull()?.to ?: lastAuthor(entries)
+
+    /**
+     * A send that changes the current member's model within its runtime is a switch too: the note
+     * a person sees, recorded as `same-conversation`. Null when the member is unchanged, or on another
+     * runtime, whose first turn is noted as it joins.
+     */
+    fun modelChange(entries: List<ChatEntry>, member: TeamMember, id: String): ChatEntry.Handover? {
+        val current = currentMember(entries) ?: return null
+        if (current.runtimeId != member.runtimeId || current.modelId == member.modelId) return null
+        return entry(id, current, member, HandoverMethod.SAME_CONVERSATION)
+    }
+
     /** [entries] for a summary, oldest first, within [TRANSCRIPT_LIMIT]. */
     fun transcript(entries: List<ChatEntry>): String = bounded(entries, Int.MAX_VALUE, TRANSCRIPT_LIMIT).joinToString("\n")
 
