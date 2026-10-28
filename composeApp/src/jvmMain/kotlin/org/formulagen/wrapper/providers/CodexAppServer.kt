@@ -13,8 +13,9 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * One Codex app-server child over bounded stdio JSON-RPC. Its policy is the allowed-method list
  * each owner passes: Providers gets [StdioCodexAppServer.ACCOUNT_METHODS], chat gets account and
- * conversation methods (chatCodex). Server requests such as tool approvals are always refused,
- * and callers never receive tokens.
+ * conversation methods (chatCodex). Server requests such as tool approvals are refused, unless the
+ * owner answers them itself ([StdioCodexAppServer]'s `onRequest`, for working members only), and
+ * callers never receive tokens.
  */
 internal interface CodexAppServer : AutoCloseable {
     fun call(method: String, params: JsonObject = buildJsonObject {}): JsonObject
@@ -27,6 +28,12 @@ internal class StdioCodexAppServer(
     arguments: List<String> = emptyList(),
     private val onNotification: (String, JsonObject) -> Unit = { _, _ -> },
     private val timeoutSeconds: Long = 5,
+    /**
+     * Answers a server request (`method`, `params`) by calling `respond` once with its result, or
+     * with null to refuse it. It is called on the reader thread and must not block. Null refuses
+     * every request, as a talk-only or account process always does.
+     */
+    private val onRequest: ((String, JsonObject, (JsonObject?) -> Unit) -> Unit)? = null,
 ) : CodexAppServer {
     private val process = runtime.builder(arguments + listOf("app-server", "--listen", "stdio://"))
         .redirectError(ProcessBuilder.Redirect.DISCARD).start()
@@ -45,12 +52,20 @@ internal class StdioCodexAppServer(
                         val id = (message["id"] as? JsonPrimitive)?.intOrNull
                         val method = (message["method"] as? JsonPrimitive)?.contentOrNull
                         if (message.containsKey("id") && method != null) {
-                            // The host never approves tools through this transport.
-                            send(buildJsonObject {
-                                put("id", message.getValue("id"))
-                                putJsonObject("error") { put("code", -32601); put("message", "This client does not permit tool requests") }
-                            })
-                            onNotification("request/refused", buildJsonObject {})
+                            val requestId = message.getValue("id")
+                            val handler = onRequest
+                            if (handler == null) {
+                                // A talk-only or account process never approves tools.
+                                refuse(requestId)
+                                onNotification("request/refused", buildJsonObject {})
+                            } else {
+                                val answered = AtomicBoolean()
+                                handler(method, message["params"] as? JsonObject ?: buildJsonObject {}) { result ->
+                                    if (answered.compareAndSet(false, true) && !closed.get()) runCatching {
+                                        if (result == null) refuse(requestId) else send(buildJsonObject { put("id", requestId); put("result", result) })
+                                    }
+                                }
+                            }
                         } else if (id != null) {
                             pending.remove(id)?.let { waiting ->
                                 val result = message["result"] as? JsonObject
@@ -92,6 +107,11 @@ internal class StdioCodexAppServer(
         } catch (error: Exception) { close(); throw IllegalStateException("Codex did not complete the request", error) }
         finally { pending.remove(id) }
     }
+
+    private fun refuse(requestId: JsonElement) = send(buildJsonObject {
+        put("id", requestId)
+        putJsonObject("error") { put("code", -32601); put("message", "This client does not permit tool requests") }
+    })
 
     /** Serialize whole JSON lines so interleaved calls cannot corrupt the transport. */
     private fun send(message: JsonObject) = synchronized(writer) {

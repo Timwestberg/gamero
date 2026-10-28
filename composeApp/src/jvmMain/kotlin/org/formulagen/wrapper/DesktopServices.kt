@@ -24,6 +24,7 @@ import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.chat.ChatWork
 import org.formulagen.wrapper.chat.claude.ClaudeWorkRuntime
+import org.formulagen.wrapper.chat.codex.CodexWorkRuntime
 import org.formulagen.wrapper.workspace.DesktopWorkspace
 import org.formulagen.wrapper.workspace.NativeFolderPicker
 import org.formulagen.wrapper.workspace.WorkspaceStore
@@ -118,9 +119,11 @@ internal class DesktopServices private constructor(
                 val nativeDialogs = NativeDialogs(dialogs)
                 val broker = DialogApprovalBroker(nativeDialogs)
                 val workspaces = WorkspaceStore(providerRoot, NativeFolderPicker { window })
-                // Codex's working protocol is read from its schema only, so Codex members answer working messages as talk.
-                val workers = listOfNotNull(claude?.let { ClaudeWorkRuntime(it, checkNotNull(claudeSignIn), broker) })
-                val work = ChatWork(workspaces, StartOfWork(nativeDialogs), workers, gated = setOf(RuntimeId.CODEX))
+                // Codex's working protocol is read from its schema only, so it stays off until verified live.
+                val codexWork = environment["HOVEL_CODEX_WORK"] == "1"
+                val workers = listOfNotNull(claude?.let { ClaudeWorkRuntime(it, checkNotNull(claudeSignIn), broker) },
+                    codex?.takeIf { codexWork }?.let { CodexWorkRuntime(providerRoot, it, broker) })
+                val work = ChatWork(workspaces, StartOfWork(nativeDialogs), workers, gated = setOfNotNull(RuntimeId.CODEX.takeIf { !codexWork }))
                 val chat = own(DesktopChat(providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment)), offered, work))
                 // Both runtimes sign in outside Hovel, on the player's own install, so a status check never signs a chat out.
                 val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),

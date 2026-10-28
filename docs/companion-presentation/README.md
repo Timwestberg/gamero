@@ -57,6 +57,16 @@ The desktop host answers the `chat.*` and `providers.*` host-bridge v2 methods n
 - `providers/RuntimeProvider.kt`: one `RuntimeProvider` per offered runtime behind `providers/DesktopProviders.kt`: `CodexProvider` (the account process and its model list) and `ClaudeProvider`. `providers/RuntimeCopy.kt` holds each runtime's names and messages for chat and providers.
 - `providers/CodexAppServer.kt`: bounded stdio JSON-RPC to one Codex app-server, limited to each owner's method list. `providers/CodexRuntime.kt` owns how every Codex child is started (`codexProcess`): the player's own Codex on its default home, with no Hovel settings and a scrubbed environment. `providers/CodexConnection.kt` reads the player's Codex sign-in for the Providers card; Hovel never signs Codex in or out (the player runs `codex login` / `codex logout`).
 
+### Working members
+
+A team member in `work` mode (`chat.send`/`chat.retry` `mode: work`) uses its provider's own agent with the player's full setup in the companion's project folder ([companion abilities](../../../game-platform/docs/launcher/companion-abilities.SPEC.md)).
+
+- `workspace/`: `WorkspaceStore` keeps each companion's folder per profile (`<providers root>/<profile>/workspaces.json`, 0600); `NativeFolderPicker` is the Mac's folder panel; `DesktopWorkspace` answers `workspace.choose|clear|status` with the folder's name and whether it exists, never its path.
+- `approvals/`: `ApprovalBroker` and `ApprovalRequest` are the seam between runtimes and the player; `NativeDialogs` holds the rules (one dialog at a time, 10-minute timeout, cancel denies); `StartOfWork` asks before a conversation's first working message; `ComposeDialogPresenter` and `NativeDialogHost` are the windows, in front of Hovel, which the page cannot reach.
+- `chat/DesktopChat.kt` decides per message: no folder, a moved folder, Not now, or a gated runtime answer as talk with a notice; otherwise the chat is `awaiting-you` while the start dialog is up, then runs the member's working runtime. A working reply carries `activity` from its start. Sends, retries and handovers are refused with "Answer the approval first." while `awaiting-you`; stop and close deny the dialog. `chat/ChatHandover.kt` adds the work log to summaries and recent-messages handovers and keeps a runtime's working and talk conversations caught up with each other (`ChatRecord.workConversations`).
+- `chat/claude/`: `ClaudeControl` (the `--permission-prompt-tool stdio` control protocol), `ClaudeActivity` (steps from `tool_use`/`tool_result`), and `ClaudeWorkRuntime`: one long-lived `claude -p` per (chat lease, member) in the folder, the working persona appended, the player's environment minus `ANTHROPIC_*` and another session's `CLAUDE*` variables, with their login shell's `PATH`. Stop is `control_request interrupt`.
+- `chat/codex/CodexWorkRuntime.kt`: the same for Codex from its schema, off unless `HOVEL_CODEX_WORK=1` until verified live; a working Codex message otherwise answers as talk.
+
 ### Codex on the player's own login
 
 Every Codex child (the Providers card, companion chat, Hovel tasks) runs on the player's own Codex sign-in, in Codex's default home (`$CODEX_HOME` when the player set it, else `~/.codex`), and every Hovel profile on the Mac shares it, as with Claude Code.
@@ -91,6 +101,7 @@ Every environment variable the desktop companion path reads. The launchers take 
 | `GAMERO_CODEX_PATH` | `codex` on `PATH`, then Homebrew, then ChatGPT.app's bundled CLI | `findCodexExecutable` | Codex for Providers, chat and the Hovel companion. Without one, chat and Providers say to install Codex. |
 | `PATH` | inherited | `findCodexExecutable`, `findClaudeExecutable` | Searched for `codex` and `claude` when their paths are unset. |
 | `HOVEL_CLAUDE_PROVIDER` | `1` from `dev-env.sh`; unset otherwise | `claudeProviderEnabled` | `1` offers Claude in Providers and as a companion team runtime, in a development build only: the app must carry `-Dgamero.dev=true` (Gradle run tasks and the local jpackage prototypes set it) and not `-Dgamero.release=true` (set by `tools/build-release.sh`). See [release.md](../release.md#release-and-development-builds). |
+| `HOVEL_CODEX_WORK` | unset | `DesktopServices` | `1` lets Codex team members work in a project folder. Off by default until Codex's approval protocol is verified live; a working Codex message otherwise answers as talk with a notice. |
 | `GAMERO_CLAUDE_PATH` | `claude` on `PATH`, then `~/.local/bin`, Homebrew, `/usr/local/bin` | `findClaudeExecutable` | The player's own Claude Code (2.1.304 or later), run with its own sign-in. Hovel never signs in or out. Without one, the Claude card says to install it. |
 | `GAMERO_WORKSPACE` | none | `main.kt` | Workspace for approved Hovel companion tasks; the Hovel companion is off without it. |
 | `HOVEL_REDUCED_EFFECTS` | unset | `CompanionMain` | `1` starts the two-window prototype with reduced motion and transparency. |

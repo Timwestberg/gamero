@@ -347,7 +347,7 @@ private val DISABLED_FEATURES = listOf("shell_tool", "apps", "plugins", "remote_
  * The text of one Codex reply as its notifications build it: a delta extends the current agent
  * message, a new message item starts the text over, and a completed agent message replaces it.
  */
-private class ReplyText {
+internal class ReplyText {
     var text = ""
         private set
     private var item: String? = null
