@@ -100,7 +100,7 @@ class EmberVoice(
         }
         emit(SpeechEvent(SPEECH_START))
         val started = nowMs()
-        val pieces = speechPieces(text, config.firstPieceTargetChars, config.laterPieceMaxChars)
+        val pieces = speechPieces(text, config.longSentenceMaxChars)
         if (pieces.isEmpty()) {
             emit(SpeechEvent(SPEECH_END, audioSeconds = 0.0))
             return SpeakResult(FloatArray(0), engine.sampleRate, 0.0, 0.0, 0.0, 0.0, events)
@@ -115,9 +115,9 @@ class EmberVoice(
             emit(SpeechEvent(SPEECH_LEVEL, rms = rms(take.samples)))
             parts.add(take.samples)
         }
-        val gap = sampleRate * config.silenceMs / 1000
-        val fade = if (gap == 0) sampleRate / 100 else 0
-        val samples = concat(parts, gap, fade)
+        val gap = sampleRate * config.silenceBetweenPiecesMs / 1000
+        val fade = if (gap == 0) sampleRate * config.crossfadeMs / 1000 else 0
+        val samples = concat(parts, gap, fade, config.crossfadeEdgeThreshold.toFloat())
         val totalMs = nowMs() - started
         val audioSeconds = if (sampleRate > 0) samples.size / sampleRate.toDouble() else 0.0
         val rtf = if (totalMs > 0.0) audioSeconds / (totalMs / 1000.0) else 0.0
@@ -127,8 +127,6 @@ class EmberVoice(
 }
 
 internal const val POCKET_FRAME_MS = 80
-internal const val FRAME_CAP_LIMIT = 500
-internal const val CROSSFADE_EDGE = 0.02f
 
 /** PocketTTS emits one frame every 80 ms. At 24 kHz that is 1920 samples. */
 internal fun frameSamples(sampleRate: Int): Int = sampleRate * POCKET_FRAME_MS / 1000
@@ -141,8 +139,8 @@ internal fun hitFrameCeiling(sampleCount: Int, sampleRate: Int, maxFrames: Int):
     return sampleCount >= maxFrames * frame - frame
 }
 
-/** One retry, same seed, at most twice the cap and never above the engine's 500. */
-internal fun retryFrames(firstCap: Int): Int = minOf(firstCap * 2, FRAME_CAP_LIMIT)
+/** One retry, same seed. Cap is min(firstCap * factor, maxFrames). */
+internal fun retryFrames(firstCap: Int, factor: Int, maxFrames: Int): Int = minOf(firstCap * factor, maxFrames)
 
 /**
  * Same seed on every call. A second pass happens only when the frame ceiling
@@ -154,7 +152,11 @@ internal fun synthesizePiece(engine: PieceEngine, config: VoiceConfig, piece: St
     if (!hitFrameCeiling(first.samples.size, first.sampleRate, frames)) {
         return first.copy(ttfaMs = firstAudibleMs(first.ttfaMs, false, first.synthMs))
     }
-    val second = engine.synthesize(piece, retryFrames(frames), config.seed)
+    val second = engine.synthesize(
+        piece,
+        retryFrames(frames, config.raisedCapFactor, config.raisedCapMaxFrames),
+        config.seed,
+    )
     val spent = first.synthMs + second.synthMs
     return second.copy(ttfaMs = firstAudibleMs(second.ttfaMs, true, spent), synthMs = spent)
 }
@@ -182,7 +184,7 @@ internal fun concat(
     parts: List<FloatArray>,
     gap: Int,
     crossfadeSamples: Int = 0,
-    edgeThreshold: Float = CROSSFADE_EDGE,
+    edgeThreshold: Float = 0.02f,
 ): FloatArray {
     if (parts.isEmpty()) return FloatArray(0)
     var acc = parts[0]

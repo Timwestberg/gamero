@@ -2,22 +2,17 @@ package org.formulagen.wrapper.voice
 
 /**
  * Splits a line into the pieces we send to PocketTTS.
- *
- * Pieces are sentences, after number, time, and filename normalization.
- * [firstTargetChars] and [laterMaxChars] stay in the signature so existing
- * callers compile. They no longer cut or pack inside a sentence.
- * A sentence longer than [SENTENCE_SAFETY_CHARS] is split at a word boundary.
+ * Pieces are sentences after number, time, and filename normalization.
+ * A sentence longer than [longSentenceMaxChars] is split at a word boundary.
  */
-@Suppress("UNUSED_PARAMETER")
 fun speechPieces(
     text: String,
-    firstTargetChars: Int,
-    laterMaxChars: Int,
+    longSentenceMaxChars: Int = SENTENCE_SAFETY_CHARS,
 ): List<String> {
     val spoken = normalizeForSpeech(text)
     val pieces = ArrayList<String>()
     for (sentence in splitSentences(spoken)) {
-        pieces.addAll(splitLongSentence(sentence, SENTENCE_SAFETY_CHARS))
+        pieces.addAll(splitLongSentence(sentence, longSentenceMaxChars))
     }
     return pieces.filter { it.isNotEmpty() }
 }

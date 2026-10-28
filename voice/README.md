@@ -8,7 +8,7 @@ On-device PocketTTS for the Ember pet. The Mac companion uses the JVM backend th
 
 sherpa-onnx 2.0.0 finishes the language model for a piece before the first audio callback. This module does not pretend that callback is a frame streamed while the model is still generating. The first callback is still the TTFA the benchmark records.
 
-Defaults: `numSteps` 5, temperature 0.3, seed 1, `silenceMs` 0, `maxDurationRatio` 2, 2 threads. `firstPieceTargetChars` and `laterPieceMaxChars` remain on the config and no longer cut a sentence. Tier names are local. A cached route is reused when the config version matches. A tier the host marks as below the floor goes to the server without a benchmark. Anything else speaks `task_finished` once and stays on device only if TTFA is at most 500 ms and RTF is at least 1.5. `./fluency.sh` speaks a fixed 3-turn conversation and prints the acceptance metrics.
+Defaults follow ember-voice.v2: `numSteps` 5, `fallbackNumSteps` 3, temperature 0.3, seed 1, `silenceBetweenPiecesMs` 0, `decoderFramesPerCallback` 2, `longSentenceMaxChars` 400, `crossfadeMs` 10, `startAfterMs` 200, `maxDurationRatio` 2. Tier names are local. A cached route is reused when the config version matches. A tier the host marks as below the floor goes to the server without a benchmark. Anything else speaks `task_finished` once and stays on device only if TTFA is at most 500 ms and RTF is at least 1.5. `./fluency.sh` speaks a fixed 3-turn conversation and prints the acceptance metrics.
 
 ## JVM
 

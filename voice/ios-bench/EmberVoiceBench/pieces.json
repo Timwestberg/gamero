@@ -1,8 +1,11 @@
 {
-  "silence_ms": 0,
-  "num_steps": 5,
+  "silenceBetweenPiecesMs": 0,
+  "numSteps": 5,
+  "fallbackNumSteps": 3,
   "temperature": 0.3,
   "seed": 1,
+  "decoderFramesPerCallback": 2,
+  "longSentenceMaxChars": 400,
   "lines": [
     {"id": "build_passed", "text": "Done! Your build passed.", "pieces": [{"text": "Done!", "max_frames": 36}, {"text": "Your build passed.", "max_frames": 36}]},
     {"id": "task_finished", "text": "I finished the task. Three files changed and all tests are green.", "pieces": [{"text": "I finished the task.", "max_frames": 36}, {"text": "Three files changed and all tests are green.", "max_frames": 40}]},

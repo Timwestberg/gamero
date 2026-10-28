@@ -25,12 +25,12 @@ fun main(args: Array<String>) {
     val config = VoiceConfig(modelDir = model, voiceWav = wav)
     val capture = Capture(SherpaPocketEngine(config))
     val voice = EmberVoice(capture, config)
-    println("steps=${config.numSteps} silenceMs=${config.silenceMs} seed=${config.seed}")
+    println("steps=${config.numSteps} silenceMs=${config.silenceBetweenPiecesMs} seed=${config.seed}")
     val turnAudio = ArrayList<FloatArray>()
     var synthMs = 0.0
     var audioSeconds = 0.0
     turns.forEachIndexed { index, text ->
-        val pieces = speechPieces(text, config.firstPieceTargetChars, config.laterPieceMaxChars)
+        val pieces = speechPieces(text, config.longSentenceMaxChars)
         println("turn $index pieces=${pieces.map { it.length }}")
         val started = System.nanoTime()
         val spoken = voice.speak(text)
@@ -69,7 +69,7 @@ fun main(args: Array<String>) {
             """
             {
               "num_steps": ${config.numSteps},
-              "silence_ms": ${config.silenceMs},
+              "silenceBetweenPiecesMs": ${config.silenceBetweenPiecesMs},
               "hello_cosine": ${fmt(helloCos)},
               "turn_cosine_min": ${fmt(minPair)},
               "f0_hz": [${finite.joinToString(", ") { fmt(it) }}],

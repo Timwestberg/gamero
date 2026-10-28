@@ -11,11 +11,11 @@ fun runVoiceSelfCheck() {
     check(frameBudget(39, 4.0, 0.8, 12, 24, 36) == 36) { "39 chars is ceil(35.2)" }
     check(frameBudget(28, 4.0, 0.8, 12, 24, 36) == 27) { "ceil(4 + 0.8 * 28) is 27" }
     check(frameBudget(40, 0.0, 0.0, 0, 24, 0) == 0) { "cap stays off" }
-    val passed = speechPieces("Done! Your build passed.", 40, 140)
+    val passed = speechPieces("Done! Your build passed.")
     check(passed == listOf("Done!", "Your build passed.")) { "build pieces $passed" }
     check(VoiceConfig().framesFor("Done!".length) == 36) { "config frames" }
     check(VoiceConfig().framesFor("Your build passed.".length) == 36) { "second piece frames" }
-    val numbers = speechPieces("PetBridge.kt returned error 503 at 2:45 PM after 30 seconds.", 40, 140)
+    val numbers = speechPieces("PetBridge.kt returned error 503 at 2:45 PM after 30 seconds.")
     check(numbers.any { it.contains("five hundred three") }) { "503 $numbers" }
     check(numbers.any { it.contains("two forty-five") }) { "time $numbers" }
     check(normalizeForSpeech("PetBridge") == "PetBridge") { "bare camel" }
@@ -73,21 +73,21 @@ fun runVoiceSelfCheck() {
     EmberVoice(overlong, VoiceConfig()).speak("Done!")
     check(overlongCalls == 1) { "an overlong take under the ceiling is not regenerated" }
     check(VoiceConfig().numSteps == 5) { "five flow steps" }
-    check(VoiceConfig().silenceMs == 0) { "no inserted silence" }
+    check(VoiceConfig().silenceBetweenPiecesMs == 0) { "no inserted silence" }
+    check(VoiceConfig().fallbackNumSteps == 3) { "fallback is 3 steps" }
+    check(VoiceConfig().decoderFramesPerCallback == 2) { "decoder frames" }
+    check(VoiceConfig().longSentenceMaxChars == 400) { "long sentence cap" }
+    check(VoiceConfig().crossfadeMs == 10 && VoiceConfig().startAfterMs == 200) { "playback timing" }
     val oneSentence = speechPieces(
         "Should I rerun the suite, or is this ready for you to merge?",
-        40,
-        140,
     )
     check(oneSentence.size == 1) { "comma does not split a sentence $oneSentence" }
     val cutSentence = speechPieces(
         "I refactored the session code, moved the socket into the bridge, and the build is green.",
-        40,
-        140,
     )
     check(cutSentence.size == 1) { "no 40 character cut $cutSentence" }
     val longSentence = (1..100).joinToString(" ") { "word" }
-    val longPieces = speechPieces(longSentence, 40, 140)
+    val longPieces = speechPieces(longSentence)
     check(longPieces.size > 1 && longPieces.all { it.length <= 400 }) { "400 character word split $longPieces" }
     val quiet = concat(listOf(FloatArray(1000), FloatArray(1000)), 0, 240, 0.02f)
     check(quiet.size == 2000) { "a quiet edge is not crossfaded" }
@@ -135,7 +135,7 @@ fun runVoiceSelfCheck() {
     check(stereo.sourceChannels == 2 && stereo.samples.size == 24000) { "stereo mix" }
     val roundTrip = prepareReferenceClip(referenceClipWavBytes(oneSecond))
     check(roundTrip.samples.size == oneSecond.samples.size) { "wav round trip" }
-    val spokenNumber = speechPieces("503", 40, 140)
+    val spokenNumber = speechPieces("503")
     check(spokenNumber == listOf("five hundred three")) { "503 spoken $spokenNumber" }
     check(expectedAudioSeconds(spokenNumber[0].length) == 18 / 15.0) { "expected uses the normalized length" }
     check(compareVersions("2.0.0-rc1", "2.0.0") < 0) { "pre-release is lower than the release" }

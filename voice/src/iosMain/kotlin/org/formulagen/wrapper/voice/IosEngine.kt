@@ -70,7 +70,7 @@ private class SherpaIosPieceEngine(private val config: VoiceConfig) : PieceEngin
                 config.numSteps,
                 config.temperature.toFloat(),
                 seed,
-                config.chunkSize,
+                config.decoderFramesPerCallback,
                 callback,
                 arg,
             )
