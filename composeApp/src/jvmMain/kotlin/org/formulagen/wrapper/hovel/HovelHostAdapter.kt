@@ -144,9 +144,17 @@ fun hovelExecutionRequest(task: JsonObject, hostId: String): ExecutionRequest {
         task.getValue("characterMemory").jsonPrimitive.content, recalledMemory = task.optionalText("recalledMemory"))
 }
 
-/** The kind and provider of memory job this companion runs. Others are left for a companion that can. */
+private val EXTRACT_KIND = JsonPrimitive("extract")
+private val CODEX_RUNTIME = JsonPrimitive("codex")
+
+/**
+ * Whether a memory job is this companion's to run. A job naming another `kind` or host-bridge
+ * `runtimeId` is left for a companion that runs it. A job missing either field is not someone else's:
+ * it is offered, refused by [hovelMemoryJobRequest] and shown as unreadable, so a renamed field
+ * asks for an update instead of being skipped in silence.
+ */
 fun isRunnableMemoryJob(job: JsonObject) =
-    job["kind"] == JsonPrimitive("extract") && job["providerId"] == JsonPrimitive("codex")
+    job["kind"].let { it == null || it == EXTRACT_KIND } && job["runtimeId"].let { it == null || it == CODEX_RUNTIME }
 
 /**
  * A memory job runs its server-built `input` alone, with no character section, on the job's own model and
@@ -155,7 +163,7 @@ fun isRunnableMemoryJob(job: JsonObject) =
  */
 fun hovelMemoryJobRequest(job: JsonObject, hostId: String): ExecutionRequest {
     require(job.getValue("hostId").jsonPrimitive.content == hostId) { "Memory job belongs to another computer" }
-    require(isRunnableMemoryJob(job)) { "This companion runs only Codex extraction jobs" }
+    require(job["kind"] == EXTRACT_KIND && job["runtimeId"] == CODEX_RUNTIME) { "This companion runs only Codex extraction jobs" }
     val id = job.text("id").also { require(UUID.fromString(it).toString() == it) { "Memory job ID must be a canonical UUID" } }
     val input = job.text("input").also {
         require(it.isNotBlank() && it.length <= ExecutionRequest.MAX_PROMPT_CHARS) { "Memory job input is empty or too long" }

@@ -15,8 +15,8 @@ class HovelHostSessionTest {
     private val taskId = UUID.randomUUID().toString()
     private val jobId = UUID.randomUUID().toString()
     private fun task(progress: JsonObject, revision: Int) = HovelTestFixtures.task(host, owner, taskId, progress, revision)
-    private fun job(progress: JsonObject, revision: Int, providerId: String = "codex") =
-        HovelTestFixtures.memoryJob(host, owner, jobId, progress, revision, providerId = providerId)
+    private fun job(progress: JsonObject, revision: Int, runtimeId: String = "codex") =
+        HovelTestFixtures.memoryJob(host, owner, jobId, progress, revision, runtimeId = runtimeId)
     private val queued = HovelTestFixtures.QUEUED
 
     /** A fake server with one task and one memory job. Both workers call it, so every call is synchronized. */
@@ -116,9 +116,13 @@ class HovelHostSessionTest {
     }
 
     @Test fun aMemoryJobThisVersionCannotReadAsksForAnUpdateAndNeverHoldsUpATask() {
-        // A missing field, and an effort a newer server added.
+        // A missing field, a renamed one, and an effort a newer server added.
         val unreadable = listOf(
             buildJsonObject { job(queued, 0).forEach { (key, value) -> if (key != "input") put(key, value) } },
+            buildJsonObject {
+                job(queued, 0).forEach { (key, value) -> if (key != "runtimeId") put(key, value) }
+                put("providerId", "codex")
+            },
             HovelTestFixtures.memoryJob(host, owner, jobId, effort = "maximal"),
             // An input longer than this version's provider limit.
             buildJsonObject {
@@ -150,7 +154,7 @@ class HovelHostSessionTest {
     }
 
     @Test fun aJobForAnotherProviderIsLeftForAnotherCompanion() {
-        val server = Server(taskItem = null, jobItem = job(queued, 0, providerId = "claude"))
+        val server = Server(taskItem = null, jobItem = job(queued, 0, runtimeId = "claude"))
         session(server, { error("no task") }, { error("must not launch") }).use { session ->
             session.heartbeat()
             assertEquals(listOf("heartbeat"), server.routes())

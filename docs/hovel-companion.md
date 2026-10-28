@@ -233,8 +233,10 @@ when a copy is stale.
 A heartbeat from a computer declaring `memory-extraction` also returns
 `memoryJobs`: its open jobs, oldest first. If no memory job is running, the
 session picks the first one in `queued`, `claimed` or `running` (`queued` only
-when Codex is ready) whose `kind` is `extract` and `providerId` is `codex`.
-Other jobs are left for a companion that can run them.
+when Codex is ready) whose `kind` is `extract` and host-bridge `runtimeId` is
+`codex`. A job naming another kind or runtime is left for a companion that runs
+it. A job missing either field is treated as unreadable (below), so a renamed
+field asks for an update instead of being skipped in silence.
 
 A memory job runs the server-built `input` exactly as given: no character
 section and no recalled memory. It runs on the job's `model` and `effort`,
@@ -249,8 +251,8 @@ A failed or uncertain job needs nothing on this computer. The server closes it
 and plans the day again, up to 3 attempts, then waits for the player's retry in
 Hovel. A job the server replaced or took back answers 409 and is never offered
 again. Memory job failures leave the status line unchanged, except a job this
-version cannot read (a missing field, a model or effort it does not know, or an
-input longer than it can run). The status line then says "Connected · Update
+version cannot read (a missing field, such as `runtimeId` under an older name,
+a model or effort it does not know, or an input longer than it can run). The status line then says "Connected · Update
 Hovel on this computer to run its memory jobs", and the job stays queued until
 the companion is updated.
 

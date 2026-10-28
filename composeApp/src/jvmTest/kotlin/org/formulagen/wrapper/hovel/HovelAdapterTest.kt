@@ -103,8 +103,8 @@ class HovelAdapterTest {
     }
 
     private val jobId = UUID.randomUUID().toString()
-    private fun job(progress: JsonObject, revision: Int, model: String = "runtime-default", effort: String = "low", providerId: String = "codex") =
-        HovelTestFixtures.memoryJob(host, owner, jobId, progress, revision, model, effort, providerId)
+    private fun job(progress: JsonObject, revision: Int, model: String = "runtime-default", effort: String = "low", runtimeId: String = "codex") =
+        HovelTestFixtures.memoryJob(host, owner, jobId, progress, revision, model, effort, runtimeId)
     private val queued = HovelTestFixtures.QUEUED
 
     @Test fun aMemoryJobRunsItsInputAloneOnItsModelAndEffort() {
@@ -123,8 +123,12 @@ class HovelAdapterTest {
         // A model is one name, never a flag Codex would read.
         assertFails { hovelMemoryJobRequest(job(queued, 0, model = "--config"), host) }
         assertFails { hovelMemoryJobRequest(job(queued, 0, effort = "extreme"), host) }
-        assertFalse(isRunnableMemoryJob(job(queued, 0, providerId = "claude")))
-        assertFails { hovelMemoryJobRequest(job(queued, 0, providerId = "claude"), host) }
+        assertFalse(isRunnableMemoryJob(job(queued, 0, runtimeId = "claude")))
+        assertFails { hovelMemoryJobRequest(job(queued, 0, runtimeId = "claude"), host) }
+        // A job missing its runtime, such as one from before a rename, is unreadable rather than someone else's.
+        val unnamed = buildJsonObject { job(queued, 0).forEach { (key, value) -> if (key != "runtimeId") put(key, value) } }
+        assertTrue(isRunnableMemoryJob(unnamed))
+        assertFails { hovelMemoryJobRequest(unnamed, host) }
         // Refused here as the journal would refuse it, before the job is offered.
         fun jobWith(key: String, value: String) = buildJsonObject { job(queued, 0).forEach { (k, v) -> put(k, v) }; put(key, value) }
         assertFails { hovelMemoryJobRequest(jobWith("input", "x".repeat(ExecutionRequest.MAX_PROMPT_CHARS + 1)), host) }
