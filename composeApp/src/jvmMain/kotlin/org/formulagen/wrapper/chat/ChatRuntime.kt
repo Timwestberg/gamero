@@ -1,11 +1,15 @@
 package org.formulagen.wrapper.chat
 
+import java.nio.file.Path
 import java.time.Instant
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.Serializable
+import org.formulagen.wrapper.bridge.Activity
+import org.formulagen.wrapper.bridge.ChatWaiting
 import org.formulagen.wrapper.bridge.HandoverLimits
 import org.formulagen.wrapper.bridge.RuntimeId
+import org.formulagen.wrapper.bridge.TeamMember
 
 /**
  * A runtime's own conversation with one companion: Codex's thread id or Claude Code's session id.
@@ -49,6 +53,8 @@ internal interface ChatRuntime : AutoCloseable {
 /**
  * What one turn needs. [model] is a model id or `runtime-default` (null means the same).
  * [context] is handover text owed to this runtime, sent as data ahead of the person's [text].
+ * [work] is set for a working turn, which only a working runtime takes; [persona] is then
+ * [Persona.working] and [conversation] the runtime's working conversation.
  */
 internal data class TurnRequest(
     val profile: String,
@@ -58,10 +64,17 @@ internal data class TurnRequest(
     val conversation: NativeConversation?,
     val context: String?,
     val text: String,
+    val work: WorkScope? = null,
 ) {
     /** The user turn as the runtime sends it: the delimited context block first, then the message. */
     fun input(): String = context?.let { "$it\n\n$text" } ?: text
 }
+
+/**
+ * Where and for whom a member works: the companion's project [folder], the chat [lease] (the view's
+ * session id, which a working process lives for), the [companion]'s name and the [member].
+ */
+internal data class WorkScope(val folder: Path, val lease: String, val companion: String, val member: TeamMember)
 
 /**
  * What a turn reports. Nothing is reported after [completed] or [failed]. After the caller's
@@ -81,6 +94,12 @@ internal interface TurnEvents {
     fun completed(text: String, conversation: String)
 
     fun failed(failure: ChatFailure)
+
+    /** A working turn's activity so far; each call replaces the previous one. */
+    fun activity(activity: Activity) = Unit
+
+    /** A working turn waits for the person to answer a native dialog ([waiting]), or no longer does (null). */
+    fun waiting(waiting: ChatWaiting?) = Unit
 }
 
 /** The person chose Stop: end the reply gracefully and keep the text so far. Never blocks. */

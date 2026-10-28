@@ -11,6 +11,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.formulagen.wrapper.bridge.ChatEntry
 import org.formulagen.wrapper.bridge.ChatLimits
+import org.formulagen.wrapper.bridge.HandoverLimits
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
@@ -30,6 +31,11 @@ internal data class ChatRecord(
     val entries: List<ChatEntry> = emptyList(),
     /** Handover text each runtime is owed for its next turn, independent of the visible history. */
     val pendingContext: Map<RuntimeId, String> = emptyMap(),
+    /**
+     * Each runtime's working conversation (Claude Code's working session, Codex's working thread),
+     * apart from its talk-only one: the two run with different personas and abilities.
+     */
+    val workConversations: Map<RuntimeId, NativeConversation> = emptyMap(),
 )
 
 /** Longest handover text a runtime is owed: recent messages (8,000 characters) or a summary, with their framing. */
@@ -87,7 +93,7 @@ private val historyJson = Json { encodeDefaults = true; ignoreUnknownKeys = true
 
 private fun ChatRecord.validated(): ChatRecord = also { record ->
     require(record.version == 2 && record.entries.size <= ChatLimits.HISTORY)
-    record.conversations.values.forEach { require(UUID.fromString(it.id).toString() == it.id && PERSONA_HASH.matches(it.personaHash)) }
+    (record.conversations.values + record.workConversations.values).forEach { require(UUID.fromString(it.id).toString() == it.id && PERSONA_HASH.matches(it.personaHash)) }
     record.entries.forEach { entry ->
         UUID.fromString(entry.id)
         when (entry) {
@@ -95,7 +101,8 @@ private fun ChatRecord.validated(): ChatRecord = also { record ->
             is ChatEntry.Assistant -> require(entry.text.length <= ChatLimits.REPLY && entry.author.valid())
             is ChatEntry.Handover -> {
                 Instant.parse(entry.at)
-                require(entry.from?.valid() != false && entry.to.valid() && (entry.summary?.length ?: 0) <= SUMMARY_LIMIT)
+                require(entry.from?.valid() != false && entry.to.valid() && (entry.summary?.length ?: 0) <= SUMMARY_LIMIT &&
+                    (entry.workLog?.length ?: 0) <= HandoverLimits.WORK_LOG)
             }
         }
     }

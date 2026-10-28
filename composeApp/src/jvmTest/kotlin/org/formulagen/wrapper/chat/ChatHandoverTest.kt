@@ -110,4 +110,66 @@ class ChatHandoverTest {
         val restarted = Handovers.startOver(alone, sonnet, question.id, before = emptyList())
         assertEquals(HandoverMethod.FRESH, notes(restarted).single().method); assertTrue(restarted.pendingContext.isEmpty())
     }
+
+    private fun worked(author: TeamMember, text: String, vararg steps: ActivityStep) = ChatEntry.Assistant(id(), author, text, Activity(steps.toList(), false))
+
+    @Test fun aWorkLogNamesTheChangesCommandsDenialsAndWhereTheWorkStopped() {
+        val entries = listOf(user("Fix the date test"),
+            worked(sonnet, "Reading first.", ActivityStep(ActivityKind.READ, "src/date.ts", ActivityStatus.DONE),
+                ActivityStep(ActivityKind.SEARCH, "parseDate", ActivityStatus.DONE, "2 files")),
+            worked(sonnet, "The parser dropped the offset. Fixed; I did not push.",
+                ActivityStep(ActivityKind.COMMAND, "npm test", ActivityStatus.FAILED, "1 failing\nmore"),
+                ActivityStep(ActivityKind.EDIT, "src/date.ts", ActivityStatus.DONE, "+3 -1"),
+                ActivityStep(ActivityKind.COMMAND, "npm test", ActivityStatus.DONE, "12 passing"),
+                ActivityStep(ActivityKind.CONNECTOR, "linear · create_issue", ActivityStatus.DONE),
+                ActivityStep(ActivityKind.COMMAND, "git push", ActivityStatus.DENIED)))
+        assertEquals("""
+            Files changed: src/date.ts.
+            Commands: npm test (failed: 1 failing); npm test (done: 12 passing); git push (denied).
+            Connectors: linear · create_issue (done).
+            Also: 1 files read, 1 searches.
+            Denied: git push.
+            Where it stopped: The parser dropped the offset. Fixed; I did not push.""".trimIndent(), Handovers.workLog(entries, sonnet))
+        // Only the outgoing member's own work since the last handover, and nothing when nobody worked.
+        assertNull(Handovers.workLog(entries, codex))
+        assertNull(Handovers.workLog(listOf(user("Hi"), reply(sonnet, "Hello")), sonnet))
+        val after = entries + Handovers.entry(sonnet, codex, HandoverMethod.UP_TO_DATE, HandoverReason.MANUAL)
+        assertNull(Handovers.workLog(after, sonnet))
+        assertEquals(HandoverLimits.WORK_LOG, Handovers.workLog(listOf(worked(sonnet, "x".repeat(10),
+            *(1..50).map { ActivityStep(ActivityKind.EDIT, "f$it/" + "n".repeat(200), ActivityStatus.DONE) }.toTypedArray())), sonnet)!!.length)
+    }
+
+    @Test fun aRecentMessagesHandoverCarriesTheLastWorkLogAndOwesIt() {
+        val record = ChatRecord(conversations = mapOf(RuntimeId.CLAUDE_CODE to session), entries = listOf(user("Fix it"),
+            worked(sonnet, "Fixed.", ActivityStep(ActivityKind.EDIT, "a.txt", ActivityStatus.DONE, "+1 -0"))))
+        val handed = Handovers.handover(record, Handovers.entry(sonnet, codex, HandoverMethod.RECENT_MESSAGES, HandoverReason.MANUAL),
+            Handovers.recentMessages(record.entries))
+        val note = notes(handed).single()
+        assertEquals("Files changed: a.txt.\nWhere it stopped: Fixed.", note.workLog)
+        assertTrue(Handovers.owedTo(handed, RuntimeId.CODEX)!!.endsWith("Earlier in this conversation (the work log):\n<<<\nFiles changed: a.txt.\nWhere it stopped: Fixed.\n>>>"))
+        // A summary or a fresh start carries only what it is given.
+        assertNull(Handovers.entry(sonnet, codex, HandoverMethod.UP_TO_DATE, HandoverReason.MANUAL, workLog = "x").workLog)
+        assertEquals("x", Handovers.entry(sonnet, codex, HandoverMethod.SUMMARY, HandoverReason.MANUAL, "s", workLog = "x").workLog)
+        // With no working reply since, the last handover's log is the last work log there was.
+        val later = handed.copy(entries = handed.entries + user("And now?") + reply(codex, "Sure"))
+        assertEquals(note.workLog, Handovers.lastWorkLog(later.entries))
+    }
+
+    @Test fun workingAndTalkingConversationsOfOneRuntimeCatchEachOtherUp() {
+        val talked = ChatRecord(conversations = mapOf(RuntimeId.CLAUDE_CODE to session), entries = listOf(user("Hi"), reply(sonnet, "Hello")))
+        // A first working turn hears the whole conversation; its own working replies count as seen next time.
+        assertEquals("Earlier in this conversation (the most recent messages):\n<<<\nPerson: Hi\nCompanion: Hello\n>>>",
+            Handovers.workContext(talked, RuntimeId.CLAUDE_CODE, talked.entries))
+        val working = talked.copy(workConversations = mapOf(RuntimeId.CLAUDE_CODE to thread),
+            entries = talked.entries + user("Fix it") + worked(sonnet, "Fixed.", ActivityStep(ActivityKind.EDIT, "a.txt", ActivityStatus.DONE)))
+        assertNull(Handovers.workContext(working, RuntimeId.CLAUDE_CODE, working.entries))
+        val more = working.copy(entries = working.entries + user("Thanks") + reply(sonnet, "Any time"))
+        assertEquals("Earlier in this conversation (the most recent messages):\n<<<\nPerson: Thanks\nCompanion: Any time\n>>>",
+            Handovers.workContext(more, RuntimeId.CLAUDE_CODE, more.entries))
+        // The talk-only conversation missed the working reply, so the next talk turn is caught up, with the work log.
+        val caught = assertNotNull(Handovers.catchUp(working, sonnet))
+        assertEquals(listOf(HandoverMethod.RECENT_MESSAGES), notes(caught).map { it.method })
+        assertEquals("Files changed: a.txt.\nWhere it stopped: Fixed.", notes(caught).single().workLog)
+        assertContains(Handovers.owedTo(caught, RuntimeId.CLAUDE_CODE)!!, "Person: Fix it\nCompanion: Fixed.")
+    }
 }

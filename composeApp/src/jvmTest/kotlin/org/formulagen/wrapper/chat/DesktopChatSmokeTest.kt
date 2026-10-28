@@ -70,6 +70,47 @@ class DesktopChatSmokeTest {
         root.toFile().deleteRecursively()
     }
 
+    /**
+     * One short Haiku working turn on the owner's own Claude Code and full setup, in a fresh scratch
+     * folder (never a real project): the test's broker allows only an edit of notes.txt and denies
+     * everything else, connectors included. Prints states only, never output.
+     */
+    @Test fun installedClaudeWorksInAScratchFolderAfterAnApproval() {
+        val executable = System.getenv("HOVEL_CLAUDE_WORK_SMOKE")
+        assumeTrue("Set HOVEL_CLAUDE_WORK_SMOKE to an installed claude executable", executable != null)
+        val root = Files.createTempDirectory("hovel-claude-work-smoke")
+        val folder = Files.createDirectories(root.resolve("project")).toRealPath()
+        val notes = Files.writeString(folder.resolve("notes.txt"), "first note line\n")
+        val runtime = ClaudeRuntime(Path.of(requireNotNull(executable)), root.resolve("providers"))
+        val asked = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val broker = org.formulagen.wrapper.approvals.ApprovalBroker { request, _ ->
+            asked += "${request.kind} ${request.title}"
+            if (request.kind == org.formulagen.wrapper.approvals.ApprovalKind.EDIT && request.title.endsWith(" notes.txt"))
+                org.formulagen.wrapper.approvals.ApprovalDecision.ALLOW_ONCE else org.formulagen.wrapper.approvals.ApprovalDecision.DENY
+        }
+        val haiku = org.formulagen.wrapper.bridge.TeamMember(org.formulagen.wrapper.bridge.RuntimeId.CLAUDE_CODE, "haiku")
+        org.formulagen.wrapper.chat.claude.ClaudeWorkRuntime(runtime, org.formulagen.wrapper.providers.ClaudeConnection(runtime), broker).use { claude ->
+            assertEquals(Readiness.Ready, claude.readiness("local"))
+            val done = java.util.concurrent.CompletableFuture<String>()
+            val last = java.util.concurrent.atomic.AtomicReference<org.formulagen.wrapper.bridge.Activity?>()
+            claude.startTurn(TurnRequest("local", java.util.UUID.randomUUID().toString(), Persona.working("Ember"), "haiku", null, null,
+                "Read notes.txt, then append the line 'hello from Ember' to it with your edit tool. Do not run any commands.",
+                WorkScope(folder, "smoke", "Ember", haiku)), object : TurnEvents {
+                override fun opened(conversation: String) = Unit
+                override fun accepted() = Unit
+                override fun partial(text: String) = Unit
+                override fun activity(activity: org.formulagen.wrapper.bridge.Activity) { last.set(activity) }
+                override fun completed(text: String, conversation: String) { done.complete("completed (${text.length} chars)") }
+                override fun failed(failure: ChatFailure) { done.complete("failed $failure") }
+            })
+            val outcome = done.get(300, TimeUnit.SECONDS)
+            println("CLAUDE_WORK_SMOKE: $outcome; asked=${asked.map { it.substringBefore(' ') }}; steps=${last.get()?.steps?.map { "${it.kind}:${it.status}" }}")
+            assertTrue(outcome.startsWith("completed"), outcome)
+            assertTrue(Files.readString(notes).contains("hello from Ember"), "The approved edit changed the file")
+        }
+        root.toFile().deleteRecursively()
+    }
+
     @Test fun localModelProducesDesktopPlaybackAndStops() {
         assumeTrue("Set HOVEL_CHAT_VOICE_SMOKE=1 with the voice files installed", System.getenv("HOVEL_CHAT_VOICE_SMOKE") == "1")
         val config=checkNotNull(desktopVoiceConfig(System.getenv()))

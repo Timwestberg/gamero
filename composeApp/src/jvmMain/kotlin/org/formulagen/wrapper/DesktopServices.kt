@@ -18,6 +18,12 @@ import org.formulagen.wrapper.bridge.ProviderCapability
 import org.formulagen.wrapper.bridge.ProviderMethods
 import org.formulagen.wrapper.bridge.WorkspaceCapability
 import org.formulagen.wrapper.bridge.WorkspaceMethods
+import org.formulagen.wrapper.approvals.ComposeDialogPresenter
+import org.formulagen.wrapper.approvals.DialogApprovalBroker
+import org.formulagen.wrapper.approvals.NativeDialogs
+import org.formulagen.wrapper.approvals.StartOfWork
+import org.formulagen.wrapper.chat.ChatWork
+import org.formulagen.wrapper.chat.claude.ClaudeWorkRuntime
 import org.formulagen.wrapper.workspace.DesktopWorkspace
 import org.formulagen.wrapper.workspace.NativeFolderPicker
 import org.formulagen.wrapper.workspace.WorkspaceStore
@@ -52,6 +58,8 @@ internal class DesktopServices private constructor(
     val pet: DesktopPetLauncher,
     /** Each companion's project folder, chosen with the Mac's folder picker. */
     val workspace: DesktopWorkspace,
+    /** The native approval and start-of-work dialogs; the window renders them with `NativeDialogHost`. */
+    val dialogs: ComposeDialogPresenter,
     /** Hovel's Mac companion; null for another product or without Codex and `GAMERO_WORKSPACE`. */
     val companion: HovelCompanion?,
     /** The embedded game; null without `HOVEL_GAME_PROJECT` or a window to host it. */
@@ -105,8 +113,15 @@ internal class DesktopServices private constructor(
                 val runtimes = listOfNotNull(codex?.let { CodexChatRuntime(providerRoot, it) },
                     claude?.let { ClaudeChatRuntime(it, checkNotNull(claudeSignIn)) })
                 val offered = setOfNotNull(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE.takeIf { claudeOffered })
+                // Working members: only native dialogs answer, in front of this window.
+                val dialogs = ComposeDialogPresenter { window }
+                val nativeDialogs = NativeDialogs(dialogs)
+                val broker = DialogApprovalBroker(nativeDialogs)
                 val workspaces = WorkspaceStore(providerRoot, NativeFolderPicker { window })
-                val chat = own(DesktopChat(providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment)), offered))
+                // Codex's working protocol is read from its schema only, so Codex members answer working messages as talk.
+                val workers = listOfNotNull(claude?.let { ClaudeWorkRuntime(it, checkNotNull(claudeSignIn), broker) })
+                val work = ChatWork(workspaces, StartOfWork(nativeDialogs), workers, gated = setOf(RuntimeId.CODEX))
+                val chat = own(DesktopChat(providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment)), offered, work))
                 // Both runtimes sign in outside Hovel, on the player's own install, so a status check never signs a chat out.
                 val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),
                     claudeSignIn?.let(::ClaudeProvider))))
@@ -119,7 +134,7 @@ internal class DesktopServices private constructor(
                 val games = if (window != null && environment["HOVEL_GAME_PROJECT"] != null) {
                     DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }
                 } else null
-                return DesktopServices(chat, providers, pet, DesktopWorkspace(workspaces), companion, games, owned.toList())
+                return DesktopServices(chat, providers, pet, DesktopWorkspace(workspaces), dialogs, companion, games, owned.toList())
             } catch (error: Throwable) {
                 runCatching { closeInReverse(owned) }.exceptionOrNull()?.let(error::addSuppressed)
                 throw error
