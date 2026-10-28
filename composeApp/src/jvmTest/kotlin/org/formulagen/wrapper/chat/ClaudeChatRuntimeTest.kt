@@ -133,7 +133,7 @@ class ClaudeChatRuntimeTest {
         assertEquals(listOf("failed Unexpected"), crashed.seen)
     }
 
-    @Test fun anotherPersonaOrAnUnknownModelNeverStartsAProcess() {
+    @Test fun anotherPersonaOrAnInvalidModelNeverStartsAProcess() {
         val fake = FakeClaude()
         claude(fake).use { claude ->
             val renamed = Events()
@@ -143,12 +143,22 @@ class ClaudeChatRuntimeTest {
             claude.startTurn(request(NativeConversation("9d6b5d91-5085-4e72-a576-7d379498daf0", "")), migrated)
             assertEquals(listOf("failed ConversationLost"), migrated.seen)
             val model = Events()
-            claude.startTurn(request(model = "gpt-6-sol"), model)
+            claude.startTurn(request(model = "--not-a-model"), model)
             assertEquals(listOf("failed ModelUnavailable"), model.seen)
         }
         assertTrue(fake.turns().isEmpty())
         turn(fake, "turn-success.ndjson", request = request(model = RUNTIME_DEFAULT_MODEL))
         assertEquals("sonnet", fake.turns().single().argv().let { it[it.indexOf("--model") + 1] })
+    }
+
+    @Test fun discoveredFullModelIdsReachClaudeWithoutLosingTheContextSuffix() {
+        val fake = FakeClaude()
+        val model = "claude-fable-5-1[1m]"
+        val events = turn(fake, "turn-success.ndjson", request = request(model = model))
+        assertTrue(events.seen.any { it.startsWith("completed") })
+        assertEquals(model, fake.turns().single().argv().let { it[it.indexOf("--model") + 1] })
+        assertEquals("future-alias", claudeModel("future-alias"))
+        for (invalid in listOf("claude-fable[2m]", "claude-fable --unsafe", "--model")) assertNull(claudeModel(invalid))
     }
 
     @Test fun stopInterruptsTheTurnAndKeepsTheTextSoFar() {
@@ -276,4 +286,12 @@ class ClaudeChatRuntimeTest {
         assertFails { claude(fake).use { it.startTurn(request().copy(profile = "../x"), Events()) } }
         assertFalse(Files.exists(Path.of(fake.providers.toString(), "..", "x")))
     }
+    @Test fun talkingEffortReachesTheCliAndAutoLeavesItUnset() {
+        val fake = FakeClaude()
+        turn(fake, "turn-success.ndjson", request = request().copy(effort = ModelEffort.XHIGH))
+        val argv = fake.turns().single().argv()
+        assertEquals("xhigh", argv[argv.indexOf("--effort") + 1])
+        assertTrue(claudeEffortArguments(null).isEmpty())
+    }
+
 }

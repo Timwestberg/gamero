@@ -300,4 +300,16 @@ class CodexChatRuntimeTest {
         assertEquals("Hello", request(null).input())
         assertEquals("Earlier:\n<<<\nx\n>>>\n\nHello", request(null).copy(context = "Earlier:\n<<<\nx\n>>>").input())
     }
+    @Test fun effortIsSentPerTurnIncludingTheResolvedAutoDefault() {
+        val root = Files.createTempDirectory("codex-effort")
+        val rpcs = mutableListOf<Rpc>()
+        runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.onTurn = { complete(rpc, thread, "Hi") } }.use { codex ->
+            val events = Events()
+            codex.startTurn(request("gpt-6-astra").copy(effort = org.formulagen.wrapper.bridge.ModelEffort.HIGH), events)
+            codex.startTurn(request("gpt-6-astra", NativeConversation(thread, persona.hash, true)).copy(effort = org.formulagen.wrapper.bridge.ModelEffort.MEDIUM), events)
+            assertEquals(listOf(JsonPrimitive("high"), JsonPrimitive("medium")), rpcs.single().calls("turn/start").map { it["effort"] })
+        }
+        root.toFile().deleteRecursively()
+    }
+
 }

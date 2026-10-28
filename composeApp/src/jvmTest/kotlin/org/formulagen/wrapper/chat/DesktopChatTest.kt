@@ -431,4 +431,21 @@ class DesktopChatTest {
             assertNull(desktopVoiceConfig(env + ("HOVEL_VOICE_MODEL" to model.resolve("missing").toString()), engineLinked = true))
         } finally { model.toFile().deleteRecursively() }
     }
+    @Test fun sendAndRetryCarryEffortWithoutChangingMemberIdentity() = runBlocking<Unit> {
+        val runtime = FakeRuntime()
+        val root = Files.createTempDirectory("chat-effort")
+        DesktopChat(root, listOf(runtime), Speech()).use { chat ->
+            val a = scope(); chat.open(a); await { state(chat, a).state == ChatState.READY }
+            val message = send(a, false).copy(effort = ModelEffort.HIGH)
+            chat.send(message); await { runtime.events.size == 1 }
+            assertEquals(ModelEffort.HIGH, runtime.requests[0].effort)
+            runtime.events[0].failed(ChatFailure.Temporary)
+            chat.retry(ChatRetry(a.profile, a.companionId, a.name, a.sessionId, message.requestId, codex, UUID.randomUUID().toString(), false, effort = ModelEffort.LOW))
+            await { runtime.events.size == 2 }
+            assertEquals(ModelEffort.LOW, runtime.requests[1].effort)
+            assertEquals(runtime.requests[0].model, runtime.requests[1].model)
+        }
+        root.toFile().deleteRecursively()
+    }
+
 }

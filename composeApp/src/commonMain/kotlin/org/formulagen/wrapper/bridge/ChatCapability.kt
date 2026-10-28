@@ -52,7 +52,8 @@ enum class MemberMode {
  */
 @Serializable
 data class ChatSend(val profile: String, val companionId: String, val name: String, val sessionId: String,
-    val member: TeamMember, val requestId: String, val text: String, val speak: Boolean, val mode: MemberMode? = null) {
+    val member: TeamMember, val requestId: String, val text: String, val speak: Boolean, val mode: MemberMode? = null,
+    val effort: ModelEffort? = null) {
     fun scope() = ChatScope(profile, companionId, name, sessionId)
 }
 
@@ -72,7 +73,8 @@ data class ChatHandover(val profile: String, val companionId: String, val name: 
  */
 @Serializable
 data class ChatRetry(val profile: String, val companionId: String, val name: String, val sessionId: String,
-    val entryId: String, val member: TeamMember, val requestId: String, val speak: Boolean, val mode: MemberMode? = null) {
+    val entryId: String, val member: TeamMember, val requestId: String, val speak: Boolean, val mode: MemberMode? = null,
+    val effort: ModelEffort? = null) {
     fun scope() = ChatScope(profile, companionId, name, sessionId)
 }
 

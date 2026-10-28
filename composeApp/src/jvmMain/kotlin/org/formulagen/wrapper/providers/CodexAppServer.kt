@@ -156,7 +156,7 @@ internal class StdioCodexAppServer(
          * Reading the player's Codex account and the model list a team member chooses from. No sign-in
          * or sign-out (the player runs `codex login` and `codex logout`), no inference or workspace execution.
          */
-        val ACCOUNT_METHODS = setOf("account/read", "model/list")
+        val ACCOUNT_METHODS = setOf("account/read", "model/list", "account/rateLimits/read")
     }
 }
 

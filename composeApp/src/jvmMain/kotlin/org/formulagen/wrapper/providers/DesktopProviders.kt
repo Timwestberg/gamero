@@ -9,6 +9,7 @@ import org.formulagen.wrapper.bridge.ProviderList
 import org.formulagen.wrapper.bridge.ProviderModels
 import org.formulagen.wrapper.bridge.ProviderScope
 import org.formulagen.wrapper.bridge.ProviderStatus
+import org.formulagen.wrapper.bridge.ProviderUsage
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.closeInReverse
@@ -55,5 +56,19 @@ internal class DesktopProviders(runtimes: List<RuntimeProvider>, private val wor
         closed = true
         val held = locks.values.onEach { it.lock() }
         try { closeInReverse(runtimes.values.toList()) } finally { held.forEach { it.unlock() } }
+    }
+
+    /** Provider errors and older protocols leave quotas unknown; cancellation still stops the child. */
+    override suspend fun usage(scope: ProviderScope): ProviderUsage {
+        require(SharedRules.isProfileId(scope.profile)) { "Invalid profile" }
+        val runtime = runtimes[scope.runtimeId] ?: return ProviderUsage(scope.runtimeId, System.currentTimeMillis())
+        return locks.getValue(runtime.id).withLock {
+            check(!closed)
+            try { runInterruptible { runtime.usage(scope.profile) } }
+            catch (error: Exception) {
+                if (error is InterruptedException || error is kotlinx.coroutines.CancellationException) throw error
+                ProviderUsage(scope.runtimeId, System.currentTimeMillis())
+            }
+        }
     }
 }

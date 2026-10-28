@@ -7,6 +7,7 @@ import org.formulagen.wrapper.bridge.ProviderLimits
 import org.formulagen.wrapper.bridge.ProviderModel
 import org.formulagen.wrapper.bridge.ProviderState
 import org.formulagen.wrapper.bridge.ProviderStatus
+import org.formulagen.wrapper.bridge.ProviderUsage
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 
@@ -15,6 +16,7 @@ internal interface ProviderConnection : AutoCloseable {
     fun perform(action: ProviderAction): ProviderStatus
     /** The models this account's plan offers a team member. */
     fun models(): List<ProviderModel>
+    fun usage(): ProviderUsage
 }
 
 /**
@@ -35,6 +37,10 @@ internal class CodexConnection(private val rpc: CodexAppServer) : ProviderConnec
     }
 
     override fun models(): List<ProviderModel> = codexModelList(rpc)
+
+    override fun usage(): ProviderUsage = if (status().state == ProviderState.CONNECTED)
+        codexUsage(rpc.call("account/rateLimits/read"), System.currentTimeMillis())
+    else ProviderUsage(RuntimeId.CODEX, System.currentTimeMillis())
 
     override fun close() = rpc.close()
 }
@@ -79,7 +85,9 @@ internal fun codexModelList(rpc: CodexAppServer): List<ProviderModel> {
             val id = (model["model"] as? JsonPrimitive)?.contentOrNull ?: continue
             if (!SharedRules.isModelId(id) || models.any { it.modelId == id }) continue
             val name = (model["displayName"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() && it.length <= ProviderLimits.DISPLAY_NAME } ?: id
-            models += ProviderModel(name, (model["isDefault"] as? JsonPrimitive)?.booleanOrNull == true, id)
+            val efforts = providerEfforts((model["supportedReasoningEfforts"] as? JsonArray)?.map { (it as? JsonObject)?.get("reasoningEffort") })
+            val defaultEffort = providerEffort(model["defaultReasoningEffort"])?.takeIf { efforts?.contains(it) == true }
+            models += ProviderModel(name, (model["isDefault"] as? JsonPrimitive)?.booleanOrNull == true, id, efforts, defaultEffort)
         }
         cursor = (result["nextCursor"] as? JsonPrimitive)?.contentOrNull ?: break
     }

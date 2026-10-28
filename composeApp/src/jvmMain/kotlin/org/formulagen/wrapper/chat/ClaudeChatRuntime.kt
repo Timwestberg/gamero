@@ -9,15 +9,16 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.ChatLimits
+import org.formulagen.wrapper.bridge.ModelEffort
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.ProviderState
+import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
 import org.formulagen.wrapper.companion.terminateProcessTree
 import org.formulagen.wrapper.companion.terminateProcessTreeInBackground
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.providers.CLAUDE_FALLBACK_MODEL
-import org.formulagen.wrapper.providers.CLAUDE_MODELS
 import org.formulagen.wrapper.providers.CLAUDE_STATUS_UNKNOWN
 import org.formulagen.wrapper.process.readBoundedLine
 import org.formulagen.wrapper.process.signalInterrupt
@@ -63,7 +64,7 @@ internal class ClaudeChatRuntime(
         sessions[session]?.settle()
         val conversation = if (saved == null) listOf("--session-id", session) else listOf("--resume", session)
         val started = Turn(events, session, opens = saved == null)
-        started.start(claudeTurnArguments(model, turn.persona) + conversation, turn.profile, turn.input())
+        started.start(claudeTurnArguments(model, turn.persona) + claudeEffortArguments(turn.effort) + conversation, turn.profile, turn.input())
         return TurnHandle { started.stop() }
     }
 
@@ -203,12 +204,14 @@ internal class ClaudeChatRuntime(
     }
 }
 
-/** A Claude Code alias for [model]: the runtime default becomes [CLAUDE_FALLBACK_MODEL]; anything not in [CLAUDE_MODELS] is null. */
+/** Preserve Claude aliases and full model IDs; Claude Code owns availability and entitlement checks. */
 internal fun claudeModel(model: String?): String? = when (model) {
     null, RUNTIME_DEFAULT_MODEL -> CLAUDE_FALLBACK_MODEL
-    in CLAUDE_MODELS.map { it.modelId } -> model
-    else -> null
+    else -> model.takeIf(SharedRules::isModelId)
 }
+
+/** An explicit session effort; omission lets Claude Code choose its default. */
+internal fun claudeEffortArguments(effort: ModelEffort?): List<String> = effort?.let { listOf("--effort", it.value) }.orEmpty()
 
 /**
  * The locked-down turn: no tools, no MCP servers, no skills, plugins, hooks or CLAUDE.md (safe

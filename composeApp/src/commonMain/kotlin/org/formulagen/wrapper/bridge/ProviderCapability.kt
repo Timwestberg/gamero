@@ -15,6 +15,9 @@ interface ProviderCapability {
 
     /** The models a team member on [ProviderScope.runtimeId] may use. */
     suspend fun models(scope: ProviderScope): ProviderModels
+
+    /** Shared subscription limits, without starting a model turn. Missing windows mean unknown. */
+    suspend fun usage(scope: ProviderScope): ProviderUsage
 }
 
 /**
@@ -100,10 +103,31 @@ data class ProviderList(val runtimes: List<RuntimeId>, val working: List<Runtime
 
 /** One model a team member may use: the runtime's own [displayName], and whether it is the runtime's default. */
 @Serializable
-data class ProviderModel(val displayName: String, val isDefault: Boolean, val modelId: String)
+data class ProviderModel(val displayName: String, val isDefault: Boolean, val modelId: String,
+    val effortLevels: List<ModelEffort>? = null, val defaultEffort: ModelEffort? = null)
 
 @Serializable
 data class ProviderModels(val models: List<ProviderModel>, val runtimeId: RuntimeId)
+
+/** Subscription percentage used, with an optional reset time in Unix seconds. */
+@Serializable
+data class ProviderUsageWindow(val usedPercent: Double, val resetsAt: Long? = null) {
+    init {
+        require(usedPercent.isFinite() && usedPercent in 0.0..100.0)
+        require(resetsAt == null || resetsAt in 0..9_007_199_254_740_991L)
+    }
+}
+
+/** Checked at Unix milliseconds. Session is the five-hour quota; absent windows mean unavailable. */
+@Serializable
+data class ProviderUsage(
+    val runtimeId: RuntimeId,
+    val checkedAt: Long,
+    val session: ProviderUsageWindow? = null,
+    val weekly: ProviderUsageWindow? = null,
+) {
+    init { require(checkedAt in 0..9_007_199_254_740_991L) }
+}
 
 /** Mirrors event-contracts/host-bridge/providers.ts. */
 object ProviderMethods {
@@ -117,6 +141,7 @@ object ProviderMethods {
     val DISCONNECT = method(ProviderAction.DISCONNECT)
     val LIST = BridgeMethod("providers.list", ProviderListArgs.serializer(), ProviderList.serializer()) { SharedRules.isProfileId(it.profile) }
     val MODELS = BridgeMethod("providers.models", ProviderScope.serializer(), ProviderModels.serializer()) { SharedRules.isProfileId(it.profile) }
+    val USAGE = BridgeMethod("providers.usage", ProviderScope.serializer(), ProviderUsage.serializer()) { SharedRules.isProfileId(it.profile) }
 
     fun pack(providers: Capability<ProviderCapability>): CapabilityPack = binder.pack(providers)
 
@@ -125,5 +150,6 @@ object ProviderMethods {
         .map { (method, action) -> method.handle { providers: ProviderCapability, scope -> providers.perform(action, scope) } } + listOf(
         LIST.handle { providers: ProviderCapability, args -> providers.list(args.profile) },
         MODELS.handle { providers: ProviderCapability, scope -> providers.models(scope) },
+        USAGE.handle { providers: ProviderCapability, scope -> providers.usage(scope) },
     ))
 }

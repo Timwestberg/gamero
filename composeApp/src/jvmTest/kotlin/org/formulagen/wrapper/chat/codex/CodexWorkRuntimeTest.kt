@@ -161,4 +161,12 @@ class CodexWorkRuntimeTest {
         assertEquals("ls -la", unwrapShell("ls -la"))
         assertEquals(setOf("account/read", "thread/start", "thread/resume", "turn/start", "turn/interrupt"), WORK_CODEX_METHODS)
     }
+    @Test fun workingTurnsPassEffortToCodex() {
+        val servers = CopyOnWriteArrayList<Server>()
+        CodexWorkRuntime(root, Path.of("/usr/bin/true"), Broker()) { _, notify, req -> Server(notify, req).also { servers += it } }.use { codex ->
+            codex.startTurn(request().copy(effort = ModelEffort.MAX), Events())
+            assertEquals(JsonPrimitive("max"), servers.single().calls.single { it.first == "turn/start" }.second["effort"])
+        }
+    }
+
 }

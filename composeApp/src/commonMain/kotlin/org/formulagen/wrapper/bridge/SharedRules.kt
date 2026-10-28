@@ -17,6 +17,19 @@ enum class RuntimeProviderId {
     @SerialName("anthropic") ANTHROPIC,
 }
 
+/** Reasoning levels advertised by installed runtimes; omitted effort uses the runtime default. */
+@Serializable
+enum class ModelEffort(val value: String) {
+    @SerialName("none") NONE("none"),
+    @SerialName("minimal") MINIMAL("minimal"),
+    @SerialName("low") LOW("low"),
+    @SerialName("medium") MEDIUM("medium"),
+    @SerialName("high") HIGH("high"),
+    @SerialName("xhigh") XHIGH("xhigh"),
+    @SerialName("max") MAX("max"),
+    @SerialName("ultra") ULTRA("ultra"),
+}
+
 /** Rules more than one capability uses. Mirrors event-contracts `host-bridge/shared.ts`. */
 object SharedRules {
     /** The profile of a person who is not signed in. */
@@ -27,9 +40,10 @@ object SharedRules {
     /**
      * A model as its runtime names it, or [RUNTIME_DEFAULT_MODEL]: one lower-case token of at most
      * 128 characters. Native code hands it to Claude Code as a command-line argument, so it starts
-     * with a letter or digit and is never read as an option. Mirrors `MODEL_ID_PATTERN`.
+     * with a letter or digit and is never read as an option. Optional `[1m]` preserves Claude
+     * context selection. Mirrors `MODEL_ID_PATTERN`.
      */
-    const val MODEL_ID_PATTERN = "^[a-z0-9][a-z0-9._:/-]{0,127}$"
+    const val MODEL_ID_PATTERN = "^(?=.{1,128}$)[a-z0-9][a-z0-9._:/-]*(?:\\[1m\\])?$"
     private val MODEL_ID = Regex(MODEL_ID_PATTERN)
 
     /** Whether [value] is a model name by [MODEL_ID_PATTERN]. */
