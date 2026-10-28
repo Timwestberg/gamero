@@ -2,31 +2,17 @@ package org.formulagen.wrapper.chat
 
 import java.nio.file.Path
 import org.formulagen.wrapper.approvals.shortened
+import org.formulagen.wrapper.bridge.Activity
+import org.formulagen.wrapper.bridge.ActivityKind
+import org.formulagen.wrapper.bridge.ActivityLimits
+import org.formulagen.wrapper.bridge.ActivityStatus
+import org.formulagen.wrapper.bridge.ActivityStep
 
-/**
- * What a working reply did, step by step, as the page will show it (the contract's `activity`):
- * labels are paths relative to the project folder, commands, `server · tool` or a query, and
- * details are shortened results. Nothing in it is a path outside the project folder.
+/*
+ * A working reply's activity uses the contract's types ([Activity], [ActivityStep]): labels are
+ * paths relative to the project folder, commands, `server · tool` or a query, and details are
+ * shortened results. Nothing in it is a path outside the project folder.
  */
-internal enum class ActivityKind { READ, SEARCH, EDIT, COMMAND, CONNECTOR, WEB, OTHER }
-
-internal enum class ActivityStatus { DONE, DENIED, FAILED }
-
-internal data class ActivityStep(val kind: ActivityKind, val label: String, val status: ActivityStatus, val detail: String? = null) {
-    init { require(label.length <= ActivityLimits.LABEL && (detail?.length ?: 0) <= ActivityLimits.DETAIL) }
-}
-
-/** At most [ActivityLimits.STEPS] steps; [truncated] when later ones were left out. */
-internal data class Activity(val steps: List<ActivityStep>, val truncated: Boolean) {
-    init { require(steps.size <= ActivityLimits.STEPS) }
-}
-
-/** Mirrors the contract's `ACTIVITY_LIMITS`. */
-internal object ActivityLimits {
-    const val DETAIL = 400
-    const val LABEL = 240
-    const val STEPS = 50
-}
 
 /**
  * Collects a reply's steps within [ActivityLimits]: the first [ActivityLimits.STEPS] are kept, a

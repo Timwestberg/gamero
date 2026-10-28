@@ -34,10 +34,25 @@ data class ChatScope(val profile: String, val companionId: String, val name: Str
 @Serializable
 data class TeamMember(val runtimeId: RuntimeId, val modelId: String)
 
-/** [member] writes the reply with its model. The page resolves Claude's default model; Codex resolves its own. */
+/**
+ * How a team member answers: [TALK] is today's talk-only, locked-down chat; [WORK] is the runtime's
+ * own agent with the person's full setup, in the companion's project folder (`workspace.*`). Native
+ * code confirms the start of work and asks every approval in its own dialog.
+ */
+@Serializable
+enum class MemberMode {
+    @SerialName("talk") TALK,
+    @SerialName("work") WORK,
+}
+
+/**
+ * [member] writes the reply with its model, in [mode] ([MemberMode.TALK] when absent). The page
+ * resolves Claude's default model; Codex resolves its own. A working message without a project
+ * folder, or whose start of work the person declines, is answered as talk, with a notice.
+ */
 @Serializable
 data class ChatSend(val profile: String, val companionId: String, val name: String, val sessionId: String,
-    val member: TeamMember, val requestId: String, val text: String, val speak: Boolean) {
+    val member: TeamMember, val requestId: String, val text: String, val speak: Boolean, val mode: MemberMode? = null) {
     fun scope() = ChatScope(profile, companionId, name, sessionId)
 }
 
@@ -51,10 +66,13 @@ data class ChatHandover(val profile: String, val companionId: String, val name: 
     fun scope() = ChatScope(profile, companionId, name, sessionId)
 }
 
-/** Run the turn of the unanswered user entry [entryId] again, with [member]. [requestId] makes a repeated retry one turn. */
+/**
+ * Run the turn of the unanswered user entry [entryId] again, with [member] in [mode] (talk when
+ * absent, as for [ChatSend]). [requestId] makes a repeated retry one turn.
+ */
 @Serializable
 data class ChatRetry(val profile: String, val companionId: String, val name: String, val sessionId: String,
-    val entryId: String, val member: TeamMember, val requestId: String, val speak: Boolean) {
+    val entryId: String, val member: TeamMember, val requestId: String, val speak: Boolean, val mode: MemberMode? = null) {
     fun scope() = ChatScope(profile, companionId, name, sessionId)
 }
 
@@ -67,21 +85,76 @@ object ChatLimits { // mirrors CHAT_LIMITS
     const val NOTICE = 300
 }
 
-/** What one member hands the next: a summary, or the last [RECENT_MESSAGES] entries within [RECENT_CHARS]. */
+/**
+ * What one member hands the next: a summary, or the last [RECENT_MESSAGES] entries within
+ * [RECENT_CHARS], and a working member's [WORK_LOG].
+ */
 object HandoverLimits { // mirrors HANDOVER_LIMITS
     /** An engine's id and version, as Hovel Brain bounds them. */
     const val ENGINE_IDENTIFIER = 256
     const val RECENT_CHARS = 8000
     const val RECENT_MESSAGES = 10
     const val SUMMARY = 2000
+    const val WORK_LOG = 2000
 }
 
-/** `handing-over`: the outgoing member is writing a summary for the incoming one. */
+/** Bounds of a working reply's activity: at most [STEPS] steps, each a [LABEL] and a shortened [DETAIL]. */
+object ActivityLimits { // mirrors ACTIVITY_LIMITS
+    const val DETAIL = 400
+    const val LABEL = 240
+    const val STEPS = 50
+}
+
+/**
+ * One thing a working member did: `read`, `search` and `edit` files in the project folder, a
+ * `command` it ran, a `connector` (a tool of the person's MCP servers or connectors), a `web`
+ * search or fetch, or `other`.
+ */
+@Serializable
+enum class ActivityKind {
+    @SerialName("read") READ,
+    @SerialName("search") SEARCH,
+    @SerialName("edit") EDIT,
+    @SerialName("command") COMMAND,
+    @SerialName("connector") CONNECTOR,
+    @SerialName("web") WEB,
+    @SerialName("other") OTHER,
+}
+
+/** `denied` when the person or their own settings said no; `failed` when the step ran and failed. */
+@Serializable
+enum class ActivityStatus {
+    @SerialName("done") DONE,
+    @SerialName("denied") DENIED,
+    @SerialName("failed") FAILED,
+}
+
+/**
+ * [label] is a path relative to the project folder, a command, or `server · tool`; [detail] the
+ * shortened output or result.
+ */
+@Serializable
+data class ActivityStep(val kind: ActivityKind, val label: String, val status: ActivityStatus, val detail: String? = null) {
+    init { require(label.length <= ActivityLimits.LABEL && (detail?.length ?: 0) <= ActivityLimits.DETAIL) }
+}
+
+/** The steps of one working reply, in the order they ran; [truncated] when more than [ActivityLimits.STEPS] ran. */
+@Serializable
+data class Activity(val steps: List<ActivityStep>, val truncated: Boolean) {
+    init { require(steps.size <= ActivityLimits.STEPS) }
+}
+
+/**
+ * `awaiting-you`: a working member's reply waits for the person to answer a native dialog, and the
+ * snapshot's `waiting` says what it asks. `handing-over`: the outgoing member is writing a summary
+ * for the incoming one.
+ */
 @Serializable
 enum class ChatState {
     @SerialName("checking") CHECKING,
     @SerialName("ready") READY,
     @SerialName("responding") RESPONDING,
+    @SerialName("awaiting-you") AWAITING_YOU,
     @SerialName("handing-over") HANDING_OVER,
     @SerialName("cancelled") CANCELLED,
     @SerialName("error") ERROR,
@@ -159,12 +232,15 @@ sealed interface ChatEntry {
     @Serializable @SerialName("user")
     data class User(override val id: String, val text: String, val status: UserStatus? = null) : ChatEntry
 
+    /** [activity] is what a working member did for this reply: present only on working replies; speech reads only [text]. */
     @Serializable @SerialName("assistant")
-    data class Assistant(override val id: String, val author: TeamMember, val text: String) : ChatEntry
+    data class Assistant(override val id: String, val author: TeamMember, val text: String, val activity: Activity? = null) : ChatEntry
 
     /**
      * The handover record and its note in the conversation are the same entry. [at] is an ISO-8601
      * instant; [from] is null when no member was active; [summary] is present for `summary`.
+     * [workLog] is the files changed, commands run and what is left: with a summary, the working
+     * outgoing member's; with recent messages, the last one there was; absent when nobody worked.
      */
     @Serializable(with = HandoverSerializer::class) @SerialName("handover")
     data class Handover(
@@ -177,16 +253,31 @@ sealed interface ChatEntry {
         val summary: String? = null,
         /** The engine that decided; only with reason `engine`. */
         val engine: HandoverEngine? = null,
+        val workLog: String? = null,
     ) : ChatEntry
 }
 
 @Serializable
 data class ChatVoice(val state: VoiceState = VoiceState.IDLE, val notice: String? = null)
 
-/** [failure] is why the last turn failed, absent once a turn succeeds. */
+/** What a native dialog asks while the snapshot is `awaiting-you`: the start-of-work confirmation, or a runtime's request to act. */
+@Serializable
+enum class WaitingKind {
+    @SerialName("start") START,
+    @SerialName("approval") APPROVAL,
+}
+
+/** For the page to display only: the person answers in the native dialog, and no method takes an answer. */
+@Serializable
+data class ChatWaiting(val kind: WaitingKind, val summary: String) {
+    init { require(summary.length <= ChatLimits.NOTICE) }
+}
+
+/** [failure] is why the last turn failed, absent once a turn succeeds. [waiting] is present only while `awaiting-you`. */
 @Serializable
 data class ChatSnapshot(val state: ChatState = ChatState.READY, val messages: List<ChatEntry> = emptyList(),
-    val notice: String? = null, val voice: ChatVoice = ChatVoice(), val failure: ChatFailureReport? = null)
+    val notice: String? = null, val voice: ChatVoice = ChatVoice(), val failure: ChatFailureReport? = null,
+    val waiting: ChatWaiting? = null)
 
 /**
  * The contract's handover `from` is `nullable`, not `optional`: the key is always there. The bridge
@@ -196,7 +287,7 @@ data class ChatSnapshot(val state: ChatState = ChatState.READY, val messages: Li
 internal object HandoverSerializer : KSerializer<ChatEntry.Handover> {
     @Serializable @SerialName("handover")
     private class Wire(val id: String, val at: String, val from: Previous, val to: TeamMember, val method: HandoverMethod,
-        val reason: HandoverReason, val summary: String? = null, val engine: HandoverEngine? = null)
+        val reason: HandoverReason, val summary: String? = null, val engine: HandoverEngine? = null, val workLog: String? = null)
 
     @Serializable(with = PreviousSerializer::class)
     private class Previous(val member: TeamMember?)
@@ -212,12 +303,16 @@ internal object HandoverSerializer : KSerializer<ChatEntry.Handover> {
 
     override val descriptor: SerialDescriptor = Wire.serializer().descriptor
     override fun serialize(encoder: Encoder, value: ChatEntry.Handover) = encoder.encodeSerializableValue(Wire.serializer(),
-        Wire(value.id, value.at, Previous(value.from), value.to, value.method, value.reason, value.summary, value.engine))
+        Wire(value.id, value.at, Previous(value.from), value.to, value.method, value.reason, value.summary, value.engine, value.workLog))
     override fun deserialize(decoder: Decoder) = decoder.decodeSerializableValue(Wire.serializer())
-        .let { ChatEntry.Handover(it.id, it.at, it.from.member, it.to, it.method, it.reason, it.summary, it.engine) }
+        .let { ChatEntry.Handover(it.id, it.at, it.from.member, it.to, it.method, it.reason, it.summary, it.engine, it.workLog) }
 }
 
-/** Mirrors event-contracts/host-bridge/chat.ts. */
+/**
+ * Mirrors event-contracts/host-bridge/chat.ts. `chat.send`, `chat.retry` and `chat.handover` are
+ * refused, with a notice and no change, while the snapshot is `awaiting-you`; `chat.stop` and
+ * `chat.close` deny what a pending dialog asks.
+ */
 object ChatMethods {
     private fun valid(scope: ChatScope) = SharedRules.isProfileId(scope.profile) &&
         BridgeProtocol.UUID_PATTERN.matches(scope.companionId) && BridgeProtocol.UUID_PATTERN.matches(scope.sessionId) &&

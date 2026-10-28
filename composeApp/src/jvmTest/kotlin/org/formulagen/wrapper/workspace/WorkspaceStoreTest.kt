@@ -86,7 +86,9 @@ class WorkspaceStoreTest {
         val store = WorkspaceStore(root, Picker(project("x")))
         assertFails { store.folder("../..", companion) }
         assertFails { store.folder("local", "../../etc") }
-        assertFails { store.folder("local", companion.uppercase()) }
+        // The contract's UUIDs may be upper case; they name the same companion.
+        val project = store.choose("local", companion)
+        assertEquals(project, store.folder("local", companion.uppercase()))
         assertFails { store.choose("LOCAL", companion) }
     }
 
@@ -105,5 +107,19 @@ class WorkspaceStoreTest {
     @Test fun aLongFolderNameIsShortenedForThePage() {
         assertEquals(FOLDER_NAME_LIMIT, ProjectFolder(Path.of("/x/" + "n".repeat(300)), true).name.length)
         assertEquals("/", ProjectFolder(Path.of("/"), true).name)
+    }
+
+    @Test fun theWorkspaceMethodsAnswerNamesAndExistenceNeverPaths() = kotlinx.coroutines.runBlocking {
+        val game = project("hovel-notes")
+        val workspace = DesktopWorkspace(WorkspaceStore(root, Picker(game, null)))
+        val scope = org.formulagen.wrapper.bridge.WorkspaceScope(companion.uppercase(), "local")
+        assertEquals(org.formulagen.wrapper.bridge.WorkspaceStatus(null), workspace.status(scope))
+        val chosen = org.formulagen.wrapper.bridge.WorkspaceStatus(org.formulagen.wrapper.bridge.WorkspaceFolder(exists = true, name = "hovel-notes"))
+        assertEquals(chosen, workspace.choose(scope))
+        assertEquals(chosen, workspace.choose(scope), "A cancelled picker answers the unchanged status")
+        Files.delete(game)
+        assertEquals(chosen.copy(folder = chosen.folder!!.copy(exists = false)), workspace.status(scope), "A deleted folder stays chosen")
+        assertEquals(org.formulagen.wrapper.bridge.WorkspaceStatus(null), workspace.clear(scope))
+        assertEquals(org.formulagen.wrapper.bridge.WorkspaceStatus(null), workspace.status(scope))
     }
 }

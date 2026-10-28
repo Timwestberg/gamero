@@ -6,12 +6,10 @@ import org.formulagen.wrapper.approvals.ApprovalDecision
 import org.formulagen.wrapper.approvals.ApprovalKind
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.TeamMember
-import org.formulagen.wrapper.chat.ActivityKind
-import org.formulagen.wrapper.chat.ActivityKind.*
-import org.formulagen.wrapper.chat.ActivityLimits
-import org.formulagen.wrapper.chat.ActivityStatus
-import org.formulagen.wrapper.chat.ActivityStatus.*
-import org.formulagen.wrapper.chat.ActivityStep
+import org.formulagen.wrapper.bridge.ActivityKind.*
+import org.formulagen.wrapper.bridge.ActivityLimits
+import org.formulagen.wrapper.bridge.ActivityStatus.*
+import org.formulagen.wrapper.bridge.ActivityStep
 import kotlin.test.*
 
 /** Claude Code's host control protocol and activity, checked on lines recorded in the abilities spike (trimmed, paths replaced). */

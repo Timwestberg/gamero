@@ -31,7 +31,7 @@ class DesktopServicesTest {
             GAMERO_PRODUCT_NAME, window = null)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
-            val product = listOf("chat.open", "providers.status", "pet.configure", "pet.show", "games.launch")
+            val product = listOf("chat.open", "providers.status", "pet.configure", "pet.show", "games.launch", "workspace.choose", "workspace.status")
             val gamero = BridgeRouter(GAMERO_PRODUCT_NAME, desktopHostCapabilities(), services.packs(GAMERO_PRODUCT_NAME), scope, {})
             assertTrue(gamero.knownMethods.containsAll(product))
             assertTrue("companion.capabilities" !in gamero.knownMethods, "the companion is Hovel's product")

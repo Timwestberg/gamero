@@ -2,10 +2,10 @@ package org.formulagen.wrapper.chat.claude
 
 import java.nio.file.Path
 import kotlinx.serialization.json.*
-import org.formulagen.wrapper.chat.Activity
-import org.formulagen.wrapper.chat.ActivityKind
+import org.formulagen.wrapper.bridge.Activity
+import org.formulagen.wrapper.bridge.ActivityKind
+import org.formulagen.wrapper.bridge.ActivityStatus
 import org.formulagen.wrapper.chat.ActivityLog
-import org.formulagen.wrapper.chat.ActivityStatus
 import org.formulagen.wrapper.chat.WorkPaths
 
 /**
@@ -31,6 +31,9 @@ internal class ClaudeActivity(folder: Path) {
         private set
 
     fun activity(): Activity = log.activity()
+
+    /** A step Hovel records itself, such as a request it could not show the player. */
+    fun note(kind: ActivityKind, label: String, status: ActivityStatus, detail: String?) = log.add(kind, label, status, detail)
 
     /** Apply one line; true when it added a step. */
     fun receive(message: JsonObject): Boolean {

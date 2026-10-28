@@ -24,3 +24,9 @@ class FakeGameCapability : GameCapability {
         return AutoCloseable { closed = null }
     }
 }
+
+class FakeWorkspaceCapability : WorkspaceCapability {
+    override suspend fun choose(scope: WorkspaceScope) = WorkspaceStatus(WorkspaceFolder(true, "hovel-notes"))
+    override suspend fun clear(scope: WorkspaceScope) = WorkspaceStatus(null)
+    override suspend fun status(scope: WorkspaceScope) = WorkspaceStatus(WorkspaceFolder(true, "hovel-notes"))
+}

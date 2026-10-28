@@ -85,7 +85,11 @@ internal class WorkspaceStore(private val root: Path, private val picker: Folder
         } finally { Files.deleteIfExists(temp) }
     }
 
-    private fun key(companionId: String): String = UUID.fromString(companionId).toString().also { require(it == companionId) { "Invalid companion" } }
+    /** The canonical lower-case id, so `ABC…` and `abc…` are one companion; anything else is not a companion id. */
+    private fun key(companionId: String): String {
+        require(companionId.length == 36) { "Invalid companion" }
+        return UUID.fromString(companionId).toString().also { require(it.equals(companionId, ignoreCase = true)) { "Invalid companion" } }
+    }
 }
 
 /** One profile's project folders by companion id (version 1). */

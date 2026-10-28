@@ -16,6 +16,11 @@ import org.formulagen.wrapper.bridge.PetCapability
 import org.formulagen.wrapper.bridge.PetMethods
 import org.formulagen.wrapper.bridge.ProviderCapability
 import org.formulagen.wrapper.bridge.ProviderMethods
+import org.formulagen.wrapper.bridge.WorkspaceCapability
+import org.formulagen.wrapper.bridge.WorkspaceMethods
+import org.formulagen.wrapper.workspace.DesktopWorkspace
+import org.formulagen.wrapper.workspace.NativeFolderPicker
+import org.formulagen.wrapper.workspace.WorkspaceStore
 import org.formulagen.wrapper.chat.ClaudeChatRuntime
 import org.formulagen.wrapper.chat.CodexChatRuntime
 import org.formulagen.wrapper.chat.DesktopChat
@@ -45,6 +50,8 @@ internal class DesktopServices private constructor(
     val chat: DesktopChat,
     val providers: DesktopProviders,
     val pet: DesktopPetLauncher,
+    /** Each companion's project folder, chosen with the Mac's folder picker. */
+    val workspace: DesktopWorkspace,
     /** Hovel's Mac companion; null for another product or without Codex and `GAMERO_WORKSPACE`. */
     val companion: HovelCompanion?,
     /** The embedded game; null without `HOVEL_GAME_PROJECT` or a window to host it. */
@@ -53,7 +60,7 @@ internal class DesktopServices private constructor(
 ) : AutoCloseable {
     /** The product capability packs [product] registers with the bridge. */
     fun packs(product: String): List<CapabilityPack> =
-        desktopProductPacks(product, companion?.let(::HovelCompanionCapability), chat, providers, pet, games)
+        desktopProductPacks(product, companion?.let(::HovelCompanionCapability), chat, providers, pet, games, workspace)
 
     /** The page's document context ended: end its chat view, close its game and void a pending approval. */
     fun invalidate() {
@@ -98,6 +105,7 @@ internal class DesktopServices private constructor(
                 val runtimes = listOfNotNull(codex?.let { CodexChatRuntime(providerRoot, it) },
                     claude?.let { ClaudeChatRuntime(it, checkNotNull(claudeSignIn)) })
                 val offered = setOfNotNull(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE.takeIf { claudeOffered })
+                val workspaces = WorkspaceStore(providerRoot, NativeFolderPicker { window })
                 val chat = own(DesktopChat(providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment)), offered))
                 // Both runtimes sign in outside Hovel, on the player's own install, so a status check never signs a chat out.
                 val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),
@@ -111,7 +119,7 @@ internal class DesktopServices private constructor(
                 val games = if (window != null && environment["HOVEL_GAME_PROJECT"] != null) {
                     DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }
                 } else null
-                return DesktopServices(chat, providers, pet, companion, games, owned.toList())
+                return DesktopServices(chat, providers, pet, DesktopWorkspace(workspaces), companion, games, owned.toList())
             } catch (error: Throwable) {
                 runCatching { closeInReverse(owned) }.exceptionOrNull()?.let(error::addSuppressed)
                 throw error
@@ -121,9 +129,9 @@ internal class DesktopServices private constructor(
 }
 
 /**
- * The product packs a desktop host registers. Every desktop product has chat, providers, pet and
- * games; Hovel adds its companion. A missing implementation registers as `Unsupported`, so its
- * methods answer `unsupported` instead of `unknown-method`.
+ * The product packs a desktop host registers. Every desktop product has chat, providers, pet,
+ * games and project folders; Hovel adds its companion. A missing implementation registers as
+ * `Unsupported`, so its methods answer `unsupported` instead of `unknown-method`.
  */
 internal fun desktopProductPacks(
     product: String,
@@ -132,12 +140,14 @@ internal fun desktopProductPacks(
     providers: ProviderCapability?,
     pet: PetCapability?,
     games: GameCapability?,
+    workspace: WorkspaceCapability?,
 ): List<CapabilityPack> = buildList {
     if (product == HOVEL_PRODUCT) add(CompanionMethods.pack(supportedIfPresent(companion)))
     add(ChatMethods.pack(supportedIfPresent(chat)))
     add(ProviderMethods.pack(supportedIfPresent(providers)))
     add(PetMethods.pack(supportedIfPresent(pet)))
     add(GameMethods.pack(supportedIfPresent(games)))
+    add(WorkspaceMethods.pack(supportedIfPresent(workspace)))
 }
 
 private fun <T : Any> supportedIfPresent(impl: T?): Capability<T> = impl?.let { Capability.Supported(it) } ?: Capability.Unsupported
