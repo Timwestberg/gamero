@@ -73,11 +73,12 @@ Use the application's actual account sign-in; do not create substitute credentia
 
 Set GAMERO_WEB_URL to that Hovel account UI and relaunch with the same native
 configuration above. The registered profile is scoped to this configured URL.
-Open **Profile → Providers → Connect Codex** in that same Hovel account. Complete
-the supported browser sign-in and wait for Connected. The profile connection uses
-an isolated Codex home and the OS keyring; the approved task adapter uses that same
-home. The global Codex app/CLI login is separate, and no provider token enters the
-web view or Hovel service. Provider connection alone does not register this computer.
+Sign in to Codex on this Mac with `codex login` in Terminal, then open
+**Profile → Providers** in that same Hovel account and choose Check again until
+Codex shows Connected. Hovel uses the player's own Codex login (Codex's default
+home) for the Providers card, companion chat and the approved task adapter alike,
+and never signs in or out itself; no provider token enters the web view or Hovel
+service. Provider connection alone does not register this computer.
 
 **Approval gate for the coordinator:** the validator's read-only browser permission
 does not itself authorize storing a host credential or launching a provider task.
@@ -103,3 +104,35 @@ Closing stops polling and interrupts local execution; interrupted claims remain
 ambiguous. Restart requires the user's explicit Connect computer/native approval
 again and reuses the same persisted host identity. Native profile switching across
 accounts is intentionally rejected in this first slice.
+
+## 3. Memory: recalled notes and a memory job
+
+The unit tests run a fake Codex, so the real CLI's model and effort flags are
+checked here. Use a test account whose memory is turned on in Hovel's memory
+settings with this computer as the extraction computer.
+
+1. **Flags.** On the Mac, run `codex exec --help` and `codex --help` for the
+   installed version. Confirm `exec` takes `-m <model>` and that
+   `-c model_reasoning_effort="low"` is accepted before `exec`. If not, change
+   `codexExecArguments` in `companion/CodexCliProvider.kt` before going on.
+2. **A memory job.** Finish one approved task, then wait for the next local day
+   (or use a test account with an earlier finished day). Within 5 minutes the
+   companion calls `memory/consolidate`, the next heartbeat brings a memory job,
+   and it runs beside any running task. Confirm it reaches `succeeded` and the
+   day's notes appear in Hovel. Repeat with a named model and `high` effort in
+   memory settings and confirm Codex used them.
+3. **No project instructions.** Put an `AGENTS.md` in the player's workspace
+   that asks for a different output. Confirm the memory job's result is still
+   memory JSON: memory jobs run in `memory-workspace-<hostId>`, not the
+   workspace. Repeat with one in `~/.codex/AGENTS.md`: memory jobs use the
+   player's own Codex home, so if `--ignore-user-config` does not keep it out,
+   record that here before release.
+4. **One login, two runs.** Start a long task, let a memory job run beside it,
+   then confirm `codex login status` still reports a ChatGPT login. Both runs
+   share one sign-in and may refresh it at the same time.
+5. **Recalled memory.** Submit an approved task for the same character. Confirm
+   the task's recalled notes appear in Codex's input in their own section,
+   between the character context and the task.
+
+Memory job receipts and output stay in `memory-journal-<hostId>` and
+`memory-output-<hostId>`, apart from the task journal.

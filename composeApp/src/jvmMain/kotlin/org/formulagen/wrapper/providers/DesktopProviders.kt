@@ -1,65 +1,59 @@
 package org.formulagen.wrapper.providers
 
-import java.awt.Desktop
-import java.net.URI
-import java.nio.file.Path
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.formulagen.wrapper.bridge.ProviderAction
 import org.formulagen.wrapper.bridge.ProviderCapability
-import org.formulagen.wrapper.bridge.ProviderId
+import org.formulagen.wrapper.bridge.ProviderList
+import org.formulagen.wrapper.bridge.ProviderModels
 import org.formulagen.wrapper.bridge.ProviderScope
-import org.formulagen.wrapper.bridge.ProviderState
 import org.formulagen.wrapper.bridge.ProviderStatus
+import org.formulagen.wrapper.bridge.RuntimeId
+import org.formulagen.wrapper.bridge.SharedRules
+import org.formulagen.wrapper.closeInReverse
 
 /**
- * The `providers.*` capability: one active profile's Codex account process, with credentials kept
- * off the bridge. [onDisconnect] runs before a sign-out, so open chats stop using the account.
+ * The `providers.*` capability, routed by runtime with credentials kept off the bridge. [runtimes]
+ * are the runtimes this build offers; one gated off is absent, so it has no card and every call for
+ * it answers "not offered". [working] are those it lets work in a project folder, by the same
+ * answer the chat runs on. Each runtime runs one call at a time.
  */
-internal class DesktopProviders(
-    private val root: Path,
-    private val executable: Path?,
-    private val openBrowser: (URI) -> Unit = { Desktop.getDesktop().browse(it) },
-    private val onDisconnect: () -> Unit = {},
-    private val createConnection: (CodexRuntime, (URI) -> Unit) -> ProviderConnection = { runtime, open ->
-        runtime.prepare(); CodexConnection(StdioCodexAppServer(runtime), open)
-    },
-) : ProviderCapability, AutoCloseable {
-    private val mutex = Mutex()
-    private var activeProfile: String? = null
-    private var connection: ProviderConnection? = null
-    private var closed = false
+internal class DesktopProviders(runtimes: List<RuntimeProvider>, private val working: Set<RuntimeId> = emptySet()) : ProviderCapability, AutoCloseable {
+    private val runtimes = runtimes.associateBy { it.id }
+    private val locks = runtimes.associate { it.id to Mutex() }
+    @Volatile private var closed = false
 
-    /** The router has validated the scope; resolve the profile's folder before starting a provider. */
-    override suspend fun perform(action: ProviderAction, scope: ProviderScope): ProviderStatus = mutex.withLock {
-        check(!closed)
-        val profile = scope.profile
-        val home = codexProfileHome(root, profile)
-        if (action == ProviderAction.DISCONNECT) onDisconnect()
-        if (executable == null) return@withLock failure(ProviderState.UNAVAILABLE, "Install Codex on this Mac, then restart Hovel to connect.")
-        runInterruptible {
-            try {
-                if (activeProfile != profile) {
-                    connection?.close(); connection = null; activeProfile = profile
-                }
-                val current = connection ?: createConnection(CodexRuntime(executable, home), openBrowser).also { connection = it }
-                current.perform(action)
-            } catch (error: InterruptedException) {
-                connection?.close(); connection = null
-                throw error
-            } catch (_: Exception) {
-                connection?.close(); connection = null
-                failure(ProviderState.ERROR, "Codex connection could not be verified. Check your connection and try again.")
-            }
-        }
+    /** The router has validated the scope; the runtime resolves the profile's folder before starting anything. */
+    override suspend fun perform(action: ProviderAction, scope: ProviderScope): ProviderStatus {
+        require(SharedRules.isProfileId(scope.profile)) { "Invalid profile" }
+        val runtime = runtimes[scope.runtimeId] ?: return notOfferedStatus(scope.runtimeId)
+        return locks.getValue(runtime.id).withLock { check(!closed); runInterruptible { runtime.status(scope.profile, action) } }
     }
 
-    /** Expose a bounded display error instead of raw provider output or credentials. */
-    private fun failure(state: ProviderState, message: String) = ProviderStatus(ProviderId.CODEX, state, message = message)
+    /** The offered runtimes, in the contract's order, and those of them that may work. */
+    override suspend fun list(profile: String): ProviderList {
+        require(SharedRules.isProfileId(profile)) { "Invalid profile" }
+        val offered = RuntimeId.entries.filter { it in runtimes }
+        return ProviderList(offered, offered.filter { it in working })
+    }
 
-    /** Close the owned account process after the native bridge has stopped taking requests. */
-    override fun close() = kotlinx.coroutines.runBlocking {
-        mutex.withLock { closed = true; connection?.close(); connection = null }
+    /** Nothing known is an empty list, never an error: the page still offers the runtime's default. */
+    override suspend fun models(scope: ProviderScope): ProviderModels {
+        require(SharedRules.isProfileId(scope.profile)) { "Invalid profile" }
+        val runtime = runtimes[scope.runtimeId] ?: return ProviderModels(emptyList(), scope.runtimeId)
+        val models = locks.getValue(runtime.id).withLock {
+            check(!closed)
+            try { runInterruptible { runtime.models(scope.profile) } }
+            catch (error: Exception) { if (error is InterruptedException || error is kotlinx.coroutines.CancellationException) throw error; emptyList() }
+        }
+        return ProviderModels(models, scope.runtimeId)
+    }
+
+    /** Close the owned account processes after the native bridge has stopped taking requests. */
+    override fun close() = kotlinx.coroutines.runBlocking<Unit> {
+        closed = true
+        val held = locks.values.onEach { it.lock() }
+        try { closeInReverse(runtimes.values.toList()) } finally { held.forEach { it.unlock() } }
     }
 }

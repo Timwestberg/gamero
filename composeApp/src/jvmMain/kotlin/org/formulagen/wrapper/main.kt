@@ -22,6 +22,7 @@ import kotlinx.coroutines.*
 import java.io.File
 import java.net.URI
 import kotlin.system.exitProcess
+import org.formulagen.wrapper.approvals.NativeDialogHost
 import org.formulagen.wrapper.bridge.desktopHostCapabilities
 import org.formulagen.wrapper.companion.NativeBridge
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
@@ -164,11 +165,11 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
     }
     val product = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME
     val services = remember {
-        DesktopServices.create(url, support.toPath(), System.getenv(), product, window) {
-            resources.browser.get()?.executeJavaScript("window.dispatchEvent(new Event('gameroGameClosed'))", url, 0)
-        }.also { resources.services = it }
+        DesktopServices.create(url, support.toPath(), System.getenv(), product, window).also { resources.services = it }
     }
     val companion = services.companion
+    // Approvals and the start-of-work confirmation: windows of Hovel's own that the page cannot reach.
+    NativeDialogHost(services.dialogs)
     LaunchedEffect(start) {
         if (!start) return@LaunchedEffect
         lifecycle.start {
