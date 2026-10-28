@@ -121,7 +121,14 @@ settings with this computer as the extraction computer.
    and it runs beside any running task. Confirm it reaches `succeeded` and the
    day's notes appear in Hovel. Repeat with a named model and `high` effort in
    memory settings and confirm Codex used them.
-3. **Recalled memory.** Submit an approved task for the same character. Confirm
+3. **No project instructions.** Put an `AGENTS.md` in the player's workspace
+   that asks for a different output. Confirm the memory job's result is still
+   memory JSON: memory jobs run in `memory-workspace-<hostId>`, not the
+   workspace.
+4. **One login, two runs.** Start a long task, let a memory job run beside it,
+   then confirm `codex login status` still reports a ChatGPT login. Both runs
+   share one sign-in and may refresh it at the same time.
+5. **Recalled memory.** Submit an approved task for the same character. Confirm
    the task's recalled notes appear in Codex's input in their own section,
    between the character context and the task.
 

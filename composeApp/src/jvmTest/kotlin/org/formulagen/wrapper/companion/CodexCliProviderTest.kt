@@ -92,7 +92,7 @@ class CodexCliProviderTest {
         val (provider, directory) = fixture()
         val input = "Extract memory notes from these exchanges.\n[t1] Request:\nFix the build."
         val request = ExecutionRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(), input,
-            extraction = ProviderChoice("gpt-5.1-codex-mini", "low"))
+            rawPrompt = true, choice = ProviderChoice("gpt-5.1-codex-mini", "low"))
         assertEquals(ProviderResult(true, "fixture result"), provider.execute(request))
         assertEquals(input, Files.readString(directory.resolve("input.txt")))
         val args = Files.readAllLines(directory.resolve("arguments.txt"))
@@ -101,18 +101,19 @@ class CodexCliProviderTest {
         assertTrue(args.indexOf("exec") < args.indexOf("-m"))
     }
 
-    @Test fun onlyAMemoryJobNamesAModelOrEffort() {
+    @Test fun onlyARequestWithAChoiceNamesAModelOrEffort() {
         val output = java.nio.file.Path.of("/tmp/out.txt")
         val tail = listOf("--ignore-user-config", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check",
             "--color", "never", "--output-last-message", "/tmp/out.txt", "-")
-        fun request(choice: ProviderChoice?) = ExecutionRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(), "x", extraction = choice)
+        fun request(choice: ProviderChoice?) = ExecutionRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(), "x", choice = choice)
         // A task's command is unchanged by memory.
         assertEquals(listOf("-a", "never", "exec") + tail, codexExecArguments(request(null), output))
         assertEquals(listOf("-a", "never", "exec") + tail,
             codexExecArguments(request(ProviderChoice("runtime-default", "runtime-default")), output))
         assertEquals(listOf("-a", "never", "-c", "model_reasoning_effort=\"xhigh\"", "exec", "-m", "o4-mini") + tail,
             codexExecArguments(request(ProviderChoice("o4-mini", "xhigh")), output))
-        assertFails { codexExecArguments(request(ProviderChoice("--profile", "low")), output) }
+        // A choice that could be read as a flag cannot exist.
+        assertFails { ProviderChoice("--profile", "low") }
     }
 
     @Test fun apiKeyLoginIsNotAdvertisedReady() {

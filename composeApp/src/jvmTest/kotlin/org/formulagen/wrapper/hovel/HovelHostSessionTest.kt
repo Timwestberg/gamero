@@ -14,21 +14,10 @@ class HovelHostSessionTest {
     private val owner = UUID.randomUUID().toString()
     private val taskId = UUID.randomUUID().toString()
     private val jobId = UUID.randomUUID().toString()
-    private val input = "Extract memory notes from these exchanges."
-
-    private fun task(progress: JsonObject, revision: Int) = buildJsonObject {
-        put("ownerId", owner); put("characterMemory", "Ada remembers"); put("revision", revision); put("progress", progress)
-        put("request", buildJsonObject { put("id", taskId); put("hostId", host); put("mode", "local"); put("prompt", "Inspect") })
-    }
-
-    private fun job(progress: JsonObject, revision: Int, providerId: String = "codex") = buildJsonObject {
-        put("attempt", 1); put("createdAt", "2026-10-28T00:00:00.000Z"); put("day", "2026-10-27")
-        put("effort", "low"); put("hostId", host); put("id", jobId); put("input", input)
-        put("kind", "extract"); put("model", "runtime-default"); put("ownerId", owner); put("progress", progress)
-        put("providerId", providerId); put("revision", revision); put("updatedAt", "2026-10-28T00:00:00.000Z")
-    }
-
-    private val queued = buildJsonObject { put("state", "queued") }
+    private fun task(progress: JsonObject, revision: Int) = HovelTestFixtures.task(host, owner, taskId, progress, revision)
+    private fun job(progress: JsonObject, revision: Int, providerId: String = "codex") =
+        HovelTestFixtures.memoryJob(host, owner, jobId, progress, revision, providerId = providerId)
+    private val queued = HovelTestFixtures.QUEUED
 
     /** A fake server with one task and one memory job. Both workers call it, so every call is synchronized. */
     private inner class Server(private var taskItem: JsonObject? = task(queued, 0), private var jobItem: JsonObject? = job(queued, 0)) : HovelTransport {
@@ -67,12 +56,14 @@ class HovelHostSessionTest {
 
     private fun isOpen(item: JsonObject) = stateOf(item) in setOf("queued", "claimed", "running")
 
+    private val statuses = java.util.Collections.synchronizedList(mutableListOf<String>())
+
     private fun session(server: Server, provider: TaskProvider, memoryProvider: TaskProvider) = HovelHostSession(
-        host,
-        ExecutionJournal(Files.createTempDirectory("session-journal"), host), provider,
-        ExecutionJournal(Files.createTempDirectory("session-memory-journal"), host), memoryProvider,
-        { CodexCliProvider.Readiness.READY }, server,
-    ) {}
+        hostId = host,
+        journal = ExecutionJournal(Files.createTempDirectory("session-journal"), host), provider = provider,
+        memoryJournal = ExecutionJournal(Files.createTempDirectory("session-memory-journal"), host), memoryProvider = memoryProvider,
+        checkReadiness = { CodexCliProvider.Readiness.READY }, transport = server,
+    ) { statuses += it }
 
     private fun eventually(condition: () -> Boolean) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
@@ -95,8 +86,10 @@ class HovelHostSessionTest {
             eventually { server.count("memory/consolidate") == 1 }
             assertEquals("succeeded", server.jobState())
             assertEquals("running", server.taskState())
-            assertEquals(input, synchronized(ran) { ran.single() }.prompt)
-            assertEquals(ProviderChoice("runtime-default", "low"), synchronized(ran) { ran.single() }.extraction)
+            val ranJob = synchronized(ran) { ran.single() }
+            assertEquals(HovelTestFixtures.MEMORY_JOB_INPUT, ranJob.prompt)
+            assertTrue(ranJob.rawPrompt)
+            assertEquals(ProviderChoice("runtime-default", "low"), ranJob.choice)
             releaseTask.countDown()
             eventually { server.taskState() == "succeeded" }
         }
@@ -118,14 +111,21 @@ class HovelHostSessionTest {
         }
     }
 
-    @Test fun aMalformedMemoryJobNeverHoldsUpATask() {
-        val server = Server(jobItem = buildJsonObject {
-            job(queued, 0).forEach { (key, value) -> if (key != "input") put(key, value) }
-        })
-        session(server, { ProviderResult(true, "Task done") }, { error("must not launch") }).use { session ->
-            assertFails { session.heartbeat() }
-            eventually { server.taskState() == "succeeded" }
-            assertEquals(0, server.count("memory/claim"))
+    @Test fun aMemoryJobThisVersionCannotReadAsksForAnUpdateAndNeverHoldsUpATask() {
+        // A missing field, and an effort a newer server added.
+        val unreadable = listOf(
+            buildJsonObject { job(queued, 0).forEach { (key, value) -> if (key != "input") put(key, value) } },
+            HovelTestFixtures.memoryJob(host, owner, jobId, effort = "maximal"),
+        )
+        for (item in unreadable) {
+            statuses.clear()
+            val server = Server(taskItem = task(queued, 0), jobItem = item)
+            session(server, { ProviderResult(true, "Task done") }, { error("must not launch") }).use { session ->
+                session.heartbeat()
+                assertEquals(HovelHostSession.MEMORY_JOB_UNREADABLE, statuses.last())
+                eventually { server.taskState() == "succeeded" }
+                assertEquals(0, server.count("memory/claim"))
+            }
         }
     }
 

@@ -15,12 +15,14 @@ never launches again automatically. Successful/failed results are durable before
 publication; reconnect republishes the saved receipt. A task cannot change its
 host, prompt, context, recalled memory or model choice under the same ID.
 
-`ExecutionRequest.recalledMemory` (a task's generated notes) and
-`ExecutionRequest.extraction` (a memory job's model and effort) are left out of
-a record while they are null, so a record without them is the same as before
-and an older companion still reads it. A record holding either cannot be read
-by a companion older than these fields; memory jobs use their own journal
-directory, which an older companion never opens.
+`ExecutionRequest.recalledMemory` (a task's generated notes), `rawPrompt`
+(the prompt is the whole provider text, as for a memory job) and `choice` (a
+model and effort) are left out of a record while they hold their defaults, so a
+record without them is the same as before and an older companion still reads
+it. A record holding any of them cannot be read by a companion older than these
+fields; memory jobs use their own journal directory, which an older companion
+never opens. A `ProviderChoice` is checked when it is made, so a record with an
+invalid one fails to load rather than run.
 
 A process lock prevents two companions from owning the same host journal. Atomic
 replacement and file/directory sync protect receipts. Corruption fails closed and
@@ -41,10 +43,11 @@ workspace but cannot promise file-changing work. Missing/incompatible tooling or
 sign-in prevents useful execution; no cloud handoff is implemented.
 
 stdin carries the text from `providerPrompt`: for a task, the character
-context, recalled memory when present, then the task; for a memory job, the
-job's input alone. A task runs on Codex's own model and effort. A memory job
-adds `-c model_reasoning_effort="<effort>"` before `exec` and `-m <model>` after
-it, each only when the value is not `runtime-default` (`codexExecArguments`).
+context, recalled memory when present, then the task; for a raw prompt such as
+a memory job's input, the prompt alone. A task runs on Codex's own model and
+effort. A request with a `choice`, today only a memory job, adds
+`-c model_reasoning_effort="<effort>"` before `exec` and `-m <model>` after it,
+each only when the value is not `runtime-default` (`codexExecArguments`).
 A model is checked against the server's rule (a letter or digit, then letters,
 digits and `._:/-`, at most 256 characters), so it is never read as a flag.
 

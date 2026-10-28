@@ -152,9 +152,8 @@ fun isRunnableMemoryJob(job: JsonObject) =
 fun hovelMemoryJobRequest(job: JsonObject, hostId: String): ExecutionRequest {
     require(job.getValue("hostId").jsonPrimitive.content == hostId) { "Memory job belongs to another computer" }
     require(isRunnableMemoryJob(job)) { "This companion runs only Codex extraction jobs" }
-    val choice = ProviderChoice(job.text("model"), job.text("effort"))
-    require(choice.isValid()) { "Memory job model or effort is invalid" }
-    return ExecutionRequest(job.text("id"), hostId, job.text("input"), extraction = choice)
+    return ExecutionRequest(job.text("id"), hostId, job.text("input"), rawPrompt = true,
+        choice = ProviderChoice(job.text("model"), job.text("effort")))
 }
 
 private fun JsonObject.text(key: String): String = optionalText(key) ?: error("$key is missing")

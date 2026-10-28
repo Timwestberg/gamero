@@ -27,8 +27,10 @@ data class ExecutionRequest(
     val context: String = "",
     /** Generated memory notes the server chose for a task, given to the provider in their own section. */
     @EncodeDefault(EncodeDefault.Mode.NEVER) val recalledMemory: String? = null,
-    /** Set only for a memory job: the provider runs [prompt] as it is, with no character section, on this model and effort. */
-    @EncodeDefault(EncodeDefault.Mode.NEVER) val extraction: ProviderChoice? = null,
+    /** The provider gets [prompt] as it is, with no character section: a memory job's input is already complete. */
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val rawPrompt: Boolean = false,
+    /** The model and effort to run on; null leaves both to the provider. */
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val choice: ProviderChoice? = null,
 ) {
     companion object {
         /** The longest prompt a provider is given: a Hovel follow-up's whole conversation (event-contracts `HOVEL_LIMITS.providerInput`), or a memory job's input (`HOVEL_MEMORY_LIMITS.jobInput`). */
@@ -39,11 +41,16 @@ data class ExecutionRequest(
     }
 }
 
-/** The model and reasoning effort a memory job runs on, fixed by the server when it made the job. */
+/**
+ * A model and reasoning effort, such as the ones the server fixes on a memory job. Only a valid choice can
+ * exist, decoded records included: event-contracts `hovelMemoryExtractionModel` and
+ * `hovelMemoryExtractionEffort`, so a model is never read as a flag.
+ */
 @Serializable
 data class ProviderChoice(val model: String, val effort: String) {
-    /** Within event-contracts `hovelMemoryExtractionModel` and `hovelMemoryExtractionEffort`, so a model is never read as a flag. */
-    fun isValid() = model.length <= MAX_MODEL_CHARS && MODEL.matches(model) && effort in EFFORTS
+    init {
+        require(model.length <= MAX_MODEL_CHARS && MODEL.matches(model) && effort in EFFORTS) { "Model or effort is invalid" }
+    }
 
     companion object {
         /** Leaves the choice to Codex. */
@@ -93,10 +100,7 @@ class ExecutionJournal(private val directory: Path, private val hostId: String) 
         require(request.prompt.isNotBlank() && request.prompt.length <= ExecutionRequest.MAX_PROMPT_CHARS &&
             request.context.length <= ExecutionRequest.MAX_CONTEXT_CHARS)
         request.recalledMemory?.let { require(it.isNotEmpty() && it.length <= ExecutionRequest.MAX_RECALLED_MEMORY_CHARS) }
-        request.extraction?.let {
-            require(it.isValid()) { "Memory job model or effort is invalid" }
-            require(request.context.isEmpty() && request.recalledMemory == null) { "A memory job runs its input alone" }
-        }
+        if (request.rawPrompt) require(request.context.isEmpty() && request.recalledMemory == null) { "A raw prompt runs alone" }
         read(request.id)?.let {
             require(it.request == request) { "Task identity has changed" }
             return it

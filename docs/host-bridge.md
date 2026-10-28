@@ -175,7 +175,7 @@ event: `games.launch` opens a game and `games.closed` says the player is back.
    add the event to `envelopesMatchTheValidFixtures`, which checks that the
    Kotlin encoding equals the envelope fixture from step 1.
 
-6. **Fixtures.** Run `tools/sync-host-bridge-fixtures.py ../server-platform`
+6. **Fixtures.** Run `tools/sync-server-fixtures.py ../server-platform`
    to regenerate `commonTest/.../HostBridgeFixtures.kt` from the merged
    contract, then the router tests. `--check` fails when the copy is stale. The
    `Source` line names the last server-platform commit that changed the

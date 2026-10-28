@@ -12,11 +12,7 @@ class HovelAdapterTest {
     private val host = UUID.randomUUID().toString()
     private val owner = UUID.randomUUID().toString()
     private val taskId = UUID.randomUUID().toString()
-    private fun task(progress: JsonObject, revision: Int) = buildJsonObject {
-        put("ownerId", owner); put("characterMemory", "Ada remembers")
-        put("revision", revision); put("progress", progress)
-        put("request", buildJsonObject { put("id", taskId); put("hostId", host); put("mode", "local"); put("prompt", "Inspect") })
-    }
+    private fun task(progress: JsonObject, revision: Int) = HovelTestFixtures.task(host, owner, taskId, progress, revision)
     @Test fun taskPublicationRetriesWithoutLaunchingAgain() {
         var current = task(buildJsonObject { put("state", "queued") }, 0)
         var deliveries = 0
@@ -108,22 +104,18 @@ class HovelAdapterTest {
 
     private val jobId = UUID.randomUUID().toString()
     private fun job(progress: JsonObject, revision: Int, model: String = "runtime-default", effort: String = "low", providerId: String = "codex") =
-        buildJsonObject {
-            put("attempt", 1); put("createdAt", "2026-10-28T00:00:00.000Z"); put("day", "2026-10-27")
-            put("effort", effort); put("hostId", host); put("id", jobId); put("input", "Extract memory notes from these exchanges.")
-            put("kind", "extract"); put("model", model); put("ownerId", owner); put("progress", progress)
-            put("providerId", providerId); put("revision", revision); put("updatedAt", "2026-10-28T00:00:00.000Z")
-        }
-    private val queued = buildJsonObject { put("state", "queued") }
+        HovelTestFixtures.memoryJob(host, owner, jobId, progress, revision, model, effort, providerId)
+    private val queued = HovelTestFixtures.QUEUED
 
     @Test fun aMemoryJobRunsItsInputAloneOnItsModelAndEffort() {
         val request = hovelMemoryJobRequest(job(queued, 0, model = "gpt-5.1-codex-mini", effort = "high"), host)
         assertEquals(jobId, request.id)
-        assertEquals("Extract memory notes from these exchanges.", request.prompt)
+        assertEquals(HovelTestFixtures.MEMORY_JOB_INPUT, request.prompt)
         assertEquals("", request.context)
         assertNull(request.recalledMemory)
-        assertEquals(ProviderChoice("gpt-5.1-codex-mini", "high"), request.extraction)
-        assertEquals("Extract memory notes from these exchanges.", providerPrompt(request))
+        assertTrue(request.rawPrompt)
+        assertEquals(ProviderChoice("gpt-5.1-codex-mini", "high"), request.choice)
+        assertEquals(HovelTestFixtures.MEMORY_JOB_INPUT, providerPrompt(request))
     }
 
     @Test fun aMemoryJobThisCompanionCannotRunIsRefused() {

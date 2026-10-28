@@ -93,20 +93,20 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
 /**
  * The text a provider is given on stdin. A task's is byte for byte event-contracts `hovelProviderPrompt`:
  * the character section, then recalled memory when there is some, then the task (pinned by
- * HovelProviderPromptTest). A memory job's input is already the whole text.
+ * HovelProviderPromptTest). A raw prompt, such as a memory job's input, is already the whole text.
  */
 internal fun providerPrompt(request: ExecutionRequest): String =
-    if (request.extraction != null) request.prompt
+    if (request.rawPrompt) request.prompt
     else "Platform-owned character context (user-authored):\n${request.context}\n\n" +
         request.recalledMemory?.let { "$it\n\n" }.orEmpty() + "User task:\n${request.prompt}"
 
 /**
  * Arguments for `codex exec`; [CodexCliProvider.builder] adds the ChatGPT-only login and environment
- * rules in front. Deliberately read-only. A task runs on Codex's own model and effort; a memory job
- * names its model (`exec -m`) and effort (`model_reasoning_effort`) unless they are `runtime-default`.
+ * rules in front. Deliberately read-only. A request with a [ProviderChoice] names its model (`exec -m`)
+ * and effort (`model_reasoning_effort`) unless they are `runtime-default`; others run on Codex's own.
  */
 internal fun codexExecArguments(request: ExecutionRequest, output: Path): List<String> {
-    val choice = request.extraction?.also { require(it.isValid()) { "Memory job model or effort is invalid" } }
+    val choice = request.choice
     val effort = choice?.effort?.takeIf { it != ProviderChoice.RUNTIME_DEFAULT }
     val model = choice?.model?.takeIf { it != ProviderChoice.RUNTIME_DEFAULT }
     return listOf("-a", "never") +

@@ -143,7 +143,10 @@ again.
    (`journal-<hostId>`) and a Codex provider writing to `output-<hostId>`,
    plus a memory-job journal (`memory-journal-<hostId>`) and a second Codex
    provider writing to `memory-output-<hostId>`. Both providers use the same
-   login. A second activation reuses the running session.
+   login. Memory jobs run in an empty private folder,
+   `memory-workspace-<hostId>`, never the player's workspace, so a project's
+   `AGENTS.md` cannot change their output. A second activation reuses the
+   running session.
 
 ### Keychain
 
@@ -187,8 +190,7 @@ tasks remain on this computer".
 
 The session runs two lanes, each with its own journal and a single worker
 thread: one user task and one memory job may run at the same time. A malformed
-task never holds up a memory job, nor the reverse; the first failure still
-reaches the status line.
+task never holds up a memory job, nor the reverse.
 
 ### Tasks
 
@@ -220,8 +222,9 @@ This is byte for byte the server's `hovelProviderPrompt`.
 `HovelProviderPromptTest` checks every case of the server's fixture
 (`event-contracts/src/hovel/fixtures/provider-prompt.json`), copied into
 `HovelProviderPromptFixture.kt` by
-`tools/sync-provider-prompt-fixture.py ../server-platform`. Run it after the
-fixture changes; `--check` fails when the copy is stale.
+`tools/sync-server-fixtures.py ../server-platform`, the same script that copies
+the host-bridge fixtures. Run it after the fixture changes; `--check` fails
+when a copy is stale.
 
 ### Memory jobs
 
@@ -243,21 +246,25 @@ never cut short into broken JSON.
 A failed or uncertain job needs nothing on this computer. The server closes it
 and plans the day again, up to 3 attempts, then waits for the player's retry in
 Hovel. A job the server replaced or took back answers 409 and is never offered
-again. Memory job failures leave the status line unchanged.
+again. Memory job failures leave the status line unchanged, except a job this
+version cannot read (a missing field, or a model or effort it does not know):
+the status line then says "Connected · Update Hovel on this computer to run its
+memory jobs", and the job stays queued until the companion is updated.
 
 ### Consolidation
 
 The session calls `memory/consolidate` 1 minute after start, every 5 minutes
-after that, and right after each delivered memory job result. Only the
-extraction computer chosen in Hovel's memory settings may consolidate; any
-other computer gets 403. Every failure is ignored and waits for the next call.
+after that, and right after each delivered memory job result. The calls run on
+their own thread, so a slow one never delays a heartbeat. Only the extraction
+computer chosen in Hovel's memory settings may consolidate; any other computer
+gets 403. Every failure is ignored and waits for the next call.
 
 ### Closing
 
 `ExecutionJournal` holds a `host.lock` so two companions cannot share a
-journal. `close()` stops the heartbeat thread and both workers, closes both
-journals so no stale worker can cross the launch boundary, and waits up to 3
-and 5 seconds for them to end.
+journal. `close()` stops the heartbeat and consolidation threads and both
+workers, closes both journals so no stale worker can cross the launch boundary,
+and waits at most 5 seconds in all for them to end.
 
 ## Failure messages to know
 

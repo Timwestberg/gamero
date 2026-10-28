@@ -106,9 +106,15 @@ class HovelCompanion(
                                 memoryJournal = memoryJobs
                                 val home = codexHomeForOwner?.invoke(registered.ownerId)
                                 val provider = CodexCliProvider(executable, workspace, directory.resolve("output-${registered.id}"), home)
-                                val memoryProvider = CodexCliProvider(executable, workspace, directory.resolve("memory-output-${registered.id}"), home)
-                                session = HovelHostSession(registered.id, journal, provider, memoryJobs, memoryProvider, provider::readiness, transport) { status = it }
-                                    .also { it.start() }
+                                // Extraction reads only its input: an empty private folder, never the player's project and its AGENTS.md.
+                                val memoryWorkspace = privateDirectory(directory.resolve("memory-workspace-${registered.id}"))
+                                val memoryProvider = CodexCliProvider(executable, memoryWorkspace, directory.resolve("memory-output-${registered.id}"), home)
+                                session = HovelHostSession(
+                                    hostId = registered.id,
+                                    journal = journal, provider = provider,
+                                    memoryJournal = memoryJobs, memoryProvider = memoryProvider,
+                                    checkReadiness = provider::readiness, transport = transport,
+                                ) { status = it }.also { it.start() }
                             } catch (error: Exception) { journal.close(); memoryJournal?.close(); throw error }
                         }
                     }
@@ -124,6 +130,10 @@ class HovelCompanion(
             }
             throw error
         } finally { mutex.unlock() }
+    }
+
+    private fun privateDirectory(path: Path): Path = Files.createDirectories(path).also {
+        Files.setPosixFilePermissions(it, PosixFilePermissions.fromString("rwx------"))
     }
 
     internal fun prepareRegistration(owner: String): HostRegistration {
