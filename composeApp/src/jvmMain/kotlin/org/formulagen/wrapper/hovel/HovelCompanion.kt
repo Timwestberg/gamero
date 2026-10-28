@@ -98,11 +98,23 @@ class HovelCompanion(
                         if (session == null) {
                             val transport = HovelHttpTransport(URI("$origin/api/hovel/v1/hovel"), registered.ownerId, registered.id, token)
                             val journal = ExecutionJournal(directory.resolve("journal-${registered.id}"), registered.id)
+                            var memoryJournal: ExecutionJournal? = null
                             try {
-                                // Tasks run on the player's own Codex login, as companion chat does.
+                                // Memory jobs keep their own journal and output, so one may run beside a task.
+                                val memoryJobs = ExecutionJournal(directory.resolve("memory-journal-${registered.id}"), registered.id)
+                                memoryJournal = memoryJobs
+                                // Tasks run on the player's own Codex login, as companion chat does; so do memory jobs.
                                 val provider = CodexCliProvider(executable, workspace, directory.resolve("output-${registered.id}"))
-                                session = HovelHostSession(registered.id, journal, provider, transport) { status = it }.also { it.start() }
-                            } catch (error: Exception) { journal.close(); throw error }
+                                // Extraction reads only its input: an empty private folder, never the player's project and its AGENTS.md.
+                                val memoryWorkspace = privateDirectory(directory.resolve("memory-workspace-${registered.id}"))
+                                val memoryProvider = CodexCliProvider(executable, memoryWorkspace, directory.resolve("memory-output-${registered.id}"))
+                                session = HovelHostSession(
+                                    hostId = registered.id,
+                                    journal = journal, provider = provider,
+                                    memoryJournal = memoryJobs, memoryProvider = memoryProvider,
+                                    checkReadiness = provider::readiness, transport = transport,
+                                ) { status = it }.also { it.start() }
+                            } catch (error: Exception) { journal.close(); memoryJournal?.close(); throw error }
                         }
                     }
                     buildJsonObject { put("id", registered.id); put("connected", true) }
@@ -117,6 +129,10 @@ class HovelCompanion(
             }
             throw error
         } finally { mutex.unlock() }
+    }
+
+    private fun privateDirectory(path: Path): Path = Files.createDirectories(path).also {
+        Files.setPosixFilePermissions(it, PosixFilePermissions.fromString("rwx------"))
     }
 
     internal fun prepareRegistration(owner: String): HostRegistration {
