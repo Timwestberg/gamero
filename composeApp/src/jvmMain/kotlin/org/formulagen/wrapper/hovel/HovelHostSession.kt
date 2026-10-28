@@ -45,7 +45,7 @@ class HovelHostSession(
             CodexCliProvider.Readiness.AUTH_REQUIRED -> "auth-required"
             CodexCliProvider.Readiness.UNAVAILABLE -> "unavailable"
         }))
-        status(if (readiness == CodexCliProvider.Readiness.READY) "Connected · Codex ready" else "Connected · Open Profile → Providers to connect Codex")
+        status(if (readiness == CodexCliProvider.Readiness.READY) "Connected · Codex ready" else "Connected · Sign in to Codex: run `codex login` in Terminal")
         val ready = readiness == CodexCliProvider.Readiness.READY
         // A malformed task never holds up a memory job, nor the reverse.
         val taskFailure = runCatching { offerTask(response, ready) }.exceptionOrNull()

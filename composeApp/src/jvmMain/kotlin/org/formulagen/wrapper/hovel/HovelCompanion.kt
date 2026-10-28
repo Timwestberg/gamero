@@ -34,9 +34,8 @@ class HovelCompanion(
     private val executable: Path,
     private val workspace: Path,
     private val credentials: HostCredentials = MacHostCredentials(),
-    private val codexHomeForOwner: ((String) -> Path)? = null,
 ) : AutoCloseable {
-    var status by mutableStateOf("Connect Codex in Profile → Providers, then connect this Mac from Hovel.")
+    var status by mutableStateOf("Sign in to Codex with `codex login` in Terminal, then connect this Mac from Hovel.")
         private set
     var approval by mutableStateOf<ConnectionApproval?>(null)
         private set
@@ -104,11 +103,11 @@ class HovelCompanion(
                                 // Memory jobs keep their own journal and output, so one may run beside a task.
                                 val memoryJobs = ExecutionJournal(directory.resolve("memory-journal-${registered.id}"), registered.id)
                                 memoryJournal = memoryJobs
-                                val home = codexHomeForOwner?.invoke(registered.ownerId)
-                                val provider = CodexCliProvider(executable, workspace, directory.resolve("output-${registered.id}"), home)
+                                // Tasks run on the player's own Codex login, as companion chat does; so do memory jobs.
+                                val provider = CodexCliProvider(executable, workspace, directory.resolve("output-${registered.id}"))
                                 // Extraction reads only its input: an empty private folder, never the player's project and its AGENTS.md.
                                 val memoryWorkspace = privateDirectory(directory.resolve("memory-workspace-${registered.id}"))
-                                val memoryProvider = CodexCliProvider(executable, memoryWorkspace, directory.resolve("memory-output-${registered.id}"), home)
+                                val memoryProvider = CodexCliProvider(executable, memoryWorkspace, directory.resolve("memory-output-${registered.id}"))
                                 session = HovelHostSession(
                                     hostId = registered.id,
                                     journal = journal, provider = provider,

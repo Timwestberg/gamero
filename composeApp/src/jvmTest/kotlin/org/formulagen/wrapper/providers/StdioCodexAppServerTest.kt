@@ -3,6 +3,7 @@ package org.formulagen.wrapper.providers
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 import kotlinx.serialization.json.*
+import org.formulagen.wrapper.process.readBoundedLine
 import kotlin.test.*
 
 class StdioCodexAppServerTest {
@@ -10,7 +11,6 @@ class StdioCodexAppServerTest {
         val root = Files.createTempDirectory("hovel-codex-exit")
         try {
             val runtime = CodexRuntime(java.nio.file.Path.of("/usr/bin/false"), root.resolve("private"))
-            runtime.prepare()
             assertFails { StdioCodexAppServer(runtime) }
         } finally { root.toFile().deleteRecursively() }
     }
@@ -24,20 +24,17 @@ class StdioCodexAppServerTest {
             for line in sys.stdin:
                 request = json.loads(line)
                 if 'id' not in request: continue
-                if request['method'] == 'account/login/start':
-                    print(json.dumps({'method':'account/login/completed','params':{'loginId':'login-fixture','success':False}}), flush=True)
                 result = {'account':None} if request['method'] == 'account/read' else {}
                 print(json.dumps({'id':request['id'],'result':result}), flush=True)
         """.trimIndent())
         Files.setPosixFilePermissions(executable, PosixFilePermissions.fromString("rwx------"))
         val runtime = CodexRuntime(executable, root.resolve("private"))
-        runtime.prepare()
         try {
             StdioCodexAppServer(runtime).use { rpc ->
                 assertEquals(JsonNull, rpc.call("account/read")["account"])
-                rpc.call("account/login/start")
-                assertEquals(false, rpc.loginResult("login-fixture"))
-                assertNull(rpc.loginResult("another-login"))
+                // Sign-in and sign-out are the player's, in Terminal; the account process cannot start either.
+                assertFails { rpc.call("account/login/start") }
+                assertFails { rpc.call("account/logout") }
                 assertFails { rpc.call("turn/start") }
             }
         } finally { root.toFile().deleteRecursively() }
@@ -63,7 +60,7 @@ class StdioCodexAppServerTest {
                     print(json.dumps({'id':request['id'],'result':{}}), flush=True)
         """.trimIndent())
         Files.setPosixFilePermissions(executable, PosixFilePermissions.fromString("rwx------"))
-        val runtime = CodexRuntime(executable, root.resolve("private")); runtime.prepare()
+        val runtime = CodexRuntime(executable, root.resolve("private"))
         val notifications = java.util.concurrent.CopyOnWriteArrayList<String>()
         try {
             StdioCodexAppServer(runtime, onNotification = { method, _ -> notifications += method }).use { rpc ->
@@ -92,13 +89,14 @@ class StdioCodexAppServerTest {
                 print(json.dumps({'id':request['id'],'result':{'account':None}}), flush=True)
         """.trimIndent())
         Files.setPosixFilePermissions(executable, PosixFilePermissions.fromString("rwx------"))
-        val runtime = CodexRuntime(executable, root.resolve("private")); runtime.prepare()
+        val runtime = CodexRuntime(executable, root.resolve("private"))
         val notifications = java.util.concurrent.CopyOnWriteArrayList<String>()
         try {
             StdioCodexAppServer(runtime, onNotification = { method, _ -> notifications += method }).use { rpc ->
                 assertEquals(JsonNull, rpc.call("account/read")["account"])
                 assertEquals(JsonNull, rpc.call("account/read")["account"])
-                assertEquals(listOf("turn/completed", "turn/completed"), notifications.toList())
+                // The message too long to keep is reported by its name, and reading goes on.
+                assertEquals(listOf("transport/dropped", "turn/completed", "transport/dropped", "turn/completed"), notifications.toList())
             }
         } finally { root.toFile().deleteRecursively() }
     }
@@ -118,7 +116,7 @@ class StdioCodexAppServerTest {
                     print(json.dumps({'id':request['id'],'result':{'thread':{'id':'fresh'}}}), flush=True)
         """.trimIndent())
         Files.setPosixFilePermissions(executable, PosixFilePermissions.fromString("rwx------"))
-        val runtime = CodexRuntime(executable, root.resolve("private")); runtime.prepare()
+        val runtime = CodexRuntime(executable, root.resolve("private"))
         try {
             StdioCodexAppServer(runtime, allowedMethods = setOf("thread/resume", "thread/start")).use { rpc ->
                 assertFailsWith<CodexRequestRejected> { rpc.call("thread/resume") }

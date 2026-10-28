@@ -20,4 +20,5 @@ internal fun iosHovelBridgePacks(): List<CapabilityPack> = listOf(
     ProviderMethods.pack(Capability.Unsupported),
     PetMethods.pack(Capability.Unsupported),
     GameMethods.pack(Capability.Unsupported),
+    WorkspaceMethods.pack(Capability.Unsupported),
 )
