@@ -127,8 +127,8 @@ internal class DesktopSpeech(
                         if (!started) {
                             pending = pending + pcm
                             val queuedMs = if (rate > 0) pending.size / 2 * 1000 / rate else 0
-                            // The sentence has finished synthesizing. Start once 200 ms is queued,
-                            // or immediately when the sentence is shorter than that.
+                            // Once per reply, not per sentence. A later sentence is written as soon
+                            // as it is ready; the pause at a period is sentenceGapMs inside the audio.
                             val startAfter = synchronized(gate) { voiceConfig?.startAfterMs ?: settings.startAfterMs }
                             if (queuedMs >= startAfter || pcm.isNotEmpty()) {
                                 if (synchronized(gate) { closed || ticket != generation }) return@speakStreaming false

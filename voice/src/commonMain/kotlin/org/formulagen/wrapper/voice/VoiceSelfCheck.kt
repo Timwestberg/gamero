@@ -74,6 +74,10 @@ fun runVoiceSelfCheck() {
     check(overlongCalls == 1) { "an overlong take under the ceiling is not regenerated" }
     check(VoiceConfig().numSteps == 5) { "five flow steps" }
     check(VoiceConfig().silenceBetweenPiecesMs == 0) { "no inserted silence" }
+    check(VoiceConfig().resolvedSentenceGapMs == 0) { "pocket does not insert a sentence gap" }
+    check(VoiceConfig(backend = VoiceConfig.KOKORO).resolvedSentenceGapMs == VoiceConfig.KOKORO_SENTENCE_GAP_MS) {
+        "kokoro sentence gap"
+    }
     check(VoiceConfig().fallbackNumSteps == 3) { "fallback is 3 steps" }
     check(VoiceConfig().decoderFramesPerCallback == 2) { "decoder frames" }
     check(VoiceConfig().longSentenceMaxChars == 400) { "long sentence cap" }
@@ -203,6 +207,33 @@ fun runVoiceSelfCheck() {
     check(coverUnknownWords("questions zxqvik", kokoroChatLexicon(lexicon).known) == "questions z x q v i k") {
         "questions stays a word and an unknown token is spelled"
     }
+    val quietLead = 60
+    val quietTail = 122
+    val speech = 400
+    val padded = FloatArray(quietLead + speech + quietTail)
+    for (index in quietLead until quietLead + speech) padded[index] = 0.3f
+    val trimmed = trimEdgeSilence(padded, 0.02f)
+    check(trimmed.size == speech) { "trim keeps the sentence and drops both edges" }
+    val beforeGapMs = quietTail + quietLead
+    check(beforeGapMs == 182) { "sample reply gap before the trim" }
+    var second: FloatArray? = null
+    val gapEngine = object : PieceEngine {
+        override val sampleRate: Int = 1000
+        override fun usesFrameCeiling(): Boolean = false
+        override fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio {
+            return PieceAudio(padded.copyOf(), 1000, 1.0, 1.0)
+        }
+        override fun release() {}
+    }
+    EmberVoice(gapEngine, VoiceConfig(backend = VoiceConfig.KOKORO, crossfadeMs = 0)).speakStreaming("One. Two.") { samples, _ ->
+        if (second == null && samples.size > speech) second = samples
+        true
+    }
+    val nextSentence = checkNotNull(second)
+    val gap = VoiceConfig.KOKORO_SENTENCE_GAP_MS
+    check(nextSentence.size == gap + speech) { "the next sentence is the gap plus the trimmed speech ${nextSentence.size}" }
+    check(nextSentence.copyOfRange(0, gap).all { it == 0f }) { "the inserted gap is silence" }
+    check(nextSentence[gap] == 0.3f) { "speech follows the gap immediately" }
     check(expectedAudioSeconds(spokenNumber[0].length) == 18 / 15.0) { "expected uses the normalized length" }
     check(compareVersions("2.0.0-rc1", "2.0.0") < 0) { "pre-release is lower than the release" }
     check(compareVersions("2.0.0", "2.0.0-rc1") > 0) { "release is higher than its pre-release" }
