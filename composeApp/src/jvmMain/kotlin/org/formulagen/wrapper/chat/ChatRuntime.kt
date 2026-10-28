@@ -16,10 +16,12 @@ internal val RuntimeId.program: String get() = when (this) { RuntimeId.CODEX -> 
 /**
  * A runtime's own conversation with one companion: Codex's thread id or Claude Code's session id.
  * [personaHash] is the [Persona.hash] the conversation was last used with, or empty when it was
- * migrated from a record that did not track it.
+ * migrated from a record that did not track it. [explicitModel] is set once a turn in it named a
+ * model other than the runtime default: Codex keeps that model for later turns, so going back to
+ * its default must name the default.
  */
 @Serializable
-internal data class NativeConversation(val id: String, val personaHash: String)
+internal data class NativeConversation(val id: String, val personaHash: String, val explicitModel: Boolean = false)
 
 /**
  * The seam [DesktopChat] talks to: one implementation per runtime. Implementations deliver

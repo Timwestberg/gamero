@@ -68,7 +68,7 @@ class ChatHistoryTest {
         val (file, _) = paths(root)
         val claude = TeamMember(RuntimeId.CLAUDE_CODE, "sonnet")
         val record = ChatRecord(
-            conversations = mapOf(RuntimeId.CODEX to NativeConversation(thread, ""), RuntimeId.CLAUDE_CODE to NativeConversation(session, hash)),
+            conversations = mapOf(RuntimeId.CODEX to NativeConversation(thread, "", explicitModel = true), RuntimeId.CLAUDE_CODE to NativeConversation(session, hash)),
             entries = listOf(
                 ChatEntry.User(user, "Hello"),
                 ChatEntry.Handover(handover, "2026-10-27T12:00:00Z", TeamMember(RuntimeId.CODEX, RUNTIME_DEFAULT_MODEL), claude,
@@ -83,6 +83,10 @@ class ChatHistoryTest {
         val json = Json.parseToJsonElement(Files.readString(file)).jsonObject
         assertEquals(JsonPrimitive(2), json["version"])
         assertEquals(setOf("codex", "claude-code"), json.getValue("conversations").jsonObject.keys)
+        assertEquals(JsonPrimitive(true), json.getValue("conversations").jsonObject.getValue("codex").jsonObject["explicitModel"])
+        // A record written before conversations remembered named models reads as not named.
+        Files.writeString(file, Files.readString(file).replace(",\"explicitModel\":false", ""))
+        assertEquals(false, history.read().conversations.getValue(RuntimeId.CLAUDE_CODE).explicitModel)
         val entries = json.getValue("entries").jsonArray.map { it.jsonObject }
         assertEquals(listOf("user", "handover", "assistant"), entries.map { it.getValue("role").jsonPrimitive.content })
         assertEquals(buildJsonObject { put("runtimeId", "claude-code"); put("modelId", "sonnet") }, entries[2]["author"])

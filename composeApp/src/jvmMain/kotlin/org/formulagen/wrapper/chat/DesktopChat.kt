@@ -194,10 +194,21 @@ internal class DesktopChat(
         val handle = runtime.startTurn(request, Reply(session, generation, member, request, retried))
         val stale = synchronized(gate) {
             val current = live(session, generation)
-            if (current && session.state == ChatState.RESPONDING) session.turn = handle
+            if (current && session.state == ChatState.RESPONDING) {
+                session.turn = handle
+                // The turn has started, so its model counts even if the reply is then stopped.
+                if (member.modelId != SharedRules.RUNTIME_DEFAULT_MODEL) namedModel(session, kind)
+            }
             !current
         }
         if (stale) runtime.release()
+    }
+
+    /** Remember that [kind]'s conversation was given an explicit model. */
+    private fun namedModel(session: Session, kind: RuntimeId) {
+        val conversation = session.record.conversations[kind]?.takeUnless { it.explicitModel } ?: return
+        session.record = session.record.copy(conversations = session.record.conversations + (kind to conversation.copy(explicitModel = true)))
+        runCatching { session.history.write(session.record) }
     }
 
     /** True once [runtime] is ready for this view; otherwise [notReady] runs with the gate held, while the work is still current. */
@@ -255,7 +266,12 @@ internal class DesktopChat(
     private inner class Reply(val session: Session, val generation: Int, val member: TeamMember, val request: TurnRequest, val retried: Boolean) : TurnEvents {
         private val kind = member.runtimeId
         private fun open() = live(session, generation) && session.state == ChatState.RESPONDING
-        private fun keep(conversation: String) = session.record.conversations + (kind to NativeConversation(conversation, request.persona.hash))
+        private val named = member.modelId != SharedRules.RUNTIME_DEFAULT_MODEL
+        /** This turn's conversation, with the persona it ran with; a model named in it stays remembered. */
+        private fun keep(conversation: String): Map<RuntimeId, NativeConversation> {
+            val previous = session.record.conversations[kind]?.takeIf { it.id == conversation }
+            return session.record.conversations + (kind to NativeConversation(conversation, request.persona.hash, named || previous?.explicitModel == true))
+        }
 
         /** Saved before the reply ends, so a stopped turn keeps the conversation it started. */
         override fun opened(conversation: String) = synchronized(gate) {

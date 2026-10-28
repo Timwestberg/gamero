@@ -90,7 +90,9 @@ class DesktopChatTeamTest {
             assertEquals(entries.map { it.id }, chat.snapshot(scope).messages.map { it.id }, "Entry ids are stable across polls")
             val record = saved()
             val hash = Persona.companion("Ember").hash
-            assertEquals(mapOf(RuntimeId.CODEX to NativeConversation(thread, hash), RuntimeId.CLAUDE_CODE to NativeConversation(session, hash)), record.conversations)
+            // Claude members always name their model; Codex here used its default.
+            assertEquals(mapOf(RuntimeId.CODEX to NativeConversation(thread, hash), RuntimeId.CLAUDE_CODE to NativeConversation(session, hash, explicitModel = true)),
+                record.conversations)
             assertNull(record.pendingContext)
             // Each runtime then continues its own conversation, with nothing owed.
             turn(chat, codexRuntime, codex, "Back to you", "Welcome back", thread)
@@ -140,6 +142,27 @@ class DesktopChatTeamTest {
             chat.handover(handover(sonnet, opus))
             turn(chat, claude, opus, "Once more", "Sure", session)
             assertEquals(3, switches().size)
+        }
+    }
+
+    @Test fun aConversationRemembersThatATurnNamedAModel() = runBlocking {
+        val codexRuntime = Fake(RuntimeId.CODEX)
+        val luna = TeamMember(RuntimeId.CODEX, "gpt-6-luna")
+        chat(codexRuntime).use { chat ->
+            chat.open(scope)
+            turn(chat, codexRuntime, codex, "Hi", "Hello", thread)
+            assertEquals(false, saved().conversations[RuntimeId.CODEX]?.explicitModel)
+            // A started turn counts even when the reply is then stopped.
+            chat.send(send(luna)); await { codexRuntime.events.size == 2 }
+            await { saved().conversations[RuntimeId.CODEX]?.explicitModel == true }
+            chat.stop(scope)
+            turn(chat, codexRuntime, codex, "Back to the default", "Ok", thread)
+            assertEquals(NativeConversation(thread, Persona.companion("Ember").hash, explicitModel = true), codexRuntime.requests.last().conversation)
+            assertEquals(true, saved().conversations[RuntimeId.CODEX]?.explicitModel)
+            // A new conversation starts without one.
+            chat.send(send(codex)); await { codexRuntime.events.size == 4 }
+            codexRuntime.events.last().opened(session); codexRuntime.events.last().completed("Fresh", session)
+            assertEquals(false, saved().conversations[RuntimeId.CODEX]?.explicitModel)
         }
     }
 

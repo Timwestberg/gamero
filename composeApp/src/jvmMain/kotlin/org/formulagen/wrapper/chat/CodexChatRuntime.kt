@@ -18,6 +18,7 @@ import org.formulagen.wrapper.providers.CodexAppServer
 import org.formulagen.wrapper.providers.CodexRequestRejected
 import org.formulagen.wrapper.providers.CodexRuntime
 import org.formulagen.wrapper.providers.StdioCodexAppServer
+import org.formulagen.wrapper.providers.codexModelList
 import org.formulagen.wrapper.providers.codexProfileHome
 
 /**
@@ -39,6 +40,8 @@ internal class CodexChatRuntime(
     /** Closing an app-server can wait seconds for its process tree, so it never runs on a caller's thread. */
     private val releaser = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-chat-release"))
     private var connection: Connection? = null
+    /** Codex's default model by profile, from `model/list`, with when it was read (System.nanoTime). */
+    private val defaults = ConcurrentHashMap<String, Pair<Long, String>>()
     /** Changes on every connect and release; events from an older app-server are ignored. */
     private var epoch = 0
     private var closed = false
@@ -68,13 +71,15 @@ internal class CodexChatRuntime(
         val connection = connect(turn.profile)
         if (!chatgpt(connection)) { events.failed(ChatFailure.SignedOut); return TurnHandle {} }
         val thread = thread(connection, turn, events)
+        // Codex keeps a named model for later turns of a thread, so its default is named to go back to it.
+        val sent = model.ifEmpty { if (turn.conversation?.explicitModel == true && thread == turn.conversation.id) defaultModel(connection).orEmpty() else "" }
         val active = Turn(thread, events)
         synchronized(lock) { current(connection); connection.turn = active }
         val started = connection.rpc.call("turn/start", buildJsonObject {
             put("threadId", thread)
             putJsonArray("input") { add(buildJsonObject { put("type", "text"); put("text", turn.input()) }) }
             // Codex keeps a turn's model for later turns, so an explicit model is sent with every turn.
-            model.takeIf { it.isNotEmpty() }?.let { put("model", it) }
+            sent.takeIf { it.isNotEmpty() }?.let { put("model", it) }
         })
         val turnId = started.getValue("turn").jsonObject.getValue("id").jsonPrimitive.content
         synchronized(delivery) {
@@ -162,6 +167,15 @@ internal class CodexChatRuntime(
         synchronized(lock) { current(connection); connection.thread = id }
         if (id != saved) events.opened(id)
         return id
+    }
+
+    /** Codex's own default model for the profile, read at most once a minute; null when `model/list` cannot say. */
+    private fun defaultModel(connection: Connection): String? {
+        defaults[connection.profile]?.takeIf { System.nanoTime() - it.first < DEFAULT_MODEL_TTL_NANOS }?.let { return it.second }
+        val model = try { codexModelList(connection.rpc).firstOrNull { it.isDefault }?.modelId } catch (_: Exception) { null } ?: return null
+        current(connection)
+        defaults[connection.profile] = System.nanoTime() to model
+        return model
     }
 
     private fun workspace(connection: Connection): Path = connection.home.resolve("conversation-workspace").also { Files.createDirectories(it) }
@@ -268,6 +282,11 @@ internal class CodexChatRuntime(
     }
 }
 
+private val DEFAULT_MODEL_TTL_NANOS = TimeUnit.MINUTES.toNanos(1)
+
+/** What a chat app-server may be asked: the account, its conversation, and the model list for naming Codex's default. */
+internal val CHAT_CODEX_METHODS = setOf("account/read", "thread/start", "thread/resume", "turn/start", "turn/interrupt", "model/list")
+
 /** An explicit Codex model, "" for Codex's own default, or null for an id that is not a model id. */
 private fun explicitModel(model: String?): String? = when {
     model == null || model == RUNTIME_DEFAULT_MODEL -> ""
@@ -290,7 +309,7 @@ internal fun codexFailure(error: JsonObject?): ChatFailure {
 /** Keep conversation capabilities separate from the approved workspace-task runtime. */
 internal fun chatCodex(runtime: CodexRuntime, receive: (String, JsonObject) -> Unit) =
     StdioCodexAppServer(runtime,
-        allowedMethods = setOf("account/read", "thread/start", "thread/resume", "turn/start", "turn/interrupt"),
+        allowedMethods = CHAT_CODEX_METHODS,
         arguments = chatProcessArguments(), onNotification = receive, timeoutSeconds = 15)
 
 /** Explicit tool restrictions apply at process startup, before any thread can run. */

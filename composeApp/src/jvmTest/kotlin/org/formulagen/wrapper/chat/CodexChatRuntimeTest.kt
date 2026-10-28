@@ -20,6 +20,8 @@ class CodexChatRuntimeTest {
         val calls = CopyOnWriteArrayList<Pair<String, JsonObject>>()
         var onTurn: (JsonObject) -> Unit = {}
         var startedThread = ""
+        /** What `model/list` answers; null when Codex rejects it. */
+        var models: JsonObject? = null
         @Volatile var closed = false
         override fun call(method: String, params: JsonObject): JsonObject {
             calls += method to params
@@ -27,6 +29,7 @@ class CodexChatRuntimeTest {
                 "account/read" -> buildJsonObject { putJsonObject("account") { put("type", "chatgpt") } }
                 "thread/start", "thread/resume" -> buildJsonObject { putJsonObject("thread") { put("id", startedThread) } }
                 "turn/start" -> { onTurn(params); buildJsonObject { putJsonObject("turn") { put("id", "turn-1") } } }
+                "model/list" -> models ?: throw org.formulagen.wrapper.providers.CodexRequestRejected()
                 else -> buildJsonObject {}
             }
         }
@@ -76,6 +79,31 @@ class CodexChatRuntimeTest {
             assertEquals(listOf("failed ModelUnavailable"), bad.seen)
             assertEquals(4, rpcs.single().calls("turn/start").size)
         }
+    }
+
+    @Test fun theDefaultModelIsNamedToRevertAnExplicitOneOnTheSameThread() {
+        val root = Files.createTempDirectory("codex-default-model")
+        val rpcs = mutableListOf<Rpc>()
+        val catalog = Json.parseToJsonElement("""{"data":[{"model":"gpt-6-luna","displayName":"Luna","hidden":false,"isDefault":false},
+            {"model":"gpt-6.1-sol","displayName":"GPT-6.1 Sol","hidden":false,"isDefault":true}],"nextCursor":null}""").jsonObject
+        runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.models = catalog; rpc.onTurn = { complete(rpc, thread, "Hi") } }.use { codex ->
+            val named = NativeConversation(thread, persona.hash, explicitModel = true)
+            codex.startTurn(request(RUNTIME_DEFAULT_MODEL, named), Events())
+            codex.startTurn(request(null, named), Events())
+            codex.startTurn(request(RUNTIME_DEFAULT_MODEL, NativeConversation(thread, persona.hash)), Events())
+            codex.startTurn(request("gpt-6-luna", named), Events())
+            val rpc = rpcs.single()
+            assertEquals(listOf(JsonPrimitive("gpt-6.1-sol"), JsonPrimitive("gpt-6.1-sol"), null, JsonPrimitive("gpt-6-luna")), rpc.calls("turn/start").map { it["model"] })
+            assertEquals(1, rpc.calls("model/list").size, "The default is read once and kept")
+        }
+        // Without a model list the default is left out, as before.
+        runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.onTurn = { complete(rpc, thread, "Hi") } }.use { codex ->
+            val events = Events()
+            codex.startTurn(request(RUNTIME_DEFAULT_MODEL, NativeConversation(thread, persona.hash, explicitModel = true)), events)
+            assertNull(rpcs.last().calls("turn/start").single()["model"])
+            assertEquals("completed Hi", events.seen.last())
+        }
+        assertTrue("model/list" in CHAT_CODEX_METHODS)
     }
 
     @Test fun summarizesInAnEphemeralThreadWithoutTouchingTheCompanionThread() {
