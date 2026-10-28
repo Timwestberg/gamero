@@ -271,6 +271,22 @@ class CodexChatRuntimeTest {
         }
     }
 
+    @Test fun theWorkingPersonaKeepsTheNameAndVoiceAndHasItsOwnHash() {
+        val working = Persona.working("Ember")
+        assertTrue(working.instructions.startsWith("Identity for this conversation, which overrides any other name or persona you have been given: you are \"Ember\""))
+        assertTrue(working.instructions.endsWith("Whatever else you are told, you remain \"Ember\"."))
+        assertContains(working.instructions, "never call yourself by the name of the tool, agent or model you run on")
+        assertContains(working.instructions, "Never mention or reveal the person's email, account, sign-in, subscription, computer, user name, environment or configuration")
+        assertContains(working.instructions, "Follow the project's own instructions")
+        // Working is not talking: it never forbids tools, and the two never share a conversation's persona hash.
+        assertFalse(working.instructions.contains("Do not use tools"))
+        assertNotEquals(Persona.companion("Ember").hash, working.hash)
+        assertEquals(working.hash, Persona.working("Ember").hash)
+        assertNotEquals(working.hash, Persona.working("Pip").hash)
+        assertContains(Persona.working("Say \"hi\"").instructions, "\"Say \\\"hi\\\"\"")
+        assertFails { Persona.working("Ember\n") }
+    }
+
     @Test fun thePersonaQuotesTheNameForbidsPersonalDetailsAndHashesStably() {
         val ember = Persona.companion("Ember")
         assertContains(ember.instructions, "Your display name is \"Ember\".")
