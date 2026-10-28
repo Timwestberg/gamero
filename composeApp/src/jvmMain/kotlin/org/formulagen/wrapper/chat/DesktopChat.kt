@@ -1,43 +1,44 @@
 package org.formulagen.wrapper.chat
 
-import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import java.util.UUID
 import java.util.concurrent.Executors
-import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
-import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.providers.*
+import org.formulagen.wrapper.closeInReverse
+import org.formulagen.wrapper.providers.codexProfileHome
 
-/** Owns one view's conversation lease. Workers never mutate a newer view or replay a send. */
+/**
+ * Owns one view's conversation lease: its history, request dedupe, the reply watchdog and speech.
+ * Replies run through a [ChatRuntime]; workers never mutate a newer view or replay a send.
+ * [runtimes] are the runtimes found on this Mac; the chat closes them.
+ */
 internal class DesktopChat(
     private val providerRoot: Path,
-    private val executable: Path?,
+    runtimes: List<ChatRuntime>,
     private val speech: ChatSpeech,
-    private val createRpc: (CodexRuntime, (String, JsonObject) -> Unit) -> CodexAppServer = ::chatCodex,
 ) : ChatCapability, AutoCloseable {
+    private val runtimes = runtimes.associateBy { it.id }
     private val gate = Any()
     private val worker = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-chat"))
     private val timer = Executors.newSingleThreadScheduledExecutor(loggingDaemonThreads("hovel-chat-timeout"))
-    /** Closing an app-server can wait seconds for its process tree, so it never runs under [gate] or on a caller's thread. */
-    private val releaser = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-chat-release"))
     private var active: Session? = null
     /** The last view the host ended on its own (or could not open), so that view's polls keep showing why. */
     private var ended: Pair<ChatScope, ChatSnapshot>? = null
     private var closed = false
-    private class Session(val scope: ChatScope, val runtime: CodexRuntime, val history: ChatHistory, var record: ChatRecord) {
+    private class Session(val scope: ChatScope, val runtime: ChatRuntime, val persona: Persona, val history: ChatHistory, var record: ChatRecord) {
         var state = ChatState.CHECKING
-        var notice: String? = "Checking Codex connection…"
-        var rpc: CodexAppServer? = null
-        var resumed = false
+        var notice: String? = "Checking ${runtime.id.product} connection…"
         var generation = 0
-        var turnId: String? = null
-        var itemId: String? = null
+        /** The reply in progress, once its runtime has started it. */
+        var turn: TurnHandle? = null
         var speak = false
         var checking = true
-        var rpcEpoch = 0
-        val awaitingTurn = mutableListOf<Pair<String, JsonObject>>()
     }
 
     /** Opening is the only operation allowed to replace an active conversation. */
@@ -47,17 +48,15 @@ internal class DesktopChat(
         if (old?.scope == scope && old.state !in setOf(ChatState.ERROR, ChatState.DISCONNECTED)) return@synchronized view(old)
         invalidateLocked(keepEnded = false)
         ended = null
-        if (executable == null) {
-            return@synchronized ChatSnapshot(ChatState.ERROR, notice = "Install Codex on this Mac and restart Hovel.", voice = speech.status())
-                .also { ended = scope to it }
-        }
-        val home = codexProfileHome(providerRoot, scope.profile)
-        val runtime = CodexRuntime(executable, home)
+        // The chat contract does not name a team member yet, so every companion talks to Codex.
+        val kind = RuntimeKind.CODEX
+        val runtime = runtimes[kind] ?: return@synchronized ChatSnapshot(ChatState.ERROR,
+            notice = "Install ${kind.program} on this Mac and restart Hovel.", voice = speech.status()).also { ended = scope to it }
         val id = UUID.fromString(scope.companionId).toString()
-        val history = ChatHistory(home.resolve("companion-chats").resolve("$id.json"))
-        val session = Session(scope, runtime, history, history.read()).also { active = it }
+        val history = ChatHistory(codexProfileHome(providerRoot, scope.profile).resolve("companion-chats").resolve("$id.json"))
+        val session = Session(scope, runtime, Persona.companion(scope.name), history, history.read()).also { active = it }
         val generation = session.generation
-        worker.execute { attempt(session, generation) { ensureAccount(session, generation) } }
+        worker.execute { attempt(session, generation) { checkReadiness(session, generation) } }
         view(session)
     }
 
@@ -73,14 +72,15 @@ internal class DesktopChat(
         if (session.checking || session.state == ChatState.RESPONDING) throw BridgeBusyException()
         check(session.state in setOf(ChatState.READY, ChatState.CANCELLED))
         speech.stop()
-        val messages = (session.record.messages + ChatMessage(args.requestId, ChatRole.USER, args.text.trimEcma()) +
+        val text = args.text.trimEcma()
+        val messages = (session.record.messages + ChatMessage(args.requestId, ChatRole.USER, text) +
             ChatMessage(UUID.randomUUID().toString(), ChatRole.ASSISTANT, "")).takeLast(ChatLimits.HISTORY)
         val next = session.record.copy(messages = messages)
         session.history.write(next)
         session.record = next; session.state = ChatState.RESPONDING; session.notice = null
-        session.speak = args.speak; session.itemId = null; session.turnId = null; session.awaitingTurn.clear()
+        session.speak = args.speak; session.turn = null
         val generation = ++session.generation
-        worker.execute { attempt(session, generation) { startTurn(session, generation, args.text.trimEcma()) } }
+        worker.execute { attempt(session, generation) { startTurn(session, generation, text, retried = false) } }
         timer.schedule({ synchronized(gate) {
             if (live(session, generation) && session.state == ChatState.RESPONDING) {
                 end(session, ChatState.ERROR, "The reply took too long. Your message is saved; retry when you are ready.")
@@ -89,10 +89,12 @@ internal class DesktopChat(
         view(session)
     }
 
-    /** Stop closes the owned provider process, including any still-starting turn. */
+    /** Stop ends the reply gracefully, or ends the runtime's work when no reply has started yet (an account check, a starting turn). */
     override suspend fun stop(scope: ChatScope): ChatSnapshot = synchronized(gate) {
         val session = current(scope)
-        end(session, ChatState.CANCELLED, "Reply stopped.")
+        val turn = session.turn
+        end(session, ChatState.CANCELLED, "Reply stopped.", release = turn == null)
+        turn?.stop()
         view(session)
     }
 
@@ -114,111 +116,71 @@ internal class DesktopChat(
     private fun live(session: Session, generation: Int = session.generation) = !closed && active === session && generation == session.generation
     private fun view(session: Session) = ChatSnapshot(session.state, session.record.messages, session.notice, speech.status())
 
-    /** Keep account verification off the UI thread and never substitute an API key. */
-    private fun ensureAccount(session: Session, generation: Int): CodexAppServer {
-        val rpc = synchronized(gate) { check(live(session, generation)); session.rpc } ?: run {
-            session.runtime.prepare()
-            val epoch = synchronized(gate) { check(live(session, generation)); ++session.rpcEpoch }
-            val opened = createRpc(session.runtime) { method, params -> receive(session, epoch, method, params) }
-            val kept = synchronized(gate) { live(session, generation).also { if (it) session.rpc = opened } }
-            if (!kept) { opened.close(); error("Chat closed") }
-            opened
-        }
-        // Readiness only: a forced refresh costs a round trip and can race another app-server sharing the keyring login.
-        val result = rpc.call("account/read", buildJsonObject { put("refreshToken", false) })
+    /** Keep the account check off the bridge thread; a runtime never substitutes an API key. */
+    private fun checkReadiness(session: Session, generation: Int) {
+        val readiness = session.runtime.readiness(session.scope.profile)
         synchronized(gate) {
-            check(live(session, generation))
-            val account = result["account"] as? JsonObject
-            if (account?.get("type") != JsonPrimitive("chatgpt")) {
-                session.state = ChatState.DISCONNECTED; session.notice = "Connect Codex in Profile → Providers to message your companion."
-                session.checking = false
-                dropRpc(session)
-                error("ChatGPT account required")
-            }
+            if (!live(session, generation)) return
             session.checking = false
-            if (session.state != ChatState.RESPONDING) { session.state = ChatState.READY; session.notice = null }
-        }
-        return rpc
-    }
-
-    /** Resume only the native-owned thread belonging to this companion. */
-    private fun startTurn(session: Session, generation: Int, text: String) {
-        val rpc = ensureAccount(session, generation)
-        if (!session.resumed) {
-            val cwd = session.runtime.home.resolve("conversation-workspace")
-            Files.createDirectories(cwd)
-            val id = openThread(rpc, session, cwd.toString())
-            require(UUID.fromString(id).toString() == id)
-            synchronized(gate) {
-                check(live(session, generation))
-                session.record = session.record.copy(threadId = id); session.history.write(session.record); session.resumed = true
-            }
-        }
-        synchronized(gate) { check(live(session, generation)) }
-        val started = rpc.call("turn/start", buildJsonObject {
-            put("threadId", session.record.threadId)
-            putJsonArray("input") { add(buildJsonObject { put("type", "text"); put("text", text) }) }
-        })
-        synchronized(gate) {
-            if (live(session, generation) && session.state == ChatState.RESPONDING) {
-                session.turnId = started.getValue("turn").jsonObject.getValue("id").jsonPrimitive.content
-                val buffered = session.awaitingTurn.toList(); session.awaitingTurn.clear()
-                buffered.forEach { (method, params) -> receive(session, session.rpcEpoch, method, params) }
+            when (readiness) {
+                Readiness.Ready -> if (session.state != ChatState.RESPONDING) { session.state = ChatState.READY; session.notice = null }
+                Readiness.SignedOut -> { session.state = ChatState.DISCONNECTED; session.notice = signedOutNotice(session.runtime.id) }
+                is Readiness.Unavailable -> { session.state = ChatState.ERROR; session.notice = readiness.reason }
             }
         }
     }
 
-    /** Resume this companion's thread; if Codex no longer has it, start a fresh one, which the caller saves. */
-    private fun openThread(rpc: CodexAppServer, session: Session, cwd: String): String {
-        val saved = session.record.threadId
-        val resumed = saved?.let {
-            try { rpc.call("thread/resume", chatThreadParams(session.scope.name, cwd, it)) }
-            catch (_: CodexRequestRejected) { null }
+    /** Start the reply on the session's runtime. A turn that outlived its view is ended at once. */
+    private fun startTurn(session: Session, generation: Int, text: String, retried: Boolean) {
+        val request = synchronized(gate) {
+            check(live(session, generation))
+            TurnRequest(session.scope.profile, session.scope.companionId, session.persona, model = null,
+                conversation = session.record.threadId?.let { NativeConversation(it, "") }, context = null, text = text)
         }
-        val result = resumed ?: rpc.call("thread/start", chatThreadParams(session.scope.name, cwd, null))
-        return result.getValue("thread").jsonObject.getValue("id").jsonPrimitive.content
+        val handle = session.runtime.startTurn(request, Reply(session, generation, request, retried))
+        val stale = synchronized(gate) {
+            val current = live(session, generation)
+            if (current && session.state == ChatState.RESPONDING) session.turn = handle
+            !current
+        }
+        if (stale) session.runtime.release()
     }
 
-    /** Consume only text and terminal state. Tool requests are rejected by the transport. */
-    private fun receive(session: Session, epoch: Int, method: String, params: JsonObject) = synchronized(gate) {
-        if (!live(session) || epoch != session.rpcEpoch) return@synchronized
-        if (method in setOf("request/refused", "transport/closed")) {
-            if (session.state == ChatState.RESPONDING) end(session, ChatState.ERROR, "The reply stopped. Try again when Codex is ready.")
-            // A dead app-server is never reused: the next send starts a new one and resumes the thread again.
-            else if (method == "transport/closed") dropRpc(session)
-            return@synchronized
+    /** One turn's events, applied only while its view and generation are current and the reply is open. */
+    private inner class Reply(val session: Session, val generation: Int, val request: TurnRequest, val retried: Boolean) : TurnEvents {
+        private fun open() = live(session, generation) && session.state == ChatState.RESPONDING
+
+        /** Saved before the reply ends, so a stopped turn keeps the conversation it started. */
+        override fun opened(conversation: String) = synchronized(gate) {
+            if (!open()) return@synchronized
+            session.record = session.record.copy(threadId = conversation)
+            runCatching { session.history.write(session.record) }.onFailure { end(session, ChatState.ERROR, couldNotComplete(session.runtime.id)) }
         }
-        if (session.state != ChatState.RESPONDING || params["threadId"] != JsonPrimitive(session.record.threadId)) return@synchronized
-        if (session.turnId == null) {
-            if (session.awaitingTurn.size >= 512) end(session, ChatState.ERROR, "The reply could not be synchronized. Reopen this chat to try again.")
-            else session.awaitingTurn += method to params
-            return@synchronized
+
+        override fun partial(text: String) = synchronized(gate) { if (open()) updateReply(session, text) }
+
+        override fun completed(text: String, conversation: String) = synchronized(gate) {
+            if (!open()) return@synchronized
+            updateReply(session, text)
+            session.record = session.record.copy(threadId = conversation)
+            session.state = ChatState.READY; session.notice = null; session.turn = null
+            runCatching { session.history.write(session.record) }.onFailure {
+                session.notice = "This reply could not be saved. Keep this chat open and try again later."
+            }
+            if (session.speak) speech.speak(session.record.messages.last().text)
         }
-        val turn = params["turn"] as? JsonObject
-        val eventTurn = (params["turnId"] as? JsonPrimitive)?.contentOrNull ?: (turn?.get("id") as? JsonPrimitive)?.contentOrNull
-        if (session.turnId != null && eventTurn != session.turnId) return@synchronized
-        when (method) {
-            "item/agentMessage/delta" -> {
-                val id = params["itemId"]?.jsonPrimitive?.content ?: return@synchronized
-                val prefix = if (session.itemId == id) session.record.messages.last().text else ""
-                session.itemId = id
-                updateReply(session, prefix + params.getValue("delta").jsonPrimitive.content)
+
+        /** Errors keep the user's text and never send it again, except once into a new conversation when the runtime lost its own. */
+        override fun failed(failure: ChatFailure) = synchronized(gate) {
+            if (!open()) return@synchronized
+            if (failure == ChatFailure.ConversationLost && request.conversation != null && !retried) {
+                session.record = session.record.copy(threadId = null); session.turn = null
+                updateReply(session, "")
+                runCatching { session.history.write(session.record) }
+                worker.execute { attempt(session, generation) { startTurn(session, generation, request.text, retried = true) } }
+                return@synchronized
             }
-            "item/completed" -> {
-                val item = params["item"] as? JsonObject
-                if (item?.get("type") == JsonPrimitive("agentMessage")) updateReply(session, item["text"]?.jsonPrimitive?.content.orEmpty())
-            }
-            "turn/completed" -> {
-                val status = turn?.get("status")?.jsonPrimitive?.content
-                session.state = when (status) { "completed" -> ChatState.READY; "interrupted" -> ChatState.CANCELLED; else -> ChatState.ERROR }
-                session.notice = if (session.state == ChatState.ERROR) "Codex could not finish this reply. Check your connection or plan allowance." else null
-                session.turnId = null
-                runCatching { session.history.write(session.record) }.onFailure {
-                    session.notice = "This reply could not be saved. Keep this chat open and try again later."
-                }
-                if (session.state == ChatState.READY && session.speak) speech.speak(session.record.messages.last().text)
-            }
-            "error" -> if (params["willRetry"] != JsonPrimitive(true)) end(session, ChatState.ERROR, "Codex could not finish this reply. Check Providers and try again.")
+            end(session, failureState(failure), failureNotice(session.runtime.id, failure), release = false)
         }
     }
 
@@ -229,31 +191,25 @@ internal class DesktopChat(
     }
 
     /**
-     * Errors keep the user's text and never automatically send it again. Any failure, including a
-     * native linkage error, ends the request instead of killing the worker; a VM error is then rethrown.
+     * Any failure, including a native linkage error, ends the request instead of killing the
+     * worker; a VM error is then rethrown.
      */
     private fun attempt(session: Session, generation: Int, work: () -> Unit) {
         try { work() } catch (error: Throwable) {
             synchronized(gate) {
-                if (live(session, generation) && session.state != ChatState.DISCONNECTED) end(session, ChatState.ERROR, "Codex could not complete the request. Reconnect or retry when ready.")
+                if (live(session, generation) && session.state != ChatState.DISCONNECTED) end(session, ChatState.ERROR, couldNotComplete(session.runtime.id))
             }
             if (error is VirtualMachineError) throw error
         }
     }
 
-    private fun end(session: Session, state: ChatState, notice: String) {
+    /** [release] ends the runtime's work too; a failure the runtime reported, or a graceful stop, has already ended it. */
+    private fun end(session: Session, state: ChatState, notice: String, release: Boolean = true) {
         session.generation++; session.state = state; session.notice = notice; session.checking = false
-        session.turnId = null; session.awaitingTurn.clear(); session.speak = false
-        dropRpc(session); speech.stop()
+        session.turn = null; session.speak = false
+        if (release) session.runtime.release()
+        speech.stop()
         runCatching { session.history.write(session.record) }
-    }
-
-    /** Detach the session's app-server so later events are ignored, and close it off the lock. */
-    private fun dropRpc(session: Session) {
-        session.rpcEpoch++; session.resumed = false
-        val rpc = session.rpc ?: return
-        session.rpc = null
-        try { releaser.execute { rpc.close() } } catch (_: RejectedExecutionException) { rpc.close() }
     }
 
     private fun invalidateLocked(keepEnded: Boolean) {
@@ -265,14 +221,41 @@ internal class DesktopChat(
         speech.stop()
     }
 
-    /** App exit: stop work, then wait briefly so owned app-servers finish terminating. */
+    /** App exit: stop work, then close the runtimes, which wait briefly for their processes to end. */
     override fun close() {
         synchronized(gate) {
             if (closed) return
             invalidateLocked(keepEnded = false); closed = true; ended = null; timer.shutdownNow(); worker.shutdownNow()
         }
-        releaser.shutdown()
-        releaser.awaitTermination(5, TimeUnit.SECONDS)
-        speech.close()
+        try { closeInReverse(runtimes.values.toList()) } finally { speech.close() }
     }
+}
+
+/** A lost sign-in leaves the chat "disconnected"; every other failure is an error the person can retry. */
+private fun failureState(failure: ChatFailure) = if (failure == ChatFailure.SignedOut) ChatState.DISCONNECTED else ChatState.ERROR
+
+private fun signedOutNotice(runtime: RuntimeKind) = when (runtime) {
+    RuntimeKind.CODEX -> "Connect Codex in Profile → Providers to message your companion."
+    RuntimeKind.CLAUDE_CODE -> "Sign in to Claude Code again."
+}
+
+private fun couldNotComplete(runtime: RuntimeKind) = "${runtime.program} could not complete the request. Reconnect or retry when ready."
+
+/** The person-facing reason a turn failed. Raw runtime output never reaches it. */
+internal fun failureNotice(runtime: RuntimeKind, failure: ChatFailure, zone: ZoneId = ZoneId.systemDefault()): String = when (failure) {
+    ChatFailure.SignedOut -> signedOutNotice(runtime)
+    is ChatFailure.UsageLimit -> "You've reached your ${runtime.product} usage limit. " +
+        (failure.resetsAt?.let { "It resets at ${resetTime(it, zone)}." } ?: "Try again later.")
+    ChatFailure.ModelUnavailable -> "${runtime.product} can't use this model. Choose another model and try again."
+    ChatFailure.Temporary -> "The reply stopped. Try again when ${runtime.product} is ready."
+    ChatFailure.ConversationLost -> "${runtime.product} could not continue this conversation. Send your message again to start fresh."
+    ChatFailure.Lockdown -> "${runtime.program} started with tools or plugins that companion chat does not allow, so the reply was stopped."
+    ChatFailure.Unexpected -> "${runtime.product} could not finish this reply. Check Providers and try again."
+}
+
+/** "3:00 PM" today, otherwise the date too, in the Mac's time zone. */
+private fun resetTime(at: Instant, zone: ZoneId): String {
+    val local = at.atZone(zone)
+    return if (local.toLocalDate() == LocalDate.now(zone)) DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).format(local)
+    else DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).format(local)
 }

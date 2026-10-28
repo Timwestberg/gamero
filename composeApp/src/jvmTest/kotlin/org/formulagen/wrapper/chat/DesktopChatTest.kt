@@ -63,11 +63,14 @@ class DesktopChatTest {
         while (!check()) { if (System.nanoTime() > until) fail("Condition timed out"); Thread.sleep(10) }
     }
     private fun state(chat: DesktopChat, scope: ChatScope) = runBlocking { chat.snapshot(scope) }
+    /** A chat whose only runtime is Codex, served by [rpc] instead of an app-server process. */
+    private fun chat(root: Path, speech: ChatSpeech, rpc: (receive: (String, JsonObject) -> Unit) -> CodexAppServer) =
+        DesktopChat(root, listOf(CodexChatRuntime(root, Path.of("/usr/bin/true")) { _, receive -> rpc(receive) }), speech)
 
     @Test fun streamsPersistsDeduplicatesAndResumesOnlyItsCompanion() = runBlocking {
         val root = Files.createTempDirectory("chat-history")
         val speech = Speech(); val rpcs = CopyOnWriteArrayList<Rpc>()
-        DesktopChat(root, Path.of("/usr/bin/true"), speech) { _, receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
+        chat(root, speech) { receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
             val a = scope(); chat.open(a); await { state(chat,a).state == ChatState.READY }
             val request = send(a); chat.send(request); chat.send(request)
             await { rpcs[0].calls.contains("turn/start") }
@@ -99,7 +102,7 @@ class DesktopChatTest {
 
     @Test fun buffersEventsBeforeTurnAcknowledgementAndMutesPendingReply() = runBlocking {
         val speech = Speech(); lateinit var rpc: Rpc
-        DesktopChat(Files.createTempDirectory("chat-early"), Path.of("/usr/bin/true"), speech) { _, receive -> Rpc(receive).also { rpc=it; it.earlyReply=true } }.use { chat ->
+        chat(Files.createTempDirectory("chat-early"), speech) { receive -> Rpc(receive).also { rpc=it; it.earlyReply=true } }.use { chat ->
             val a=scope(); chat.open(a); await { state(chat,a).state==ChatState.READY }
             chat.send(send(a)); await { state(chat,a).state==ChatState.READY }
             assertEquals("Early hello",chat.snapshot(a).messages.last().text)
@@ -114,7 +117,7 @@ class DesktopChatTest {
     @Test fun stoppingAnAccountProbeCannotResurrectIt() = runBlocking {
         val entered=CountDownLatch(1); val release=CountDownLatch(1)
         val speech=Speech(); lateinit var old: Rpc
-        DesktopChat(Files.createTempDirectory("chat-stop"),Path.of("/usr/bin/true"),speech) { _, receive ->
+        chat(Files.createTempDirectory("chat-stop"), speech) { receive ->
             Rpc(receive).also { old=it; it.beforeAccount={ entered.countDown(); release.await(5,TimeUnit.SECONDS) } }
         }.use { chat ->
             val a=scope(); chat.open(a); assertTrue(entered.await(5,TimeUnit.SECONDS))
@@ -125,7 +128,7 @@ class DesktopChatTest {
 
     @Test fun disconnectedAccountsNeverStartATurnAndCorruptHistoryIsPreserved() = runBlocking {
         val root=Files.createTempDirectory("chat-invalid"); lateinit var rpc: Rpc
-        DesktopChat(root,Path.of("/usr/bin/true"),Speech()) { _, receive -> Rpc(receive).also { rpc=it; it.connected=false } }.use { chat ->
+        chat(root, Speech()) { receive -> Rpc(receive).also { rpc=it; it.connected=false } }.use { chat ->
             val a=scope(); chat.open(a); await { state(chat,a).state==ChatState.DISCONNECTED }
             assertFails { chat.send(send(a)) }; assertEquals(listOf("account/read"),rpc.calls.toList())
             await { rpc.closed }
@@ -138,7 +141,7 @@ class DesktopChatTest {
 
     @Test fun failedResumeStartsAFreshThreadAndSavesIt() = runBlocking {
         val root = Files.createTempDirectory("chat-resume"); val rpcs = CopyOnWriteArrayList<Rpc>()
-        DesktopChat(root, Path.of("/usr/bin/true"), Speech()) { _, receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
+        chat(root, Speech()) { receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
             val a = scope(); chat.open(a); await { state(chat,a).state == ChatState.READY }
             chat.send(send(a, false)); await { rpcs[0].calls.contains("turn/start") }
             rpcs[0].complete(); await { state(chat,a).state == ChatState.READY }
@@ -160,7 +163,7 @@ class DesktopChatTest {
 
     @Test fun losingAnIdleAppServerStartsANewOneOnTheNextSend() = runBlocking {
         val rpcs = CopyOnWriteArrayList<Rpc>()
-        DesktopChat(Files.createTempDirectory("chat-idle-loss"), Path.of("/usr/bin/true"), Speech()) { _, receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
+        chat(Files.createTempDirectory("chat-idle-loss"), Speech()) { receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
             val a = scope(); chat.open(a); await { state(chat,a).state == ChatState.READY }
             chat.send(send(a, false)); await { rpcs[0].calls.contains("turn/start") }
             rpcs[0].complete(); await { state(chat,a).state == ChatState.READY }
@@ -174,7 +177,7 @@ class DesktopChatTest {
     }
 
     @Test fun viewsTheHostEndedKeepTheirFinalSnapshot() = runBlocking {
-        DesktopChat(Files.createTempDirectory("chat-no-codex"), null, Speech()).use { chat ->
+        DesktopChat(Files.createTempDirectory("chat-no-codex"), emptyList(), Speech()).use { chat ->
             val a = scope()
             assertEquals(ChatState.ERROR, chat.open(a).state)
             assertEquals(ChatState.ERROR, chat.snapshot(a).state)
@@ -182,7 +185,7 @@ class DesktopChatTest {
             assertFails { chat.snapshot(scope()) }
             chat.closeSession(a); assertFails { chat.snapshot(a) }
         }
-        DesktopChat(Files.createTempDirectory("chat-invalidate"), Path.of("/usr/bin/true"), Speech()) { _, receive -> Rpc(receive) }.use { chat ->
+        chat(Files.createTempDirectory("chat-invalidate"), Speech()) { receive -> Rpc(receive) }.use { chat ->
             val a = scope(); chat.open(a); await { state(chat,a).state == ChatState.READY }
             chat.invalidate()
             assertEquals(ChatState.ERROR, chat.snapshot(a).state)
@@ -193,7 +196,7 @@ class DesktopChatTest {
 
     @Test fun stoppingNeverWaitsForTheAppServerToExit() = runBlocking {
         val closing = CountDownLatch(1); val release = CountDownLatch(1); lateinit var rpc: Rpc
-        DesktopChat(Files.createTempDirectory("chat-release"), Path.of("/usr/bin/true"), Speech()) { _, receive ->
+        chat(Files.createTempDirectory("chat-release"), Speech()) { receive ->
             Rpc(receive).also { rpc = it; it.onClose = { closing.countDown(); release.await(5, TimeUnit.SECONDS) } }
         }.use { chat ->
             val a = scope(); chat.open(a); await { state(chat,a).state == ChatState.READY }
@@ -204,6 +207,68 @@ class DesktopChatTest {
             assertTrue(System.nanoTime() - started < TimeUnit.SECONDS.toNanos(4))
             assertFalse(rpc.closed)
             release.countDown(); await { rpc.closed }
+        }
+    }
+
+    /** A runtime the test drives by hand. It stands in for Codex, which the chat uses until sends name a member. */
+    private class FakeRuntime : ChatRuntime {
+        override val id = RuntimeKind.CODEX
+        val requests = CopyOnWriteArrayList<TurnRequest>()
+        val events = CopyOnWriteArrayList<TurnEvents>()
+        @Volatile var stops = 0
+        @Volatile var releases = 0
+        override fun readiness(profile: String) = Readiness.Ready
+        override fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle { requests += turn; this.events += events; return TurnHandle { stops++ } }
+        override fun summarize(request: SummaryRequest) = error("Not used")
+        override fun release() { releases++ }
+        override fun close() = Unit
+    }
+
+    @Test fun aLostConversationStartsFreshOnceAndFailuresBecomeNotices() = runBlocking {
+        val runtime = FakeRuntime()
+        DesktopChat(Files.createTempDirectory("chat-fake-runtime"), listOf(runtime), Speech()).use { chat ->
+            val a = scope(); chat.open(a); await { state(chat,a).state == ChatState.READY }
+            chat.send(send(a, false)); await { runtime.events.size == 1 }
+            assertNull(runtime.requests[0].conversation)
+            runtime.events[0].opened(threadId); runtime.events[0].partial("Hel"); runtime.events[0].completed("Hello", threadId)
+            assertEquals(ChatState.READY, chat.snapshot(a).state); assertEquals("Hello", chat.snapshot(a).messages.last().text)
+
+            chat.send(send(a, false)); await { runtime.events.size == 2 }
+            assertEquals(threadId, runtime.requests[1].conversation?.id)
+            runtime.events[1].partial("Partial"); runtime.events[1].failed(ChatFailure.ConversationLost)
+            await { runtime.events.size == 3 }
+            assertNull(runtime.requests[2].conversation); assertEquals("Hello", runtime.requests[2].text)
+            assertEquals(ChatState.RESPONDING, chat.snapshot(a).state); assertEquals("", chat.snapshot(a).messages.last().text)
+            // A new conversation that is lost too is not retried again.
+            runtime.events[2].failed(ChatFailure.ConversationLost)
+            assertEquals(ChatState.ERROR, chat.snapshot(a).state)
+            assertEquals("Codex could not continue this conversation. Send your message again to start fresh.", chat.snapshot(a).notice)
+            assertEquals(3, runtime.requests.size)
+
+            // An error needs Reconnect, which opens the same view again.
+            chat.open(a); await { state(chat,a).state == ChatState.READY }
+            chat.send(send(a, false)); await { runtime.events.size == 4 }
+            runtime.events[3].failed(ChatFailure.UsageLimit(java.time.Instant.now().plusSeconds(3600)))
+            assertEquals(ChatState.ERROR, chat.snapshot(a).state)
+            assertTrue(chat.snapshot(a).notice!!.startsWith("You've reached your Codex usage limit. It resets at "))
+            assertEquals("You've reached your Claude usage limit. Try again later.", failureNotice(RuntimeKind.CLAUDE_CODE, ChatFailure.UsageLimit(null)))
+
+            // Stop ends a started reply through its handle, without ending the runtime's other work.
+            chat.open(a); await { state(chat,a).state == ChatState.READY }
+            chat.send(send(a, false)); await { runtime.events.size == 5 }
+            Thread.sleep(100)
+            val releases = runtime.releases
+            assertEquals(ChatState.CANCELLED, chat.stop(a).state)
+            assertEquals(1, runtime.stops); assertEquals(releases, runtime.releases)
+            runtime.events[4].completed("Late", threadId)
+            assertEquals(ChatState.CANCELLED, chat.snapshot(a).state); assertEquals("", chat.snapshot(a).messages.last().text)
+
+            chat.send(send(a, false)); await { runtime.events.size == 6 }
+            runtime.events[5].failed(ChatFailure.SignedOut)
+            assertEquals(ChatState.DISCONNECTED, chat.snapshot(a).state)
+            assertEquals("Connect Codex in Profile → Providers to message your companion.", chat.snapshot(a).notice)
+            // Every failed send keeps the person's message.
+            assertEquals(5, chat.snapshot(a).messages.count { it.role == ChatRole.USER })
         }
     }
 

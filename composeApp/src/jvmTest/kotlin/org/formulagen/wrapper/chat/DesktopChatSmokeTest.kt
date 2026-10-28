@@ -19,7 +19,7 @@ class DesktopChatSmokeTest {
             val runtime=CodexRuntime(Path.of(requireNotNull(executable)), home); runtime.prepare()
             chatCodex(runtime) { _, _ -> }.use { rpc ->
                 assertEquals(JsonNull,rpc.call("account/read",buildJsonObject { put("refreshToken",false) })["account"])
-                val result=rpc.call("thread/start",chatThreadParams("Ember",home.toString(),null))
+                val result=rpc.call("thread/start",chatThreadParams(Persona.companion("Ember"),home.toString(),null))
                 assertNotNull(result["thread"]?.jsonObject?.get("id"))
                 println("CHAT_CODEX_SMOKE: real app-server accepted isolated unauthenticated conversation configuration")
             }

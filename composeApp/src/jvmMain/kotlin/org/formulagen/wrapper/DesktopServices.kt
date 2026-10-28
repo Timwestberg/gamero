@@ -16,6 +16,7 @@ import org.formulagen.wrapper.bridge.PetCapability
 import org.formulagen.wrapper.bridge.PetMethods
 import org.formulagen.wrapper.bridge.ProviderCapability
 import org.formulagen.wrapper.bridge.ProviderMethods
+import org.formulagen.wrapper.chat.CodexChatRuntime
 import org.formulagen.wrapper.chat.DesktopChat
 import org.formulagen.wrapper.chat.DesktopSpeech
 import org.formulagen.wrapper.chat.desktopVoiceConfig
@@ -80,7 +81,8 @@ internal class DesktopServices private constructor(
                 val codex = findCodexExecutable(environment)
                 val origin = URI(appUrl).let { URI(it.scheme, null, it.host, it.port, null, null, null).toASCIIString() }
                 val providerRoot = support.resolve("providers").resolve(HovelCompanion.sha256(origin))
-                val chat = own(DesktopChat(providerRoot, codex, DesktopSpeech(desktopVoiceConfig(environment))))
+                val chat = own(DesktopChat(providerRoot, listOfNotNull(codex?.let { CodexChatRuntime(providerRoot, it) }),
+                    DesktopSpeech(desktopVoiceConfig(environment))))
                 val providers = own(DesktopProviders(providerRoot, codex, onDisconnect = chat::invalidate))
                 val pet = own(DesktopPetLauncher(environment, support.resolve("ember-pet.log")))
                 val workspace = environment["GAMERO_WORKSPACE"]?.let(Path::of)
