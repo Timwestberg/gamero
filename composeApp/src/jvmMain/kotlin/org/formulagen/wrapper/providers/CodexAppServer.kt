@@ -9,7 +9,6 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
 
 /**
  * One Codex app-server child over bounded stdio JSON-RPC. Its policy is the allowed-method list
@@ -19,7 +18,6 @@ import java.util.concurrent.atomic.AtomicReference
  */
 internal interface CodexAppServer : AutoCloseable {
     fun call(method: String, params: JsonObject = buildJsonObject {}): JsonObject
-    fun loginResult(loginId: String): Boolean?
 }
 
 /** Correlate bounded stdio requests and own the lifetime of one installed Codex app-server child. */
@@ -36,7 +34,6 @@ internal class StdioCodexAppServer(
     private val pending = ConcurrentHashMap<Int, CompletableFuture<JsonObject>>()
     private val sequence = AtomicInteger()
     private val closed = AtomicBoolean()
-    private val completion = AtomicReference<Pair<String, Boolean>?>()
 
     init {
         Thread.ofPlatform().daemon().name("hovel-codex-app-server").start {
@@ -60,11 +57,6 @@ internal class StdioCodexAppServer(
                                 if (result != null) waiting.complete(result)
                                 else waiting.completeExceptionally(CodexRequestRejected())
                             }
-                        } else if (method == "account/login/completed") {
-                            val params = message["params"] as? JsonObject
-                            val loginId = (params?.get("loginId") as? JsonPrimitive)?.contentOrNull
-                            val success = (params?.get("success") as? JsonPrimitive)?.booleanOrNull
-                            if (loginId != null && success != null) completion.set(loginId to success)
                         }
                         if (method != null && !message.containsKey("id")) {
                             onNotification(method, message["params"] as? JsonObject ?: buildJsonObject {})
@@ -101,9 +93,6 @@ internal class StdioCodexAppServer(
         finally { pending.remove(id) }
     }
 
-    /** Report only the matching login outcome, never raw notification text. */
-    override fun loginResult(loginId: String): Boolean? = completion.get()?.takeIf { it.first == loginId }?.second
-
     /** Serialize whole JSON lines so interleaved calls cannot corrupt the transport. */
     private fun send(message: JsonObject) = synchronized(writer) {
         writer.write(message.toString()); writer.newLine(); writer.flush()
@@ -115,7 +104,7 @@ internal class StdioCodexAppServer(
         pending.clear()
     }
 
-    /** Stop only Hovel's child and cancel any callback listener it owns. */
+    /** Stop only Hovel's child. */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         failPending()
@@ -124,8 +113,11 @@ internal class StdioCodexAppServer(
     }
 
     companion object {
-        /** The account lifecycle and the model list a team member chooses from; no inference or workspace execution. */
-        val ACCOUNT_METHODS = setOf("account/read", "account/login/start", "account/login/cancel", "account/logout", "model/list")
+        /**
+         * Reading the player's Codex account and the model list a team member chooses from. No sign-in
+         * or sign-out (the player runs `codex login` and `codex logout`), no inference or workspace execution.
+         */
+        val ACCOUNT_METHODS = setOf("account/read", "model/list")
     }
 }
 

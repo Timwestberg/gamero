@@ -34,9 +34,8 @@ class HovelCompanion(
     private val executable: Path,
     private val workspace: Path,
     private val credentials: HostCredentials = MacHostCredentials(),
-    private val codexHomeForOwner: ((String) -> Path)? = null,
 ) : AutoCloseable {
-    var status by mutableStateOf("Connect Codex in Profile → Providers, then connect this Mac from Hovel.")
+    var status by mutableStateOf("Sign in to Codex with `codex login` in Terminal, then connect this Mac from Hovel.")
         private set
     var approval by mutableStateOf<ConnectionApproval?>(null)
         private set
@@ -100,7 +99,8 @@ class HovelCompanion(
                             val transport = HovelHttpTransport(URI("$origin/api/hovel/v1/hovel"), registered.ownerId, registered.id, token)
                             val journal = ExecutionJournal(directory.resolve("journal-${registered.id}"), registered.id)
                             try {
-                                val provider = CodexCliProvider(executable, workspace, directory.resolve("output-${registered.id}"), codexHomeForOwner?.invoke(registered.ownerId))
+                                // Tasks run on the player's own Codex login, as companion chat does.
+                                val provider = CodexCliProvider(executable, workspace, directory.resolve("output-${registered.id}"))
                                 session = HovelHostSession(registered.id, journal, provider, transport) { status = it }.also { it.start() }
                             } catch (error: Exception) { journal.close(); throw error }
                         }

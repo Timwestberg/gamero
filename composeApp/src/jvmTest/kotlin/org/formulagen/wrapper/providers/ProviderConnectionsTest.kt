@@ -1,6 +1,5 @@
 package org.formulagen.wrapper.providers
 
-import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Clock
@@ -15,8 +14,6 @@ class ProviderConnectionsTest {
     private open class Rpc : CodexAppServer {
         val calls = mutableListOf<String>()
         var account: JsonElement = JsonNull
-        var outcome: Boolean? = null
-        var authUrl = "https://auth.openai.com/oauth/authorize?fixture=1"
         var closed = false
         override fun call(method: String, params: JsonObject): JsonObject {
             calls += method
@@ -25,91 +22,55 @@ class ProviderConnectionsTest {
                     assertEquals(JsonPrimitive(false), params["refreshToken"])
                     buildJsonObject { put("account", account) }
                 }
-                "account/login/start" -> {
-                    assertEquals("chatgpt", params["type"]?.jsonPrimitive?.content)
-                    buildJsonObject { put("type", "chatgpt"); put("loginId", LOGIN_ID); put("authUrl", authUrl) }
-                }
-                "account/logout" -> { account = JsonNull; buildJsonObject {} }
                 else -> buildJsonObject {}
             }
         }
-        override fun loginResult(loginId: String) = outcome
         override fun close() { closed = true }
     }
     private fun chatgpt() = buildJsonObject { put("type", "chatgpt"); put("email", "player@example.test"); put("planType", "plus") }
+    private val signedOut = ProviderStatus(RuntimeId.CODEX, ProviderState.DISCONNECTED, detail = ProviderDetail.SIGNED_OUT,
+        message = "Uses your Codex sign-in on this Mac. Run `codex login` in Terminal, then choose Check again.")
 
-    @Test fun browserLaunchIsPendingUntilAccountReadConfirmsChatgpt() {
+    @Test fun codexIsTheExternalSignInThePlayerManagesInTerminal() {
         val rpc = Rpc()
-        val opened = mutableListOf<URI>()
-        val connection = CodexConnection(rpc, { opened += it })
-        assertEquals(ProviderState.DISCONNECTED, connection.perform(ProviderAction.STATUS).state)
-        val pending = connection.perform(ProviderAction.CONNECT)
-        assertEquals(ProviderState.SIGNING_IN, pending.state)
-        assertFalse(pending.toString().contains("auth.openai.com"))
-        assertEquals("auth.openai.com", opened.single().host)
-        connection.perform(ProviderAction.CONNECT)
-        assertEquals(1, rpc.calls.count { it == "account/login/start" })
-        connection.perform(ProviderAction.REOPEN)
-        assertEquals(2, opened.size)
-        assertEquals(ProviderState.SIGNING_IN, connection.perform(ProviderAction.STATUS).state)
-        rpc.account = chatgpt(); rpc.outcome = true
-        val connected = connection.perform(ProviderAction.STATUS)
-        assertEquals(ProviderState.CONNECTED, connected.state)
-        assertEquals("player@example.test", connected.accountLabel)
-        assertEquals("plus", connected.plan)
-        assertEquals(ProviderState.DISCONNECTED, connection.perform(ProviderAction.DISCONNECT).state)
+        val connection = CodexConnection(rpc)
+        assertEquals(signedOut, connection.perform(ProviderAction.STATUS))
+        // Every other action answers the status with where sign-in happens, and keeps its detail.
+        for (action in listOf(ProviderAction.CONNECT, ProviderAction.CANCEL, ProviderAction.REOPEN, ProviderAction.DISCONNECT)) {
+            assertEquals(signedOut.copy(message = "Sign in and out with `codex login` in Terminal."), connection.perform(action))
+        }
+        rpc.account = chatgpt()
+        val connected = ProviderStatus(RuntimeId.CODEX, ProviderState.CONNECTED, accountLabel = "player@example.test", plan = "plus")
+        assertEquals(connected, connection.perform(ProviderAction.STATUS))
+        assertEquals(connected.copy(message = "Sign in and out with `codex login` in Terminal."), connection.perform(ProviderAction.DISCONNECT))
+        assertEquals(chatgpt(), rpc.account, "Disconnect never signs the player out")
+        rpc.account = buildJsonObject { put("type", "apiKey") }
+        assertEquals(ProviderStatus(RuntimeId.CODEX, ProviderState.ERROR, detail = ProviderDetail.API_KEY,
+            message = "Codex is using an API key. Sign in with your ChatGPT subscription to use it here: run `codex login` in Terminal."),
+            connection.perform(ProviderAction.STATUS))
+        rpc.account = buildJsonObject { put("type", "somethingNew") }
+        assertFails { connection.perform(ProviderAction.STATUS) }
+        assertTrue(rpc.calls.all { it == "account/read" }, "Hovel only reads the account: ${rpc.calls}")
         connection.close(); assertTrue(rpc.closed)
     }
 
-    @Test fun cancellationFailureAndBrowserFailureStayTruthful() {
-        val rpc = Rpc()
-        val connection = CodexConnection(rpc, { error("Browser not available") })
-        assertEquals(ProviderState.SIGNING_IN, connection.perform(ProviderAction.CONNECT).state)
-        assertEquals(ProviderState.DISCONNECTED, connection.perform(ProviderAction.CANCEL).state)
-        assertTrue(rpc.calls.contains("account/login/cancel"))
-        connection.perform(ProviderAction.CONNECT); rpc.outcome = false
-        assertEquals(ProviderState.ERROR, connection.perform(ProviderAction.STATUS).state)
-        rpc.account = buildJsonObject { put("type", "apiKey") }
-        assertFails { connection.perform(ProviderAction.STATUS) }
-    }
-
-    @Test fun expiredLoginCancelsInsteadOfPollingForever() {
-        val rpc = Rpc()
-        var instant = Instant.EPOCH
-        val clock = object : Clock() {
-            override fun getZone() = ZoneOffset.UTC
-            override fun withZone(zone: java.time.ZoneId) = this
-            override fun instant() = instant
-        }
-        val connection = CodexConnection(rpc, {}, clock)
-        connection.perform(ProviderAction.CONNECT)
-        instant = instant.plusSeconds(601)
-        assertEquals(ProviderState.ERROR, connection.perform(ProviderAction.STATUS).state)
-        assertTrue(rpc.calls.contains("account/login/cancel"))
-    }
-
-    @Test fun onlySupportedProviderAuthorizationUrlsCanOpen() {
-        for (url in listOf("http://auth.openai.com/test", "https://auth.openai.com.evil.test/", "file:///tmp/test", "https://user@auth.openai.com/", "https://auth.openai.com:444/")) {
-            val rpc = Rpc().also { it.authUrl = url }
-            var opened = false
-            assertFails { CodexConnection(rpc, { opened = true }).perform(ProviderAction.CONNECT) }
-            assertFalse(opened)
-        }
-    }
-
-    @Test fun profileAndRuntimeNeverUseTheGlobalCodexCredentialDirectory() {
+    @Test fun everyProfileSharesThePlayersCodexHomeAndOldHomesStayPut() {
         val root = Files.createTempDirectory("hovel-provider-test")
         try {
-            val home = codexProfileHome(root, LOGIN_ID)
-            assertNotEquals(home, codexProfileHome(root, "local"))
-            assertFails { codexProfileHome(root, "../../.codex") }
-            val runtime = CodexRuntime(Path.of("/bin/echo"), home)
-            runtime.prepare()
-            val command = runtime.builder(listOf("login", "status"))
-            assertEquals(home.toString(), command.environment()["CODEX_HOME"])
-            assertTrue(command.command().contains("cli_auth_credentials_store=\"keyring\""))
-            assertTrue(command.command().contains("forced_login_method=\"chatgpt\""))
+            val runtime = CodexRuntime(Path.of("/bin/echo"), root)
+            assertEquals(root.resolve("codex"), runtime.statusFolder())
+            assertEquals(root.resolve(LOGIN_ID).resolve("codex-chat"), runtime.conversationFolder(LOGIN_ID))
+            assertFails { runtime.conversationFolder("../../.codex") }
+            val command = runtime.builder(listOf("app-server"))
+            // Codex's own default home: whatever the player set, never a folder of Hovel's.
+            assertEquals(System.getenv("CODEX_HOME"), command.environment()["CODEX_HOME"])
+            assertEquals(listOf("/bin/echo", "app-server"), command.command())
+            assertEquals(runtime.statusFolder().toFile(), command.directory())
             assertFalse(command.environment().keys.any { it.startsWith("OPENAI_") || it in setOf("CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "ACCESS_TOKEN") })
+            // The old per-profile home is only named, for migrating a chat record; nothing creates or signs in there.
+            assertEquals(root.resolve("local").resolve("codex"), legacyCodexProfileHome(root, "local"))
+            assertFalse(Files.exists(legacyCodexProfileHome(root, LOGIN_ID)))
+            assertFails { legacyCodexProfileHome(root, "../x") }
             assertNull(findCodexExecutable(mapOf("GAMERO_CODEX_PATH" to "/missing/codex")))
         } finally { root.toFile().deleteRecursively() }
     }
@@ -122,36 +83,34 @@ class ProviderConnectionsTest {
 
     /** A Codex provider whose account processes are [Rpc]s recorded in [processes]. */
     private fun codex(root: Path, processes: MutableList<Rpc>, events: MutableList<String> = mutableListOf(), executable: Path? = Path.of("/bin/echo"),
-        clock: Clock = Clock.systemUTC(), onDisconnect: () -> Unit = {}, models: () -> JsonObject = { JsonObject(emptyMap()) }) =
-        CodexProvider(root, executable, openBrowser = {}, onDisconnect = onDisconnect, clock = clock, createConnection = { _, open ->
+        clock: Clock = Clock.systemUTC(), models: () -> JsonObject = { JsonObject(emptyMap()) }) =
+        CodexProvider(root, executable, clock = clock, createConnection = { _ ->
             val rpc = object : Rpc() {
                 override fun call(method: String, params: JsonObject) =
                     (if (method == "model/list") models() else super.call(method, params)).also { events += method }
             }
             processes += rpc
-            CodexConnection(rpc, open)
+            CodexConnection(rpc)
         })
 
-    @Test fun registryClosesThePreviousProfileAndSignsChatsOutFirst() = runBlocking {
+    @Test fun oneAccountProcessServesEveryProfileAndNothingSignsOut() = runBlocking {
         val root = Files.createTempDirectory("hovel-provider-registry")
         val processes = mutableListOf<Rpc>()
         val events = mutableListOf<String>()
-        val registry = DesktopProviders(listOf(codex(root, processes, events, onDisconnect = { events += "chat invalidated" })))
+        val registry = DesktopProviders(listOf(codex(root, processes, events)))
         fun scope(profile: String = "local") = ProviderScope(profile, RuntimeId.CODEX)
         try {
             assertFails { registry.perform(ProviderAction.STATUS, scope("../../.codex")) }
             assertTrue(processes.isEmpty())
-            assertEquals(ProviderStatus(RuntimeId.CODEX, ProviderState.DISCONNECTED, detail = ProviderDetail.SIGNED_OUT), registry.perform(ProviderAction.STATUS, scope()))
+            assertEquals(signedOut, registry.perform(ProviderAction.STATUS, scope()))
             registry.perform(ProviderAction.CONNECT, scope())
             registry.perform(ProviderAction.STATUS, scope(LOGIN_ID))
-            assertEquals(2, processes.size)
-            assertTrue(processes.first().closed)
-            assertFalse(processes.last().closed)
-            events.clear()
             registry.perform(ProviderAction.DISCONNECT, scope(LOGIN_ID))
-            assertEquals(listOf("chat invalidated", "account/logout", "account/read"), events)
+            // Every profile shares the player's one Codex login, so one account process answers them all.
+            assertEquals(1, processes.size)
+            assertEquals(listOf("account/read", "account/read", "account/read", "account/read"), events)
         } finally { registry.close(); root.toFile().deleteRecursively() }
-        assertTrue(processes.last().closed)
+        assertTrue(processes.single().closed)
     }
 
     @Test fun registryWithoutCodexIsUnavailable() = runBlocking<Unit> {
@@ -166,9 +125,9 @@ class ProviderConnectionsTest {
 
     @Test fun claudeIsRoutedApartFromCodexAndNeverSignedInOrOut() = runBlocking<Unit> {
         val root = Files.createTempDirectory("hovel-provider-claude")
-        val fake = FakeClaude(); val clock = MutableClock(); val processes = mutableListOf<Rpc>(); val codexCalls = mutableListOf<String>(); var invalidated = 0
+        val fake = FakeClaude(); val clock = MutableClock(); val processes = mutableListOf<Rpc>(); val codexCalls = mutableListOf<String>()
         val signIn = ClaudeConnection(fake.runtime(), clock = clock)
-        val registry = DesktopProviders(listOf(codex(root, processes, codexCalls, onDisconnect = { invalidated++ }), ClaudeProvider(signIn)))
+        val registry = DesktopProviders(listOf(codex(root, processes, codexCalls), ClaudeProvider(signIn)))
         fun scope(runtime: RuntimeId) = ProviderScope(LOGIN_ID, runtime)
         val connected = ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.CONNECTED, accountLabel = "player@example.test", plan = "max")
         try {
@@ -184,7 +143,6 @@ class ProviderConnectionsTest {
             assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.DISCONNECTED, detail = ProviderDetail.SIGNED_OUT,
                 message = "Sign in to Claude Code with your Claude subscription: run `claude auth login` in Terminal, then choose Check again."),
                 registry.perform(ProviderAction.STATUS, scope(RuntimeId.CLAUDE_CODE)))
-            assertEquals(0, invalidated, "Claude's disconnect signs nobody out, so open chats keep going")
             assertTrue(codexCalls.isEmpty())
             assertEquals(ProviderState.DISCONNECTED, registry.perform(ProviderAction.STATUS, scope(RuntimeId.CODEX)).state)
             assertEquals(RuntimeProviderId.OPENAI, registry.perform(ProviderAction.STATUS, scope(RuntimeId.CODEX)).providerId)

@@ -3,11 +3,15 @@ package org.formulagen.wrapper.companion
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
-import org.formulagen.wrapper.providers.CodexRuntime
 import org.formulagen.wrapper.providers.codexProcess
 
-/** Provider authentication remains wholly in supported, user-installed Codex tooling. */
-class CodexCliProvider(private val executable: Path, workspace: Path, outputDirectory: Path, private val codexHome: Path? = null) : TaskProvider {
+/**
+ * Hovel tasks on the player's own Codex sign-in (Codex's default home). Authentication stays
+ * wholly in the player's installed Codex: Hovel checks `codex login status` before every task and
+ * runs one only on a ChatGPT login. The task itself ignores the player's `config.toml`, so its
+ * read-only lockdown is the same whatever the player configured.
+ */
+class CodexCliProvider(private val executable: Path, workspace: Path, outputDirectory: Path) : TaskProvider {
     private val outputDirectory = outputDirectory.toAbsolutePath().normalize()
     private val workspace = workspace.toRealPath()
     init {
@@ -54,7 +58,7 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
         Files.createFile(output, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
             java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")))
         run {
-            // v1 is deliberately read-only. builder() adds the ChatGPT-only login and environment rules.
+            // v1 is deliberately read-only. The login check above is the ChatGPT-only rule; builder() adds the environment rules.
             val command = listOf("-a", "never", "exec", "--ignore-user-config", "--ephemeral",
                 "--sandbox", "read-only", "--skip-git-repo-check", "--color", "never",
                 "--output-last-message", output.toString(), "-")
@@ -88,8 +92,6 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
         } // Retain output even on ambiguous failure for explicit local reconciliation.
     }
 
-    /** The profile's isolated login when there is one, else the user's own Codex login; [codexProcess] owns the rules. */
-    internal fun builder(arguments: List<String>): ProcessBuilder = codexHome?.let {
-        CodexRuntime(executable, it).also { runtime -> runtime.prepare() }.builder(arguments, workspace)
-    } ?: codexProcess(executable, arguments, workspace)
+    /** The player's own Codex login; [codexProcess] owns the rules. */
+    internal fun builder(arguments: List<String>): ProcessBuilder = codexProcess(executable, arguments, workspace)
 }

@@ -9,32 +9,28 @@ import org.formulagen.wrapper.providers.codexProcess
 import org.formulagen.wrapper.providers.scrubCodexEnvironment
 
 class CodexCliProviderTest {
-    @Test fun profileTasksUseTheSameIsolatedKeyringAsProviderSettings() {
+    @Test fun tasksRunOnThePlayersOwnCodexLoginWithNoSettingsOfHovels() {
         val directory = Files.createTempDirectory("hovel-codex-profile")
         try {
-            val home = directory.resolve("provider-account")
-            val provider = CodexCliProvider(java.nio.file.Path.of("/bin/echo"), directory, directory.resolve("output"), home)
+            val provider = CodexCliProvider(java.nio.file.Path.of("/bin/echo"), directory, directory.resolve("output"))
             val command = provider.builder(listOf("login", "status"))
-            assertEquals(home.toString(), command.environment()["CODEX_HOME"])
-            assertTrue(command.command().contains("cli_auth_credentials_store=\"keyring\""))
-            assertEquals(1, command.command().count { it == "forced_login_method=\"chatgpt\"" })
+            // No forced login method (it logs an API-key login out) and no credential store (the player's own applies).
+            assertEquals(listOf("/bin/echo", "login", "status"), command.command())
+            assertEquals(System.getenv("CODEX_HOME"), command.environment()["CODEX_HOME"])
         } finally { directory.toFile().deleteRecursively() }
     }
 
-    @Test fun everyCodexChildIsChatgptOnlyWithoutInheritedCredentials() {
+    @Test fun everyCodexChildIsThePlayersCodexWithoutInheritedCredentials() {
         val directory = Files.createTempDirectory("hovel-codex-environment")
         try {
-            val home = directory.resolve("home")
             val echo = java.nio.file.Path.of("/bin/echo")
-            assertEquals(listOf("/bin/echo", "-c", "forced_login_method=\"chatgpt\"", "-c", "cli_auth_credentials_store=\"keyring\"", "exec"),
-                codexProcess(echo, listOf("exec"), directory, home).command())
-            assertEquals(listOf("/bin/echo", "-c", "forced_login_method=\"chatgpt\"", "exec"), codexProcess(echo, listOf("exec"), directory).command())
-            val inherited = mapOf("OPENAI_API_KEY" to "k", "ACCESS_TOKEN" to "t", "CODEX_API_KEY" to "k", "CODEX_SANDBOX" to "s",
-                "CODEX_CA_CERTIFICATE" to "ca", "CODEX_HOME" to "/user/codex", "PATH" to "/bin")
-            val isolated = inherited.toMutableMap().also { scrubCodexEnvironment(it, home) }
-            assertEquals(mapOf("CODEX_CA_CERTIFICATE" to "ca", "CODEX_HOME" to home.toAbsolutePath().toString(), "PATH" to "/bin"), isolated)
-            val userLogin = inherited.toMutableMap().also { scrubCodexEnvironment(it, null) }
-            assertEquals(mapOf("CODEX_CA_CERTIFICATE" to "ca", "CODEX_HOME" to "/user/codex", "PATH" to "/bin"), userLogin)
+            assertEquals(listOf("/bin/echo", "exec"), codexProcess(echo, listOf("exec"), directory).command())
+            val inherited = mapOf("OPENAI_API_KEY" to "k", "OPENAI_BASE_URL" to "u", "ACCESS_TOKEN" to "t", "CODEX_API_KEY" to "k",
+                "CODEX_SANDBOX" to "seatbelt", "CODEX_SANDBOX_NETWORK_DISABLED" to "1", "CODEX_THREAD_ID" to "x",
+                "CODEX_CA_CERTIFICATE" to "ca", "CODEX_HOME" to "/player/codex", "PATH" to "/bin")
+            val scrubbed = inherited.toMutableMap().also { scrubCodexEnvironment(it) }
+            // The player's own home and network setup stay; billing keys and another Codex session's variables go.
+            assertEquals(mapOf("CODEX_CA_CERTIFICATE" to "ca", "CODEX_HOME" to "/player/codex", "PATH" to "/bin"), scrubbed)
         } finally { directory.toFile().deleteRecursively() }
     }
 
@@ -68,7 +64,8 @@ class CodexCliProviderTest {
         assertEquals(CodexCliProvider.Readiness.READY, provider.readiness())
         assertEquals(ProviderResult(true, "fixture result"), provider.execute(request))
         val args = Files.readAllLines(directory.resolve("arguments.txt"))
-        assertTrue(args.containsAll(listOf("never", "forced_login_method=\"chatgpt\"", "--ignore-user-config", "--ephemeral", "read-only")))
+        assertTrue(args.containsAll(listOf("never", "--ignore-user-config", "--ephemeral", "read-only")))
+        assertFalse(args.any { it.startsWith("forced_login_method") || it.startsWith("cli_auth_credentials_store") })
         assertFalse(args.contains(request.prompt))
         assertTrue(Files.readString(directory.resolve("input.txt")).contains(request.prompt))
         assertFalse(Files.exists(directory.resolve("unwanted")))

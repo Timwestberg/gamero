@@ -24,11 +24,14 @@ class CodexChatRuntimeTest {
         var models: JsonObject? = null
         /** Codex no longer has the saved thread. */
         var resumeRejected = false
+        /** What `config/read` answers as the player's configuration; null when Codex rejects it. */
+        var config: JsonObject? = JsonObject(emptyMap())
         @Volatile var closed = false
         override fun call(method: String, params: JsonObject): JsonObject {
             calls += method to params
             return when (method) {
                 "account/read" -> buildJsonObject { putJsonObject("account") { put("type", "chatgpt") } }
+                "config/read" -> config?.let { buildJsonObject { put("config", it) } } ?: throw org.formulagen.wrapper.providers.CodexRequestRejected()
                 "thread/resume" -> if (resumeRejected) throw org.formulagen.wrapper.providers.CodexRequestRejected()
                     else buildJsonObject { putJsonObject("thread") { put("id", startedThread) } }
                 "thread/start" -> buildJsonObject { putJsonObject("thread") { put("id", startedThread) } }
@@ -38,7 +41,6 @@ class CodexChatRuntimeTest {
             }
         }
         fun calls(method: String) = calls.filter { it.first == method }.map { it.second }
-        override fun loginResult(loginId: String): Boolean? = null
         override fun close() { closed = true }
     }
 
@@ -68,9 +70,9 @@ class CodexChatRuntimeTest {
         runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.onTurn = { complete(rpc, thread, "Hi") } }.use { codex ->
             val events = Events()
             codex.startTurn(request("gpt-6-luna"), events)
-            codex.startTurn(request("gpt-6-luna", NativeConversation(thread, persona.hash)), events)
-            codex.startTurn(request(RUNTIME_DEFAULT_MODEL, NativeConversation(thread, persona.hash)), events)
-            codex.startTurn(request(null, NativeConversation(thread, persona.hash)), events)
+            codex.startTurn(request("gpt-6-luna", NativeConversation(thread, persona.hash, playerLogin = true)), events)
+            codex.startTurn(request(RUNTIME_DEFAULT_MODEL, NativeConversation(thread, persona.hash, playerLogin = true)), events)
+            codex.startTurn(request(null, NativeConversation(thread, persona.hash, playerLogin = true)), events)
             val turns = rpcs.single().calls("turn/start")
             assertEquals(listOf(JsonPrimitive("gpt-6-luna"), JsonPrimitive("gpt-6-luna"), null, null), turns.map { it["model"] })
             // The thread is started once, reported once, then reused on the same app-server.
@@ -91,7 +93,7 @@ class CodexChatRuntimeTest {
         val rpcs = mutableListOf<Rpc>()
         val catalog = Json.parseToJsonElement("""{"data":[{"model":"gpt-6-luna","displayName":"Luna","hidden":false,"isDefault":false},
             {"model":"gpt-6.1-sol","displayName":"GPT-6.1 Sol","hidden":false,"isDefault":true}],"nextCursor":null}""").jsonObject
-        val conversation = NativeConversation(thread, persona.hash)
+        val conversation = NativeConversation(thread, persona.hash, playerLogin = true)
         runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.models = catalog; rpc.onTurn = { complete(rpc, thread, "Hi") } }.use { codex ->
             codex.startTurn(request("gpt-6-luna", conversation), Events())
             codex.startTurn(request(RUNTIME_DEFAULT_MODEL, conversation), Events())
@@ -124,9 +126,9 @@ class CodexChatRuntimeTest {
         val rpcs = mutableListOf<Rpc>()
         runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.resumeRejected = true; rpc.onTurn = { complete(rpc, thread, "Hi") } }.use { codex ->
             val lost = Events()
-            codex.startTurn(request(null, NativeConversation(thread, persona.hash)), lost)
+            codex.startTurn(request(null, NativeConversation(thread, persona.hash, playerLogin = true)), lost)
             assertEquals(listOf("failed ConversationLost"), lost.seen)
-            assertEquals(listOf("account/read", "thread/resume"), rpcs.single().calls.map { it.first })
+            assertEquals(listOf("account/read", "config/read", "thread/resume"), rpcs.single().calls.map { it.first })
             // The chat then starts over without a conversation, in a new thread.
             val fresh = Events()
             codex.startTurn(request(null), fresh)
@@ -181,6 +183,92 @@ class CodexChatRuntimeTest {
         assertEquals(ChatFailure.Temporary, codexFailure(error(buildJsonObject { putJsonObject("httpConnectionFailed") { put("httpStatusCode", 502) } })))
         assertEquals(ChatFailure.Unexpected, codexFailure(error(JsonPrimitive("contextWindowExceeded"))))
         assertEquals(ChatFailure.Unexpected, codexFailure(null))
+    }
+
+    @Test fun aThreadFromHovelsOldCodexLoginIsALostConversationWithoutAskingCodex() {
+        val root = Files.createTempDirectory("codex-old-login")
+        val rpcs = mutableListOf<Rpc>()
+        runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.onTurn = { complete(rpc, thread, "Hi") } }.use { codex ->
+            // Opened before Codex moved to the player's own login: that thread lives in the old per-profile home.
+            val lost = Events()
+            codex.startTurn(request(null, NativeConversation(thread, persona.hash)), lost)
+            assertEquals(listOf("failed ConversationLost"), lost.seen)
+            assertTrue(rpcs.isEmpty(), "Nothing is asked of Codex for a thread it cannot have")
+            val resumed = Events()
+            codex.startTurn(request(null, NativeConversation(thread, persona.hash, playerLogin = true)), resumed)
+            assertEquals("completed Hi", resumed.seen.last())
+            assertEquals(1, rpcs.single().calls("thread/resume").size)
+        }
+    }
+
+    @Test fun everyThreadTurnsOffThePlayersMcpServersAndFeatures() {
+        val root = Files.createTempDirectory("codex-player-config")
+        val rpcs = mutableListOf<Rpc>()
+        val player = Json.parseToJsonElement("""{"mcp_servers":{"blender":{"command":"/x","enabled":true},"dot.ted":{"command":"/y","enabled":true}},
+            "features":{"code_mode":true,"memories":true,"shell_tool":false,"network_proxy":null},"notify":["/usr/bin/true"]}""").jsonObject
+        val off = talkOnlyOverrides(player)
+        assertEquals(Json.parseToJsonElement("""{"blender":{"enabled":false},"dot.ted":{"enabled":false}}"""), off["mcp_servers"])
+        val features = off.getValue("features").jsonObject
+        // The player's own features and the fixed lockdown, all off on the thread itself.
+        for (name in listOf("code_mode", "memories", "shell_tool", "apps", "plugins", "hooks", "multi_agent")) assertEquals(JsonPrimitive(false), features[name], name)
+        assertTrue(features.values.all { it == JsonPrimitive(false) })
+        assertEquals(JsonArray(emptyList()), off["notify"]); assertEquals(JsonPrimitive("disabled"), off["web_search"])
+        assertEquals(JsonPrimitive(0), off["project_doc_max_bytes"])
+        val plugins = talkOnlyOverrides(Json.parseToJsonElement("""{"plugins":{"computer-history@openai-bundled":{"enabled":true}}}""").jsonObject)
+        assertEquals(Json.parseToJsonElement("""{"computer-history@openai-bundled":{"enabled":false}}"""), plugins["plugins"])
+        assertNull(talkOnlyOverrides(JsonObject(emptyMap()))["mcp_servers"])
+        runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.config = player; rpc.onTurn = { complete(rpc, thread, "Hi") } }.use { codex ->
+            codex.startTurn(request(null), Events())
+            val rpc = rpcs.single()
+            val start = rpc.calls("thread/start").single()
+            assertEquals(off, start["config"])
+            assertEquals(JsonPrimitive("read-only"), start["sandbox"]); assertEquals(JsonPrimitive("never"), start["approvalPolicy"])
+            // The configuration is read as a thread in the profile's own empty folder sees it.
+            assertEquals(start["cwd"], rpc.calls("config/read").single()["cwd"])
+            assertEquals(root.resolve("local").resolve("codex-chat").toString(), start["cwd"]?.jsonPrimitive?.content)
+            codex.summarize(SummaryRequest("local", persona, null, "Person: Hi"))
+            assertEquals(off, rpc.calls("thread/start").last()["config"])
+        }
+        // A Codex that cannot say what the player's configuration turns on starts no thread.
+        runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.config = null }.use { codex ->
+            val refused = Events()
+            codex.startTurn(request(null), refused)
+            assertEquals(listOf("failed Lockdown"), refused.seen)
+            assertTrue(rpcs.last().calls("thread/start").isEmpty())
+            assertFails { codex.summarize(SummaryRequest("local", persona, null, "Person: Hi")) }
+        }
+        val arguments = chatProcessArguments()
+        assertTrue(arguments.windowed(2).any { it == listOf("-c", "notify=[]") }, "The player's notify program never runs for chat")
+        assertFalse(arguments.contains("mcp_servers={}"), "An empty table leaves the player's servers running, so it is not relied on")
+        assertTrue("config/read" in CHAT_CODEX_METHODS)
+    }
+
+    @Test fun anMcpServerStartingForATalkOnlyThreadEndsTheTurnClosed() {
+        val root = Files.createTempDirectory("codex-mcp-started")
+        val rpcs = mutableListOf<Rpc>()
+        runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.onTurn = {
+            rpc.notify("mcpServer/startupStatus/updated", buildJsonObject { put("threadId", thread); put("name", "blender"); put("status", "starting") })
+        } }.use { codex ->
+            val events = Events()
+            codex.startTurn(request(null), events)
+            val until = System.nanoTime() + 5_000_000_000
+            while (!rpcs.single().closed) { check(System.nanoTime() < until) { "App-server not closed" }; Thread.sleep(10) }
+            assertEquals("failed Lockdown", events.seen.last())
+            assertFalse(events.seen.any { it.startsWith("completed") })
+        }
+    }
+
+    @Test fun onlyAChatgptLoginIsReady() {
+        val root = Files.createTempDirectory("codex-readiness")
+        for ((account, expected) in listOf(
+            JsonNull to Readiness.SignedOut,
+            buildJsonObject { put("type", "apiKey") } to Readiness.Unavailable(org.formulagen.wrapper.providers.CODEX_API_KEY),
+            buildJsonObject { put("type", "chatgpt") } to Readiness.Ready)) {
+            CodexChatRuntime(root, Path.of("/usr/bin/true")) { _, receive -> object : org.formulagen.wrapper.providers.CodexAppServer {
+                override fun call(method: String, params: JsonObject) = buildJsonObject { put("account", account) }
+                override fun close() = Unit
+            } }.use { assertEquals(expected, it.readiness("local")) }
+        }
     }
 
     @Test fun thePersonaQuotesTheNameForbidsPersonalDetailsAndHashesStably() {

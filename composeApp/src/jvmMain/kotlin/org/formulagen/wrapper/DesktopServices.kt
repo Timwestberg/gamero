@@ -33,7 +33,6 @@ import org.formulagen.wrapper.providers.ClaudeRuntime
 import org.formulagen.wrapper.providers.CodexProvider
 import org.formulagen.wrapper.providers.DesktopProviders
 import org.formulagen.wrapper.providers.claudeProviderEnabled
-import org.formulagen.wrapper.providers.codexProfileHome
 import org.formulagen.wrapper.providers.findClaudeExecutable
 import org.formulagen.wrapper.providers.findCodexExecutable
 
@@ -100,14 +99,14 @@ internal class DesktopServices private constructor(
                     claude?.let { ClaudeChatRuntime(it, checkNotNull(claudeSignIn)) })
                 val offered = setOfNotNull(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE.takeIf { claudeOffered })
                 val chat = own(DesktopChat(providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment)), offered))
-                val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex, onDisconnect = chat::invalidate),
+                // Both runtimes sign in outside Hovel, on the player's own install, so a status check never signs a chat out.
+                val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),
                     claudeSignIn?.let(::ClaudeProvider))))
                 val pet = own(DesktopPetLauncher(environment, support.resolve("ember-pet.log")))
                 val workspace = environment["GAMERO_WORKSPACE"]?.let(Path::of)
                 val companion = if (product == HOVEL_PRODUCT && System.getProperty("os.name").contains("Mac") &&
                     codex != null && workspace != null) {
-                    own(HovelCompanion(appUrl, support.resolve("hovel-${HovelCompanion.sha256(appUrl)}"), codex, workspace,
-                        codexHomeForOwner = { codexProfileHome(providerRoot, it) }))
+                    own(HovelCompanion(appUrl, support.resolve("hovel-${HovelCompanion.sha256(appUrl)}"), codex, workspace))
                 } else null
                 val games = if (window != null && environment["HOVEL_GAME_PROJECT"] != null) {
                     DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }

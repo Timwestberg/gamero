@@ -15,8 +15,8 @@ internal class RuntimeCopy(
     val notOffered: String,
     /** A chat notice when the runtime's sign-in ended. */
     val signedOut: String,
-    /** How to sign in, for a Providers card whose sign-in happens outside Hovel; null when Hovel signs in itself. */
-    val signInHint: String?,
+    /** How to sign in, for the Providers card: both runtimes sign in outside Hovel, in the player's own install. */
+    val signInHint: String,
 )
 
 internal val RuntimeId.copy: RuntimeCopy get() = when (this) {
@@ -29,8 +29,8 @@ private val CODEX_COPY = RuntimeCopy(
     program = "Codex",
     notInstalled = "Install Codex on this Mac, then restart Hovel to connect.",
     notOffered = "Codex is not available in this version of Hovel.",
-    signedOut = "Connect Codex in Profile → Providers to message your companion.",
-    signInHint = null,
+    signedOut = "Sign in to Codex again: run `codex login` in Terminal.",
+    signInHint = "Uses your Codex sign-in on this Mac. Run `codex login` in Terminal, then choose Check again.",
 )
 
 private val CLAUDE_COPY = RuntimeCopy(

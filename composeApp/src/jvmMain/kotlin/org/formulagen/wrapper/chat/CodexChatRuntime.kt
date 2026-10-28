@@ -1,6 +1,5 @@
 package org.formulagen.wrapper.chat
 
-import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
@@ -14,15 +13,24 @@ import org.formulagen.wrapper.bridge.ChatLimits
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
+import org.formulagen.wrapper.bridge.ProviderState
+import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.providers.CodexAppServer
 import org.formulagen.wrapper.providers.CodexRequestRejected
 import org.formulagen.wrapper.providers.CodexRuntime
 import org.formulagen.wrapper.providers.StdioCodexAppServer
+import org.formulagen.wrapper.providers.codexAccountStatus
 import org.formulagen.wrapper.providers.codexModelList
-import org.formulagen.wrapper.providers.codexProfileHome
 
 /**
- * Codex behind [ChatRuntime]. One app-server serves the active profile and is kept between turns;
+ * Codex behind [ChatRuntime], on the player's own Codex sign-in and default home. Talk-only: the
+ * player's configuration loads, so every thread turns off the MCP servers and features it enables
+ * ([talkOnlyOverrides]) on top of the process lockdown ([chatProcessArguments]); an MCP server
+ * that starts anyway ends the turn as [ChatFailure.Lockdown]. A thread opened on Hovel's old
+ * per-profile login cannot be resumed and is a lost conversation.
+ *
+ * One app-server serves the active profile and is kept between turns;
  * it is dropped on [release], on a closed transport, on a refused tool request and when the account
  * is not ChatGPT, and the next turn starts a new one and resumes the thread again. A thread Codex no
  * longer has is a lost conversation, which the chat starts over with the recent messages. Stopping
@@ -49,7 +57,8 @@ internal class CodexChatRuntime(
     private var epoch = 0
     private var closed = false
 
-    private class Connection(val profile: String, val home: Path, val rpc: CodexAppServer, val epoch: Int) {
+    /** [folder] is the profile's empty conversation folder, where its threads start. */
+    private class Connection(val profile: String, val folder: Path, val rpc: CodexAppServer, val epoch: Int) {
         /** The thread this app-server has resumed or started; any other thread is resumed first. */
         var thread: String? = null
         var turn: Turn? = null
@@ -64,15 +73,17 @@ internal class CodexChatRuntime(
         val early = mutableListOf<Pair<String, JsonObject>>()
     }
 
-    override fun readiness(profile: String): Readiness =
-        if (chatgpt(connect(profile))) Readiness.Ready else Readiness.SignedOut
+    override fun readiness(profile: String): Readiness = account(connect(profile))
 
     /** Resume only the native-owned thread belonging to this companion, then start the turn. */
     override fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle {
         val model = explicitModel(turn.model) ?: run { events.failed(ChatFailure.ModelUnavailable); return TurnHandle {} }
+        // Opened on Hovel's old per-profile Codex login, which the player's own login does not have.
+        if (turn.conversation?.playerLogin == false) { events.failed(ChatFailure.ConversationLost); return TurnHandle {} }
         val connection = connect(turn.profile)
-        if (!chatgpt(connection)) { events.failed(ChatFailure.SignedOut); return TurnHandle {} }
-        val thread = thread(connection, turn, events) ?: run { events.failed(ChatFailure.ConversationLost); return TurnHandle {} }
+        if (account(connection) != Readiness.Ready) { events.failed(ChatFailure.SignedOut); return TurnHandle {} }
+        val overrides = overrides(connection) ?: run { events.failed(ChatFailure.Lockdown); return TurnHandle {} }
+        val thread = thread(connection, turn, events, overrides) ?: run { events.failed(ChatFailure.ConversationLost); return TurnHandle {} }
         // Codex keeps a named model for the later turns of a thread, so "runtime-default" names Codex's own
         // default whenever it is known; only when it never was is the model left out.
         val sent = model.ifEmpty { defaultModel(connection).orEmpty() }
@@ -101,9 +112,9 @@ internal class CodexChatRuntime(
     override fun summarize(request: SummaryRequest): String {
         val model = explicitModel(request.model) ?: error("Unknown model")
         val connection = connect(request.profile)
-        check(chatgpt(connection)) { "ChatGPT account required" }
-        val cwd = workspace(connection)
-        val started = connection.rpc.call("thread/start", chatThreadParams(request.persona, cwd.toString(), null, ephemeral = true))
+        check(account(connection) == Readiness.Ready) { "ChatGPT account required" }
+        val overrides = checkNotNull(overrides(connection)) { "Codex configuration unreadable" }
+        val started = connection.rpc.call("thread/start", chatThreadParams(request.persona, connection.folder.toString(), null, ephemeral = true, overrides))
         val thread = started.getValue("thread").jsonObject.getValue("id").jsonPrimitive.content
         val summary = Summary().also { connection.summaries[thread] = it }
         try {
@@ -137,34 +148,50 @@ internal class CodexChatRuntime(
             check(!closed) { "Chat closed" }
             connection?.let { if (it.profile == profile) return it; detachLocked() }
         }
-        val home = codexProfileHome(providerRoot, profile)
-        val runtime = CodexRuntime(executable, home).also { it.prepare() }
+        val runtime = CodexRuntime(executable, providerRoot)
+        val folder = runtime.conversationFolder(profile)
         val mine = synchronized(lock) { ++epoch }
         val rpc = createRpc(runtime) { method, params -> receive(mine, method, params) }
         val opened = synchronized(lock) {
-            if (closed || epoch != mine || connection != null) null else Connection(profile, home, rpc, mine).also { connection = it }
+            if (closed || epoch != mine || connection != null) null else Connection(profile, folder, rpc, mine).also { connection = it }
         }
         if (opened == null) { rpc.close(); error("Chat closed") }
         return opened
     }
 
-    /** Readiness only: a forced refresh costs a round trip and can race another app-server sharing the keyring login. */
-    private fun chatgpt(connection: Connection): Boolean {
-        val account = connection.rpc.call("account/read", buildJsonObject { put("refreshToken", false) })["account"] as? JsonObject
+    /**
+     * Ready only on a ChatGPT login; an API-key login is never used. Readiness only: a forced refresh
+     * costs a round trip and can race the player's other Codex sessions sharing the login.
+     */
+    private fun account(connection: Connection): Readiness {
+        val account = connection.rpc.call("account/read", buildJsonObject { put("refreshToken", false) })["account"]
         current(connection)
-        if (account?.get("type") == JsonPrimitive("chatgpt")) return true
+        val status = runCatching { codexAccountStatus(account) }.getOrNull()
+        if (status?.state == ProviderState.CONNECTED) return Readiness.Ready
         detach(connection)
-        return false
+        return if (status?.state == ProviderState.ERROR) Readiness.Unavailable(checkNotNull(status.message)) else Readiness.SignedOut
+    }
+
+    /**
+     * What turns off the player's MCP servers and features for this conversation, from Codex's own
+     * reading of the configuration as a thread in [Connection.folder] sees it. Null when Codex cannot
+     * say, and then no thread starts.
+     */
+    private fun overrides(connection: Connection): JsonObject? {
+        val read = try { connection.rpc.call("config/read", buildJsonObject { put("cwd", connection.folder.toString()) }) }
+            catch (_: CodexRequestRejected) { return null }
+        current(connection)
+        return (read["config"] as? JsonObject)?.let(::talkOnlyOverrides)
     }
 
     /** The companion's thread on this app-server: resumed, or new when there is none. Null when Codex no longer has it. */
-    private fun thread(connection: Connection, turn: TurnRequest, events: TurnEvents): String? {
+    private fun thread(connection: Connection, turn: TurnRequest, events: TurnEvents, overrides: JsonObject): String? {
         val saved = turn.conversation?.id
         if (saved != null && synchronized(lock) { connection.thread } == saved) return saved
-        val cwd = workspace(connection).toString()
+        val cwd = connection.folder.toString()
         // Codex applies the persona on every resume, so a thread survives a renamed companion.
-        val result = if (saved == null) connection.rpc.call("thread/start", chatThreadParams(turn.persona, cwd, null))
-            else try { connection.rpc.call("thread/resume", chatThreadParams(turn.persona, cwd, saved)) } catch (_: CodexRequestRejected) { return null }
+        val result = if (saved == null) connection.rpc.call("thread/start", chatThreadParams(turn.persona, cwd, null, overrides = overrides))
+            else try { connection.rpc.call("thread/resume", chatThreadParams(turn.persona, cwd, saved, overrides = overrides)) } catch (_: CodexRequestRejected) { return null }
         val id = result.getValue("thread").jsonObject.getValue("id").jsonPrimitive.content
         require(UUID.fromString(id).toString() == id)
         synchronized(lock) { current(connection); connection.thread = id }
@@ -184,11 +211,18 @@ internal class CodexChatRuntime(
         return (fresh ?: known?.second).also { defaults[connection.profile] = System.nanoTime() to it }
     }
 
-    private fun workspace(connection: Connection): Path = connection.home.resolve("conversation-workspace").also { Files.createDirectories(it) }
-
     /** Consume only text and terminal state from the current app-server. Tool requests are refused by the transport. */
     private fun receive(epoch: Int, method: String, params: JsonObject) = synchronized(delivery) {
         val connection = synchronized(lock) { connection?.takeIf { it.epoch == epoch } } ?: return@synchronized
+        if (method == MCP_STARTUP) {
+            // A talk-only conversation never runs an MCP server; one starting means the overrides did not hold.
+            log(LogLevel.Warn, "codex", "Codex chat refused; an MCP server started")
+            val turn = synchronized(lock) { connection.turn.also { connection.turn = null } }
+            connection.summaries.values.forEach { it.fail() }
+            detach(connection)
+            turn?.events?.failed(ChatFailure.Lockdown)
+            return@synchronized
+        }
         if (method == "transport/closed" || method == "request/refused") {
             val turn = synchronized(lock) { connection.turn.also { connection.turn = null } }
             connection.summaries.values.forEach { it.fail() }
@@ -268,8 +302,46 @@ internal class CodexChatRuntime(
     }
 }
 
-/** What a chat app-server may be asked: the account, its conversation, and the model list for naming Codex's default. */
-internal val CHAT_CODEX_METHODS = setOf("account/read", "thread/start", "thread/resume", "turn/start", "turn/interrupt", "model/list")
+/**
+ * What a chat app-server may be asked: the account, the configuration it must turn off, its
+ * conversation, and the model list for naming Codex's default.
+ */
+internal val CHAT_CODEX_METHODS = setOf("account/read", "config/read", "thread/start", "thread/resume", "turn/start", "turn/interrupt", "model/list")
+
+/** Codex reports each MCP server it starts for a thread with this notification. */
+private const val MCP_STARTUP = "mcpServer/startupStatus/updated"
+
+/**
+ * A thread's `config` overrides: the whole talk-only lockdown, applied to the thread itself. The
+ * process-level `-c` settings ([chatProcessArguments]) are kept, but they do not reach everything a
+ * thread loads (the player's plugins' MCP servers and Codex's Apps server start despite
+ * `-c features.plugins=false`), while the thread's own `config` does. On top of the fixed lockdown,
+ * it turns off what the player's own configuration ([config], from `config/read`) turns on: every
+ * MCP server and plugin it lists and every feature it enables. Codex merges these into the player's
+ * tables (an empty `mcp_servers={}` leaves them all running), so each one is named, as a nested
+ * table rather than a dotted key so that a name with a dot is turned off too.
+ */
+internal fun talkOnlyOverrides(config: JsonObject): JsonObject = buildJsonObject {
+    fun names(key: String) = (config[key] as? JsonObject)?.keys.orEmpty().sorted()
+    val servers = names("mcp_servers")
+    if (servers.isNotEmpty()) putJsonObject("mcp_servers") { servers.forEach { putJsonObject(it) { put("enabled", false) } } }
+    val plugins = names("plugins")
+    if (plugins.isNotEmpty()) putJsonObject("plugins") { plugins.forEach { putJsonObject(it) { put("enabled", false) } } }
+    val enabled = (config["features"] as? JsonObject)?.filterValues { it == JsonPrimitive(true) }?.keys.orEmpty()
+    putJsonObject("features") { (DISABLED_FEATURES + enabled).toSortedSet().forEach { put(it, false) } }
+    put("web_search", "disabled")
+    putJsonArray("notify") {}
+    putJsonObject("skills") { putJsonObject("bundled") { put("enabled", false) }; put("include_instructions", false) }
+    putJsonObject("agents") { put("enabled", false) }
+    put("project_doc_max_bytes", 0)
+}
+
+/** Codex features that give a talk-only companion a tool, a hook, memory or another agent; all off. */
+private val DISABLED_FEATURES = listOf("shell_tool", "apps", "plugins", "remote_plugin", "hooks", "multi_agent", "multi_agent_v2",
+    "computer_use", "browser_use", "browser_use_external", "in_app_browser", "image_generation", "view_image",
+    "unified_exec", "code_mode_host", "workspace_dependencies", "worktrees", "shell_snapshot",
+    "chronicle", "goals", "sleep_tool", "tool_suggest", "realtime_conversation",
+    "memories", "skill_search", "skill_mcp_dependency_install", "request_permissions_tool")
 
 /**
  * The text of one Codex reply as its notifications build it: a delta extends the current agent
@@ -324,29 +396,30 @@ internal fun chatCodex(runtime: CodexRuntime, receive: (String, JsonObject) -> U
         allowedMethods = CHAT_CODEX_METHODS,
         arguments = chatProcessArguments(), onNotification = receive, timeoutSeconds = 15)
 
-/** Explicit tool restrictions apply at process startup, before any thread can run. */
+/** Explicit tool restrictions apply at process startup, before any thread can run; each thread repeats them ([talkOnlyOverrides]). */
 internal fun chatProcessArguments(): List<String> {
-    val disabled = listOf("shell_tool", "apps", "plugins", "remote_plugin", "hooks", "multi_agent", "multi_agent_v2",
-        "computer_use", "browser_use", "browser_use_external", "in_app_browser", "image_generation", "view_image",
-        "unified_exec", "code_mode_host", "workspace_dependencies", "worktrees", "shell_snapshot",
-        "chronicle", "goals", "sleep_tool", "tool_suggest", "realtime_conversation",
-        "memories", "skill_search", "skill_mcp_dependency_install", "request_permissions_tool")
-    return disabled.flatMap { listOf("-c", "features.$it=false") } + listOf(
-        "-c", "web_search=\"disabled\"", "-c", "mcp_servers={}", "-c", "skills.bundled.enabled=false",
+    // Every thread repeats this lockdown in its own `config` and turns off the player's MCP servers by name
+    // (talkOnlyOverrides): `mcp_servers={}` would leave the player's running.
+    // `notify` is a program from the player's configuration that would run after every turn, like a hook.
+    return DISABLED_FEATURES.flatMap { listOf("-c", "features.$it=false") } + listOf(
+        "-c", "web_search=\"disabled\"", "-c", "notify=[]", "-c", "skills.bundled.enabled=false",
         "-c", "skills.include_instructions=false", "-c", "agents.enabled=false",
         "-c", "project_doc_max_bytes=0", "-c", "sandbox_mode=\"read-only\"", "-c", "approval_policy=\"never\"",
     )
 }
 
 /**
- * Thread settings for the companion [persona]; tool access remains controlled by native configuration.
+ * Thread settings for the companion [persona], with the player's configuration turned off by
+ * [overrides] ([talkOnlyOverrides]); tool access remains controlled by native configuration.
  * A resume asks for thread metadata only: the full turn history of a long conversation would not
  * fit in one bounded protocol line, and the native record already holds the visible messages.
  * An [ephemeral] thread is never written to Codex's history.
  */
-internal fun chatThreadParams(persona: Persona, cwd: String, threadId: String?, ephemeral: Boolean = false): JsonObject = buildJsonObject {
+internal fun chatThreadParams(persona: Persona, cwd: String, threadId: String?, ephemeral: Boolean = false,
+    overrides: JsonObject = JsonObject(emptyMap())): JsonObject = buildJsonObject {
     threadId?.let { put("threadId", it); put("excludeTurns", true) }
     if (ephemeral) put("ephemeral", true)
     put("cwd", cwd); put("sandbox", "read-only"); put("approvalPolicy", "never")
     put("baseInstructions", persona.instructions)
+    if (overrides.isNotEmpty()) put("config", overrides)
 }

@@ -74,11 +74,12 @@ Use the application's actual account sign-in; do not create substitute credentia
 
 Set GAMERO_WEB_URL to that Hovel account UI and relaunch with the same native
 configuration above. The registered profile is scoped to this configured URL.
-Open **Profile → Providers → Connect Codex** in that same Hovel account. Complete
-the supported browser sign-in and wait for Connected. The profile connection uses
-an isolated Codex home and the OS keyring; the approved task adapter uses that same
-home. The global Codex app/CLI login is separate, and no provider token enters the
-web view or Hovel service. Provider connection alone does not register this computer.
+Sign in to Codex on this Mac with `codex login` in Terminal, then open
+**Profile → Providers** in that same Hovel account and choose Check again until
+Codex shows Connected. Hovel uses the player's own Codex login (Codex's default
+home) for the Providers card, companion chat and the approved task adapter alike,
+and never signs in or out itself; no provider token enters the web view or Hovel
+service. Provider connection alone does not register this computer.
 
 **Approval gate for the coordinator:** the validator's read-only browser permission
 does not itself authorize storing a host credential or launching a provider task.

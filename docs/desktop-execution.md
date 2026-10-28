@@ -24,12 +24,18 @@ journal in a separate private directory and retain it when offline or signing ou
 
 ## Codex boundary
 
-`CodexCliProvider` checks `codex login status` for a ChatGPT subscription login.
-Authentication remains in the user's supported Codex installation. The adapter
-never accepts or stores provider credentials and removes inherited OpenAI API-key
-environment variables. It forces ChatGPT login mode, ignores user configuration,
-and invokes `codex exec` directly with stdin, no shell, ephemeral execution,
-approvals disabled, and a read-only sandbox. This initial capability can inspect a
+`CodexCliProvider` runs on the player's own Codex sign-in (Codex's default home,
+`$CODEX_HOME` or `~/.codex`) and checks `codex login status` for a ChatGPT
+subscription login before every task. Authentication remains in the user's
+supported Codex installation: the player signs in and out with `codex login` and
+`codex logout`. The adapter never accepts or stores provider credentials and
+removes inherited OpenAI API-key environment variables. It does not pass
+`forced_login_method`, because Codex logs out any login that does not match it,
+which would sign the player out of their own Codex; the login check is the
+ChatGPT-only rule instead. It ignores user configuration (`--ignore-user-config`;
+the login still comes from the player's home) and invokes `codex exec` directly
+with stdin, no shell, ephemeral execution, approvals disabled, and a read-only
+sandbox. This initial capability can inspect a
 workspace but cannot promise file-changing work. Missing/incompatible tooling or
 sign-in prevents useful execution; no cloud handoff is implemented.
 

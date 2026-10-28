@@ -10,10 +10,12 @@ import org.formulagen.wrapper.bridge.RuntimeId
 /**
  * A runtime's own conversation with one companion: Codex's thread id or Claude Code's session id.
  * [personaHash] is the [Persona.hash] the conversation was last used with, or empty when it was
- * migrated from a record that did not track it.
+ * migrated from a record that did not track it. [playerLogin] is set on every conversation opened
+ * since every runtime runs on the player's own sign-in; only Codex reads it, because a Codex thread
+ * from before then lives in Hovel's old per-profile Codex home and cannot be resumed.
  */
 @Serializable
-internal data class NativeConversation(val id: String, val personaHash: String)
+internal data class NativeConversation(val id: String, val personaHash: String, val playerLogin: Boolean = false)
 
 /**
  * The seam [DesktopChat] talks to: one implementation per runtime. Implementations deliver

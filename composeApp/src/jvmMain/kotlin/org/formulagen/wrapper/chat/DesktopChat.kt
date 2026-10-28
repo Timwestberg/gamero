@@ -301,7 +301,7 @@ internal class DesktopChat(
         private val kind = member.runtimeId
         private fun open() = live(session, generation) && session.state == ChatState.RESPONDING
         /** This turn's conversation, with the persona it ran with. */
-        private fun keep(conversation: String) = session.record.conversations + (kind to NativeConversation(conversation, request.persona.hash))
+        private fun keep(conversation: String) = session.record.conversations + (kind to NativeConversation(conversation, request.persona.hash, playerLogin = true))
 
         /** Saved before the reply ends, so a stopped turn keeps the conversation it started. */
         override fun opened(conversation: String) = synchronized(gate) {

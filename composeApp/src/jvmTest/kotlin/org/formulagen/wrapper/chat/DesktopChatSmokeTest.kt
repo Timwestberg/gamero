@@ -15,16 +15,24 @@ class DesktopChatSmokeTest {
     @Test fun installedCodexAcceptsConversationConfiguration() {
         val executable = System.getenv("HOVEL_CHAT_CODEX_SMOKE")
         assumeTrue("Set HOVEL_CHAT_CODEX_SMOKE to an installed codex executable", executable != null)
-        val home = Files.createTempDirectory("hovel-chat-config-smoke")
+        // The player's own Codex home, read only: the account and configuration are read, and one
+        // ephemeral thread is started (no turn) to check that no MCP server starts under the overrides.
+        val root = Files.createTempDirectory("hovel-chat-config-smoke")
         try {
-            val runtime=CodexRuntime(Path.of(requireNotNull(executable)), home); runtime.prepare()
-            chatCodex(runtime) { _, _ -> }.use { rpc ->
-                assertEquals(JsonNull,rpc.call("account/read",buildJsonObject { put("refreshToken",false) })["account"])
-                val result=rpc.call("thread/start",chatThreadParams(Persona.companion("Ember"),home.toString(),null))
+            val runtime = CodexRuntime(Path.of(requireNotNull(executable)), root)
+            val startups = java.util.concurrent.CopyOnWriteArrayList<String>()
+            chatCodex(runtime) { method, params -> if (method == "mcpServer/startupStatus/updated") startups += params["name"].toString() }.use { rpc ->
+                assertTrue(rpc.call("account/read", buildJsonObject { put("refreshToken", false) }).containsKey("account"))
+                val folder = runtime.conversationFolder("local")
+                val config = rpc.call("config/read", buildJsonObject { put("cwd", folder.toString()) }).getValue("config").jsonObject
+                val result = rpc.call("thread/start", chatThreadParams(Persona.companion("Ember"), folder.toString(), null, ephemeral = true, talkOnlyOverrides(config)))
                 assertNotNull(result["thread"]?.jsonObject?.get("id"))
-                println("CHAT_CODEX_SMOKE: real app-server accepted isolated unauthenticated conversation configuration")
+                Thread.sleep(3000)
+                assertTrue(startups.isEmpty(), "No MCP server starts for a talk-only thread: $startups")
+                val sources = result["instructionSources"]?.jsonArray?.size
+                println("CHAT_CODEX_SMOKE: the player's Codex accepted the talk-only configuration, started no MCP server, instruction sources=$sources")
             }
-        } finally { home.toFile().deleteRecursively() }
+        } finally { root.toFile().deleteRecursively() }
     }
 
     /**

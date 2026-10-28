@@ -15,7 +15,7 @@ import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
 import org.formulagen.wrapper.bridge.TeamMember
-import org.formulagen.wrapper.providers.codexProfileHome
+import org.formulagen.wrapper.providers.legacyCodexProfileHome
 
 /**
  * One companion's conversation for one profile, shared by every runtime on its team (version 2).
@@ -66,12 +66,15 @@ internal class ChatHistory(private val file: Path, private val legacy: Path? = n
     }
 }
 
-/** A companion's history for [profile]: `<providers root>/<profile>/companion-chats/<companionId>.json`, migrating from Codex's folder. */
+/**
+ * A companion's history for [profile]: `<providers root>/<profile>/companion-chats/<companionId>.json`,
+ * runtime-neutral, migrating a version 1 record from Hovel's old per-profile Codex home.
+ */
 internal fun companionChatHistory(providerRoot: Path, profile: String, companionId: String): ChatHistory {
     require(SharedRules.isProfileId(profile)) { "Invalid profile" }
     val name = "${UUID.fromString(companionId)}.json"
     return ChatHistory(providerRoot.resolve(profile).resolve("companion-chats").resolve(name),
-        legacy = codexProfileHome(providerRoot, profile).resolve("companion-chats").resolve(name))
+        legacy = legacyCodexProfileHome(providerRoot, profile).resolve("companion-chats").resolve(name))
 }
 
 private const val MAX_RECORD_BYTES = 3_000_000

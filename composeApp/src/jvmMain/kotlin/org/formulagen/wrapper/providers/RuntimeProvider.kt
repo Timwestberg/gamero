@@ -1,7 +1,5 @@
 package org.formulagen.wrapper.providers
 
-import java.awt.Desktop
-import java.net.URI
 import java.nio.file.Path
 import java.time.Clock
 import org.formulagen.wrapper.bridge.ProviderAction
@@ -10,6 +8,7 @@ import org.formulagen.wrapper.bridge.ProviderModel
 import org.formulagen.wrapper.bridge.ProviderState
 import org.formulagen.wrapper.bridge.ProviderStatus
 import org.formulagen.wrapper.bridge.RuntimeId
+import org.formulagen.wrapper.bridge.SharedRules
 
 /**
  * One runtime behind `providers.*`. Calls block (they may run a process), and [DesktopProviders]
@@ -24,53 +23,44 @@ internal interface RuntimeProvider : AutoCloseable {
 }
 
 /**
- * Codex: one account process for the active profile, with credentials kept native. [onDisconnect]
- * runs before a sign-out, so open chats stop using the account. Its model list comes from that same
- * process and answers again for a minute.
+ * Codex: the player's own Codex sign-in, which every profile on this Mac shares, read through one
+ * account process. Hovel never signs in or out ([CodexConnection]). The model list comes from that
+ * same process and answers again for a minute.
  */
 internal class CodexProvider(
     private val root: Path,
     private val executable: Path?,
-    private val openBrowser: (URI) -> Unit = { Desktop.getDesktop().browse(it) },
-    private val onDisconnect: () -> Unit = {},
-    private val createConnection: (CodexRuntime, (URI) -> Unit) -> ProviderConnection = { runtime, open ->
-        runtime.prepare(); CodexConnection(StdioCodexAppServer(runtime), open)
-    },
+    private val createConnection: (CodexRuntime) -> ProviderConnection = { runtime -> CodexConnection(StdioCodexAppServer(runtime)) },
     private val clock: Clock = Clock.systemUTC(),
 ) : RuntimeProvider {
     override val id = RuntimeId.CODEX
-    private var activeProfile: String? = null
     private var connection: ProviderConnection? = null
-    private val models = mutableMapOf<String, Pair<Long, List<ProviderModel>>>()
+    private var models: Pair<Long, List<ProviderModel>>? = null
 
     override fun status(profile: String, action: ProviderAction): ProviderStatus {
-        val home = codexProfileHome(root, profile)
-        if (action == ProviderAction.DISCONNECT) onDisconnect()
+        require(SharedRules.isProfileId(profile)) { "Invalid profile" }
         if (executable == null) return codex(ProviderState.UNAVAILABLE, ProviderDetail.NOT_INSTALLED, id.copy.notInstalled)
         return try {
-            connection(profile, home, executable).perform(action).also { if (action == ProviderAction.DISCONNECT) models.remove(profile) }
+            connection(executable).perform(action)
         } catch (error: InterruptedException) {
             drop(); throw error
         } catch (_: Exception) {
-            drop(); codex(ProviderState.ERROR, ProviderDetail.UNKNOWN, "Codex connection could not be verified. Check your connection and try again.")
+            drop(); codex(ProviderState.ERROR, ProviderDetail.UNKNOWN, "Codex status could not be checked. Try again.")
         }
     }
 
     override fun models(profile: String): List<ProviderModel> {
-        val home = codexProfileHome(root, profile)
+        require(SharedRules.isProfileId(profile)) { "Invalid profile" }
         val executable = executable ?: return emptyList()
         val now = clock.millis()
-        models[profile]?.takeIf { now - it.first in 0 until MODELS_TTL_MILLIS }?.let { return it.second }
+        models?.takeIf { now - it.first in 0 until MODELS_TTL_MILLIS }?.let { return it.second }
         // A failed call may have stopped the account process, so the next one starts a new one.
-        return try { connection(profile, home, executable).models().also { models[profile] = now to it } }
+        return try { connection(executable).models().also { models = now to it } }
         catch (error: Exception) { drop(); throw error }
     }
 
-    /** The active profile's account process; another profile's is closed first. */
-    private fun connection(profile: String, home: Path, executable: Path): ProviderConnection {
-        if (activeProfile != profile) { drop(); activeProfile = profile }
-        return connection ?: createConnection(CodexRuntime(executable, home), openBrowser).also { connection = it }
-    }
+    private fun connection(executable: Path): ProviderConnection =
+        connection ?: createConnection(CodexRuntime(executable, root)).also { connection = it }
 
     private fun drop() { connection?.close(); connection = null }
 
