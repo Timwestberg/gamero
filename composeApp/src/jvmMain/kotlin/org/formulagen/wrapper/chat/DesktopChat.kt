@@ -17,6 +17,12 @@ import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.closeInReverse
 import org.formulagen.wrapper.providers.copy
 import org.formulagen.wrapper.util.shortened
+import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.logger.log
+import org.formulagen.wrapper.voice.FILLER_LINES
+import org.formulagen.wrapper.voice.FillerSettings
+import org.formulagen.wrapper.voice.FillerTurn
+import org.formulagen.wrapper.voice.HearingResult
 import org.formulagen.wrapper.workspace.ProjectFolder
 
 /**
@@ -37,12 +43,18 @@ internal class DesktopChat(
     private val offered: Set<RuntimeId> = RuntimeId.entries.toSet(),
     private val work: ChatWork? = null,
     private val voices: VoicePickerModel? = null,
+    private val fillers: FillerSettings = FillerSettings(),
+    private val hearing: DesktopHearing? = null,
 ) : ChatCapability, AutoCloseable {
     private val runtimes = runtimes.associateBy { it.id }
     private val workers: Map<RuntimeId, WorkRuntime> = work?.runtimes.orEmpty()
     private val gate = Any()
     private val worker = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-chat"))
     private val timer = Executors.newSingleThreadScheduledExecutor(loggingDaemonThreads("hovel-chat-timeout"))
+    private val fillerTurn = FillerTurn(fillers)
+    private var hearingHolding = false
+    private var hearingPartial = ""
+    private var hearingNotice: String? = null
     private var active: Session? = null
     /** The last view the host ended on its own, so that view's polls keep showing why. */
     private var ended: Pair<ChatScope, ChatSnapshot>? = null
@@ -101,6 +113,7 @@ internal class DesktopChat(
         val history = companionChatHistory(providerRoot, scope.profile, scope.companionId)
         val snapshot = view(Session(scope, Persona.companion(scope.name), history, history.read()).also { active = it })
         publishPicker()
+        if (fillers.enabled) speech.warmFillers(FILLER_LINES)
         snapshot
     }
 
@@ -115,13 +128,16 @@ internal class DesktopChat(
      * member's runtime again. A message whose turn fails stays, unanswered, for `chat.retry`. A
      * member on a runtime this build does not offer is refused with a notice and no entry.
      */
-    override suspend fun send(args: ChatSend): ChatSnapshot = synchronized(gate) {
+    override suspend fun send(args: ChatSend): ChatSnapshot = synchronized(gate) { submitLocked(args) }
+
+    private fun submitLocked(args: ChatSend): ChatSnapshot {
         val session = current(args.scope())
-        if (session.record.entries.any { it.id == args.requestId }) return@synchronized view(session)
-        if (session.state == ChatState.AWAITING_YOU) return@synchronized refuse(session, ANSWER_FIRST)
+        if (session.record.entries.any { it.id == args.requestId }) return view(session)
+        if (session.state == ChatState.AWAITING_YOU) return refuse(session, ANSWER_FIRST)
         if (session.state == ChatState.RESPONDING || session.state == ChatState.HANDING_OVER) throw BridgeBusyException()
         val kind = args.member.runtimeId
-        if (kind !in offered) return@synchronized view(session).copy(notice = kind.copy.notOffered)
+        if (kind !in offered) return view(session).copy(notice = kind.copy.notOffered)
+        fillerTurn.cancel()
         speech.stop()
         val text = args.text.trimEcma()
         val record = session.record
@@ -133,7 +149,7 @@ internal class DesktopChat(
         session.history.write(next)
         session.record = next
         begin(session, turn, record.entries, args.speak)
-        view(session)
+        return view(session)
     }
 
     /**
@@ -471,7 +487,10 @@ internal class DesktopChat(
             runCatching { session.history.write(session.record) }.onFailure {
                 session.notice = "This reply could not be saved. Keep this chat open and try again later."
             }
-            if (session.speak) (session.record.entries.firstOrNull { it.id == turn.replyId } as? ChatEntry.Assistant)?.let { speech.speak(it.text) }
+            if (session.speak) (session.record.entries.firstOrNull { it.id == turn.replyId } as? ChatEntry.Assistant)?.let {
+                fillerTurn.replyArrived()
+                speech.speak(it.text)
+            }
         }
 
         /** Errors keep the person's text and never send it again, except once into a new conversation when the runtime lost its own. */
@@ -552,6 +571,7 @@ internal class DesktopChat(
         session.turn = null; session.speak = false; session.handover = null; session.inFlight = null
         // A start-of-work dialog still up is denied; an approval is denied by the runtime's stop or release.
         session.waiting = null; session.startCancel?.cancel(); session.startCancel = null
+        fillerTurn.cancel()
         if (release) session.used.forEach { runtimes[it]?.release(); workers[it]?.release() }
         speech.stop()
         runCatching { session.history.write(session.record) }
@@ -559,14 +579,118 @@ internal class DesktopChat(
 
     private fun publishPicker() {
         val model = voices ?: return
+        val session = active
         model.update(
             voicePickerState(
-                chatOpen = !closed && active != null,
+                chatOpen = !closed && session != null,
                 kokoro = speech.kokoroActive(),
                 voices = speech.voiceChoices(),
                 selectedId = speech.currentVoiceId(),
+                holdEnabled = session != null && hearingHoldAllowed(session.state, speech.status().state, fillerTurn.playing),
+                holding = hearingHolding,
+                partial = hearingPartial,
+                hearingNotice = hearingNotice,
             ),
         )
+    }
+
+    /** Press on the voice row. A press during a filler cuts that clip and the turn, then listens. */
+    internal fun hearingDown() {
+        val ear = hearing
+        if (ear == null) {
+            synchronized(gate) {
+                hearingNotice = "Hold to talk needs the hearing models. Run scripts/fetch-voice.sh, then rebuild."
+                publishPicker()
+            }
+            return
+        }
+        val start = synchronized(gate) {
+            val session = active ?: return
+            if (!hearingHoldAllowed(session.state, speech.status().state, fillerTurn.playing)) return
+            if (fillerTurn.playing) interruptFillerLocked()
+            hearingHolding = true
+            hearingPartial = ""
+            hearingNotice = null
+            publishPicker()
+            true
+        }
+        if (start != true) return
+        ear.down(
+            onPartial = { text -> synchronized(gate) { if (hearingHolding) { hearingPartial = text; publishPicker() } } },
+            onFailed = { message -> synchronized(gate) { hearingHolding = false; hearingNotice = message; publishPicker() } },
+        )
+    }
+
+    /** Release on the voice row. The last decode runs here, then the transcript is a normal talk send. */
+    internal fun hearingUp() {
+        val ear = hearing ?: return
+        ear.up { result ->
+            synchronized(gate) {
+                hearingHolding = false
+                hearingPartial = ""
+                log(LogLevel.Info, "hearing", "asr_final decodeMs=${result.decodeMs.toInt()} speechMs=${result.speechMs} chars=${result.text.length}")
+                commitHearingLocked(result)
+                publishPicker()
+            }
+        }
+    }
+
+    /** A test, or a finished hold, handing the recognizer result to the chat. */
+    internal fun commitHeard(result: HearingResult) = synchronized(gate) {
+        commitHearingLocked(result)
+        publishPicker()
+    }
+
+    private fun interruptFillerLocked() {
+        val session = active ?: return
+        fillerTurn.cancel()
+        if (session.state == ChatState.RESPONDING || session.state == ChatState.AWAITING_YOU) {
+            val turn = session.turn
+            end(session, ChatState.CANCELLED, "", release = turn == null)
+            session.notice = null
+            turn?.stop()
+        } else {
+            speech.stop()
+        }
+    }
+
+    private fun commitHearingLocked(result: HearingResult) {
+        val session = active ?: return
+        val member = Handovers.currentMember(session.record.entries)
+        when (val decision = decideHearing(result, member, session.state)) {
+            HearingCommit.Ignore -> Unit
+            is HearingCommit.Notice -> {
+                session.notice = decision.text
+                hearingNotice = decision.text
+            }
+            is HearingCommit.Send -> {
+                if (member == null) return
+                hearingNotice = null
+                submitLocked(ChatSend(
+                    session.scope.profile, session.scope.companionId, session.scope.name, session.scope.sessionId,
+                    member, UUID.randomUUID().toString(), decision.text, speak = true, mode = MemberMode.TALK,
+                ))
+                fillerTurn.begin()
+                if (session.state == ChatState.RESPONDING && session.speak && fillerTurn.arm(System.nanoTime())) {
+                    log(LogLevel.Info, "hearing", "send chars=${decision.text.length}")
+                    timer.schedule({ fillerDue() }, fillers.thresholdMs.toLong(), TimeUnit.MILLISECONDS)
+                }
+            }
+        }
+    }
+
+    private fun fillerDue() = synchronized(gate) {
+        if (closed || active == null) return@synchronized
+        val cue = fillerTurn.poll(System.nanoTime()) ?: return@synchronized
+        val voiceId = speech.currentVoiceId().ifEmpty { "unknown" }
+        val pcm = speech.fillerPcm(voiceId, cue.line)
+        if (pcm == null) {
+            fillerTurn.clipFinished()
+            log(LogLevel.Info, "hearing", "filler skipped cache-cold voice=$voiceId")
+            return@synchronized
+        }
+        log(LogLevel.Info, "hearing", "filler line=\"${cue.line}\" voice=$voiceId waitedMs=${cue.waitedMs}")
+        speech.playClip(pcm.pcm, pcm.sampleRate) { synchronized(gate) { fillerTurn.clipFinished() } }
     }
 
     private fun invalidateLocked(keepEnded: Boolean) {
@@ -574,6 +698,8 @@ internal class DesktopChat(
         session?.let {
             // The conversation's start-of-work confirmations end with its view (a closed chat, another companion).
             work?.startOfWork?.forget(it.scope.sessionId)
+            hearingHolding = false
+            hearing?.cancel()
             // A reply cut off by the closed view leaves its message unanswered, for a retry after reconnecting.
             fail(it, null, null, ChatState.ERROR, "This chat was closed. Reconnect to continue.")
             if (keepEnded) ended = it.scope to view(it)
@@ -588,6 +714,7 @@ internal class DesktopChat(
             if (closed) return
             invalidateLocked(keepEnded = false); closed = true; ended = null; publishPicker(); timer.shutdownNow(); worker.shutdownNow()
         }
+        hearing?.close()
         try { closeInReverse(runtimes.values.toList() + workers.values.toList()) } finally { speech.close() }
     }
 }

@@ -220,7 +220,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                 Text("Set GAMERO_CODEX_PATH and GAMERO_WORKSPACE to enable this Mac's optional Codex connection.", Modifier.padding(8.dp))
             }
             val picker by services.voicePicker.state
-            KokoroVoicePicker(picker, services.chat::chooseSpokenVoice)
+            KokoroVoicePicker(picker, services.chat::chooseSpokenVoice, services.chat::hearingDown, services.chat::hearingUp)
             App(url, enableLegacyBridge = false, webViewFactory = ::persistentDesktopBrowser, onWebViewCreated = { browser ->
                 resources.attachBrowser(browser)
                 resources.bridge?.close()

@@ -1,6 +1,8 @@
 package org.formulagen.wrapper.chat
 
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -13,6 +15,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -27,6 +30,10 @@ internal data class VoicePickerState(
     val visible: Boolean = false,
     val voices: List<VoiceChoice> = emptyList(),
     val selectedId: String = "",
+    val holdEnabled: Boolean = false,
+    val holding: Boolean = false,
+    val partial: String = "",
+    val hearingNotice: String? = null,
 ) {
     companion object {
         val Hidden = VoicePickerState()
@@ -38,10 +45,22 @@ internal fun voicePickerState(
     kokoro: Boolean,
     voices: List<VoiceChoice>,
     selectedId: String,
+    holdEnabled: Boolean = false,
+    holding: Boolean = false,
+    partial: String = "",
+    hearingNotice: String? = null,
 ): VoicePickerState {
     if (!chatOpen || !kokoro || voices.isEmpty()) return VoicePickerState.Hidden
     val selected = if (voices.any { it.id == selectedId }) selectedId else voices.first().id
-    return VoicePickerState(visible = true, voices = voices, selectedId = selected)
+    return VoicePickerState(
+        visible = true,
+        voices = voices,
+        selectedId = selected,
+        holdEnabled = holdEnabled,
+        holding = holding,
+        partial = partial,
+        hearingNotice = hearingNotice,
+    )
 }
 
 /** The line spoken when a person picks a voice, so the next sentence is not the first time they hear it. */
@@ -61,23 +80,47 @@ internal class VoicePickerModel {
  * The selected name is the voice the next sentence uses.
  */
 @Composable
-internal fun KokoroVoicePicker(state: VoicePickerState, onSelect: (String) -> Unit) {
+internal fun KokoroVoicePicker(
+    state: VoicePickerState,
+    onSelect: (String) -> Unit,
+    onHoldStart: () -> Unit = {},
+    onHoldEnd: () -> Unit = {},
+) {
     if (!state.visible) return
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
-        horizontalArrangement = Arrangement.End,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("Voice", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(end = 4.dp))
-        for (voice in state.voices) {
-            val selected = voice.id == state.selectedId
-            TextButton(onClick = { if (!selected) onSelect(voice.id) }, modifier = Modifier.height(32.dp)) {
-                Text(
-                    voice.name,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (state.holding) "Release to send" else "Hold to talk",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (state.holdEnabled || state.holding) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 12.dp).pointerInput(state.holdEnabled, state.holding) {
+                    detectTapGestures(onPress = {
+                        if (!state.holdEnabled && !state.holding) return@detectTapGestures
+                        onHoldStart()
+                        tryAwaitRelease()
+                        onHoldEnd()
+                    })
+                },
+            )
+            Text("Voice", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(end = 4.dp))
+            for (voice in state.voices) {
+                val selected = voice.id == state.selectedId
+                TextButton(onClick = { if (!selected) onSelect(voice.id) }, modifier = Modifier.height(32.dp)) {
+                    Text(
+                        voice.name,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
+        }
+        val note = state.hearingNotice ?: state.partial.takeIf { it.isNotEmpty() }
+        if (note != null) {
+            Text(note, style = MaterialTheme.typography.bodySmall, modifier = Modifier.align(Alignment.End))
         }
     }
 }

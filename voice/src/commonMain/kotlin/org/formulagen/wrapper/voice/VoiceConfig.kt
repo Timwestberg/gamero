@@ -55,6 +55,8 @@ data class VoiceConfig(
     val kokoroVoiceId: String = "",
     val kokoroVoiceFile: String = "",
     val kokoroVoiceFromEnv: Boolean = false,
+    val fillersEnabled: Boolean = true,
+    val fillerThresholdMs: Int = FILLER_THRESHOLD_MS,
 ) {
     val version: String
         get() {
@@ -67,7 +69,7 @@ data class VoiceConfig(
                 "fade=$crossfadeMs@$crossfadeEdgeThreshold,start=$startAfterMs," +
                 "frames=$frameFloor+$frameIntercept+$frameSlope,short=$shortPieceChars/$shortPieceMinFrames," +
                 "ratio=$maxDurationRatio,cap=$raisedCapFactor/$raisedCapMaxFrames,backend=$backend," +
-                "kokoro=$voiceId@$speed"
+                "kokoro=$voiceId@$speed,fillers=$fillersEnabled@$fillerThresholdMs"
         }
 
     /** The gap a listener hears between sentences, in milliseconds. */

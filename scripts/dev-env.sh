@@ -43,6 +43,10 @@ export HOVEL_KOKORO_MODEL="${HOVEL_KOKORO_MODEL:-$VOICE_ROOT/models/kokoro-multi
 export HOVEL_VOICE_BACKEND="${HOVEL_VOICE_BACKEND:-kokoro}"
 export HOVEL_VOICE_MODEL="${HOVEL_VOICE_MODEL:-$VOICE_ROOT/models/sherpa-onnx-pocket-tts-int8-2026-01-26}"
 export HOVEL_VOICE_REFERENCE="${HOVEL_VOICE_REFERENCE:-$VOICE_ROOT/models/voices/0a67_enhanced-24k.wav}"
+export HOVEL_HEARING_MODEL="${HOVEL_HEARING_MODEL:-$VOICE_ROOT/models/hearing}"
+# Fillers are on. Set HOVEL_VOICE_FILLERS=0 to turn them off, HOVEL_VOICE_FILLER_MS to change the wait.
+export HOVEL_VOICE_FILLERS="${HOVEL_VOICE_FILLERS:-1}"
+export HOVEL_VOICE_FILLER_MS="${HOVEL_VOICE_FILLER_MS:-450}"
 
 # Stop unless the game project runs the pinned embedding engine.
 require_embed_godot() {
@@ -66,6 +70,9 @@ warn_missing_voice() {
   if ! compgen -G "$VOICE_ROOT/deps/sherpa/sherpa-onnx-jvm-*.jar" >/dev/null \
     || [[ "$kokoro_ok" -eq 0 ]]; then
     echo 'Spoken replies are off: Kokoro voice files are missing. Run scripts/fetch-voice.sh to enable them.' >&2
+  fi
+  if [[ ! -f "$HOVEL_HEARING_MODEL/silero_vad.onnx" || ! -f "$HOVEL_HEARING_MODEL/zipformer/tokens.txt" ]]; then
+    echo 'Hold to talk is off: hearing models are missing. Run scripts/fetch-voice.sh to enable them.' >&2
   fi
 }
 
