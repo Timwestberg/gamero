@@ -11,7 +11,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.closeInReverse
-import org.formulagen.wrapper.providers.codexProfileHome
 
 /**
  * Owns one view's conversation lease: its history, request dedupe, the reply watchdog and speech.
@@ -52,8 +51,7 @@ internal class DesktopChat(
         val kind = RuntimeKind.CODEX
         val runtime = runtimes[kind] ?: return@synchronized ChatSnapshot(ChatState.ERROR,
             notice = "Install ${kind.program} on this Mac and restart Hovel.", voice = speech.status()).also { ended = scope to it }
-        val id = UUID.fromString(scope.companionId).toString()
-        val history = ChatHistory(codexProfileHome(providerRoot, scope.profile).resolve("companion-chats").resolve("$id.json"))
+        val history = companionChatHistory(providerRoot, scope.profile, scope.companionId)
         val session = Session(scope, runtime, Persona.companion(scope.name), history, history.read()).also { active = it }
         val generation = session.generation
         worker.execute { attempt(session, generation) { checkReadiness(session, generation) } }
@@ -68,14 +66,15 @@ internal class DesktopChat(
     /** Persist the explicit user message before starting any provider work. */
     override suspend fun send(args: ChatSend): ChatSnapshot = synchronized(gate) {
         val session = current(args.scope())
-        if (session.record.messages.any { it.id == args.requestId }) return@synchronized view(session)
+        if (session.record.entries.any { it.id == args.requestId }) return@synchronized view(session)
         if (session.checking || session.state == ChatState.RESPONDING) throw BridgeBusyException()
         check(session.state in setOf(ChatState.READY, ChatState.CANCELLED))
         speech.stop()
         val text = args.text.trimEcma()
-        val messages = (session.record.messages + ChatMessage(args.requestId, ChatRole.USER, text) +
-            ChatMessage(UUID.randomUUID().toString(), ChatRole.ASSISTANT, "")).takeLast(ChatLimits.HISTORY)
-        val next = session.record.copy(messages = messages)
+        val author = MemberRef(session.runtime.id, RUNTIME_DEFAULT_MODEL)
+        val entries = (session.record.entries + HistoryEntry.User(args.requestId, text) +
+            HistoryEntry.Assistant(UUID.randomUUID().toString(), author, "")).takeLast(ChatLimits.HISTORY)
+        val next = session.record.copy(entries = entries)
         session.history.write(next)
         session.record = next; session.state = ChatState.RESPONDING; session.notice = null
         session.speak = args.speak; session.turn = null
@@ -114,7 +113,14 @@ internal class DesktopChat(
 
     private fun current(scope: ChatScope): Session = checkNotNull(active?.takeIf { !closed && it.scope == scope }) { "Chat view expired" }
     private fun live(session: Session, generation: Int = session.generation) = !closed && active === session && generation == session.generation
-    private fun view(session: Session) = ChatSnapshot(session.state, session.record.messages, session.notice, speech.status())
+    /** The page sees user and assistant text only; handover entries reach it once the contract carries them. */
+    private fun view(session: Session) = ChatSnapshot(session.state, session.record.entries.mapNotNull {
+        when (it) {
+            is HistoryEntry.User -> ChatMessage(it.id, ChatRole.USER, it.text)
+            is HistoryEntry.Assistant -> ChatMessage(it.id, ChatRole.ASSISTANT, it.text)
+            is HistoryEntry.Handover -> null
+        }
+    }, session.notice, speech.status())
 
     /** Keep the account check off the bridge thread; a runtime never substitutes an API key. */
     private fun checkReadiness(session: Session, generation: Int) {
@@ -132,10 +138,12 @@ internal class DesktopChat(
 
     /** Start the reply on the session's runtime. A turn that outlived its view is ended at once. */
     private fun startTurn(session: Session, generation: Int, text: String, retried: Boolean) {
+        val kind = session.runtime.id
         val request = synchronized(gate) {
             check(live(session, generation))
+            val record = session.record
             TurnRequest(session.scope.profile, session.scope.companionId, session.persona, model = null,
-                conversation = session.record.threadId?.let { NativeConversation(it, "") }, context = null, text = text)
+                conversation = record.conversations[kind], context = record.pendingContext?.takeIf { it.runtimeId == kind }?.text, text = text)
         }
         val handle = session.runtime.startTurn(request, Reply(session, generation, request, retried))
         val stale = synchronized(gate) {
@@ -148,13 +156,15 @@ internal class DesktopChat(
 
     /** One turn's events, applied only while its view and generation are current and the reply is open. */
     private inner class Reply(val session: Session, val generation: Int, val request: TurnRequest, val retried: Boolean) : TurnEvents {
+        private val kind = session.runtime.id
         private fun open() = live(session, generation) && session.state == ChatState.RESPONDING
+        private fun keep(conversation: String) = session.record.conversations + (kind to NativeConversation(conversation, request.persona.hash))
 
         /** Saved before the reply ends, so a stopped turn keeps the conversation it started. */
         override fun opened(conversation: String) = synchronized(gate) {
             if (!open()) return@synchronized
-            session.record = session.record.copy(threadId = conversation)
-            runCatching { session.history.write(session.record) }.onFailure { end(session, ChatState.ERROR, couldNotComplete(session.runtime.id)) }
+            session.record = session.record.copy(conversations = keep(conversation))
+            runCatching { session.history.write(session.record) }.onFailure { end(session, ChatState.ERROR, couldNotComplete(kind)) }
         }
 
         override fun partial(text: String) = synchronized(gate) { if (open()) updateReply(session, text) }
@@ -162,32 +172,34 @@ internal class DesktopChat(
         override fun completed(text: String, conversation: String) = synchronized(gate) {
             if (!open()) return@synchronized
             updateReply(session, text)
-            session.record = session.record.copy(threadId = conversation)
+            // The handover text reached this runtime with the turn, so it is no longer owed.
+            val owed = session.record.pendingContext?.takeUnless { request.context != null && it.runtimeId == kind }
+            session.record = session.record.copy(conversations = keep(conversation), pendingContext = owed)
             session.state = ChatState.READY; session.notice = null; session.turn = null
             runCatching { session.history.write(session.record) }.onFailure {
                 session.notice = "This reply could not be saved. Keep this chat open and try again later."
             }
-            if (session.speak) speech.speak(session.record.messages.last().text)
+            if (session.speak) (session.record.entries.lastOrNull() as? HistoryEntry.Assistant)?.let { speech.speak(it.text) }
         }
 
         /** Errors keep the user's text and never send it again, except once into a new conversation when the runtime lost its own. */
         override fun failed(failure: ChatFailure) = synchronized(gate) {
             if (!open()) return@synchronized
             if (failure == ChatFailure.ConversationLost && request.conversation != null && !retried) {
-                session.record = session.record.copy(threadId = null); session.turn = null
+                session.record = session.record.copy(conversations = session.record.conversations - kind); session.turn = null
                 updateReply(session, "")
                 runCatching { session.history.write(session.record) }
                 worker.execute { attempt(session, generation) { startTurn(session, generation, request.text, retried = true) } }
                 return@synchronized
             }
-            end(session, failureState(failure), failureNotice(session.runtime.id, failure), release = false)
+            end(session, failureState(failure), failureNotice(kind, failure), release = false)
         }
     }
 
     private fun updateReply(session: Session, text: String) {
-        val messages = session.record.messages
-        if (messages.lastOrNull()?.role != ChatRole.ASSISTANT) return
-        session.record = session.record.copy(messages = messages.dropLast(1) + messages.last().copy(text = text.take(ChatLimits.REPLY)))
+        val entries = session.record.entries
+        val reply = entries.lastOrNull() as? HistoryEntry.Assistant ?: return
+        session.record = session.record.copy(entries = entries.dropLast(1) + reply.copy(text = text.take(ChatLimits.REPLY)))
     }
 
     /**
