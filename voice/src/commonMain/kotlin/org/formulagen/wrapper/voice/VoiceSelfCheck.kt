@@ -190,6 +190,19 @@ fun runVoiceSelfCheck() {
     check(contract.voiceId == "adam70-michael30" && contract.speed == "1.00") { "default contract" }
     check(contract.lexiconSha256.length == 64) { "lexicon hash" }
     check(kokoroVoiceContract("heart60-adam40").speed == "0.97") { "harper speed" }
+    val lexicon = parseKokoroLexicon(
+        "question k w ˈ ɛ s ʧ ᵊ n\ntry t ɹ ˈ I\ncity s ˈ ɪ ɾ i\ndog d ˈ ɔ ɡ\nbox b ˈ ɑ k s\nwant w ˈ ɑ n t\n" +
+            ('a'..'z').joinToString("\n") { "$it $it" },
+    )
+    val probe = listOf("questions", "tries", "cities", "dogs", "boxes", "wanted", "question", "zxqvik")
+    val report = kokoroOovReport(probe, lexicon)
+    check(report.baseOov > 0) { "the upstream lexicon misses an inflection: $report" }
+    check("questions" !in lexicon) { "questions is the reported skip" }
+    check("questions" in kokoroChatLexicon(lexicon).known) { "questions is inflected from question" }
+    check(report.coveredOov == 0) { "a covered word is still missing: $report" }
+    check(coverUnknownWords("questions zxqvik", kokoroChatLexicon(lexicon).known) == "questions z x q v i k") {
+        "questions stays a word and an unknown token is spelled"
+    }
     check(expectedAudioSeconds(spokenNumber[0].length) == 18 / 15.0) { "expected uses the normalized length" }
     check(compareVersions("2.0.0-rc1", "2.0.0") < 0) { "pre-release is lower than the release" }
     check(compareVersions("2.0.0", "2.0.0-rc1") > 0) { "release is higher than its pre-release" }

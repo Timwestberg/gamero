@@ -36,6 +36,7 @@ internal class DesktopChat(
     private val speech: ChatSpeech,
     private val offered: Set<RuntimeId> = RuntimeId.entries.toSet(),
     private val work: ChatWork? = null,
+    private val voices: VoicePickerModel? = null,
 ) : ChatCapability, AutoCloseable {
     private val runtimes = runtimes.associateBy { it.id }
     private val workers: Map<RuntimeId, WorkRuntime> = work?.runtimes.orEmpty()
@@ -91,11 +92,16 @@ internal class DesktopChat(
     override suspend fun open(scope: ChatScope): ChatSnapshot = synchronized(gate) {
         check(!closed)
         val old = active
-        if (old?.scope == scope && old.state !in setOf(ChatState.ERROR, ChatState.DISCONNECTED)) return@synchronized view(old)
+        if (old?.scope == scope && old.state !in setOf(ChatState.ERROR, ChatState.DISCONNECTED)) {
+            publishPicker()
+            return@synchronized view(old)
+        }
         invalidateLocked(keepEnded = false)
         ended = null
         val history = companionChatHistory(providerRoot, scope.profile, scope.companionId)
-        view(Session(scope, Persona.companion(scope.name), history, history.read()).also { active = it })
+        val snapshot = view(Session(scope, Persona.companion(scope.name), history, history.read()).also { active = it })
+        publishPicker()
+        snapshot
     }
 
     /** Polling cannot reopen an expired lease, but a view the host ended keeps reading its final state. */
@@ -297,7 +303,13 @@ internal class DesktopChat(
         if (ended?.first == scope) ended = null
         // The conversation's start-of-work confirmations end with its lease.
         work?.startOfWork?.forget(scope.sessionId)
-        Unit
+        publishPicker()
+    }
+
+    /** The voice row calls this. The next spoken sentence uses [id], and a short line plays now. */
+    internal fun chooseSpokenVoice(id: String) {
+        speech.previewVoice(id)
+        synchronized(gate) { publishPicker() }
     }
 
     /** Called when the document or provider login changes. A still-open view reads why and can reconnect. */
@@ -545,6 +557,18 @@ internal class DesktopChat(
         runCatching { session.history.write(session.record) }
     }
 
+    private fun publishPicker() {
+        val model = voices ?: return
+        model.update(
+            voicePickerState(
+                chatOpen = !closed && active != null,
+                kokoro = speech.kokoroActive(),
+                voices = speech.voiceChoices(),
+                selectedId = speech.currentVoiceId(),
+            ),
+        )
+    }
+
     private fun invalidateLocked(keepEnded: Boolean) {
         val session = active; active = null
         session?.let {
@@ -555,13 +579,14 @@ internal class DesktopChat(
             if (keepEnded) ended = it.scope to view(it)
         }
         speech.stop()
+        publishPicker()
     }
 
     /** App exit: stop work, then close the runtimes, which wait briefly for their processes to end. */
     override fun close() {
         synchronized(gate) {
             if (closed) return
-            invalidateLocked(keepEnded = false); closed = true; ended = null; timer.shutdownNow(); worker.shutdownNow()
+            invalidateLocked(keepEnded = false); closed = true; ended = null; publishPicker(); timer.shutdownNow(); worker.shutdownNow()
         }
         try { closeInReverse(runtimes.values.toList() + workers.values.toList()) } finally { speech.close() }
     }

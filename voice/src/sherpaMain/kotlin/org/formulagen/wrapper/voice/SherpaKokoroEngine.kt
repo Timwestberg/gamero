@@ -7,6 +7,7 @@ import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -18,6 +19,7 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class SherpaKokoroEngine(private val config: VoiceConfig) : PieceEngine {
     private val tts: OfflineTts
+    private val knownWords: Set<String>
     private val released = AtomicBoolean(false)
     private val cancel = AtomicBoolean(false)
     override val sampleRate: Int
@@ -31,6 +33,8 @@ class SherpaKokoroEngine(private val config: VoiceConfig) : PieceEngine {
         if (missing.isNotEmpty()) {
             throw IllegalStateException("Kokoro files missing in ${dir.path}: ${missing.joinToString(", ")}")
         }
+        val lexicon = prepareChatLexicon(dir)
+        knownWords = lexicon.known
         val chosen = voice()
         if (chosen.sid !in 0 until kokoroCatalog().speakerCount) {
             throw IllegalStateException("Kokoro voice ${chosen.id} sid ${chosen.sid} is outside the voice table")
@@ -39,7 +43,7 @@ class SherpaKokoroEngine(private val config: VoiceConfig) : PieceEngine {
             .setModel(File(dir, "model.onnx").path)
             .setVoices(File(dir, "voices-blends.bin").path)
             .setTokens(File(dir, "tokens.txt").path)
-            .setLexicon(File(dir, "lexicon-us-en.txt").path)
+            .setLexicon(lexicon.files)
             .build()
         val model = OfflineTtsModelConfig.builder()
             .setKokoro(kokoro)
@@ -66,6 +70,7 @@ class SherpaKokoroEngine(private val config: VoiceConfig) : PieceEngine {
         if (released.get()) throw IllegalStateException("voice engine was released")
         if (cancel.get()) throw SpeechCancelled()
         val chosen = voice()
+        val spoken = coverUnknownWords(text, knownWords)
         val ttfaNs = AtomicLong(-1L)
         val start = System.nanoTime()
         val callback = object : OfflineTtsCallback {
@@ -74,7 +79,7 @@ class SherpaKokoroEngine(private val config: VoiceConfig) : PieceEngine {
                 return if (cancel.get()) 0 else 1
             }
         }
-        val audio = tts.generateWithCallback(text, chosen.sid, chosen.speed, callback)
+        val audio = tts.generateWithCallback(spoken, chosen.sid, chosen.speed, callback)
         val totalMs = (System.nanoTime() - start) / 1_000_000.0
         val ttfaMs = if (ttfaNs.get() >= 0) ttfaNs.get() / 1_000_000.0 else totalMs
         if (audio.samples.isEmpty() || audio.sampleRate <= 0) {
@@ -96,3 +101,41 @@ class SherpaKokoroEngine(private val config: VoiceConfig) : PieceEngine {
 }
 
 internal fun createKokoroEngine(config: VoiceConfig): PieceEngine = SherpaKokoroEngine(config)
+
+private class PreparedLexicon(val files: String, val known: Set<String>)
+
+/**
+ * Writes regular inflections beside the upstream lexicon and passes both files
+ * to sherpa. A later duplicate is ignored, so the upstream pronunciation wins.
+ */
+private fun prepareChatLexicon(dir: File): PreparedLexicon {
+    val baseFile = File(dir, "lexicon-us-en.txt")
+    val text = baseFile.readText()
+    val chat = kokoroChatLexicon(parseKokoroLexicon(text))
+    val supplement = File(dir, "lexicon-chat.txt")
+    val stamp = File(dir, "lexicon-chat.sha256")
+    val hash = sha256(text) + " inflect-1"
+    if (chat.additions.isNotEmpty() && (stamp.takeIf { it.isFile }?.readText()?.trim() != hash || !supplement.isFile)) {
+        supplement.bufferedWriter().use { out ->
+            for ((word, phones) in chat.additions) {
+                out.write(word)
+                out.write(" ")
+                out.write(phones)
+                out.newLine()
+            }
+        }
+        stamp.writeText(hash + "\n")
+    }
+    val files = if (supplement.isFile && chat.additions.isNotEmpty()) {
+        baseFile.path + "," + supplement.path
+    } else {
+        baseFile.path
+    }
+    val known = if (supplement.isFile && chat.additions.isNotEmpty()) chat.known else chat.known - chat.additions.keys
+    return PreparedLexicon(files, known)
+}
+
+private fun sha256(text: String): String {
+    val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+    return digest.joinToString("") { byte -> "%02x".format(byte) }
+}

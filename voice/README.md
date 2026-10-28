@@ -11,7 +11,9 @@ Mac chat speaks with Kokoro 82M v1.0. PocketTTS stays behind the same `PieceEngi
 | `adam55-bella45` | Riley | 0.95 | Adam 55 / Bella 45 |
 | `heart60-adam40` | Harper | 0.97 | Heart 60 / Adam 40 |
 
-Sam is the default because it is the blend closest to the Adam sample that was the clearest of the set, at the same speed. Set `HOVEL_KOKORO_VOICE` to an id, or write the id to `~/.gamero/kokoro-voice`. The choice is reused for later sentences. Change it and the next launch speaks with that voice. There is no voice control in the chat page yet.
+Sam is the default because it is the blend closest to the Adam sample that was the clearest of the set, at the same speed. While Ember's chat is open, the Mac window shows a Voice row with these names. The selected name is the one in use. Choosing another speaks "Hi, I'm …" and the next sentence uses it, and the id is saved to `~/.gamero/kokoro-voice`. `HOVEL_KOKORO_VOICE` still overrides that file at launch. The row is hidden when the engine is Pocket.
+
+A word missing from `lexicon-us-en.txt` used to be skipped. Regular inflections of a listed stem are written to `lexicon-chat.txt` beside it, and any word that is still unknown is spelled letter by letter so it is not dropped.
 
 Speech is normalized before it is split into sentences: versions (`Sonnet 5.5`, `2.0.1`), units, URLs, and filenames become words. A token the normalizer does not know is spelled. It is not dropped. Each sentence is one Kokoro generate. Playback is the existing stream: the first sentence can start while the next one is still generating.
 

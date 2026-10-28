@@ -25,6 +25,10 @@ internal interface ChatSpeech : AutoCloseable {
     fun status(): ChatVoice
     fun speak(text: String)
     fun stop()
+    fun kokoroActive(): Boolean = false
+    fun voiceChoices(): List<VoiceChoice> = emptyList()
+    fun currentVoiceId(): String = ""
+    fun previewVoice(id: String) {}
 }
 
 /**
@@ -53,8 +57,20 @@ internal class DesktopSpeech(
     /** Kokoro voices a person can pick. The id is what gets stored. */
     internal fun voices(): List<KokoroVoice> = kokoroVoices()
 
-    internal fun currentVoiceId(): String = synchronized(gate) {
+    override fun kokoroActive(): Boolean = synchronized(gate) { voiceConfig?.backend == VoiceConfig.KOKORO }
+
+    override fun voiceChoices(): List<VoiceChoice> =
+        if (kokoroActive()) kokoroVoices().map { VoiceChoice(it.id, it.name) } else emptyList()
+
+    override fun currentVoiceId(): String = synchronized(gate) {
         voiceConfig?.kokoroVoiceId?.ifEmpty { null } ?: kokoroCatalog().defaultId
+    }
+
+    /** Switch now, remember it, and speak one short line in the new voice. */
+    override fun previewVoice(id: String) {
+        chooseVoice(id)
+        val name = kokoroVoice(id)?.name ?: return
+        speak(voicePreviewLine(name))
     }
 
     /**
