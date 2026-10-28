@@ -6,6 +6,9 @@ package org.formulagen.wrapper.voice
  * `max_frames`; those are this config's decoder frame count and ceiling.
  * [fallbackNumSteps] is what to ship if a Mac cannot stay in real time at
  * [numSteps]. This module does not switch steps by itself.
+ *
+ * Mac chat uses [KOKORO]. [SHERPA] stays for a later "speak in my voice" clip.
+ * Kokoro's frame ceiling, flow steps, and reference clip are unused.
  */
 data class VoiceConfig(
     val numSteps: Int = 5,
@@ -41,14 +44,23 @@ data class VoiceConfig(
     val backend: String = SHERPA,
     val modelDir: String = "",
     val voiceWav: String = "",
+    val kokoroModelDir: String = "",
+    val kokoroVoiceId: String = "",
+    val kokoroVoiceFile: String = "",
+    val kokoroVoiceFromEnv: Boolean = false,
 ) {
     val version: String
-        get() = "v2 steps=$numSteps,fallback=$fallbackNumSteps,temp=$temperature,seed=$seed," +
-            "threads=$numThreads,decoderFrames=$decoderFramesPerCallback,split=$split," +
-            "long=$longSentenceMaxChars/$longSentenceSplit,silence=$silenceBetweenPiecesMs," +
-            "fade=$crossfadeMs@$crossfadeEdgeThreshold,start=$startAfterMs," +
-            "frames=$frameFloor+$frameIntercept+$frameSlope,short=$shortPieceChars/$shortPieceMinFrames," +
-            "ratio=$maxDurationRatio,cap=$raisedCapFactor/$raisedCapMaxFrames,backend=$backend"
+        get() {
+            val voiceId = kokoroVoiceId.ifEmpty { kokoroCatalog().defaultId }
+            val speed = kokoroVoice(voiceId)?.speedText ?: "none"
+            return "v2 steps=$numSteps,fallback=$fallbackNumSteps,temp=$temperature,seed=$seed," +
+                "threads=$numThreads,decoderFrames=$decoderFramesPerCallback,split=$split," +
+                "long=$longSentenceMaxChars/$longSentenceSplit,silence=$silenceBetweenPiecesMs," +
+                "fade=$crossfadeMs@$crossfadeEdgeThreshold,start=$startAfterMs," +
+                "frames=$frameFloor+$frameIntercept+$frameSlope,short=$shortPieceChars/$shortPieceMinFrames," +
+                "ratio=$maxDurationRatio,cap=$raisedCapFactor/$raisedCapMaxFrames,backend=$backend," +
+                "kokoro=$voiceId@$speed"
+        }
 
     fun framesFor(chars: Int): Int = frameBudget(
         chars,
@@ -61,6 +73,7 @@ data class VoiceConfig(
 
     companion object {
         const val SHERPA = "sherpa"
+        const val KOKORO = "kokoro"
         const val FLUID_AUDIO = "fluid-audio"
         const val SENTENCE = "sentence"
         const val WORD_BOUNDARY = "word-boundary"

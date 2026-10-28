@@ -421,14 +421,37 @@ class DesktopChatTest {
     }
 
     @Test fun voiceIsUnavailableUntilTheEngineAndFilesArePresent() {
-        val model = Files.createTempDirectory("voice-model")
-        val clip = Files.createTempFile(model, "voice", ".wav")
-        val env = mapOf("HOVEL_VOICE_MODEL" to model.toString(), "HOVEL_VOICE_REFERENCE" to clip.toString())
+        val root = Files.createTempDirectory("voice-model")
+        val kokoro = root.resolve("kokoro")
+        Files.createDirectories(kokoro)
+        for (name in listOf("model.onnx", "voices-blends.bin", "tokens.txt", "lexicon-us-en.txt")) {
+            Files.writeString(kokoro.resolve(name), "x")
+        }
+        val pocket = root.resolve("pocket")
+        Files.createDirectories(pocket)
+        val clip = Files.createTempFile(pocket, "voice", ".wav")
+        val choice = root.resolve("missing-choice.txt")
+        val kokoroEnv = mapOf(
+            "HOVEL_KOKORO_MODEL" to kokoro.toString(),
+            "HOVEL_KOKORO_VOICE_FILE" to choice.toString(),
+        )
+        val pocketEnv = mapOf(
+            "HOVEL_VOICE_BACKEND" to "sherpa",
+            "HOVEL_VOICE_MODEL" to pocket.toString(),
+            "HOVEL_VOICE_REFERENCE" to clip.toString(),
+        )
         try {
-            assertNotNull(desktopVoiceConfig(env, engineLinked = true))
-            assertNull(desktopVoiceConfig(env, engineLinked = false))
-            assertNull(desktopVoiceConfig(env - "HOVEL_VOICE_REFERENCE", engineLinked = true))
-            assertNull(desktopVoiceConfig(env + ("HOVEL_VOICE_MODEL" to model.resolve("missing").toString()), engineLinked = true))
-        } finally { model.toFile().deleteRecursively() }
+            val chat = checkNotNull(desktopVoiceConfig(kokoroEnv, engineLinked = true))
+            assertEquals(org.formulagen.wrapper.voice.VoiceConfig.KOKORO, chat.backend)
+            assertEquals("adam70-michael30", chat.kokoroVoiceId)
+            assertNull(desktopVoiceConfig(kokoroEnv, engineLinked = false))
+            assertNull(desktopVoiceConfig(kokoroEnv - "HOVEL_KOKORO_MODEL" + ("HOVEL_KOKORO_MODEL" to root.resolve("missing").toString()), engineLinked = true))
+            Files.delete(kokoro.resolve("voices-blends.bin"))
+            assertNull(desktopVoiceConfig(kokoroEnv, engineLinked = true))
+            val cloned = checkNotNull(desktopVoiceConfig(pocketEnv, engineLinked = true))
+            assertEquals(org.formulagen.wrapper.voice.VoiceConfig.SHERPA, cloned.backend)
+            assertNull(desktopVoiceConfig(pocketEnv - "HOVEL_VOICE_REFERENCE", engineLinked = true))
+            assertNull(desktopVoiceConfig(mapOf("HOVEL_VOICE_MODEL" to pocket.toString(), "HOVEL_VOICE_REFERENCE" to clip.toString()), engineLinked = true))
+        } finally { root.toFile().deleteRecursively() }
     }
 }

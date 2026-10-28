@@ -37,7 +37,10 @@ EMBED_GODOT_VERSION='4.8.beta1.official.4d10419ca'
 export HOVEL_CLAUDE_PROVIDER="${HOVEL_CLAUDE_PROVIDER:-1}"
 
 # Local voice for spoken chat replies. scripts/fetch-voice.sh downloads these.
+# Mac chat uses Kokoro. Pocket remains for a later "speak in my voice" clip.
 VOICE_ROOT="$GAMERO_ROOT/spikes/ember-voice/mac"
+export HOVEL_KOKORO_MODEL="${HOVEL_KOKORO_MODEL:-$VOICE_ROOT/models/kokoro-multi-lang-v1_0}"
+export HOVEL_VOICE_BACKEND="${HOVEL_VOICE_BACKEND:-kokoro}"
 export HOVEL_VOICE_MODEL="${HOVEL_VOICE_MODEL:-$VOICE_ROOT/models/sherpa-onnx-pocket-tts-int8-2026-01-26}"
 export HOVEL_VOICE_REFERENCE="${HOVEL_VOICE_REFERENCE:-$VOICE_ROOT/models/voices/0a67_enhanced-24k.wav}"
 
@@ -53,9 +56,16 @@ require_embed_godot() {
 
 # Say up front when spoken replies will be off. Text chat still works.
 warn_missing_voice() {
+  local name
+  local kokoro_ok=1
+  for name in model.onnx voices-blends.bin tokens.txt lexicon-us-en.txt; do
+    if [[ ! -f "$HOVEL_KOKORO_MODEL/$name" ]]; then
+      kokoro_ok=0
+    fi
+  done
   if ! compgen -G "$VOICE_ROOT/deps/sherpa/sherpa-onnx-jvm-*.jar" >/dev/null \
-    || [[ ! -d "$HOVEL_VOICE_MODEL" || ! -f "$HOVEL_VOICE_REFERENCE" ]]; then
-    echo 'Spoken replies are off: voice files are missing. Run scripts/fetch-voice.sh to enable them.' >&2
+    || [[ "$kokoro_ok" -eq 0 ]]; then
+    echo 'Spoken replies are off: Kokoro voice files are missing. Run scripts/fetch-voice.sh to enable them.' >&2
   fi
 }
 

@@ -1,6 +1,21 @@
 # :voice
 
-On-device PocketTTS for the Ember pet. The Mac companion uses the JVM backend through `DesktopSpeech`. iOS and Android stay in this module for the same speak path.
+Mac chat speaks with Kokoro 82M v1.0. PocketTTS stays behind the same `PieceEngine` seam for a later "speak in my voice" clip (`HOVEL_VOICE_BACKEND=sherpa`). iOS and Android still use Pocket. Kokoro on those targets is not linked.
+
+`scripts/fetch-voice.sh` downloads both. Kokoro's pinned files are `model.onnx`, upstream `voices.bin`, `tokens.txt`, and `lexicon-us-en.txt`. `voice/kokoro/pack-blends.py` writes the four chat blends into a derived `voices-blends.bin` (speaker slots 50–53). That file is not committed. The voice a person picks is one of:
+
+| Id | Name | Speed | Blend |
+| --- | --- | --- | --- |
+| `adam70-michael30` | Sam | 1.00 | Adam 70 / Michael 30, the default |
+| `adam60-george40` | Jamie | 0.95 | Adam 60 / George 40 |
+| `adam55-bella45` | Riley | 0.95 | Adam 55 / Bella 45 |
+| `heart60-adam40` | Harper | 0.97 | Heart 60 / Adam 40 |
+
+Sam is the default because it is the blend closest to the Adam sample that was the clearest of the set, at the same speed. Set `HOVEL_KOKORO_VOICE` to an id, or write the id to `~/.gamero/kokoro-voice`. The choice is reused for later sentences. Change it and the next launch speaks with that voice. There is no voice control in the chat page yet.
+
+Speech is normalized before it is split into sentences: versions (`Sonnet 5.5`, `2.0.1`), units, URLs, and filenames become words. A token the normalizer does not know is spelled. It is not dropped. Each sentence is one Kokoro generate. Playback is the existing stream: the first sentence can start while the next one is still generating.
+
+On-device PocketTTS remains in this module for the cloned-voice path. The Mac companion uses the JVM backend through `DesktopSpeech`.
 
 ## What it does
 

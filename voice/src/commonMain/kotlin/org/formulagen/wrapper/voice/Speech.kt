@@ -47,6 +47,9 @@ interface PieceEngine {
     val sampleRate: Int
     fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio
     fun release()
+
+    /** PocketTTS retries when a take fills [maxFrames]. Kokoro does not use that cap. */
+    fun usesFrameCeiling(): Boolean = true
     fun requestCancel() {}
     fun clearCancel() {}
     fun isCancelled(): Boolean = false
@@ -183,7 +186,7 @@ internal fun retryFrames(firstCap: Int, factor: Int, maxFrames: Int): Int = minO
 internal fun synthesizePiece(engine: PieceEngine, config: VoiceConfig, piece: String): PieceAudio {
     val frames = config.framesFor(piece.length)
     val first = engine.synthesize(piece, frames, config.seed)
-    if (!hitFrameCeiling(first.samples.size, first.sampleRate, frames)) {
+    if (!engine.usesFrameCeiling() || !hitFrameCeiling(first.samples.size, first.sampleRate, frames)) {
         return first.copy(ttfaMs = firstAudibleMs(first.ttfaMs, false, first.synthMs))
     }
     val second = engine.synthesize(

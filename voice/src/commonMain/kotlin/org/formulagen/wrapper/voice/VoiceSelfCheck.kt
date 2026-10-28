@@ -137,6 +137,59 @@ fun runVoiceSelfCheck() {
     check(roundTrip.samples.size == oneSecond.samples.size) { "wav round trip" }
     val spokenNumber = speechPieces("503")
     check(spokenNumber == listOf("five hundred three")) { "503 spoken $spokenNumber" }
+    check(normalizeForSpeech("Sonnet 5.5") == "Sonnet five point five") { "model version" }
+    check(normalizeForSpeech("2.0.1") == "two point zero point one") { "version" }
+    check(normalizeForSpeech("v2.0.1") == "vee two point zero point one") { "v prefix" }
+    check(normalizeForSpeech("Install v2.") == "Install vee two.") { "bare v2 is spelled" }
+    check(normalizeForSpeech("2.0.0-rc1") == "two point zero point zero release candidate one") { "pre-release" }
+    check(normalizeForSpeech("80ms") == "eighty milliseconds") { "milliseconds" }
+    check(normalizeForSpeech("24 kHz") == "twenty-four kilohertz") { "kilohertz" }
+    check(normalizeForSpeech("3.5 GB") == "three point five gigabytes") { "gigabytes" }
+    check(normalizeForSpeech("See https://example.com/docs.") == "See example dot com slash docs.") { "url" }
+    check(normalizeForSpeech("GPT-4o") == "gee pee tee dash four oh") { "model token" }
+    check(normalizeForSpeech("zz9") == "zee zee nine") { "spelled leftover" }
+    check(normalizeForSpeech("PetBridge.kt") == "Pet Bridge dot kt") { "file" }
+    check(normalizeForSpeech("2:45 PM") == "two forty-five PM") { "time words" }
+    check(normalizeForSpeech("30") == "thirty") { "thirty" }
+    val versionSentences = speechPieces("Sonnet 5.5 is here. Install 2.0.1.")
+    check(versionSentences == listOf("Sonnet five point five is here.", "Install two point zero point one.")) {
+        "version sentences $versionSentences"
+    }
+    var kokoroCalls = 0
+    val kokoroLike = object : PieceEngine {
+        override val sampleRate: Int = 24000
+        override fun usesFrameCeiling(): Boolean = false
+        override fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio {
+            kokoroCalls += 1
+            return PieceAudio(FloatArray(24000 * 10), 24000, 5.0, 5.0)
+        }
+        override fun release() {}
+    }
+    EmberVoice(kokoroLike, VoiceConfig(backend = VoiceConfig.KOKORO)).speak("Done!")
+    check(kokoroCalls == 1) { "Kokoro does not regenerate a take that fills the Pocket frame ceiling" }
+    val catalog = kokoroCatalog()
+    check(catalog.defaultId == "adam70-michael30") { "default blend" }
+    check(catalog.voices.size == 4) { "four blends" }
+    val expectedVoices = mapOf(
+        "adam70-michael30" to Triple("Sam", 50, "1.00"),
+        "adam60-george40" to Triple("Jamie", 51, "0.95"),
+        "adam55-bella45" to Triple("Riley", 52, "0.95"),
+        "heart60-adam40" to Triple("Harper", 53, "0.97"),
+    )
+    check(catalog.voices.map { it.id }.toSet() == expectedVoices.keys) { "voice ids" }
+    for (voice in catalog.voices) {
+        val (name, sid, speed) = expectedVoices.getValue(voice.id)
+        check(voice.name == name && voice.sid == sid && voice.speedText == speed) { voice.id }
+        check(voice.name.isNotEmpty() && voice.weights.isNotEmpty()) { "voice fields" }
+        val weight = voice.weights.sumOf { it.weight.toDouble() }
+        check(weight > 0.99 && weight < 1.01) { "weights $weight" }
+    }
+    check(catalog.voices.map { it.sid }.toSet().size == 4) { "sids" }
+    val contract = kokoroVoiceContract()
+    check(contract.engine == VoiceConfig.KOKORO) { "engine id" }
+    check(contract.voiceId == "adam70-michael30" && contract.speed == "1.00") { "default contract" }
+    check(contract.lexiconSha256.length == 64) { "lexicon hash" }
+    check(kokoroVoiceContract("heart60-adam40").speed == "0.97") { "harper speed" }
     check(expectedAudioSeconds(spokenNumber[0].length) == 18 / 15.0) { "expected uses the normalized length" }
     check(compareVersions("2.0.0-rc1", "2.0.0") < 0) { "pre-release is lower than the release" }
     check(compareVersions("2.0.0", "2.0.0-rc1") > 0) { "release is higher than its pre-release" }

@@ -32,6 +32,11 @@ import platform.posix.memcpy
  */
 @OptIn(ExperimentalForeignApi::class)
 actual fun openPieceEngine(config: VoiceConfig): PieceEngine {
+    if (config.backend == VoiceConfig.KOKORO) {
+        throw IllegalStateException(
+            "Kokoro is the Mac chat voice. This iOS build still speaks with Pocket or FluidAudio.",
+        )
+    }
     return if (config.backend == VoiceConfig.FLUID_AUDIO) {
         FluidAudioPieceEngine(config)
     } else {

@@ -3,6 +3,11 @@
 # --speak also synthesizes one line when the spike model is already on disk.
 set -eu
 HERE=$(CDPATH= cd "$(dirname "$0")" && pwd)
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "error: python3 is required for the Kokoro blend self-check" >&2
+  exit 1
+fi
+python3 "$HERE/kokoro/pack-blends.py" --self-check
 ROOT=$(CDPATH= cd "$HERE/.." && pwd)
 # shellcheck source=../spikes/ember-voice/mac/script-lib.sh
 . "$ROOT/spikes/ember-voice/mac/script-lib.sh"
