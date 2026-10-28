@@ -33,8 +33,9 @@ fun runVoiceSelfCheck() {
     check(spoken.events.last().name == SPEECH_END) { "end" }
     check(spoken.events.count { it.name == SPEECH_LEVEL } == 2) { "levels" }
     check(spoken.ttfaMs == 12.0) { "ttfa from the engine callback" }
-    check(spoken.samples.size == 2400 + 2400 + 24000 * 40 / 1000) { "40 ms gap is in the audio" }
-    check(spoken.audioSeconds == spoken.samples.size / 24000.0) { "measured audio includes the gap" }
+    check(spoken.samples.size == 2400 + 2400 - 240) { "10 ms crossfade, no 40 ms hole" }
+    check(spoken.samples.none { it == 0f }) { "hot edges crossfade instead of inserting silence" }
+    check(spoken.audioSeconds == spoken.samples.size / 24000.0) { "measured audio" }
     events.addAll(spoken.events.map { it.name })
     val heard = ArrayList<String>()
     EmberVoice(fake, VoiceConfig()).speak("Done! Your build passed.") { heard.add(it.name) }
@@ -47,19 +48,49 @@ fun runVoiceSelfCheck() {
             calls += 1
             check(text == "Done!") { "normalized piece $text" }
             return if (calls == 1) {
-                check(seed == 1) { "first seed" }
+                check(seed == 1 && maxFrames == 36) { "first take seed=$seed frames=$maxFrames" }
                 PieceAudio(FloatArray(24000 * 10), 24000, 100.0, 120.0)
             } else {
-                check(seed == 2) { "retry seed" }
+                check(seed == 1 && maxFrames == 72) { "retry keeps seed 1 and raises the cap to $maxFrames" }
                 PieceAudio(FloatArray(24000), 24000, 20.0, 30.0)
             }
         }
         override fun release() {}
     }
     val retried = EmberVoice(retryEngine, VoiceConfig()).speak("Done!")
-    check(calls == 2) { "runaway retries once" }
-    check(retried.samples.size == 24000) { "shorter take is kept" }
-    check(retried.ttfaMs == 150.0) { "buffered retry counts both takes" }
+    check(calls == 2) { "a truncated take is generated again" }
+    check(retried.samples.size == 24000) { "the raised-cap take is kept" }
+    check(retried.ttfaMs == 150.0) { "a buffered retry counts both takes" }
+    var overlongCalls = 0
+    val overlong = object : PieceEngine {
+        override val sampleRate: Int = 24000
+        override fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio {
+            overlongCalls += 1
+            return PieceAudio(FloatArray(50000), 24000, 10.0, 40.0)
+        }
+        override fun release() {}
+    }
+    EmberVoice(overlong, VoiceConfig()).speak("Done!")
+    check(overlongCalls == 1) { "an overlong take under the ceiling is not regenerated" }
+    check(VoiceConfig().numSteps == 5) { "five flow steps" }
+    check(VoiceConfig().silenceMs == 0) { "no inserted silence" }
+    val oneSentence = speechPieces(
+        "Should I rerun the suite, or is this ready for you to merge?",
+        40,
+        140,
+    )
+    check(oneSentence.size == 1) { "comma does not split a sentence $oneSentence" }
+    val cutSentence = speechPieces(
+        "I refactored the session code, moved the socket into the bridge, and the build is green.",
+        40,
+        140,
+    )
+    check(cutSentence.size == 1) { "no 40 character cut $cutSentence" }
+    val longSentence = (1..100).joinToString(" ") { "word" }
+    val longPieces = speechPieces(longSentence, 40, 140)
+    check(longPieces.size > 1 && longPieces.all { it.length <= 400 }) { "400 character word split $longPieces" }
+    val quiet = concat(listOf(FloatArray(1000), FloatArray(1000)), 0, 240, 0.02f)
+    check(quiet.size == 2000) { "a quiet edge is not crossfaded" }
 
     val cached = selectTier(
         DeviceProfile("phone"),

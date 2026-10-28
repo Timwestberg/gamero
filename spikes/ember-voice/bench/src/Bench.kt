@@ -1388,7 +1388,7 @@ private fun selfCheck(config: BenchConfig) {
     check(numbers.any { it.contains("two forty-five") }, "time split $numbers")
     check(numbers.any { it.contains("thirty") }, "thirty $numbers")
     val limit = speechPieces(say.text, 60, 140)
-    check(limit.first().endsWith("say,"), "say_limit first ${limit.first()}")
+    check(limit.size == 1, "say_limit stays one sentence ${limit.map { it.length }}")
     check(limit.any { it.contains("two hundred forty") }, "say_limit number $limit")
     val questionPieces = speechPieces(question.text, 60, 140)
     check(questionPieces.size == 1, "question pieces ${questionPieces.size}")

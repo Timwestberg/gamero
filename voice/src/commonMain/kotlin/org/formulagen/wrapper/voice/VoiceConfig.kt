@@ -3,10 +3,12 @@ package org.formulagen.wrapper.voice
 /**
  * Local voice settings. Field names here are the module's. The shared
  * event-contracts names are synced by hand until that repo is readable here.
- * The numbers match the Linux VM confirmation on the quick-wins branch.
+ * Sentence audio uses 5 flow steps. If a Mac cannot stay in real time, the
+ * fallback is 3 steps. Silence between sentences is 0. The frame ceiling and
+ * the short-piece floor stay as a safety cap.
  */
 data class VoiceConfig(
-    val numSteps: Int = 1,
+    val numSteps: Int = 5,
     val temperature: Double = 0.3,
     val seed: Int = 1,
     val numThreads: Int = 2,
@@ -19,7 +21,7 @@ data class VoiceConfig(
     val shortPieceChars: Int = 24,
     val shortPieceMinFrames: Int = 36,
     val maxDurationRatio: Double = 2.0,
-    val silenceMs: Int = 40,
+    val silenceMs: Int = 0,
     val passTtfaMs: Double = 500.0,
     val passRtf: Double = 1.5,
     val backend: String = SHERPA,
