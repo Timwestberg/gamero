@@ -32,7 +32,7 @@ class HovelHostSession(
             CodexCliProvider.Readiness.AUTH_REQUIRED -> "auth-required"
             CodexCliProvider.Readiness.UNAVAILABLE -> "unavailable"
         }))
-        status(if (readiness == CodexCliProvider.Readiness.READY) "Connected · Codex ready" else "Connected · Open Profile → Providers to connect Codex")
+        status(if (readiness == CodexCliProvider.Readiness.READY) "Connected · Codex ready" else "Connected · Sign in to Codex: run `codex login` in Terminal")
 
         if (working.get()) return
         val task = response.getValue("tasks").jsonArray.map { it.jsonObject }.firstOrNull {

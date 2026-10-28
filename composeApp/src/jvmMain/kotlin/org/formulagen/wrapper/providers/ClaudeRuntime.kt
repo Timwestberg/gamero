@@ -44,14 +44,6 @@ internal const val CLAUDE_FALLBACK_MODEL = "sonnet"
 internal val CHILD_ENV = listOf("HOME", "USER", "LOGNAME", "TMPDIR", "LANG")
 private val CLAUDE_SETTINGS = mapOf("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" to "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY" to "1")
 
-/**
- * Claude is offered only when a development build ([development]: `-Dgamero.dev=true`, which only
- * local launches set) asks for it with `HOVEL_CLAUDE_PROVIDER=1`. A release build ([release]) never
- * offers it, until Anthropic confirms a companion persona on a player's own subscription is allowed.
- * Anything else, including an unmarked build, fails closed.
- */
-internal fun claudeProviderEnabled(env: Map<String, String>, release: Boolean, development: Boolean): Boolean =
-    development && !release && env["HOVEL_CLAUDE_PROVIDER"] == "1"
 
 /**
  * The player's installed Claude Code, run unmodified on its own sign-in. [workspaceRoot] is the
@@ -111,4 +103,21 @@ internal fun findClaudeExecutable(
             "$home/.local/bin/claude" + fixed
     return candidates.mapNotNull { runCatching { Path.of(it) }.getOrNull() }
         .firstOrNull { it.isAbsolute && Files.isRegularFile(it) && Files.isExecutable(it) }
+}
+
+/**
+ * A working child's whole environment: the player's own ([parent]), with their login shell's `PATH`
+ * ([loginPath]) so their tools are found, and the Claude executable's folder on it. Removed:
+ * `ANTHROPIC_*` (an API key or another endpoint instead of the subscription) and the variables
+ * another Claude Code session sets for its children (`CLAUDECODE`, `CLAUDE_CODE_*`, every other
+ * `CLAUDE_*`), except `CLAUDE_CONFIG_DIR`, which is where the player keeps their own setup.
+ */
+internal fun claudeWorkEnvironment(parent: Map<String, String>, loginPath: String?, executable: Path): Map<String, String> {
+    val kept = parent.filterKeys { key ->
+        !key.startsWith("ANTHROPIC_") && key != "CLAUDECODE" && (!key.startsWith("CLAUDE_") || key == "CLAUDE_CONFIG_DIR")
+    }
+    val path = (loginPath ?: parent["PATH"]).orEmpty().split(File.pathSeparator).filter { it.isNotBlank() }
+    val withClaude = listOfNotNull(executable.parent?.toString()).filter { it !in path } + path +
+        listOf("/usr/bin", "/bin", "/usr/sbin", "/sbin").filter { it !in path }
+    return kept + ("PATH" to withClaude.joinToString(File.pathSeparator)) + ("HOME" to (parent["HOME"] ?: System.getProperty("user.home")))
 }

@@ -62,6 +62,55 @@ internal fun readBoundedLine(reader: BufferedReader, limit: Int = MAX_PROTOCOL_L
     }
 }
 
+/** One message read by [readProtocolLine]: whole, or too long and dropped with only its [prefix] kept. */
+internal sealed interface ProtocolLine {
+    data class Whole(val text: String) : ProtocolLine
+    /** The first characters of a message longer than the limit; the rest was discarded unbuffered. */
+    data class Dropped(val prefix: String) : ProtocolLine
+}
+
+/**
+ * Like [readBoundedLine], for a trusted local child whose messages can be large (a working agent's
+ * tool results): a message over [limit] is not silently skipped but reported as [ProtocolLine.Dropped]
+ * with its first [keep] characters, so the caller can still read its `type` and answer it.
+ */
+internal fun readProtocolLine(reader: BufferedReader, limit: Int, keep: Int = 4_096): ProtocolLine? {
+    val line = StringBuilder()
+    var dropping = false
+    var prefix = ""
+    while (true) {
+        val next = reader.read()
+        when {
+            next == -1 -> return when {
+                dropping -> ProtocolLine.Dropped(prefix)
+                line.isNotEmpty() -> ProtocolLine.Whole(line.toString())
+                else -> null
+            }
+            next == '\n'.code -> {
+                if (dropping) return ProtocolLine.Dropped(prefix)
+                if (line.isNotEmpty()) return ProtocolLine.Whole(line.toString())
+            }
+            dropping -> Unit
+            line.length >= limit -> { dropping = true; prefix = line.take(keep).toString(); line.setLength(0) }
+            else -> line.append(next.toChar())
+        }
+    }
+}
+
+/**
+ * The `PATH` the player's login shell sets up, or null when it cannot be read within a few seconds:
+ * a Mac app started from Finder has only the system folders on its own.
+ */
+internal fun readLoginShellPath(parent: Map<String, String>): String? {
+    val shell = parent["SHELL"]?.takeIf { java.nio.file.Path.of(it).isAbsolute && java.nio.file.Files.isExecutable(java.nio.file.Path.of(it)) } ?: "/bin/zsh"
+    val marker = "__HOVEL_PATH__"
+    val output = runBounded(ProcessBuilder(shell, "-l", "-c", "printf '$marker%s' \"\$PATH\"").directory(File(System.getProperty("user.home"))),
+        kotlin.time.Duration.parse("5s"))?.takeIf { it.exitCode == 0 }?.output ?: return null
+    return output.substringAfterLast(marker, "").trim().takeIf { value ->
+        value.isNotEmpty() && value.split(File.pathSeparator).all { it.isEmpty() || it.startsWith("/") }
+    }
+}
+
 internal data class BoundedOutput(val exitCode: Int, val output: String)
 
 /**

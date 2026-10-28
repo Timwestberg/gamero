@@ -22,6 +22,8 @@ class SharedLimitsTest {
         assertEquals(SharedRules.COMPANION_NAME_LIMIT, limits.getValue("COMPANION_NAME_LIMIT").jsonPrimitive.int)
         assertEquals(mapOf("engineIdentifier" to HandoverLimits.ENGINE_IDENTIFIER, "recentChars" to HandoverLimits.RECENT_CHARS,
             "recentMessages" to HandoverLimits.RECENT_MESSAGES, "summary" to HandoverLimits.SUMMARY), numbers("HANDOVER_LIMITS"))
+        assertEquals(mapOf("folderName" to WorkspaceLimits.FOLDER_NAME), numbers("WORKSPACE_LIMITS"))
+        assertEquals(mapOf("detail" to ActivityLimits.DETAIL, "label" to ActivityLimits.LABEL, "steps" to ActivityLimits.STEPS), numbers("ACTIVITY_LIMITS"))
         assertEquals(mapOf("accountLabel" to ProviderLimits.ACCOUNT_LABEL, "displayName" to ProviderLimits.DISPLAY_NAME,
             "message" to ProviderLimits.MESSAGE, "models" to ProviderLimits.MODELS, "plan" to ProviderLimits.PLAN,
             "runtimes" to ProviderLimits.RUNTIMES), numbers("PROVIDER_LIMITS"))

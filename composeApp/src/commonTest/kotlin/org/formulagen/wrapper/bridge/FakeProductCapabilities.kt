@@ -4,7 +4,7 @@ package org.formulagen.wrapper.bridge
 class FakeProviderCapability : ProviderCapability {
     override suspend fun perform(action: ProviderAction, scope: ProviderScope) =
         ProviderStatus(scope.runtimeId, if (action == ProviderAction.CONNECT) ProviderState.SIGNING_IN else ProviderState.DISCONNECTED)
-    override suspend fun list(profile: String) = ProviderList(RuntimeId.entries)
+    override suspend fun list(profile: String) = ProviderList(RuntimeId.entries, listOf(RuntimeId.CLAUDE_CODE))
     override suspend fun models(scope: ProviderScope) = ProviderModels(listOf(ProviderModel("Sonnet", true, "sonnet")), scope.runtimeId)
 }
 
@@ -23,4 +23,10 @@ class FakeGameCapability : GameCapability {
         closed = onClosed
         return AutoCloseable { closed = null }
     }
+}
+
+class FakeWorkspaceCapability : WorkspaceCapability {
+    override suspend fun choose(scope: WorkspaceScope) = WorkspaceStatus(WorkspaceFolder(true, "hovel-notes"))
+    override suspend fun clear(scope: WorkspaceScope) = WorkspaceStatus(null)
+    override suspend fun status(scope: WorkspaceScope) = WorkspaceStatus(WorkspaceFolder(true, "hovel-notes"))
 }

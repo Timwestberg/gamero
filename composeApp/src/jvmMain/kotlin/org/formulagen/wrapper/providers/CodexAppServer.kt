@@ -2,24 +2,25 @@ package org.formulagen.wrapper.providers
 
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.companion.terminateProcessTree
-import org.formulagen.wrapper.process.readBoundedLine
+import org.formulagen.wrapper.process.MAX_PROTOCOL_LINE
+import org.formulagen.wrapper.process.ProtocolLine
+import org.formulagen.wrapper.process.readProtocolLine
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
 
 /**
  * One Codex app-server child over bounded stdio JSON-RPC. Its policy is the allowed-method list
  * each owner passes: Providers gets [StdioCodexAppServer.ACCOUNT_METHODS], chat gets account and
- * conversation methods (chatCodex). Server requests such as tool approvals are always refused,
- * and callers never receive tokens.
+ * conversation methods (chatCodex). Server requests such as tool approvals are refused, unless the
+ * owner answers them itself ([StdioCodexAppServer]'s `onRequest`, for working members only), and
+ * callers never receive tokens.
  */
 internal interface CodexAppServer : AutoCloseable {
     fun call(method: String, params: JsonObject = buildJsonObject {}): JsonObject
-    fun loginResult(loginId: String): Boolean?
 }
 
 /** Correlate bounded stdio requests and own the lifetime of one installed Codex app-server child. */
@@ -29,6 +30,14 @@ internal class StdioCodexAppServer(
     arguments: List<String> = emptyList(),
     private val onNotification: (String, JsonObject) -> Unit = { _, _ -> },
     private val timeoutSeconds: Long = 5,
+    /**
+     * Answers a server request (`method`, `params`) by calling `respond` once with its result, or
+     * with null to refuse it. It is called on the reader thread and must not block. Null refuses
+     * every request, as a talk-only or account process always does.
+     */
+    private val onRequest: ((String, JsonObject, (JsonObject?) -> Unit) -> Unit)? = null,
+    /** Longest protocol line kept; a longer server request is refused from its opening, and a longer notification reported as `transport/dropped`. */
+    private val lineLimit: Int = MAX_PROTOCOL_LINE,
 ) : CodexAppServer {
     private val process = runtime.builder(arguments + listOf("app-server", "--listen", "stdio://"))
         .redirectError(ProcessBuilder.Redirect.DISCARD).start()
@@ -36,35 +45,40 @@ internal class StdioCodexAppServer(
     private val pending = ConcurrentHashMap<Int, CompletableFuture<JsonObject>>()
     private val sequence = AtomicInteger()
     private val closed = AtomicBoolean()
-    private val completion = AtomicReference<Pair<String, Boolean>?>()
 
     init {
         Thread.ofPlatform().daemon().name("hovel-codex-app-server").start {
             try {
                 process.inputStream.bufferedReader().use { reader ->
                     while (true) {
-                        val line = readBoundedLine(reader) ?: break
+                        val line = when (val read = readProtocolLine(reader, lineLimit) ?: break) {
+                            is ProtocolLine.Whole -> read.text
+                            is ProtocolLine.Dropped -> { dropped(read.prefix); continue }
+                        }
                         val message = Json.parseToJsonElement(line).jsonObject
                         val id = (message["id"] as? JsonPrimitive)?.intOrNull
                         val method = (message["method"] as? JsonPrimitive)?.contentOrNull
                         if (message.containsKey("id") && method != null) {
-                            // The host never approves tools through this transport.
-                            send(buildJsonObject {
-                                put("id", message.getValue("id"))
-                                putJsonObject("error") { put("code", -32601); put("message", "This client does not permit tool requests") }
-                            })
-                            onNotification("request/refused", buildJsonObject {})
+                            val requestId = message.getValue("id")
+                            val handler = onRequest
+                            if (handler == null) {
+                                // A talk-only or account process never approves tools.
+                                refuse(requestId)
+                                onNotification("request/refused", buildJsonObject {})
+                            } else {
+                                val answered = AtomicBoolean()
+                                handler(method, message["params"] as? JsonObject ?: buildJsonObject {}) { result ->
+                                    if (answered.compareAndSet(false, true) && !closed.get()) runCatching {
+                                        if (result == null) refuse(requestId) else send(buildJsonObject { put("id", requestId); put("result", result) })
+                                    }
+                                }
+                            }
                         } else if (id != null) {
                             pending.remove(id)?.let { waiting ->
                                 val result = message["result"] as? JsonObject
                                 if (result != null) waiting.complete(result)
                                 else waiting.completeExceptionally(CodexRequestRejected())
                             }
-                        } else if (method == "account/login/completed") {
-                            val params = message["params"] as? JsonObject
-                            val loginId = (params?.get("loginId") as? JsonPrimitive)?.contentOrNull
-                            val success = (params?.get("success") as? JsonPrimitive)?.booleanOrNull
-                            if (loginId != null && success != null) completion.set(loginId to success)
                         }
                         if (method != null && !message.containsKey("id")) {
                             onNotification(method, message["params"] as? JsonObject ?: buildJsonObject {})
@@ -101,8 +115,22 @@ internal class StdioCodexAppServer(
         finally { pending.remove(id) }
     }
 
-    /** Report only the matching login outcome, never raw notification text. */
-    override fun loginResult(loginId: String): Boolean? = completion.get()?.takeIf { it.first == loginId }?.second
+    /** A message too long to keep, answered from its opening: a request is refused, a reply fails its call, a notification is reported by name. */
+    private fun dropped(prefix: String) {
+        val method = Regex("\"method\"\\s*:\\s*\"([^\"]+)\"").find(prefix)?.groupValues?.get(1)
+        // JSON-RPC ids here are numbers; a string "id" is an item's, deeper in the message.
+        val id = Regex("\"id\"\\s*:\\s*(\\d+)").find(prefix)?.groupValues?.get(1)?.let { JsonPrimitive(it.toInt()) }
+        when {
+            method != null && id != null -> refuse(id)
+            id != null -> (id as? JsonPrimitive)?.intOrNull?.let { pending.remove(it)?.completeExceptionally(CodexRequestRejected()) }
+            method != null -> onNotification("transport/dropped", buildJsonObject { put("method", method) })
+        }
+    }
+
+    private fun refuse(requestId: JsonElement) = send(buildJsonObject {
+        put("id", requestId)
+        putJsonObject("error") { put("code", -32601); put("message", "This client does not permit tool requests") }
+    })
 
     /** Serialize whole JSON lines so interleaved calls cannot corrupt the transport. */
     private fun send(message: JsonObject) = synchronized(writer) {
@@ -115,7 +143,7 @@ internal class StdioCodexAppServer(
         pending.clear()
     }
 
-    /** Stop only Hovel's child and cancel any callback listener it owns. */
+    /** Stop only Hovel's child. */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         failPending()
@@ -124,8 +152,11 @@ internal class StdioCodexAppServer(
     }
 
     companion object {
-        /** The account lifecycle and the model list a team member chooses from; no inference or workspace execution. */
-        val ACCOUNT_METHODS = setOf("account/read", "account/login/start", "account/login/cancel", "account/logout", "model/list")
+        /**
+         * Reading the player's Codex account and the model list a team member chooses from. No sign-in
+         * or sign-out (the player runs `codex login` and `codex logout`), no inference or workspace execution.
+         */
+        val ACCOUNT_METHODS = setOf("account/read", "model/list")
     }
 }
 

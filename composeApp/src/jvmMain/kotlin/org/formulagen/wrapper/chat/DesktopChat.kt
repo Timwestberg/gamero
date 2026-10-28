@@ -10,23 +10,35 @@ import java.time.temporal.ChronoUnit
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import org.formulagen.wrapper.providers.copy
+import org.formulagen.wrapper.approvals.CancelSignal
+import org.formulagen.wrapper.approvals.memberLabel
+import org.formulagen.wrapper.approvals.startOfWorkSummary
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.closeInReverse
+import org.formulagen.wrapper.providers.copy
+import org.formulagen.wrapper.util.shortened
+import org.formulagen.wrapper.workspace.ProjectFolder
 
 /**
  * Owns one view's conversation lease: its history, request dedupe, the reply watchdog, speech and
  * handovers between team members. Each reply runs on the [ChatRuntime] of the member that sends it;
  * workers never mutate a newer view or replay a send. [runtimes] are the runtimes found on this
  * Mac; the chat closes them. [offered] are the runtimes this build offers, found or not.
+ *
+ * A message in `work` mode ([work]) runs on the member's working runtime in the companion's project
+ * folder, after the person confirms the start of work natively; while a native dialog is up the
+ * chat is `awaiting-you` and refuses sends, retries and handovers. Without a folder, or when the
+ * person chooses Not now, the message is answered as talk with a notice.
  */
 internal class DesktopChat(
     private val providerRoot: Path,
     runtimes: List<ChatRuntime>,
     private val speech: ChatSpeech,
     private val offered: Set<RuntimeId> = RuntimeId.entries.toSet(),
+    private val work: ChatWork? = null,
 ) : ChatCapability, AutoCloseable {
     private val runtimes = runtimes.associateBy { it.id }
+    private val workers: Map<RuntimeId, WorkRuntime> = work?.runtimes.orEmpty()
     private val gate = Any()
     private val worker = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-chat"))
     private val timer = Executors.newSingleThreadScheduledExecutor(loggingDaemonThreads("hovel-chat-timeout"))
@@ -54,12 +66,26 @@ internal class DesktopChat(
         var failure: ChatFailureReport? = null
         /** Runtimes this view has run turns or summaries on; closing the view ends their work. */
         val used = mutableSetOf<RuntimeId>()
+        /** What the native dialog asks while `awaiting-you`. */
+        var waiting: ChatWaiting? = null
+        /** Cancels a start-of-work confirmation still on screen. */
+        var startCancel: CancelSignal? = null
+        /** A refusal's notice, shown while the chat stays in the state it was refused in. */
+        var refusal: Pair<ChatState, String>? = null
     }
 
     private class PendingHandover(val requestId: String, val from: RuntimeId?, val state: ChatState, val notice: String?)
 
-    /** A turn answering the user entry [userEntryId] with [member], whose reply is the entry [replyId]. */
-    private class InFlight(val member: TeamMember, val userEntryId: String, val replyId: String, val text: String)
+    /**
+     * A turn answering the user entry [userEntryId] with [member], whose reply is the entry [replyId].
+     * [mode] is what was asked; [work] is the folder once a working turn is confirmed, and [notice]
+     * stays after the reply when a working message was answered as talk.
+     */
+    private class InFlight(val member: TeamMember, val userEntryId: String, val replyId: String, val text: String,
+        val mode: MemberMode = MemberMode.TALK, val priorSteps: List<ActivityStep> = emptyList()) {
+        var work: ProjectFolder? = null
+        var notice: String? = null
+    }
 
     /** Opening is the only operation allowed to replace an active conversation. */
     override suspend fun open(scope: ChatScope): ChatSnapshot = synchronized(gate) {
@@ -86,6 +112,7 @@ internal class DesktopChat(
     override suspend fun send(args: ChatSend): ChatSnapshot = synchronized(gate) {
         val session = current(args.scope())
         if (session.record.entries.any { it.id == args.requestId }) return@synchronized view(session)
+        if (session.state == ChatState.AWAITING_YOU) return@synchronized refuse(session, ANSWER_FIRST)
         if (session.state == ChatState.RESPONDING || session.state == ChatState.HANDING_OVER) throw BridgeBusyException()
         val kind = args.member.runtimeId
         if (kind !in offered) return@synchronized view(session).copy(notice = kind.copy.notOffered)
@@ -94,7 +121,7 @@ internal class DesktopChat(
         val record = session.record
         // A runtime's first turn, a runtime catching up, or a new model is noted just before the message it answers.
         val noted = Handovers.beforeTurn(record, args.member)
-        val turn = InFlight(args.member, args.requestId, UUID.randomUUID().toString(), text)
+        val turn = InFlight(args.member, args.requestId, UUID.randomUUID().toString(), text, args.mode ?: MemberMode.TALK)
         val next = noted.copy(entries = (noted.entries + ChatEntry.User(args.requestId, text) +
             ChatEntry.Assistant(turn.replyId, args.member, "")).takeLast(ChatLimits.HISTORY))
         session.history.write(next)
@@ -114,11 +141,12 @@ internal class DesktopChat(
         val session = current(args.scope())
         val record = session.record
         if (record.entries.any { it.id == args.requestId }) return@synchronized view(session)
+        if (session.state == ChatState.AWAITING_YOU) return@synchronized refuse(session, ANSWER_FIRST)
         if (session.state == ChatState.RESPONDING || session.state == ChatState.HANDING_OVER) {
-            return@synchronized view(session).copy(notice = "Wait for the reply to finish, or stop it, before trying again.")
+            return@synchronized refuse(session, "Wait for the reply to finish, or stop it, before trying again.")
         }
         val at = record.entries.indexOfFirst { it is ChatEntry.User && it.id == args.entryId && it.status == UserStatus.UNANSWERED }
-        if (at < 0) return@synchronized view(session).copy(notice = "Only a message without a reply can be sent again.")
+        if (at < 0) return@synchronized refuse(session, "Only a message without a reply can be sent again.")
         if (args.member.runtimeId !in offered) return@synchronized view(session).copy(notice = args.member.runtimeId.copy.notOffered)
         val message = record.entries[at] as ChatEntry.User
         speech.stop()
@@ -127,7 +155,9 @@ internal class DesktopChat(
         val notes = switched?.entries?.drop(before.entries.size).orEmpty()
         // The reply the failed turn left, if any, is replaced.
         val after = record.entries.drop(at + 1).let { rest -> if (rest.firstOrNull() is ChatEntry.Assistant) rest.drop(1) else rest }
-        val turn = InFlight(args.member, message.id, args.requestId, message.text)
+        // A failed working reply's finished steps stay with the message's next try, if it works too.
+        val failed = (record.entries.drop(at + 1).firstOrNull() as? ChatEntry.Assistant)?.activity?.steps.orEmpty()
+        val turn = InFlight(args.member, message.id, args.requestId, message.text, args.mode ?: MemberMode.TALK, failed)
         val next = record.copy(entries = (before.entries + notes + message + ChatEntry.Assistant(turn.replyId, args.member, "") + after)
             .takeLast(ChatLimits.HISTORY), pendingContext = switched?.pendingContext ?: record.pendingContext)
         session.history.write(next)
@@ -143,12 +173,66 @@ internal class DesktopChat(
         if (kind !in runtimes) return fail(session, ChatFailureKind.UNAVAILABLE, null, ChatState.DISCONNECTED, missing(kind), release = false)
         session.state = ChatState.RESPONDING; session.notice = null; session.speak = speak
         val generation = ++session.generation
-        worker.execute { attempt(session, generation, kind) { startTurn(session, generation, turn, retried = false) } }
+        worker.execute { attempt(session, generation, kind) { if (decide(session, generation, turn)) startTurn(session, generation, turn, retried = false) } }
+        // Work waits for the person and runs longer; its dialogs bound each wait, and this bounds the whole reply.
+        val working = turn.mode == MemberMode.WORK
         timer.schedule({ synchronized(gate) {
-            if (live(session, generation) && session.state == ChatState.RESPONDING) {
-                fail(session, ChatFailureKind.TEMPORARY, null, ChatState.ERROR, "The reply took too long. Your message is saved; retry when you are ready.")
+            if (live(session, generation) && (session.state == ChatState.RESPONDING || session.state == ChatState.AWAITING_YOU)) {
+                fail(session, ChatFailureKind.TEMPORARY, null, ChatState.ERROR,
+                    if (working) "The work took too long. Your message is saved; retry when you are ready."
+                    else "The reply took too long. Your message is saved; retry when you are ready.")
             }
-        } }, 3, TimeUnit.MINUTES)
+        } }, if (working) WORK_TIMEOUT_MINUTES else TALK_TIMEOUT_MINUTES, TimeUnit.MINUTES)
+    }
+
+    /**
+     * Whether [turn] works or talks, decided on the worker before it starts: a working message needs a
+     * runtime that can work here, the companion's project folder, and the person's Start working for
+     * this conversation, asked natively while the chat is `awaiting-you`. Anything else answers as
+     * talk with a notice. False when the view moved on meanwhile.
+     */
+    private fun decide(session: Session, generation: Int, turn: InFlight): Boolean {
+        if (turn.mode != MemberMode.WORK) return true
+        val member = turn.member
+        val scope = session.scope
+        fun talk(notice: String) = synchronized(gate) { turn.notice = notice.shortened(ChatLimits.NOTICE); live(session, generation) }
+        val work = work ?: return talk(member.runtimeId.copy.cannotWork)
+        val folder = when (val availability = work.availability(scope.profile, scope.companionId, member)) {
+            is WorkAvailability.Talk -> return talk(availability.notice)
+            is WorkAvailability.Work -> availability.folder
+        }
+        if (!work.startOfWork.isConfirmed(scope.sessionId, scope.companionId, folder.path, member)) {
+            val cancel = CancelSignal()
+            synchronized(gate) {
+                if (!live(session, generation)) return false
+                session.state = ChatState.AWAITING_YOU
+                session.waiting = ChatWaiting(WaitingKind.START, startOfWorkSummary(scope.name, folder.path, member))
+                session.startCancel = cancel
+            }
+            val started = work.startOfWork.ask(scope.name, folder.path, member, cancel)
+            synchronized(gate) {
+                // An answer that comes back after the view moved on is never remembered.
+                if (!live(session, generation)) return false
+                session.state = ChatState.RESPONDING; session.waiting = null; session.startCancel = null
+                if (started) work.startOfWork.remember(scope.sessionId, scope.companionId, folder.path, member)
+            }
+            if (!started) return talk("${memberLabel(member)} answered without working. Choose Start working to let them work in ${folder.name}.")
+        }
+        return synchronized(gate) {
+            if (!live(session, generation)) return false
+            // The page labels a reply as work by its activity, so a working reply carries one from its start
+            // (with the steps a failed try already finished, when this is its retry).
+            turn.work = folder
+            updateActivity(session, turn.replyId, merged(turn, Activity(emptyList(), truncated = false)))
+            true
+        }
+    }
+
+    /** [activity] after the steps an earlier, failed try of the same message finished, within the contract's bounds. */
+    private fun merged(turn: InFlight, activity: Activity): Activity {
+        if (turn.priorSteps.isEmpty()) return activity
+        val steps = turn.priorSteps + activity.steps
+        return Activity(steps.take(ActivityLimits.STEPS), activity.truncated || steps.size > ActivityLimits.STEPS)
     }
 
     /**
@@ -159,12 +243,15 @@ internal class DesktopChat(
         val session = current(args.scope())
         if (session.record.entries.any { it.id == args.requestId } || session.handover?.requestId == args.requestId) return@synchronized view(session)
         // A refusal is a snapshot with a notice and no new entry; the page keeps the current member.
-        if (session.state == ChatState.RESPONDING) return@synchronized view(session).copy(notice = "Wait for the reply to finish, or stop it, before switching.")
-        if (session.state == ChatState.HANDING_OVER) return@synchronized view(session).copy(notice = "Another switch is still in progress.")
+        if (session.state == ChatState.AWAITING_YOU) return@synchronized refuse(session, ANSWER_FIRST)
+        if (session.state == ChatState.RESPONDING) return@synchronized refuse(session, "Wait for the reply to finish, or stop it, before switching.")
+        if (session.state == ChatState.HANDING_OVER) return@synchronized refuse(session, "Another switch is still in progress.")
         val to = args.to.runtimeId
         if (to !in runtimes) { session.notice = missing(to); return@synchronized view(session) }
         val from = args.from
-        val canSummarize = from != null && from.runtimeId in runtimes && session.record.conversations[from.runtimeId] != null
+        // A member that only worked here has spoken too: its summary comes from its talk-only runtime, from the transcript.
+        val canSummarize = from != null && from.runtimeId in runtimes &&
+            (session.record.conversations[from.runtimeId] != null || session.record.workConversations[from.runtimeId] != null)
         val plan = Handovers.plan(session.record, from, args.to, canSummarize)
         if (plan is HandoverPlan.Record && (to in session.ready || plan.method == HandoverMethod.SAME_CONVERSATION)) {
             record(session, args, plan.method, null, plan.context)
@@ -191,7 +278,8 @@ internal class DesktopChat(
             handover.from?.let { runtimes[it]?.release() }
             return@synchronized view(session)
         }
-        if (session.state != ChatState.RESPONDING) return@synchronized view(session)
+        if (session.state != ChatState.RESPONDING && session.state != ChatState.AWAITING_YOU) return@synchronized view(session)
+        // A pending dialog is denied: the start of work by its cancel, an approval by the runtime's stop.
         val turn = session.turn
         end(session, ChatState.CANCELLED, "Reply stopped.", release = turn == null)
         turn?.stop()
@@ -207,6 +295,9 @@ internal class DesktopChat(
     override suspend fun closeSession(scope: ChatScope) = synchronized(gate) {
         if (active?.scope == scope) invalidateLocked(keepEnded = false)
         if (ended?.first == scope) ended = null
+        // The conversation's start-of-work confirmations end with its lease.
+        work?.startOfWork?.forget(scope.sessionId)
+        Unit
     }
 
     /** Called when the document or provider login changes. A still-open view reads why and can reconnect. */
@@ -217,48 +308,64 @@ internal class DesktopChat(
 
     private fun current(scope: ChatScope): Session = checkNotNull(active?.takeIf { !closed && it.scope == scope }) { "Chat view expired" }
     private fun live(session: Session, generation: Int = session.generation) = !closed && active === session && generation == session.generation
-    private fun view(session: Session) = ChatSnapshot(session.state, session.record.entries, session.notice, speech.status(), session.failure)
+    private fun view(session: Session) = ChatSnapshot(session.state, session.record.entries,
+        session.refusal?.takeIf { it.first == session.state }?.second ?: session.notice, speech.status(), session.failure,
+        session.waiting?.takeIf { session.state == ChatState.AWAITING_YOU })
+
+    /** A refusal: no change, and its notice stays in every snapshot until the chat's state changes. */
+    private fun refuse(session: Session, notice: String): ChatSnapshot {
+        session.refusal = session.state to notice
+        return view(session)
+    }
 
     /** Check the member's runtime once per view, then start the reply. A turn that outlived its view is ended at once. */
     private fun startTurn(session: Session, generation: Int, turn: InFlight, retried: Boolean) {
         val member = turn.member
         val kind = member.runtimeId
+        val folder = synchronized(gate) { turn.work }
+        val worker = folder?.let { workers.getValue(kind) }
         val runtime = runtimes.getValue(kind)
         synchronized(gate) { if (live(session, generation)) session.used += kind }
         // Nothing reached the runtime, but the message stays, unanswered, for a retry.
-        if (!ready(session, generation, runtime) { readiness ->
+        if (!ready(session, generation, kind, worker?.let { it::readiness } ?: runtime::readiness) { readiness ->
             fail(session, if (readiness == Readiness.SignedOut) ChatFailureKind.SIGNED_OUT else ChatFailureKind.UNAVAILABLE, null,
                 notReadyState(readiness), notReadyNotice(kind, readiness), release = false)
         }) return
         val request = synchronized(gate) {
             check(live(session, generation))
             val record = session.record
-            TurnRequest(session.scope.profile, session.scope.companionId, session.persona, member.modelId,
+            val scope = session.scope
+            if (folder == null) TurnRequest(scope.profile, scope.companionId, session.persona, member.modelId,
                 conversation = record.conversations[kind], context = Handovers.owedTo(record, kind), text = turn.text)
+            else TurnRequest(scope.profile, scope.companionId, Persona.working(scope.name), member.modelId,
+                conversation = record.workConversations[kind], context = Handovers.workContext(record, kind, session.beforeTurn), text = turn.text,
+                work = WorkScope(folder.path, scope.sessionId, scope.name, member))
         }
-        val handle = runtime.startTurn(request, Reply(session, generation, turn, request, retried))
+        val reply = Reply(session, generation, turn, request, retried)
+        val handle = worker?.startTurn(request, reply) ?: runtime.startTurn(request, reply)
         val stale = synchronized(gate) {
             val current = live(session, generation)
-            if (current && session.state == ChatState.RESPONDING) session.turn = handle
+            // A working turn may already wait on an approval; Stop must still reach it.
+            if (current && (session.state == ChatState.RESPONDING || session.state == ChatState.AWAITING_YOU)) session.turn = handle
             !current
         }
-        if (stale) runtime.release()
+        if (stale) worker?.release() ?: runtime.release()
     }
 
-    /** True once [runtime] is ready for this view; otherwise [notReady] runs with the gate held, while the work is still current. */
-    private fun ready(session: Session, generation: Int, runtime: ChatRuntime, notReady: (Readiness) -> Unit): Boolean {
-        if (synchronized(gate) { runtime.id in session.ready }) return true
-        val readiness = runtime.readiness(session.scope.profile)
+    /** True once runtime [id] is ready for this view; otherwise [notReady] runs with the gate held, while the work is still current. */
+    private fun ready(session: Session, generation: Int, id: RuntimeId, readiness: (String) -> Readiness, notReady: (Readiness) -> Unit): Boolean {
+        if (synchronized(gate) { id in session.ready }) return true
+        val answer = readiness(session.scope.profile)
         return synchronized(gate) {
             if (!live(session, generation)) return@synchronized false
-            if (readiness == Readiness.Ready) { session.ready += runtime.id; true } else { notReady(readiness); false }
+            if (answer == Readiness.Ready) { session.ready += id; true } else { notReady(answer); false }
         }
     }
 
     /** Check the incoming runtime, run the planned summary, and record the handover, unless it was cancelled. */
     private fun handOver(session: Session, generation: Int, args: ChatHandover, plan: HandoverPlan) {
         val to = args.to.runtimeId
-        if (!ready(session, generation, runtimes.getValue(to)) { restore(session, notReadyNotice(to, it)) }) return
+        if (!ready(session, generation, to, runtimes.getValue(to)::readiness) { restore(session, notReadyNotice(to, it)) }) return
         val (method, summary, context) = when (plan) {
             is HandoverPlan.Record -> Triple(plan.method, null, plan.context)
             is HandoverPlan.Summarize -> {
@@ -280,7 +387,9 @@ internal class DesktopChat(
 
     /** Write the handover entry and what the incoming runtime is owed; the chat is then ready for `to`. */
     private fun record(session: Session, args: ChatHandover, method: HandoverMethod, summary: String?, context: String?) {
-        val entry = Handovers.entry(args.from, args.to, method, args.reason, summary, id = args.requestId)
+        // A summary from a member that worked carries its work log; a recent-messages handover carries the last one there was.
+        val workLog = args.from?.takeIf { method == HandoverMethod.SUMMARY }?.let { Handovers.workLog(session.record.entries, it) }
+        val entry = Handovers.entry(args.from, args.to, method, args.reason, summary, id = args.requestId, workLog = workLog)
         session.record = Handovers.handover(session.record, entry, context)
         session.handover = null; session.state = ChatState.READY; session.notice = null
         runCatching { session.history.write(session.record) }.onFailure {
@@ -299,20 +408,28 @@ internal class DesktopChat(
     private inner class Reply(val session: Session, val generation: Int, val turn: InFlight, val request: TurnRequest, val retried: Boolean) : TurnEvents {
         private val member = turn.member
         private val kind = member.runtimeId
-        private fun open() = live(session, generation) && session.state == ChatState.RESPONDING
-        /** This turn's conversation, with the persona it ran with. */
-        private fun keep(conversation: String) = session.record.conversations + (kind to NativeConversation(conversation, request.persona.hash))
+        private val working = request.work != null
+        private fun open() = live(session, generation) && (session.state == ChatState.RESPONDING || session.state == ChatState.AWAITING_YOU)
+        /** The record with this turn's conversation (its talk or its working one), with the persona it ran with. */
+        private fun keep(record: ChatRecord, conversation: String): ChatRecord {
+            val kept = NativeConversation(conversation, request.persona.hash, playerLogin = true)
+            return if (working) record.copy(workConversations = record.workConversations + (kind to kept))
+                else record.copy(conversations = record.conversations + (kind to kept))
+        }
 
         /** Saved before the reply ends, so a stopped turn keeps the conversation it started. */
         override fun opened(conversation: String) = synchronized(gate) {
             if (!open()) return@synchronized
-            session.record = session.record.copy(conversations = keep(conversation))
+            session.record = keep(session.record, conversation)
             runCatching { session.history.write(session.record) }.onFailure { end(session, ChatState.ERROR, couldNotComplete(kind)) }
         }
 
-        /** What this runtime was owed reached it with the turn, so it is owed nothing now, whatever the reply does next. */
+        /**
+         * What this runtime was owed reached it with the turn, so it is owed nothing now, whatever the
+         * reply does next. A working turn's context is worked out each time and owes nothing.
+         */
         override fun accepted() = synchronized(gate) {
-            if (!open() || request.context == null) return@synchronized
+            if (!open() || request.context == null || working) return@synchronized
             session.record = Handovers.consumed(session.record, kind)
             runCatching { session.history.write(session.record) }
             Unit
@@ -320,14 +437,25 @@ internal class DesktopChat(
 
         override fun partial(text: String) = synchronized(gate) { if (open()) updateReply(session, turn.replyId, text) }
 
+        /** Live while the work runs; the reply's entry carries what was done so far. */
+        override fun activity(activity: Activity) = synchronized(gate) { if (open() && working) updateActivity(session, turn.replyId, merged(turn, activity)) }
+
+        /** The page shows what the native dialog asks, and cannot answer it. */
+        override fun waiting(waiting: ChatWaiting?) = synchronized(gate) {
+            if (!open() || !working) return@synchronized
+            session.waiting = waiting?.let { it.copy(summary = it.summary.shortened(ChatLimits.NOTICE)) }
+            session.state = if (waiting != null) ChatState.AWAITING_YOU else ChatState.RESPONDING
+        }
+
         override fun completed(text: String, conversation: String) = synchronized(gate) {
             if (!open()) return@synchronized
             updateReply(session, turn.replyId, text)
             // Answered now, so the message is no longer unanswered and the last turn did not fail.
-            session.record = session.record.copy(conversations = keep(conversation), entries = session.record.entries.map {
+            session.record = keep(session.record, conversation).let { record -> record.copy(entries = record.entries.map {
                 if (it is ChatEntry.User && it.id == turn.userEntryId) it.copy(status = null) else it
-            })
-            session.state = ChatState.READY; session.notice = null; session.turn = null; session.inFlight = null; session.failure = null
+            }) }
+            session.state = ChatState.READY; session.notice = turn.notice; session.turn = null; session.inFlight = null; session.failure = null
+            session.waiting = null
             runCatching { session.history.write(session.record) }.onFailure {
                 session.notice = "This reply could not be saved. Keep this chat open and try again later."
             }
@@ -337,9 +465,20 @@ internal class DesktopChat(
         /** Errors keep the person's text and never send it again, except once into a new conversation when the runtime lost its own. */
         override fun failed(failure: ChatFailure) = synchronized(gate) {
             if (!open()) return@synchronized
-            if (failure == ChatFailure.ConversationLost && !retried) return@synchronized startOver()
+            if (failure == ChatFailure.ConversationLost && !retried) return@synchronized if (working) startOverWorking() else startOver()
             if (failure == ChatFailure.SignedOut) session.ready -= kind
             fail(session, failureKind(failure), (failure as? ChatFailure.UsageLimit)?.resetsAt, failureState(failure), failureNotice(kind, failure), release = false)
+        }
+
+        /** The working conversation is gone: the next try starts a new one, which hears everything before the message. */
+        private fun startOverWorking() {
+            session.record = session.record.copy(workConversations = session.record.workConversations - kind)
+            session.turn = null
+            session.state = ChatState.RESPONDING; session.waiting = null
+            updateReply(session, turn.replyId, "")
+            updateActivity(session, turn.replyId, merged(turn, Activity(emptyList(), truncated = false)))
+            runCatching { session.history.write(session.record) }
+            worker.execute { attempt(session, generation, kind) { startTurn(session, generation, turn, retried = true) } }
         }
 
         /** The runtime starts a new conversation and hears the recent messages, noted just before the person's message. */
@@ -350,6 +489,12 @@ internal class DesktopChat(
             runCatching { session.history.write(session.record) }
             worker.execute { attempt(session, generation, kind) { startTurn(session, generation, turn, retried = true) } }
         }
+    }
+
+    private fun updateActivity(session: Session, replyId: String, activity: Activity) {
+        session.record = session.record.copy(entries = session.record.entries.map {
+            if (it is ChatEntry.Assistant && it.id == replyId) it.copy(activity = activity) else it
+        })
     }
 
     private fun updateReply(session: Session, replyId: String, text: String) {
@@ -367,7 +512,8 @@ internal class DesktopChat(
             session.record = session.record.copy(entries = session.record.entries.mapNotNull {
                 when {
                     it is ChatEntry.User && it.id == turn.userEntryId -> it.copy(status = UserStatus.UNANSWERED)
-                    it is ChatEntry.Assistant && it.id == turn.replyId && it.text.isEmpty() -> null
+                    // A reply that said nothing goes, unless it already did some work: finished steps stay.
+                    it is ChatEntry.Assistant && it.id == turn.replyId && it.text.isEmpty() && it.activity?.steps.isNullOrEmpty() -> null
                     else -> it
                 }
             })
@@ -392,7 +538,9 @@ internal class DesktopChat(
     private fun end(session: Session, state: ChatState, notice: String, release: Boolean = true) {
         session.generation++; session.state = state; session.notice = notice
         session.turn = null; session.speak = false; session.handover = null; session.inFlight = null
-        if (release) session.used.forEach { runtimes[it]?.release() }
+        // A start-of-work dialog still up is denied; an approval is denied by the runtime's stop or release.
+        session.waiting = null; session.startCancel?.cancel(); session.startCancel = null
+        if (release) session.used.forEach { runtimes[it]?.release(); workers[it]?.release() }
         speech.stop()
         runCatching { session.history.write(session.record) }
     }
@@ -400,6 +548,8 @@ internal class DesktopChat(
     private fun invalidateLocked(keepEnded: Boolean) {
         val session = active; active = null
         session?.let {
+            // The conversation's start-of-work confirmations end with its view (a closed chat, another companion).
+            work?.startOfWork?.forget(it.scope.sessionId)
             // A reply cut off by the closed view leaves its message unanswered, for a retry after reconnecting.
             fail(it, null, null, ChatState.ERROR, "This chat was closed. Reconnect to continue.")
             if (keepEnded) ended = it.scope to view(it)
@@ -413,9 +563,18 @@ internal class DesktopChat(
             if (closed) return
             invalidateLocked(keepEnded = false); closed = true; ended = null; timer.shutdownNow(); worker.shutdownNow()
         }
-        try { closeInReverse(runtimes.values.toList()) } finally { speech.close() }
+        try { closeInReverse(runtimes.values.toList() + workers.values.toList()) } finally { speech.close() }
     }
 }
+
+/** Every send, retry and handover while a native dialog is up is refused with this. */
+internal const val ANSWER_FIRST = "Answer the approval first."
+
+/** How long a talk-only reply may take. */
+private const val TALK_TIMEOUT_MINUTES = 3L
+
+/** How long a working reply may take in all, waits for the person included. */
+private const val WORK_TIMEOUT_MINUTES = 30L
 
 /** The kind the page reads for a failed turn. A conversation lost twice is unexpected. */
 private fun failureKind(failure: ChatFailure) = when (failure) {

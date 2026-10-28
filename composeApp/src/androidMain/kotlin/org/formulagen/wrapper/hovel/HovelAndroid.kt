@@ -58,6 +58,7 @@ internal fun hovelBridgePacks(): List<CapabilityPack> = listOf(
     org.formulagen.wrapper.bridge.ProviderMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.PetMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.GameMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.WorkspaceMethods.pack(Capability.Unsupported),
 )
 
 /** Plays the Hovel launch and start screen, then opens [url] once the player steps inside. */

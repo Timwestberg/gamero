@@ -93,7 +93,7 @@ class DesktopChatTeamTest {
             assertEquals(entries.map { it.id }, chat.snapshot(scope).messages.map { it.id }, "Entry ids are stable across polls")
             val record = saved()
             val hash = Persona.companion("Ember").hash
-            assertEquals(mapOf(RuntimeId.CODEX to NativeConversation(thread, hash), RuntimeId.CLAUDE_CODE to NativeConversation(session, hash)), record.conversations)
+            assertEquals(mapOf(RuntimeId.CODEX to NativeConversation(thread, hash, playerLogin = true), RuntimeId.CLAUDE_CODE to NativeConversation(session, hash, playerLogin = true)), record.conversations)
             assertTrue(record.pendingContext.isEmpty())
             // Codex becomes active again without a handover (the team changed in the editor): it continues its own
             // conversation and is caught up on the reply it missed.

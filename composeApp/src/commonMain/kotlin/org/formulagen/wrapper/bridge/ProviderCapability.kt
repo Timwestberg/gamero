@@ -18,9 +18,9 @@ interface ProviderCapability {
 }
 
 /**
- * `connect` opens the provider's sign-in page in the system browser, `reopen` opens a pending one
- * again, `cancel` abandons it, `disconnect` signs out. Claude Code signs in outside Hovel, so for it
- * the four answer the status unchanged, with a message.
+ * Every action answers the connection's status. Codex and Claude Code both sign in outside Hovel,
+ * in the runtime itself (`codex login`, `claude auth login`), so `connect`, `cancel`, `reopen` and
+ * `disconnect` answer the status unchanged, with a message that names the runtime's own command.
  */
 enum class ProviderAction(val wireName: String) {
     STATUS("status"),
@@ -49,7 +49,7 @@ enum class ProviderState {
     @SerialName("error") ERROR,
 }
 
-/** One profile's connection to one runtime. Each profile keeps its own Codex sign-in; every profile shares the Mac's one Claude Code sign-in. */
+/** One profile's connection to one runtime. Every profile shares the person's own sign-in of each runtime on the Mac. */
 @Serializable
 data class ProviderScope(val profile: String, val runtimeId: RuntimeId)
 
@@ -88,8 +88,15 @@ data class ProviderStatus(
     init { require(providerId == runtimeId.providerId) { "A provider status names the provider of its runtime" } }
 }
 
+/**
+ * The runtimes a host offers a profile, each shown as one card. [working] lists those this host
+ * lets work in a project folder: the page offers "Works in the project" only for these, and a
+ * gated runtime is absent.
+ */
 @Serializable
-data class ProviderList(val runtimes: List<RuntimeId>)
+data class ProviderList(val runtimes: List<RuntimeId>, val working: List<RuntimeId>) {
+    init { require(runtimes.containsAll(working)) { "A working runtime is one the host offers" } }
+}
 
 /** One model a team member may use: the runtime's own [displayName], and whether it is the runtime's default. */
 @Serializable

@@ -51,6 +51,7 @@ class DesktopChatTest {
             calls += method; this.params += params
             return when(method) {
                 "account/read" -> { beforeAccount(); if (connected) json("""{"account":{"type":"chatgpt"}}""") else json("""{"account":null}""") }
+                "config/read" -> json("""{"config":{}}""")
                 "thread/resume" -> { if (resumeRejected) throw CodexRequestRejected(); json("""{"thread":{"id":"$thread"}}""") }
                 "thread/start" -> { if (resumeRejected) thread = freshThreadId; json("""{"thread":{"id":"$thread"}}""") }
                 "turn/start" -> {
@@ -64,7 +65,6 @@ class DesktopChatTest {
             put("threadId", thread); put("turnId", turn); put("itemId", "message"); put("delta", text)
         })
         fun complete() = notify("turn/completed", json("""{"threadId":"$thread","turn":{"id":"turn-1","status":"completed"}}"""))
-        override fun loginResult(loginId: String): Boolean? = null
         override fun close() { onClose(); closed = true }
     }
     private fun json(value: String) = Json.parseToJsonElement(value).jsonObject
@@ -143,7 +143,7 @@ class DesktopChatTest {
         fun rpcs() = all
         chat(root, Speech()) { receive -> Rpc(receive).also { rpc=it; all += it; it.connected=false } }.use { chat ->
             val a=scope(); chat.open(a); chat.send(send(a)); await { state(chat,a).state==ChatState.DISCONNECTED }
-            assertEquals("Connect Codex in Profile → Providers to message your companion.", chat.snapshot(a).notice)
+            assertEquals("Sign in to Codex again: run `codex login` in Terminal.", chat.snapshot(a).notice)
             // Nothing reached Codex: the message stays, unanswered, with why; a resend checks the account again.
             val failed = chat.snapshot(a)
             assertEquals(UserStatus.UNANSWERED, (failed.messages.last() as ChatEntry.User).status)
@@ -173,7 +173,7 @@ class DesktopChatTest {
             chat.send(send(again, false, text = "Still there?")); await { rpcs.size == 2 && rpcs.last().calls.contains("turn/start") }
             // A view's first send checks the account and the turn confirms it before any thread call. Codex no longer has
             // the thread, so the turn starts over in a new one, which hears the recent messages.
-            assertEquals(listOf("account/read", "account/read", "thread/resume", "account/read", "thread/start", "turn/start"), rpcs.last().calls.toList())
+            assertEquals(listOf("account/read", "account/read", "config/read", "thread/resume", "account/read", "config/read", "thread/start", "turn/start"), rpcs.last().calls.toList())
             val turn = rpcs.last().params.last()
             assertEquals(JsonPrimitive(freshThreadId), turn["threadId"])
             assertEquals("Earlier in this conversation (the most recent messages):\n<<<\nPerson: Hello\n>>>\n\nStill there?",
@@ -190,22 +190,32 @@ class DesktopChatTest {
         }
     }
 
-    @Test fun aConversationFromBeforeTeamsResumesItsCodexThread() = runBlocking {
+    @Test fun aConversationFromBeforeTeamsMovesHereAndStartsFreshOnThePlayersCodexLogin() = runBlocking {
         val root = Files.createTempDirectory("chat-migrate"); val rpcs = CopyOnWriteArrayList<Rpc>()
         val a = scope()
-        val legacy = root.resolve("local/codex/companion-chats/${a.companionId}.json")
+        val oldHome = root.resolve("local/codex")
+        val legacy = oldHome.resolve("companion-chats/${a.companionId}.json")
         Files.createDirectories(legacy.parent)
+        Files.writeString(oldHome.resolve("auth-marker"), "the old login")
         Files.writeString(legacy, """{"threadId":"$threadId","messages":[{"id":"${UUID.randomUUID()}","role":"user","text":"Hi"},{"id":"${UUID.randomUUID()}","role":"assistant","text":"Hello again"}]}""")
-        chat(root, Speech()) { receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
+        chat(root, Speech()) { receive -> Rpc(receive).also { rpcs += it; it.thread = freshThreadId } }.use { chat ->
             chat.open(a); await { state(chat,a).state == ChatState.READY }
             assertEquals(listOf("Hi", "Hello again"), chat.snapshot(a).messages.map { it.text })
+            // Hovel's own record moves out; the old home and everything else in it stay as they were.
             assertFalse(Files.exists(legacy))
-            chat.send(send(a, false)); await { rpcs.isNotEmpty() && rpcs[0].calls.contains("turn/start") }
-            assertEquals(JsonPrimitive(threadId), rpcs[0].params[rpcs[0].calls.indexOf("thread/resume")]["threadId"])
+            assertEquals("the old login", Files.readString(oldHome.resolve("auth-marker")))
+            chat.send(send(a, false, text = "Still there?")); await { rpcs.isNotEmpty() && rpcs[0].calls.contains("turn/start") }
+            // The thread lives in the old per-profile home, so it is never resumed: a new one hears the recent messages.
+            assertFalse(rpcs[0].calls.contains("thread/resume"))
+            assertEquals("Earlier in this conversation (the most recent messages):\n<<<\nPerson: Hi\nCompanion: Hello again\n>>>\n\nStill there?",
+                rpcs[0].params.last().getValue("input").jsonArray.single().jsonObject.getValue("text").jsonPrimitive.content)
             rpcs[0].complete(); await { state(chat,a).state == ChatState.READY }
-            // The first reply records the persona the migrated thread now runs with.
             val saved = ChatHistory(root.resolve("local/companion-chats/${a.companionId}.json")).read()
-            assertEquals(NativeConversation(threadId, Persona.companion("Ember").hash), saved.conversations[RuntimeId.CODEX])
+            assertEquals(NativeConversation(freshThreadId, Persona.companion("Ember").hash, playerLogin = true), saved.conversations[RuntimeId.CODEX])
+            // The conversation notes the fresh start, as the host's own note, just before the message it answers.
+            val note = saved.entries.filterIsInstance<ChatEntry.Handover>().single()
+            assertEquals(listOf(codex, codex, HandoverMethod.RECENT_MESSAGES, HandoverReason.HOST), listOf(note.from, note.to, note.method, note.reason))
+            assertEquals(listOf("user", "assistant", "handover", "user", "assistant"), saved.entries.map { it::class.simpleName!!.lowercase() })
         }
     }
 
@@ -262,7 +272,7 @@ class DesktopChatTest {
             await { rpcs[0].closed }
             assertEquals(ChatState.READY, chat.snapshot(a).state)
             chat.send(send(a, false)); await { rpcs.size == 2 && rpcs[1].calls.contains("turn/start") }
-            assertEquals(listOf("account/read", "thread/resume", "turn/start"), rpcs[1].calls.toList())
+            assertEquals(listOf("account/read", "config/read", "thread/resume", "turn/start"), rpcs[1].calls.toList())
             assertEquals(1, rpcs[0].calls.count { it == "turn/start" })
         }
     }
@@ -334,7 +344,7 @@ class DesktopChatTest {
             assertEquals(ChatState.READY, chat.snapshot(a).state); assertEquals("Hello", chat.snapshot(a).messages.last().text)
 
             chat.send(send(a, false)); await { runtime.events.size == 2 }
-            assertEquals(NativeConversation(threadId, Persona.companion("Ember").hash), runtime.requests[1].conversation)
+            assertEquals(NativeConversation(threadId, Persona.companion("Ember").hash, playerLogin = true), runtime.requests[1].conversation)
             runtime.events[1].partial("Partial"); runtime.events[1].failed(ChatFailure.ConversationLost)
             await { runtime.events.size == 3 }
             assertNull(runtime.requests[2].conversation); assertEquals("Hello", runtime.requests[2].text)
@@ -370,7 +380,7 @@ class DesktopChatTest {
             chat.send(send(a, false)); await { runtime.events.size == 6 }
             runtime.events[5].failed(ChatFailure.SignedOut)
             assertEquals(ChatState.DISCONNECTED, chat.snapshot(a).state)
-            assertEquals("Connect Codex in Profile → Providers to message your companion.", chat.snapshot(a).notice)
+            assertEquals("Sign in to Codex again: run `codex login` in Terminal.", chat.snapshot(a).notice)
             // Every failed send keeps the person's message.
             assertEquals(5, chat.snapshot(a).messages.count { it is ChatEntry.User })
         }

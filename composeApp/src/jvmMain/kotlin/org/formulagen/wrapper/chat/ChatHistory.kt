@@ -11,11 +11,12 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.formulagen.wrapper.bridge.ChatEntry
 import org.formulagen.wrapper.bridge.ChatLimits
+import org.formulagen.wrapper.bridge.Activity
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
 import org.formulagen.wrapper.bridge.TeamMember
-import org.formulagen.wrapper.providers.codexProfileHome
+import org.formulagen.wrapper.providers.legacyCodexProfileHome
 
 /**
  * One companion's conversation for one profile, shared by every runtime on its team (version 2).
@@ -30,6 +31,11 @@ internal data class ChatRecord(
     val entries: List<ChatEntry> = emptyList(),
     /** Handover text each runtime is owed for its next turn, independent of the visible history. */
     val pendingContext: Map<RuntimeId, String> = emptyMap(),
+    /**
+     * Each runtime's working conversation (Claude Code's working session, Codex's working thread),
+     * apart from its talk-only one: the two run with different personas and abilities.
+     */
+    val workConversations: Map<RuntimeId, NativeConversation> = emptyMap(),
 )
 
 /** Longest handover text a runtime is owed: recent messages (8,000 characters) or a summary, with their framing. */
@@ -53,25 +59,48 @@ internal class ChatHistory(private val file: Path, private val legacy: Path? = n
         return migrated
     }
 
-    /** Replace only after the complete new record has been written privately. */
+    /** Replace only after the complete new record has been written privately, always small enough to [read] back. */
     fun write(record: ChatRecord) {
+        val text = fitted(record)
         Files.createDirectories(file.parent)
         Files.setPosixFilePermissions(file.parent, PosixFilePermissions.fromString("rwx------"))
         val temp = Files.createTempFile(file.parent, ".chat-", ".tmp",
             PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))
         try {
-            Files.writeString(temp, historyJson.encodeToString(record))
+            Files.writeString(temp, text)
             Files.move(temp, file, ATOMIC_MOVE, REPLACE_EXISTING)
         } finally { Files.deleteIfExists(temp) }
     }
 }
 
-/** A companion's history for [profile]: `<providers root>/<profile>/companion-chats/<companionId>.json`, migrating from Codex's folder. */
+/**
+ * [record] as written, within [MAX_RECORD_BYTES] so it can always be read back: working replies'
+ * step details go first, oldest reply first, then their steps (the reply keeps an empty, truncated
+ * activity, so it still reads as work). Fails only when the messages alone do not fit.
+ */
+internal fun fitted(record: ChatRecord, limit: Int = MAX_RECORD_BYTES): String {
+    var current = record
+    fun encoded() = historyJson.encodeToString(current).takeIf { it.toByteArray().size <= limit }
+    encoded()?.let { return it }
+    val worked = record.entries.withIndex().filter { (it.value as? ChatEntry.Assistant)?.activity != null }.map { it.index }
+    fun trim(index: Int, trim: (Activity) -> Activity) {
+        val reply = current.entries[index] as ChatEntry.Assistant
+        current = current.copy(entries = current.entries.toMutableList().also { it[index] = reply.copy(activity = trim(checkNotNull(reply.activity))) })
+    }
+    for (index in worked) { trim(index) { it.copy(steps = it.steps.map { step -> step.copy(detail = null) }) }; encoded()?.let { return it } }
+    for (index in worked) { trim(index) { Activity(emptyList(), truncated = true) }; encoded()?.let { return it } }
+    error("Chat record too large")
+}
+
+/**
+ * A companion's history for [profile]: `<providers root>/<profile>/companion-chats/<companionId>.json`,
+ * runtime-neutral, migrating a version 1 record from Hovel's old per-profile Codex home.
+ */
 internal fun companionChatHistory(providerRoot: Path, profile: String, companionId: String): ChatHistory {
     require(SharedRules.isProfileId(profile)) { "Invalid profile" }
     val name = "${UUID.fromString(companionId)}.json"
     return ChatHistory(providerRoot.resolve(profile).resolve("companion-chats").resolve(name),
-        legacy = codexProfileHome(providerRoot, profile).resolve("companion-chats").resolve(name))
+        legacy = legacyCodexProfileHome(providerRoot, profile).resolve("companion-chats").resolve(name))
 }
 
 private const val MAX_RECORD_BYTES = 3_000_000
@@ -84,7 +113,7 @@ private val historyJson = Json { encodeDefaults = true; ignoreUnknownKeys = true
 
 private fun ChatRecord.validated(): ChatRecord = also { record ->
     require(record.version == 2 && record.entries.size <= ChatLimits.HISTORY)
-    record.conversations.values.forEach { require(UUID.fromString(it.id).toString() == it.id && PERSONA_HASH.matches(it.personaHash)) }
+    (record.conversations.values + record.workConversations.values).forEach { require(UUID.fromString(it.id).toString() == it.id && PERSONA_HASH.matches(it.personaHash)) }
     record.entries.forEach { entry ->
         UUID.fromString(entry.id)
         when (entry) {
