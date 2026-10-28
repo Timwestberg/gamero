@@ -54,11 +54,7 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
         Files.createFile(output, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
             java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")))
         run {
-            // v1 is deliberately read-only. builder() adds the ChatGPT-only login and environment rules.
-            val command = listOf("-a", "never", "exec", "--ignore-user-config", "--ephemeral",
-                "--sandbox", "read-only", "--skip-git-repo-check", "--color", "never",
-                "--output-last-message", output.toString(), "-")
-            val process = builder(command).redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            val process = builder(codexExecArguments(request, output)).redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .redirectError(ProcessBuilder.Redirect.DISCARD).start()
             val descendants = mutableSetOf<ProcessHandle>()
             try {
@@ -66,7 +62,7 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
                 val writer = Thread.ofPlatform().daemon().start {
                     try {
                         process.outputStream.bufferedWriter().use {
-                            it.write("Platform-owned character context (user-authored):\n${request.context}\n\nUser task:\n${request.prompt}")
+                            it.write(providerPrompt(request))
                         }
                     } catch (error: Exception) { inputFailure.set(error) }
                 }
@@ -92,4 +88,30 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
     internal fun builder(arguments: List<String>): ProcessBuilder = codexHome?.let {
         CodexRuntime(executable, it).also { runtime -> runtime.prepare() }.builder(arguments, workspace)
     } ?: codexProcess(executable, arguments, workspace)
+}
+
+/**
+ * The text a provider is given on stdin. A task's is byte for byte event-contracts `hovelProviderPrompt`:
+ * the character section, then recalled memory when there is some, then the task (pinned by
+ * HovelProviderPromptTest). A memory job's input is already the whole text.
+ */
+internal fun providerPrompt(request: ExecutionRequest): String =
+    if (request.extraction != null) request.prompt
+    else "Platform-owned character context (user-authored):\n${request.context}\n\n" +
+        request.recalledMemory?.let { "$it\n\n" }.orEmpty() + "User task:\n${request.prompt}"
+
+/**
+ * Arguments for `codex exec`; [CodexCliProvider.builder] adds the ChatGPT-only login and environment
+ * rules in front. Deliberately read-only. A task runs on Codex's own model and effort; a memory job
+ * names its model (`exec -m`) and effort (`model_reasoning_effort`) unless they are `runtime-default`.
+ */
+internal fun codexExecArguments(request: ExecutionRequest, output: Path): List<String> {
+    val choice = request.extraction?.also { require(it.isValid()) { "Memory job model or effort is invalid" } }
+    val effort = choice?.effort?.takeIf { it != ProviderChoice.RUNTIME_DEFAULT }
+    val model = choice?.model?.takeIf { it != ProviderChoice.RUNTIME_DEFAULT }
+    return listOf("-a", "never") +
+        (if (effort != null) listOf("-c", "model_reasoning_effort=\"$effort\"") else emptyList()) +
+        listOf("exec") + (if (model != null) listOf("-m", model) else emptyList()) +
+        listOf("--ignore-user-config", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check",
+            "--color", "never", "--output-last-message", output.toString(), "-")
 }

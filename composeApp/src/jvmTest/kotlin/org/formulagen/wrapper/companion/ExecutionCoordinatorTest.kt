@@ -138,4 +138,35 @@ class ExecutionCoordinatorTest {
             assertEquals(record, journal.read(record.request.id))
         }
     }
+
+    @Test fun aRecordWithoutMemoryKeepsTheShapeAnOlderCompanionReads() {
+        val dir = Files.createTempDirectory("journal")
+        val task = request()
+        ExecutionJournal(dir, host).use { it.prepare(task) }
+        val text = Files.readString(dir.resolve("${task.id}.json"))
+        assertFalse(text.contains("recalledMemory") || text.contains("extraction"))
+        // A record an older companion wrote reads back unchanged.
+        val older = """{"request":{"id":"${task.id}","hostId":"$host","prompt":"${task.prompt}","context":"Ada"},"claimId":"${UUID.randomUUID()}","phase":"PREPARED","result":null}"""
+        Files.writeString(dir.resolve("${task.id}.json"), older)
+        ExecutionJournal(dir, host).use { assertEquals(task, it.read(task.id)?.request) }
+    }
+
+    @Test fun recalledMemoryAndMemoryJobsStayWithinTheirLimits() {
+        ExecutionJournal(Files.createTempDirectory("journal"), host).use { journal ->
+            fun request(recalled: String? = null, choice: ProviderChoice? = null, context: String = "") =
+                ExecutionRequest(UUID.randomUUID().toString(), host, "Extract", context, recalled, choice)
+            val recalled = journal.prepare(request(recalled = "n".repeat(ExecutionRequest.MAX_RECALLED_MEMORY_CHARS)))
+            assertEquals(recalled, journal.read(recalled.request.id))
+            assertFails { journal.prepare(request(recalled = "n".repeat(ExecutionRequest.MAX_RECALLED_MEMORY_CHARS + 1))) }
+            assertFails { journal.prepare(request(recalled = "")) }
+            val job = journal.prepare(request(choice = ProviderChoice("runtime-default", "low")))
+            assertEquals(job, journal.read(job.request.id))
+            assertFails { journal.prepare(request(choice = ProviderChoice("-c", "low"))) }
+            assertFails { journal.prepare(request(choice = ProviderChoice("runtime-default", "max"))) }
+            assertFails { journal.prepare(request(choice = ProviderChoice("m".repeat(ProviderChoice.MAX_MODEL_CHARS + 1), "low"))) }
+            // A memory job runs its input alone.
+            assertFails { journal.prepare(request(choice = ProviderChoice("runtime-default", "low"), context = "Ada")) }
+            assertFails { journal.prepare(request(recalled = "notes", choice = ProviderChoice("runtime-default", "low"))) }
+        }
+    }
 }

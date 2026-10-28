@@ -99,10 +99,17 @@ class HovelCompanion(
                         if (session == null) {
                             val transport = HovelHttpTransport(URI("$origin/api/hovel/v1/hovel"), registered.ownerId, registered.id, token)
                             val journal = ExecutionJournal(directory.resolve("journal-${registered.id}"), registered.id)
+                            var memoryJournal: ExecutionJournal? = null
                             try {
-                                val provider = CodexCliProvider(executable, workspace, directory.resolve("output-${registered.id}"), codexHomeForOwner?.invoke(registered.ownerId))
-                                session = HovelHostSession(registered.id, journal, provider, transport) { status = it }.also { it.start() }
-                            } catch (error: Exception) { journal.close(); throw error }
+                                // Memory jobs keep their own journal and output, so one may run beside a task.
+                                val memoryJobs = ExecutionJournal(directory.resolve("memory-journal-${registered.id}"), registered.id)
+                                memoryJournal = memoryJobs
+                                val home = codexHomeForOwner?.invoke(registered.ownerId)
+                                val provider = CodexCliProvider(executable, workspace, directory.resolve("output-${registered.id}"), home)
+                                val memoryProvider = CodexCliProvider(executable, workspace, directory.resolve("memory-output-${registered.id}"), home)
+                                session = HovelHostSession(registered.id, journal, provider, memoryJobs, memoryProvider, provider::readiness, transport) { status = it }
+                                    .also { it.start() }
+                            } catch (error: Exception) { journal.close(); memoryJournal?.close(); throw error }
                         }
                     }
                     buildJsonObject { put("id", registered.id); put("connected", true) }

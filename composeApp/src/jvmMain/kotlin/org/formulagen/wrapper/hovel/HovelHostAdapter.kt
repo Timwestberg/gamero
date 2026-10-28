@@ -27,8 +27,9 @@ class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val
         endpoint = base.toASCIIString().trimEnd('/') + "/native/$ownerId/$hostId/"
     }
     override fun post(route: String, body: JsonObject): JsonObject {
-        require(route in setOf("heartbeat", "claim", "progress") || (brainEnabled && route in setOf(
-            "brain/admit", "brain/authorize", "brain/outcome", "brain/presentation-claim", "brain/presentation")))
+        require(route in setOf("heartbeat", "claim", "progress", "memory/claim", "memory/progress", "memory/consolidate") ||
+            (brainEnabled && route in setOf(
+                "brain/admit", "brain/authorize", "brain/outcome", "brain/presentation-claim", "brain/presentation")))
         val request = HttpRequest.newBuilder(URI(endpoint + route)).timeout(Duration.ofSeconds(15))
             .header("Content-Type", "application/json").header("X-Hovel-Host-Token", token)
             .POST(HttpRequest.BodyPublishers.ofString(body.toString())).build()
@@ -42,15 +43,24 @@ class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val
     }
 }
 
-/** Hovel-specific revision protocol; launch decisions remain in the generic journal. */
-class HovelTaskRemote(private val transport: HovelTransport, initial: JsonObject) : ExecutionRemote {
-    private var task = initial
+/**
+ * Hovel's revision protocol for one claimed item: claim with the journal's claim ID, then report each
+ * state at the revision last seen. Launch decisions remain in the generic journal.
+ */
+abstract class HovelRevisionRemote(private val transport: HovelTransport, initial: JsonObject) : ExecutionRemote {
+    private var item = initial
+    protected abstract val claimRoute: String
+    protected abstract val progressRoute: String
+    /** The key naming the item in a claim or report: `taskId` or `jobId`. */
+    protected abstract val idKey: String
+    protected abstract fun idOf(item: JsonObject): String
+
     override fun claim(record: ExecutionRecord) {
-        task = transport.post("claim", buildJsonObject {
-            put("taskId", record.request.id); put("claimId", record.claimId)
+        item = transport.post(claimRoute, buildJsonObject {
+            put(idKey, record.request.id); put("claimId", record.claimId)
         })
-        require(task.getValue("request").jsonObject.getValue("id").jsonPrimitive.content == record.request.id)
-        require(task.getValue("progress").jsonObject.getValue("claimId").jsonPrimitive.content == record.claimId)
+        require(idOf(item) == record.request.id)
+        require(item.getValue("progress").jsonObject.getValue("claimId").jsonPrimitive.content == record.claimId)
     }
     override fun running(record: ExecutionRecord) = progress(record, "running", null)
     override fun publish(record: ExecutionRecord, preview: String) {
@@ -62,23 +72,57 @@ class HovelTaskRemote(private val transport: HovelTransport, initial: JsonObject
         }
         progress(record, state, preview)
     }
-    private fun progress(record: ExecutionRecord, state: String, text: String?) {
-        val current = task.getValue("progress").jsonObject
+    protected fun progress(record: ExecutionRecord, state: String, text: String?) {
+        val current = item.getValue("progress").jsonObject
         require(current.getValue("claimId").jsonPrimitive.content == record.claimId) { "Server claim differs; reconcile manually" }
         val payload = buildJsonObject {
             put("state", state); put("claimId", record.claimId)
             if (text != null) put(if (state == "succeeded") "result" else "error", text)
         }
-        task = transport.post("progress", buildJsonObject {
-            put("taskId", record.request.id)
-            put("expectedRevision", task.getValue("revision").jsonPrimitive.int)
+        item = transport.post(progressRoute, buildJsonObject {
+            put(idKey, record.request.id)
+            put("expectedRevision", item.getValue("revision").jsonPrimitive.int)
             put("progress", payload)
         })
     }
 }
 
-/** What this companion can run, declared on every heartbeat. The server sends follow-ups only to a computer that lists `provider-input`. */
-val HOVEL_HOST_FEATURES = listOf("provider-input")
+/** A user task on the task routes. */
+class HovelTaskRemote(transport: HovelTransport, initial: JsonObject) : HovelRevisionRemote(transport, initial) {
+    override val claimRoute = "claim"
+    override val progressRoute = "progress"
+    override val idKey = "taskId"
+    override fun idOf(item: JsonObject) = item.getValue("request").jsonObject.getValue("id").jsonPrimitive.content
+}
+
+/**
+ * A memory job on the `memory/*` routes. The server closes a job that was replaced or taken back and
+ * answers 409 to its reports, so the job stops there and is never offered again.
+ */
+class HovelMemoryJobRemote(transport: HovelTransport, initial: JsonObject) : HovelRevisionRemote(transport, initial) {
+    override val claimRoute = "memory/claim"
+    override val progressRoute = "memory/progress"
+    override val idKey = "jobId"
+    override fun idOf(item: JsonObject) = item.getValue("id").jsonPrimitive.content
+
+    /** A successful result longer than the server takes is reported failed, never cut short into broken JSON. */
+    override fun publish(record: ExecutionRecord, preview: String) {
+        val length = record.result.orEmpty().length
+        if (record.phase == ExecutionPhase.SUCCEEDED && length > HOVEL_MEMORY_JOB_OUTPUT_CHARS) {
+            progress(record, "failed", "Extraction output is $length characters; the limit is $HOVEL_MEMORY_JOB_OUTPUT_CHARS.")
+        } else super.publish(record, preview)
+    }
+}
+
+/** event-contracts `HOVEL_MEMORY_LIMITS.jobOutput`: the longest successful result a memory job reports. */
+const val HOVEL_MEMORY_JOB_OUTPUT_CHARS = 65_536
+
+/**
+ * What this companion can run, declared on every heartbeat. The server sends follow-ups only to a computer
+ * that lists `provider-input`, recalled memory only with `memory-context`, and memory jobs only with
+ * `memory-extraction`.
+ */
+val HOVEL_HOST_FEATURES = listOf("provider-input", "memory-context", "memory-extraction")
 
 fun hovelHeartbeat(providerState: String) = buildJsonObject {
     put("providerState", providerState)
@@ -91,16 +135,34 @@ fun hovelExecutionRequest(task: JsonObject, hostId: String): ExecutionRequest {
     require(request.getValue("hostId").jsonPrimitive.content == hostId)
     require(request.getValue("mode").jsonPrimitive.content == "local") { "Cloud execution is unavailable" }
     // An explicit null or a non-string is malformed, not absent: it would otherwise run as the text "null".
-    val providerInput = task["providerInput"]?.let {
-        require(it is JsonPrimitive && it.isString) { "Provider input must be text" }
-        it.content
-    }
+    val providerInput = task.optionalText("providerInput")
     val followUp = request["followUp"]?.also { require(it is JsonObject) { "Follow-up must be an object" } }
     // The contract pairs them; one without the other would run a reply without its conversation.
     require((followUp == null) == (providerInput == null)) { "Follow-up and its provider input must arrive together" }
     val prompt = providerInput ?: request.getValue("prompt").jsonPrimitive.content
     return ExecutionRequest(request.getValue("id").jsonPrimitive.content, hostId, prompt,
-        task.getValue("characterMemory").jsonPrimitive.content)
+        task.getValue("characterMemory").jsonPrimitive.content, recalledMemory = task.optionalText("recalledMemory"))
+}
+
+/** The kind and provider of memory job this companion runs. Others are left for a companion that can. */
+fun isRunnableMemoryJob(job: JsonObject) =
+    job["kind"] == JsonPrimitive("extract") && job["providerId"] == JsonPrimitive("codex")
+
+/** A memory job runs its server-built `input` alone, with no character section, on the job's own model and effort. */
+fun hovelMemoryJobRequest(job: JsonObject, hostId: String): ExecutionRequest {
+    require(job.getValue("hostId").jsonPrimitive.content == hostId) { "Memory job belongs to another computer" }
+    require(isRunnableMemoryJob(job)) { "This companion runs only Codex extraction jobs" }
+    val choice = ProviderChoice(job.text("model"), job.text("effort"))
+    require(choice.isValid()) { "Memory job model or effort is invalid" }
+    return ExecutionRequest(job.text("id"), hostId, job.text("input"), extraction = choice)
+}
+
+private fun JsonObject.text(key: String): String = optionalText(key) ?: error("$key is missing")
+
+/** A string field, or null when absent. An explicit null or a non-string is malformed. */
+private fun JsonObject.optionalText(key: String): String? = this[key]?.let {
+    require(it is JsonPrimitive && it.isString) { "$key must be text" }
+    it.content
 }
 
 /** Complete-body timeout belongs to the exchange future; this subscriber bounds memory. */

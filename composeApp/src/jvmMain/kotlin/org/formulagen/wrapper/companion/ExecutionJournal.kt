@@ -1,5 +1,7 @@
 package org.formulagen.wrapper.companion
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.nio.ByteBuffer
@@ -12,12 +14,43 @@ import java.nio.file.StandardOpenOption.*
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
 
+/**
+ * What runs one request. The fields added after the first release are left out of a record
+ * while they hold their default, so a record without them reads the same in an older companion.
+ */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class ExecutionRequest(val id: String, val hostId: String, val prompt: String, val context: String = "") {
+data class ExecutionRequest(
+    val id: String,
+    val hostId: String,
+    val prompt: String,
+    val context: String = "",
+    /** Generated memory notes the server chose for a task, given to the provider in their own section. */
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val recalledMemory: String? = null,
+    /** Set only for a memory job: the provider runs [prompt] as it is, with no character section, on this model and effort. */
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val extraction: ProviderChoice? = null,
+) {
     companion object {
-        /** The longest prompt a provider is given: a Hovel follow-up's whole conversation (event-contracts `HOVEL_LIMITS.providerInput`). */
+        /** The longest prompt a provider is given: a Hovel follow-up's whole conversation (event-contracts `HOVEL_LIMITS.providerInput`), or a memory job's input (`HOVEL_MEMORY_LIMITS.jobInput`). */
         const val MAX_PROMPT_CHARS = 131_072
         const val MAX_CONTEXT_CHARS = 16_384
+        /** event-contracts `HOVEL_MEMORY_LIMITS.recalledMemory`. */
+        const val MAX_RECALLED_MEMORY_CHARS = 12_288
+    }
+}
+
+/** The model and reasoning effort a memory job runs on, fixed by the server when it made the job. */
+@Serializable
+data class ProviderChoice(val model: String, val effort: String) {
+    /** Within event-contracts `hovelMemoryExtractionModel` and `hovelMemoryExtractionEffort`, so a model is never read as a flag. */
+    fun isValid() = model.length <= MAX_MODEL_CHARS && MODEL.matches(model) && effort in EFFORTS
+
+    companion object {
+        /** Leaves the choice to Codex. */
+        const val RUNTIME_DEFAULT = "runtime-default"
+        const val MAX_MODEL_CHARS = 256
+        val EFFORTS = setOf(RUNTIME_DEFAULT, "minimal", "low", "medium", "high", "xhigh")
+        private val MODEL = Regex("[A-Za-z0-9][A-Za-z0-9._:/-]*")
     }
 }
 
@@ -59,6 +92,11 @@ class ExecutionJournal(private val directory: Path, private val hostId: String) 
         UUID.fromString(request.id)
         require(request.prompt.isNotBlank() && request.prompt.length <= ExecutionRequest.MAX_PROMPT_CHARS &&
             request.context.length <= ExecutionRequest.MAX_CONTEXT_CHARS)
+        request.recalledMemory?.let { require(it.isNotEmpty() && it.length <= ExecutionRequest.MAX_RECALLED_MEMORY_CHARS) }
+        request.extraction?.let {
+            require(it.isValid()) { "Memory job model or effort is invalid" }
+            require(request.context.isEmpty() && request.recalledMemory == null) { "A memory job runs its input alone" }
+        }
         read(request.id)?.let {
             require(it.request == request) { "Task identity has changed" }
             return it

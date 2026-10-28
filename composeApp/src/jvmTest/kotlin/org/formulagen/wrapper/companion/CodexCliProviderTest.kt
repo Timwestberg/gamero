@@ -76,6 +76,45 @@ class CodexCliProviderTest {
         assertFails { provider.execute(request) }
     }
 
+    @Test fun aTaskGetsRecalledMemoryInItsOwnSectionBetweenContextAndTask() {
+        val (provider, directory) = fixture()
+        val request = ExecutionRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(), "Open the release PR.", "Be brief.",
+            recalledMemory = "Recalled memory notes, generated from earlier tasks.\n- Uses pnpm ✅")
+        assertTrue(provider.execute(request).succeeded)
+        assertEquals("Platform-owned character context (user-authored):\nBe brief.\n\n" +
+            "Recalled memory notes, generated from earlier tasks.\n- Uses pnpm ✅\n\nUser task:\nOpen the release PR.",
+            String(Files.readAllBytes(directory.resolve("input.txt")), Charsets.UTF_8))
+        val args = Files.readAllLines(directory.resolve("arguments.txt"))
+        assertFalse(args.contains("-m") || args.any { it.startsWith("model_reasoning_effort") })
+    }
+
+    @Test fun aMemoryJobRunsItsInputAloneOnItsModelAndEffort() {
+        val (provider, directory) = fixture()
+        val input = "Extract memory notes from these exchanges.\n[t1] Request:\nFix the build."
+        val request = ExecutionRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(), input,
+            extraction = ProviderChoice("gpt-5.1-codex-mini", "low"))
+        assertEquals(ProviderResult(true, "fixture result"), provider.execute(request))
+        assertEquals(input, Files.readString(directory.resolve("input.txt")))
+        val args = Files.readAllLines(directory.resolve("arguments.txt"))
+        assertTrue(args.containsAll(listOf("--ignore-user-config", "--ephemeral", "read-only", "model_reasoning_effort=\"low\"")))
+        assertEquals("gpt-5.1-codex-mini", args[args.indexOf("-m") + 1])
+        assertTrue(args.indexOf("exec") < args.indexOf("-m"))
+    }
+
+    @Test fun onlyAMemoryJobNamesAModelOrEffort() {
+        val output = java.nio.file.Path.of("/tmp/out.txt")
+        val tail = listOf("--ignore-user-config", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check",
+            "--color", "never", "--output-last-message", "/tmp/out.txt", "-")
+        fun request(choice: ProviderChoice?) = ExecutionRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(), "x", extraction = choice)
+        // A task's command is unchanged by memory.
+        assertEquals(listOf("-a", "never", "exec") + tail, codexExecArguments(request(null), output))
+        assertEquals(listOf("-a", "never", "exec") + tail,
+            codexExecArguments(request(ProviderChoice("runtime-default", "runtime-default")), output))
+        assertEquals(listOf("-a", "never", "-c", "model_reasoning_effort=\"xhigh\"", "exec", "-m", "o4-mini") + tail,
+            codexExecArguments(request(ProviderChoice("o4-mini", "xhigh")), output))
+        assertFails { codexExecArguments(request(ProviderChoice("--profile", "low")), output) }
+    }
+
     @Test fun apiKeyLoginIsNotAdvertisedReady() {
         val (provider, directory) = fixture("Logged in using an API key")
         assertEquals(CodexCliProvider.Readiness.AUTH_REQUIRED, provider.readiness())
