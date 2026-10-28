@@ -96,7 +96,7 @@ class HovelTaskRemote(transport: HovelTransport, initial: JsonObject) : HovelRev
 }
 
 /**
- * A memory job on the `memory/*` routes. The server closes a job that was replaced or taken back and
+ * A memory job on the `memory/claim` and `memory/progress` routes. The server closes a job that was replaced or taken back and
  * answers 409 to its reports, so the job stops there and is never offered again.
  */
 class HovelMemoryJobRemote(transport: HovelTransport, initial: JsonObject) : HovelRevisionRemote(transport, initial) {
