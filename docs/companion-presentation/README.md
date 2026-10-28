@@ -74,7 +74,9 @@ Every environment variable the desktop companion path reads. The launchers take 
 | `HOVEL_VOICE_MODEL` | `spikes/ember-voice/mac/models/sherpa-onnx-pocket-tts-int8-2026-01-26` | `dev-env.sh`, `desktopVoiceConfig` | PocketTTS model folder. Missing, or sherpa-onnx not linked: voice is unavailable and chat is text only. |
 | `HOVEL_VOICE_REFERENCE` | `spikes/ember-voice/mac/models/voices/0a67_enhanced-24k.wav` | `dev-env.sh`, `desktopVoiceConfig` | Reference voice clip for spoken replies. |
 | `GAMERO_CODEX_PATH` | `codex` on `PATH`, then Homebrew, then ChatGPT.app's bundled CLI | `findCodexExecutable` | Codex for Providers, chat and the Hovel companion. Without one, chat and Providers say to install Codex. |
-| `PATH` | inherited | `findCodexExecutable` | Searched for `codex` when `GAMERO_CODEX_PATH` is unset. |
+| `PATH` | inherited | `findCodexExecutable`, `findClaudeExecutable` | Searched for `codex` and `claude` when their paths are unset. |
+| `HOVEL_CLAUDE_PROVIDER` | `1` from `dev-env.sh`; unset otherwise | `claudeProviderEnabled` | `1` offers Claude in Providers and as a companion team runtime. Release builds (`-Dgamero.release=true`, set by `tools/build-release.sh`) ignore it. |
+| `GAMERO_CLAUDE_PATH` | `claude` on `PATH`, then `~/.local/bin`, Homebrew, `/usr/local/bin` | `findClaudeExecutable` | The player's own Claude Code (2.1.304 or later), run with its own sign-in. Hovel never signs in or out. Without one, the Claude card says to install it. |
 | `GAMERO_WORKSPACE` | none | `main.kt` | Workspace for approved Hovel companion tasks; the Hovel companion is off without it. |
 | `HOVEL_REDUCED_EFFECTS` | unset | `CompanionMain` | `1` starts the two-window prototype with reduced motion and transparency. |
 | `HOVEL_PRESENTATION_SCENARIO` | unset (`res://companions/main.tscn`) | `DesktopCompanionHost` | Godot script to run instead of the game scene, for tests. |
@@ -84,5 +86,6 @@ Every environment variable the desktop companion path reads. The launchers take 
 | `HOVEL_ONE_FLOOR_RENDERED` | unset | `CompanionOneFloorTest` | `1` captures native Godot frames instead of running headless. |
 | `HOVEL_CHAT_CODEX_SMOKE` | unset | `DesktopChatSmokeTest` | Path to a `codex` executable; runs the real app-server configuration check. |
 | `HOVEL_CHAT_VOICE_SMOKE` | unset | `DesktopChatSmokeTest` | `1` runs the local voice playback check. |
+| `HOVEL_CHAT_CLAUDE_SMOKE` | unset | `DesktopChatSmokeTest` | Path to a signed-in `claude`; runs two short Haiku turns (a new session, then a resume) on that sign-in. |
 
 The host sets some variables for its children rather than reading them: `HOVEL_PRESENTATION_PORT`, `HOVEL_PRESENTATION_SESSION` and `HOVEL_EMBEDDED` for the game, `HOVEL_COMPANION_APPEARANCE` for the pet, and `CODEX_HOME` for each Codex child.

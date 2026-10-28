@@ -5,6 +5,8 @@ import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import kotlin.time.Duration.Companion.milliseconds
 import org.formulagen.wrapper.bridge.ProviderState
+import org.formulagen.wrapper.bridge.ProviderStatus
+import org.formulagen.wrapper.bridge.RuntimeId
 import kotlin.test.*
 
 class ClaudeProviderTest {
@@ -60,17 +62,18 @@ class ClaudeProviderTest {
 
     @Test fun eachInstallAndSignInMapsToOneCardState() {
         val current = MIN_CLAUDE_VERSION
-        assertEquals(ClaudeProviderStatus(ProviderState.UNAVAILABLE, message = "Install Claude Code on this Mac to use Claude."),
+        assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.UNAVAILABLE, message = "Install Claude Code on this Mac to use Claude."),
             claudeProviderStatus(false, null, null))
-        val outdated = ClaudeProviderStatus(ProviderState.UNAVAILABLE, message = "Update Claude Code to use it here. Hovel needs version 2.1.304 or later.")
+        val outdated = ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.UNAVAILABLE, message = "Update Claude Code to use it here. Hovel needs version 2.1.304 or later.")
         assertEquals(outdated, claudeProviderStatus(true, ClaudeVersion(2, 1, 303), subscription))
         assertEquals(outdated, claudeProviderStatus(true, null, subscription))
-        assertEquals(ClaudeProviderStatus(ProviderState.ERROR, message = "Claude status could not be checked."), claudeProviderStatus(true, current, null))
-        assertEquals(ClaudeProviderStatus(ProviderState.DISCONNECTED), claudeProviderStatus(true, current, ClaudeAuthStatus(false, "none")))
-        assertEquals(ClaudeProviderStatus(ProviderState.ERROR, message = "Claude Code is using an API key. Sign in with your Claude subscription to use it here."),
+        assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.ERROR, message = "Claude status could not be checked."), claudeProviderStatus(true, current, null))
+        assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.DISCONNECTED), claudeProviderStatus(true, current, ClaudeAuthStatus(false, "none")))
+        assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.ERROR, message = "Claude Code is using an API key. Sign in with your Claude subscription to use it here."),
             claudeProviderStatus(true, current, ClaudeAuthStatus(true, "api_key")))
-        assertEquals(ClaudeProviderStatus(ProviderState.CONNECTED, accountLabel = "player@example.test", plan = "Max"), claudeProviderStatus(true, current, subscription))
-        assertEquals("Max 20x", claudeProviderStatus(true, current, subscription.copy(subscriptionType = "max_20x")).plan)
+        assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.CONNECTED, accountLabel = "player@example.test", plan = "max"), claudeProviderStatus(true, current, subscription))
+        // The page names the plan; the host passes Claude Code's own value.
+        assertEquals("max_20x", claudeProviderStatus(true, current, subscription.copy(subscriptionType = "max_20x")).plan)
         val long = claudeProviderStatus(true, current, subscription.copy(email = "x".repeat(321), subscriptionType = null))
         assertEquals(ProviderState.CONNECTED, long.state); assertNull(long.accountLabel); assertNull(long.plan)
     }
@@ -78,7 +81,7 @@ class ClaudeProviderTest {
     @Test fun statusReadsOnlyVersionAndAuthStatusAndNeverSignsInOrOut() {
         val fake = FakeClaude()
         val connection = ClaudeConnection(fake.runtime(), timeout = 2_000.milliseconds)
-        assertEquals(ClaudeProviderStatus(ProviderState.CONNECTED, accountLabel = "player@example.test", plan = "Max"), connection.status())
+        assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.CONNECTED, accountLabel = "player@example.test", plan = "max"), connection.status())
         fake.scenario(auth = FakeClaude.fixture("auth-status-signed-out.json"), authExit = 1)
         assertEquals(ProviderState.DISCONNECTED, connection.status().state)
         fake.scenario(auth = FakeClaude.fixture("auth-status-api-key.json"))
@@ -86,7 +89,7 @@ class ClaudeProviderTest {
         // Output that disagrees with the exit code, an odd exit, or text that is not the JSON is unknown, never "signed out".
         for ((auth, exit) in listOf(FakeClaude.fixture("auth-status-subscription.json") to 1, "Not logged in" to 1, "{}" to 0, FakeClaude.fixture("auth-status-subscription.json") to 2)) {
             fake.scenario(auth = auth, authExit = exit)
-            assertEquals(ClaudeProviderStatus(ProviderState.ERROR, message = "Claude status could not be checked."), connection.status(), auth)
+            assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.ERROR, message = "Claude status could not be checked."), connection.status(), auth)
         }
         fake.scenario(version = "2.1.200 (Claude Code)")
         assertEquals(ProviderState.UNAVAILABLE, connection.status().state)

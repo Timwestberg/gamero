@@ -21,6 +21,8 @@ val iosTargets = mobileTargets || providers.gradleProperty("gamero.iosTargets").
 fun releaseSetting(name: String): String? = providers.gradleProperty(name).orNull?.takeIf { it.isNotBlank() }
 val releaseProduct = releaseSetting("gamero.product")
 val releaseWebUrl = releaseSetting("gamero.webUrl")
+// Release builds keep gated features off whatever the environment says (Claude: claudeProviderEnabled).
+val releaseBuild = releaseSetting("gamero.release") == "true"
 val releaseVersion = releaseSetting("gamero.version") ?: "1.0.0"
 val releaseBuildNumber = releaseSetting("gamero.buildNumber")?.toInt() ?: 1
 fun signingSetting(name: String): String? = providers.environmentVariable(name).orNull?.takeIf { it.isNotBlank() }
@@ -174,6 +176,7 @@ compose.desktop {
         // A packaged app gets no shell environment, so the release URL and product are baked in.
         releaseProduct?.let { jvmArgs += "-Dgamero.product=$it" }
         releaseWebUrl?.let { jvmArgs += "-Dgamero.webUrl=$it" }
+        if (releaseBuild) jvmArgs += "-Dgamero.release=true"
 
         buildTypes.release.proguard {
             // Shrink only, and keep names: KCEF, JCEF and the WebView bridge use reflection.

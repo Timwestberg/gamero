@@ -46,4 +46,17 @@ class DesktopServicesTest {
         } finally { services.close(); scope.cancel(); support.toFile().deleteRecursively() }
         assertFails { services.pet.status() }
     }
+
+    @Test fun claudeIsOfferedOnlyInDevelopmentBuildsWithTheGateOn() = runBlocking<Unit> {
+        val support = Files.createTempDirectory("desktop-services-claude")
+        val gateOn = mapOf("GAMERO_CODEX_PATH" to "/missing/codex", "GAMERO_CLAUDE_PATH" to "/missing/claude", "HOVEL_CLAUDE_PROVIDER" to "1")
+        suspend fun runtimes(environment: Map<String, String>) = DesktopServices.create("http://127.0.0.1:8133/", support, environment,
+            GAMERO_PRODUCT_NAME, window = null).use { it.providers.list("local").runtimes }
+        try {
+            assertEquals(listOf(RuntimeId.CODEX), runtimes(gateOn - "HOVEL_CLAUDE_PROVIDER"))
+            assertEquals(listOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE), runtimes(gateOn))
+            System.setProperty("gamero.release", "true")
+            assertEquals(listOf(RuntimeId.CODEX), runtimes(gateOn), "A release build ignores the setting")
+        } finally { System.clearProperty("gamero.release"); support.toFile().deleteRecursively() }
+    }
 }

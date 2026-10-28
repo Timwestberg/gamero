@@ -124,7 +124,8 @@ internal class StdioCodexAppServer(
     }
 
     companion object {
-        val ACCOUNT_METHODS = setOf("account/read", "account/login/start", "account/login/cancel", "account/logout")
+        /** The account lifecycle and the model list a team member chooses from; no inference or workspace execution. */
+        val ACCOUNT_METHODS = setOf("account/read", "account/login/start", "account/login/cancel", "account/logout", "model/list")
     }
 }
 
