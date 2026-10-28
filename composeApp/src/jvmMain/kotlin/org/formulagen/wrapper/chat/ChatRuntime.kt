@@ -82,7 +82,11 @@ internal data class TurnRequest(
     fun input(): String = context?.let { "$it\n\n$text" } ?: text
 }
 
-/** What a turn reports. Nothing arrives after [completed], [failed] or the caller's [TurnHandle.stop]. */
+/**
+ * What a turn reports. Nothing is reported after [completed] or [failed]. After the caller's
+ * [TurnHandle.stop] or [ChatRuntime.release] an event already on its way may still arrive, so the
+ * caller ignores events for a turn it ended.
+ */
 internal interface TurnEvents {
     /** The runtime started a new native conversation; the caller saves it before the reply ends, so a stopped turn keeps it. */
     fun opened(conversation: String)
