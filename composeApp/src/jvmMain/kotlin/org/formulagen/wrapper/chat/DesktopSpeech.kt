@@ -2,7 +2,10 @@ package org.formulagen.wrapper.chat
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.SourceDataLine
@@ -45,6 +48,9 @@ internal class DesktopSpeech(
     private var voiceConfig: VoiceConfig? = config
     private var engine: EmberVoice? = null
     private var line: PcmLine? = null
+    /** Audio waiting for the speaker. Synthesis keeps filling this while a sentence is still playing. */
+    private var playQueue: LinkedBlockingQueue<PlayChunk>? = null
+    private val playbackEnd = PlayChunk(ByteArray(0), 0)
     private var generation = 0
     private var closed = false
     private val notInstalled = ChatVoice(VoiceState.UNAVAILABLE, "Local voice is not installed. Text chat is available.")
@@ -116,44 +122,29 @@ internal class DesktopSpeech(
                     val active = voiceConfig ?: return@execute
                     engine ?: EmberVoice(openEngine(active), active).also { engine = it }
                 }
-                var player: PcmLine? = null
-                var started = false
-                var pending = ByteArray(0)
+                // The speaker thread blocks in the device buffer. Synthesis stays on this
+                // worker, so the next sentence is generated while the current one plays.
+                val queue = LinkedBlockingQueue<PlayChunk>()
+                synchronized(gate) { playQueue = queue }
+                val playbackFinished = CountDownLatch(1)
+                val playback = loggingDaemonThreads("hovel-voice-play").newThread {
+                    try {
+                        playQueued(queue, ticket, settings, text)
+                    } finally {
+                        playbackFinished.countDown()
+                    }
+                }
+                playback.start()
                 try {
                     voice.speakStreaming(spoken) { samples, rate ->
                         if (synchronized(gate) { closed || ticket != generation }) return@speakStreaming false
-                        val current = player ?: openLine(rate).also { player = it; synchronized(gate) { line = it } }
-                        val pcm = pcm16(samples)
-                        if (!started) {
-                            pending = pending + pcm
-                            val queuedMs = if (rate > 0) pending.size / 2 * 1000 / rate else 0
-                            // Once per reply, not per sentence. A later sentence is written as soon
-                            // as it is ready; the pause at a period is sentenceGapMs inside the audio.
-                            val startAfter = synchronized(gate) { voiceConfig?.startAfterMs ?: settings.startAfterMs }
-                            if (queuedMs >= startAfter || pcm.isNotEmpty()) {
-                                if (synchronized(gate) { closed || ticket != generation }) return@speakStreaming false
-                                current.start()
-                                started = true
-                                synchronized(gate) {
-                                    state = ChatVoice(
-                                        VoiceState.SPEAKING,
-                                        if (text.length > MAX_SPOKEN_CHARS) {
-                                            "Reading the beginning of this reply. The full reply is shown above."
-                                        } else {
-                                            null
-                                        },
-                                    )
-                                }
-                                current.write(pending)
-                                pending = ByteArray(0)
-                            }
-                        } else {
-                            current.write(pcm)
-                        }
+                        queue.put(PlayChunk(pcm16(samples), rate))
                         synchronized(gate) { !closed && ticket == generation }
                     }
                 } finally {
-                    player?.let { runCatching { it.drain(); it.stop(); it.close() } }
+                    queue.offer(playbackEnd)
+                    playbackFinished.await(2, TimeUnit.MINUTES)
+                    synchronized(gate) { if (playQueue === queue) playQueue = null }
                 }
                 synchronized(gate) { if (ticket == generation) { line = null; state = ChatVoice() } }
             } catch (error: Throwable) {
@@ -189,9 +180,71 @@ internal class DesktopSpeech(
     private fun stopLocked() {
         generation++
         engine?.cancel()
+        playQueue?.offer(playbackEnd)
         line?.let { runCatching { it.flush(); it.stop(); it.close() } }
         line = null
         state = unavailable ?: ChatVoice()
+    }
+
+    /**
+     * Writes queued sentences to the speaker. Blocks while the device buffer is full,
+     * which is what lets the synthesizer stay a sentence ahead.
+     */
+    private fun playQueued(
+        queue: LinkedBlockingQueue<PlayChunk>,
+        ticket: Int,
+        settings: VoiceConfig,
+        text: String,
+    ) {
+        var player: PcmLine? = null
+        var started = false
+        var pending = ByteArray(0)
+        fun stopped() = synchronized(gate) { closed || ticket != generation }
+        try {
+            while (!stopped()) {
+                val chunk = queue.take()
+                if (chunk === playbackEnd || stopped()) break
+                val current = player ?: openLine(chunk.rate).also {
+                    player = it
+                    synchronized(gate) { line = it }
+                }
+                if (!started) {
+                    pending += chunk.pcm
+                    val queuedMs = if (chunk.rate > 0) pending.size / 2 * 1000 / chunk.rate else 0
+                    // Once per reply. Later sentences are already being synthesized on the worker.
+                    if (queuedMs >= settings.startAfterMs || chunk.pcm.isNotEmpty()) {
+                        if (stopped()) break
+                        current.start()
+                        started = true
+                        synchronized(gate) {
+                            if (ticket == generation) {
+                                state = ChatVoice(
+                                    VoiceState.SPEAKING,
+                                    if (text.length > MAX_SPOKEN_CHARS) {
+                                        "Reading the beginning of this reply. The full reply is shown above."
+                                    } else {
+                                        null
+                                    },
+                                )
+                            }
+                        }
+                        if (stopped()) break
+                        current.write(pending)
+                        pending = ByteArray(0)
+                    }
+                } else {
+                    current.write(chunk.pcm)
+                }
+            }
+        } catch (error: Throwable) {
+            if (error is VirtualMachineError) throw error
+        } finally {
+            val live = synchronized(gate) { ticket == generation && !closed }
+            if (live) runCatching { player?.drain() }
+            runCatching { player?.stop() }
+            runCatching { player?.close() }
+            synchronized(gate) { if (line === player) line = null }
+        }
     }
 
     /** Release only after the serialized engine has finished any in-flight synthesis. */
@@ -218,6 +271,8 @@ internal fun pcm16(samples: FloatArray): ByteArray = ByteArray(samples.size * 2)
     }
 }
 
+private class PlayChunk(val pcm: ByteArray, val rate: Int)
+
 internal interface PcmLine {
     fun start()
     fun write(pcm: ByteArray)
@@ -230,7 +285,9 @@ internal interface PcmLine {
 internal fun openSpeaker(sampleRate: Int): PcmLine {
     val format = AudioFormat(sampleRate.toFloat(), 16, 1, true, false)
     val line = AudioSystem.getSourceDataLine(format)
-    line.open(format)
+    // A full second, so a short sentence is not stuck behind a tiny device buffer.
+    // Synthesis no longer waits on this write; the player thread does.
+    line.open(format, sampleRate * 2)
     return SourcePcmLine(line)
 }
 
@@ -279,6 +336,7 @@ private fun kokoroDesktopConfig(environment: Map<String, String>): VoiceConfig? 
     val fromEnv = environment["HOVEL_KOKORO_VOICE"]?.trim()?.takeIf { it.isNotEmpty() && kokoroVoice(it) != null }
     return VoiceConfig(
         backend = VoiceConfig.KOKORO,
+        numThreads = VoiceConfig.KOKORO_THREADS,
         kokoroModelDir = directory.toAbsolutePath().toString(),
         kokoroVoiceId = resolveKokoroVoiceId(environment, choice),
         kokoroVoiceFile = choice.toAbsolutePath().toString(),

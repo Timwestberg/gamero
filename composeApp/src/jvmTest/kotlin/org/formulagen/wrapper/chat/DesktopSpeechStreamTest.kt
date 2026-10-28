@@ -32,10 +32,8 @@ class DesktopSpeechStreamTest {
             override fun release() {}
         }
         val started = CountDownLatch(1)
-        val callsAtStart = AtomicInteger()
         val line = object : PcmLine {
             override fun start() {
-                callsAtStart.set(calls.get())
                 started.countDown()
             }
             override fun write(pcm: ByteArray) {}
@@ -47,9 +45,50 @@ class DesktopSpeechStreamTest {
         DesktopSpeech(VoiceConfig(), { line }, { engine }).use { speech ->
             speech.speak("Hello there. This is the second sentence.")
             assertTrue(started.await(2, TimeUnit.SECONDS), "playback started")
-            assertEquals(1, callsAtStart.get(), "playback started before the next sentence")
+            // The next sentence is already being synthesized; playback did not wait for it to finish.
+            assertTrue(secondEntered.await(2, TimeUnit.SECONDS), "the next sentence was synthesized while the first was starting")
             releaseSecond.countDown()
-            assertTrue(secondEntered.await(2, TimeUnit.SECONDS))
+        }
+    }
+
+    @Test
+    fun theNextSentenceIsSynthesizedWhileTheFirstOneIsStillBeingWritten() {
+        val calls = AtomicInteger()
+        val secondEntered = CountDownLatch(1)
+        val releaseSecond = CountDownLatch(1)
+        val writingFirst = CountDownLatch(1)
+        val releaseWrite = CountDownLatch(1)
+        val engine = object : PieceEngine {
+            override val sampleRate: Int = 24000
+            override fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio {
+                val n = calls.incrementAndGet()
+                if (n == 2) {
+                    secondEntered.countDown()
+                    assertTrue(releaseSecond.await(2, TimeUnit.SECONDS))
+                }
+                return PieceAudio(FloatArray(4800), 24000, 1.0, 1.0)
+            }
+            override fun release() {}
+        }
+        val line = object : PcmLine {
+            override fun start() {}
+            override fun write(pcm: ByteArray) {
+                if (writingFirst.count == 1L) {
+                    writingFirst.countDown()
+                    assertTrue(releaseWrite.await(2, TimeUnit.SECONDS))
+                }
+            }
+            override fun drain() {}
+            override fun flush() {}
+            override fun stop() { releaseWrite.countDown() }
+            override fun close() { releaseWrite.countDown() }
+        }
+        DesktopSpeech(VoiceConfig(), { line }, { engine }).use { speech ->
+            speech.speak("Hello there. This is the second sentence.")
+            assertTrue(writingFirst.await(2, TimeUnit.SECONDS), "the first sentence reached the speaker")
+            assertTrue(secondEntered.await(2, TimeUnit.SECONDS), "the next sentence started while the first write was still blocked")
+            releaseWrite.countDown()
+            releaseSecond.countDown()
         }
     }
 
@@ -66,12 +105,13 @@ class DesktopSpeechStreamTest {
             }
             override fun release() {}
         }
+        val writes = AtomicInteger()
         val line = object : PcmLine {
             override fun start() {
                 started.countDown()
                 hold.await(2, TimeUnit.SECONDS)
             }
-            override fun write(pcm: ByteArray) {}
+            override fun write(pcm: ByteArray) { writes.incrementAndGet() }
             override fun drain() {}
             override fun flush() {}
             override fun stop() { hold.countDown() }
@@ -81,8 +121,8 @@ class DesktopSpeechStreamTest {
             speech.speak("Hello there. This is the second sentence.")
             assertTrue(started.await(2, TimeUnit.SECONDS))
             speech.stop()
-            Thread.sleep(200)
-            assertEquals(1, calls.get())
+            Thread.sleep(300)
+            assertEquals(0, writes.get(), "stop drops audio that has not been written")
         }
     }
 

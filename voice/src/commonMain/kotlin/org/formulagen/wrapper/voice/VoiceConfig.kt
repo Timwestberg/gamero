@@ -95,5 +95,7 @@ data class VoiceConfig(
         const val WORD_BOUNDARY = "word-boundary"
         /** Phone-call pause after Kokoro's own sentence padding is removed. */
         const val KOKORO_SENTENCE_GAP_MS = 160
+        /** Kokoro on a Mac has idle cores at 2 threads. 4 keeps one sentence's generate shorter than its playback. */
+        const val KOKORO_THREADS = 4
     }
 }

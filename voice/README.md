@@ -15,7 +15,7 @@ Sam is the default because it is the blend closest to the Adam sample that was t
 
 A word missing from `lexicon-us-en.txt` used to be skipped. Regular inflections of a listed stem are written to `lexicon-chat.txt` beside it, and any word that is still unknown is spelled letter by letter so it is not dropped.
 
-Speech is normalized before it is split into sentences: versions (`Sonnet 5.5`, `2.0.1`), units, URLs, and filenames become words. A token the normalizer does not know is spelled. It is not dropped. Each sentence is one Kokoro generate. Playback is the existing stream: the first sentence can start while the next one is still generating. Kokoro's padding at a period is trimmed, then `sentenceGapMs` (160) is the only pause inserted between sentences. `startAfterMs` waits once, before the first sentence of a reply.
+Speech is normalized before it is split into sentences: versions (`Sonnet 5.5`, `2.0.1`), units, URLs, and filenames become words. A token the normalizer does not know is spelled. It is not dropped. Each sentence is one Kokoro generate. Playback is the existing stream: the first sentence can start while the next one is still generating. Kokoro's padding at a period is trimmed, then `sentenceGapMs` (160) is the only pause inserted between sentences. The next sentence is synthesized while the current one is still playing, on `KOKORO_THREADS` (4) threads. `startAfterMs` waits once, before the first sentence of a reply.
 
 On-device PocketTTS remains in this module for the cloned-voice path. The Mac companion uses the JVM backend through `DesktopSpeech`.
 
