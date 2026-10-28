@@ -2,6 +2,7 @@ package org.formulagen.wrapper.bridge
 
 /** Protocol fixtures exercise dispatch without starting a provider, pet or game process. */
 class FakeProviderCapability : ProviderCapability {
+    override suspend fun usage(scope: ProviderScope) = ProviderUsage(scope.runtimeId, 1793200000000, ProviderUsageWindow(0.0, 1793203600), ProviderUsageWindow(76.5))
     override suspend fun perform(action: ProviderAction, scope: ProviderScope) =
         ProviderStatus(scope.runtimeId, if (action == ProviderAction.CONNECT) ProviderState.SIGNING_IN else ProviderState.DISCONNECTED)
     override suspend fun list(profile: String) = ProviderList(RuntimeId.entries, listOf(RuntimeId.CLAUDE_CODE))

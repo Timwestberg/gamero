@@ -140,6 +140,7 @@ internal class CodexWorkRuntime(
                 put("threadId", threadId)
                 putJsonArray("input") { add(buildJsonObject { put("type", "text"); put("text", request.input()) }) }
                 model?.let { put("model", it) }
+                request.effort?.let { put("effort", it.value) }
             })
             val id = started.getValue("turn").jsonObject.getValue("id").jsonPrimitive.content
             events.accepted()

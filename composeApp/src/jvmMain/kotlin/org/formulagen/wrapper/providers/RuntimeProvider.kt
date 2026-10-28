@@ -7,6 +7,7 @@ import org.formulagen.wrapper.bridge.ProviderDetail
 import org.formulagen.wrapper.bridge.ProviderModel
 import org.formulagen.wrapper.bridge.ProviderState
 import org.formulagen.wrapper.bridge.ProviderStatus
+import org.formulagen.wrapper.bridge.ProviderUsage
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 
@@ -20,6 +21,8 @@ internal interface RuntimeProvider : AutoCloseable {
     fun status(profile: String, action: ProviderAction): ProviderStatus
     /** The models a team member on this runtime may use. */
     fun models(profile: String): List<ProviderModel>
+    /** Read subscription limits without a prompt, tool execution or a paid turn. */
+    fun usage(profile: String): ProviderUsage
 }
 
 /**
@@ -62,6 +65,13 @@ internal class CodexProvider(
     private fun connection(executable: Path): ProviderConnection =
         connection ?: createConnection(CodexRuntime(executable, root)).also { connection = it }
 
+    override fun usage(profile: String): ProviderUsage {
+        require(SharedRules.isProfileId(profile)) { "Invalid profile" }
+        val executable = executable ?: return ProviderUsage(id, clock.millis())
+        return try { connection(executable).usage() }
+        catch (error: Exception) { drop(); throw error }
+    }
+
     private fun drop() { connection?.close(); connection = null }
 
     /** Expose a bounded display error instead of raw provider output or credentials. */
@@ -78,12 +88,13 @@ internal class ClaudeProvider(private val connection: ClaudeConnection) : Runtim
     override fun status(profile: String, action: ProviderAction): ProviderStatus =
         connection.status().let { if (action == ProviderAction.STATUS) it else it.copy(message = "Sign in and out in Claude Code.") }
 
-    /** Claude Code's three aliases, Sonnet first and the default. */
-    override fun models(profile: String): List<ProviderModel> =
-        CLAUDE_MODELS.map { ProviderModel(it.displayName, it.modelId == CLAUDE_FALLBACK_MODEL, it.modelId) }
+    /** The installed Claude Code's catalog, including models added after Hovel was built. */
+    override fun models(profile: String): List<ProviderModel> = connection.models()
+
+    override fun usage(profile: String): ProviderUsage = connection.usage()
 
     override fun close() = Unit
 }
 
-/** How long Codex's model list answers again for a profile. */
+/** How long an installed runtime's model list answers again. */
 internal const val MODELS_TTL_MILLIS = 60_000L

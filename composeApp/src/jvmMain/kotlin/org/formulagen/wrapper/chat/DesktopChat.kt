@@ -82,7 +82,7 @@ internal class DesktopChat(
      * stays after the reply when a working message was answered as talk.
      */
     private class InFlight(val member: TeamMember, val userEntryId: String, val replyId: String, val text: String,
-        val mode: MemberMode = MemberMode.TALK, val priorSteps: List<ActivityStep> = emptyList()) {
+        val mode: MemberMode = MemberMode.TALK, val priorSteps: List<ActivityStep> = emptyList(), val effort: ModelEffort? = null) {
         var work: ProjectFolder? = null
         var notice: String? = null
     }
@@ -121,7 +121,7 @@ internal class DesktopChat(
         val record = session.record
         // A runtime's first turn, a runtime catching up, or a new model is noted just before the message it answers.
         val noted = Handovers.beforeTurn(record, args.member)
-        val turn = InFlight(args.member, args.requestId, UUID.randomUUID().toString(), text, args.mode ?: MemberMode.TALK)
+        val turn = InFlight(args.member, args.requestId, UUID.randomUUID().toString(), text, args.mode ?: MemberMode.TALK, effort = args.effort)
         val next = noted.copy(entries = (noted.entries + ChatEntry.User(args.requestId, text) +
             ChatEntry.Assistant(turn.replyId, args.member, "")).takeLast(ChatLimits.HISTORY))
         session.history.write(next)
@@ -157,7 +157,7 @@ internal class DesktopChat(
         val after = record.entries.drop(at + 1).let { rest -> if (rest.firstOrNull() is ChatEntry.Assistant) rest.drop(1) else rest }
         // A failed working reply's finished steps stay with the message's next try, if it works too.
         val failed = (record.entries.drop(at + 1).firstOrNull() as? ChatEntry.Assistant)?.activity?.steps.orEmpty()
-        val turn = InFlight(args.member, message.id, args.requestId, message.text, args.mode ?: MemberMode.TALK, failed)
+        val turn = InFlight(args.member, message.id, args.requestId, message.text, args.mode ?: MemberMode.TALK, failed, args.effort)
         val next = record.copy(entries = (before.entries + notes + message + ChatEntry.Assistant(turn.replyId, args.member, "") + after)
             .takeLast(ChatLimits.HISTORY), pendingContext = switched?.pendingContext ?: record.pendingContext)
         session.history.write(next)
@@ -336,10 +336,10 @@ internal class DesktopChat(
             val record = session.record
             val scope = session.scope
             if (folder == null) TurnRequest(scope.profile, scope.companionId, session.persona, member.modelId,
-                conversation = record.conversations[kind], context = Handovers.owedTo(record, kind), text = turn.text)
+                conversation = record.conversations[kind], context = Handovers.owedTo(record, kind), text = turn.text, effort = turn.effort)
             else TurnRequest(scope.profile, scope.companionId, Persona.working(scope.name), member.modelId,
                 conversation = record.workConversations[kind], context = Handovers.workContext(record, kind, session.beforeTurn), text = turn.text,
-                work = WorkScope(folder.path, scope.sessionId, scope.name, member))
+                work = WorkScope(folder.path, scope.sessionId, scope.name, member), effort = turn.effort)
         }
         val reply = Reply(session, generation, turn, request, retried)
         val handle = worker?.startTurn(request, reply) ?: runtime.startTurn(request, reply)

@@ -1,5 +1,7 @@
 package org.formulagen.wrapper.chat
 
+import org.formulagen.wrapper.bridge.ModelEffort
+
 import java.nio.file.Path
 import java.time.Instant
 import kotlin.time.Duration
@@ -65,6 +67,7 @@ internal data class TurnRequest(
     val context: String?,
     val text: String,
     val work: WorkScope? = null,
+    val effort: ModelEffort? = null,
 ) {
     /** The user turn as the runtime sends it: the delimited context block first, then the message. */
     fun input(): String = context?.let { "$it\n\n$text" } ?: text
