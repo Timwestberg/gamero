@@ -115,17 +115,36 @@ internal object Handovers {
         return forgotten.copy(entries = entries, pendingContext = owe(record, runtime, context))
     }
 
+    /**
+     * A retry by [member] where the conversation's current member is another one: noted by the
+     * handover rules, without a summary (same-conversation, up-to-date, recent-messages or fresh).
+     * Null when [member] is the current member already.
+     */
+    fun switchTo(record: ChatRecord, member: TeamMember): ChatRecord? {
+        val current = currentMember(record.entries)
+        if (current == member) return null
+        val plan = plan(record, current, member, fromCanSummarize = false) as HandoverPlan.Record
+        return handover(record, entry(current, member, plan.method, HandoverReason.HOST), plan.context)
+    }
+
     /** The handover text [runtime] is owed for its next turn, if any. */
     fun owedTo(record: ChatRecord, runtime: RuntimeId): String? = record.pendingContext[runtime]
 
     /** [runtime] accepted a turn carrying what it was owed, so it is owed nothing now. */
     fun consumed(record: ChatRecord, runtime: RuntimeId): ChatRecord = record.copy(pendingContext = record.pendingContext - runtime)
 
-    /** The messages [runtime] has not seen: those after its last reply while it keeps its own conversation, otherwise all of them. */
+    /**
+     * The messages [runtime] has not seen: all of them without a conversation of its own; otherwise
+     * those after its last reply, or after the last handover it was given once it has taken what that
+     * handover owed it.
+     */
     fun unseen(record: ChatRecord, runtime: RuntimeId): List<ChatEntry> {
-        val turns = record.entries.filter { it is ChatEntry.User || it is ChatEntry.Assistant }
-        if (record.conversations[runtime] == null) return turns
-        return turns.drop(turns.indexOfLast { it is ChatEntry.Assistant && it.author.runtimeId == runtime } + 1)
+        val entries = record.entries
+        fun turns(from: Int) = entries.drop(from).filter { it is ChatEntry.User || it is ChatEntry.Assistant }
+        if (record.conversations[runtime] == null) return turns(0)
+        val replied = entries.indexOfLast { it is ChatEntry.Assistant && it.author.runtimeId == runtime }
+        val handed = if (owedTo(record, runtime) != null) -1 else entries.indexOfLast { it is ChatEntry.Handover && it.to.runtimeId == runtime }
+        return turns(maxOf(replied, handed) + 1)
     }
 
     /** The member that wrote the last reply, or null when nobody has replied. */

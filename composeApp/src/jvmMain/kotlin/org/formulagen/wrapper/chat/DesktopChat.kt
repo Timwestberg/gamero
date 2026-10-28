@@ -6,6 +6,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -45,13 +46,20 @@ internal class DesktopChat(
         val ready = mutableSetOf<RuntimeId>()
         /** The handover being prepared, and what a cancel returns to. */
         var handover: PendingHandover? = null
-        /** The record before the send in progress, restored when its runtime turns out not to be ready, since nothing reached it. */
-        var beforeSend: ChatRecord? = null
+        /** The entries before the turn in progress added its own notes; they name the member it took over from. */
+        var beforeTurn: List<ChatEntry> = emptyList()
+        /** The turn in progress, from its send or retry until it ends. */
+        var inFlight: InFlight? = null
+        /** Why the last turn failed, until a turn succeeds. */
+        var failure: ChatFailureReport? = null
         /** Runtimes this view has run turns or summaries on; closing the view ends their work. */
         val used = mutableSetOf<RuntimeId>()
     }
 
     private class PendingHandover(val requestId: String, val from: RuntimeId?, val state: ChatState, val notice: String?)
+
+    /** A turn answering the user entry [userEntryId] with [member], whose reply is the entry [replyId]. */
+    private class InFlight(val member: TeamMember, val userEntryId: String, val replyId: String, val text: String)
 
     /** Opening is the only operation allowed to replace an active conversation. */
     override suspend fun open(scope: ChatScope): ChatSnapshot = synchronized(gate) {
@@ -70,38 +78,77 @@ internal class DesktopChat(
     }
 
     /**
-     * Persist the explicit user message before starting any runtime work. A disconnected chat
-     * takes a resend, which checks the member's runtime again.
+     * Persist the explicit user message, as an entry with the request's id, before starting any
+     * runtime work. A chat that is disconnected or in error takes a new send, which checks the
+     * member's runtime again. A message whose turn fails stays, unanswered, for `chat.retry`. A
+     * member on a runtime this build does not offer is refused with a notice and no entry.
      */
     override suspend fun send(args: ChatSend): ChatSnapshot = synchronized(gate) {
         val session = current(args.scope())
         if (session.record.entries.any { it.id == args.requestId }) return@synchronized view(session)
         if (session.state == ChatState.RESPONDING || session.state == ChatState.HANDING_OVER) throw BridgeBusyException()
-        check(session.state in setOf(ChatState.READY, ChatState.CANCELLED, ChatState.DISCONNECTED))
         val kind = args.member.runtimeId
-        if (kind !in runtimes) {
-            session.state = ChatState.DISCONNECTED; session.notice = missing(kind)
-            return@synchronized view(session)
-        }
+        if (kind !in offered) return@synchronized view(session).copy(notice = kind.copy.notOffered)
         speech.stop()
         val text = args.text.trimEcma()
         val record = session.record
         // A runtime's first turn, a runtime catching up, or a new model is noted just before the message it answers.
         val noted = Handovers.beforeTurn(record, args.member)
+        val turn = InFlight(args.member, args.requestId, UUID.randomUUID().toString(), text)
         val next = noted.copy(entries = (noted.entries + ChatEntry.User(args.requestId, text) +
-            ChatEntry.Assistant(UUID.randomUUID().toString(), args.member, "")).takeLast(ChatLimits.HISTORY))
+            ChatEntry.Assistant(turn.replyId, args.member, "")).takeLast(ChatLimits.HISTORY))
         session.history.write(next)
-        session.beforeSend = record
-        session.record = next; session.state = ChatState.RESPONDING; session.notice = null
-        session.speak = args.speak; session.turn = null
+        session.record = next
+        begin(session, turn, record.entries, args.speak)
+        view(session)
+    }
+
+    /**
+     * Run the turn of an unanswered message again with [ChatRetry.member], adding no user entry. A
+     * different member than the conversation's current one is noted just before the message, by the
+     * same rules as a handover (without a summary). Its reply takes the request's id, so a repeated
+     * retry runs one turn. Refused, with a notice and no change, unless the message is unanswered and
+     * no reply or switch is in progress.
+     */
+    override suspend fun retry(args: ChatRetry): ChatSnapshot = synchronized(gate) {
+        val session = current(args.scope())
+        val record = session.record
+        if (record.entries.any { it.id == args.requestId }) return@synchronized view(session)
+        if (session.state == ChatState.RESPONDING || session.state == ChatState.HANDING_OVER) {
+            return@synchronized view(session).copy(notice = "Wait for the reply to finish, or stop it, before trying again.")
+        }
+        val at = record.entries.indexOfFirst { it is ChatEntry.User && it.id == args.entryId && it.status == UserStatus.UNANSWERED }
+        if (at < 0) return@synchronized view(session).copy(notice = "Only a message without a reply can be sent again.")
+        if (args.member.runtimeId !in offered) return@synchronized view(session).copy(notice = args.member.runtimeId.copy.notOffered)
+        val message = record.entries[at] as ChatEntry.User
+        speech.stop()
+        val before = record.copy(entries = record.entries.take(at))
+        val switched = Handovers.switchTo(before, args.member)
+        val notes = switched?.entries?.drop(before.entries.size).orEmpty()
+        // The reply the failed turn left, if any, is replaced.
+        val after = record.entries.drop(at + 1).let { rest -> if (rest.firstOrNull() is ChatEntry.Assistant) rest.drop(1) else rest }
+        val turn = InFlight(args.member, message.id, args.requestId, message.text)
+        val next = record.copy(entries = (before.entries + notes + message + ChatEntry.Assistant(turn.replyId, args.member, "") + after)
+            .takeLast(ChatLimits.HISTORY), pendingContext = switched?.pendingContext ?: record.pendingContext)
+        session.history.write(next)
+        session.record = next
+        begin(session, turn, before.entries, args.speak)
+        view(session)
+    }
+
+    /** Start [turn] on its member's runtime, with the watchdog; a runtime not on this Mac fails it at once. */
+    private fun begin(session: Session, turn: InFlight, before: List<ChatEntry>, speak: Boolean) {
+        val kind = turn.member.runtimeId
+        session.inFlight = turn; session.beforeTurn = before; session.turn = null
+        if (kind !in runtimes) return fail(session, ChatFailureKind.UNAVAILABLE, null, ChatState.DISCONNECTED, missing(kind), release = false)
+        session.state = ChatState.RESPONDING; session.notice = null; session.speak = speak
         val generation = ++session.generation
-        worker.execute { attempt(session, generation, kind) { startTurn(session, generation, args.member, args.requestId, text, retried = false) } }
+        worker.execute { attempt(session, generation, kind) { startTurn(session, generation, turn, retried = false) } }
         timer.schedule({ synchronized(gate) {
             if (live(session, generation) && session.state == ChatState.RESPONDING) {
-                end(session, ChatState.ERROR, "The reply took too long. Your message is saved; retry when you are ready.")
+                fail(session, ChatFailureKind.TEMPORARY, null, ChatState.ERROR, "The reply took too long. Your message is saved; retry when you are ready.")
             }
         } }, 3, TimeUnit.MINUTES)
-        view(session)
     }
 
     /**
@@ -129,11 +176,6 @@ internal class DesktopChat(
         val generation = ++session.generation
         worker.execute { attempt(session, generation, to, onFailure = { restore(session, couldNotComplete(to)) }) { handOver(session, generation, args, plan) } }
         view(session)
-    }
-
-    /** Running an unanswered message again arrives with unanswered messages; until then the answer is a notice. */
-    override suspend fun retry(args: ChatRetry): ChatSnapshot = synchronized(gate) {
-        view(current(args.scope())).copy(notice = "This message cannot be sent again yet.")
     }
 
     /**
@@ -175,24 +217,26 @@ internal class DesktopChat(
 
     private fun current(scope: ChatScope): Session = checkNotNull(active?.takeIf { !closed && it.scope == scope }) { "Chat view expired" }
     private fun live(session: Session, generation: Int = session.generation) = !closed && active === session && generation == session.generation
-    private fun view(session: Session) = ChatSnapshot(session.state, session.record.entries, session.notice, speech.status())
+    private fun view(session: Session) = ChatSnapshot(session.state, session.record.entries, session.notice, speech.status(), session.failure)
 
     /** Check the member's runtime once per view, then start the reply. A turn that outlived its view is ended at once. */
-    private fun startTurn(session: Session, generation: Int, member: TeamMember, userEntryId: String, text: String, retried: Boolean) {
+    private fun startTurn(session: Session, generation: Int, turn: InFlight, retried: Boolean) {
+        val member = turn.member
         val kind = member.runtimeId
         val runtime = runtimes.getValue(kind)
         synchronized(gate) { if (live(session, generation)) session.used += kind }
+        // Nothing reached the runtime, but the message stays, unanswered, for a retry.
         if (!ready(session, generation, runtime) { readiness ->
-            session.beforeSend?.let { session.record = it }
-            end(session, notReadyState(readiness), notReadyNotice(kind, readiness), release = false)
+            fail(session, if (readiness == Readiness.SignedOut) ChatFailureKind.SIGNED_OUT else ChatFailureKind.UNAVAILABLE, null,
+                notReadyState(readiness), notReadyNotice(kind, readiness), release = false)
         }) return
         val request = synchronized(gate) {
             check(live(session, generation))
             val record = session.record
             TurnRequest(session.scope.profile, session.scope.companionId, session.persona, member.modelId,
-                conversation = record.conversations[kind], context = Handovers.owedTo(record, kind), text = text)
+                conversation = record.conversations[kind], context = Handovers.owedTo(record, kind), text = turn.text)
         }
-        val handle = runtime.startTurn(request, Reply(session, generation, member, userEntryId, request, retried))
+        val handle = runtime.startTurn(request, Reply(session, generation, turn, request, retried))
         val stale = synchronized(gate) {
             val current = live(session, generation)
             if (current && session.state == ChatState.RESPONDING) session.turn = handle
@@ -252,8 +296,8 @@ internal class DesktopChat(
     }
 
     /** One turn's events, applied only while its view and generation are current and the reply is open. */
-    private inner class Reply(val session: Session, val generation: Int, val member: TeamMember, val userEntryId: String,
-        val request: TurnRequest, val retried: Boolean) : TurnEvents {
+    private inner class Reply(val session: Session, val generation: Int, val turn: InFlight, val request: TurnRequest, val retried: Boolean) : TurnEvents {
+        private val member = turn.member
         private val kind = member.runtimeId
         private fun open() = live(session, generation) && session.state == ChatState.RESPONDING
         /** This turn's conversation, with the persona it ran with. */
@@ -274,17 +318,20 @@ internal class DesktopChat(
             Unit
         }
 
-        override fun partial(text: String) = synchronized(gate) { if (open()) updateReply(session, text) }
+        override fun partial(text: String) = synchronized(gate) { if (open()) updateReply(session, turn.replyId, text) }
 
         override fun completed(text: String, conversation: String) = synchronized(gate) {
             if (!open()) return@synchronized
-            updateReply(session, text)
-            session.record = session.record.copy(conversations = keep(conversation))
-            session.state = ChatState.READY; session.notice = null; session.turn = null; session.beforeSend = null
+            updateReply(session, turn.replyId, text)
+            // Answered now, so the message is no longer unanswered and the last turn did not fail.
+            session.record = session.record.copy(conversations = keep(conversation), entries = session.record.entries.map {
+                if (it is ChatEntry.User && it.id == turn.userEntryId) it.copy(status = null) else it
+            })
+            session.state = ChatState.READY; session.notice = null; session.turn = null; session.inFlight = null; session.failure = null
             runCatching { session.history.write(session.record) }.onFailure {
                 session.notice = "This reply could not be saved. Keep this chat open and try again later."
             }
-            if (session.speak) (session.record.entries.lastOrNull() as? ChatEntry.Assistant)?.let { speech.speak(it.text) }
+            if (session.speak) (session.record.entries.firstOrNull { it.id == turn.replyId } as? ChatEntry.Assistant)?.let { speech.speak(it.text) }
         }
 
         /** Errors keep the person's text and never send it again, except once into a new conversation when the runtime lost its own. */
@@ -292,24 +339,41 @@ internal class DesktopChat(
             if (!open()) return@synchronized
             if (failure == ChatFailure.ConversationLost && !retried) return@synchronized startOver()
             if (failure == ChatFailure.SignedOut) session.ready -= kind
-            end(session, failureState(failure), failureNotice(kind, failure), release = false)
+            fail(session, failureKind(failure), (failure as? ChatFailure.UsageLimit)?.resetsAt, failureState(failure), failureNotice(kind, failure), release = false)
         }
 
         /** The runtime starts a new conversation and hears the recent messages, noted just before the person's message. */
         private fun startOver() {
-            val before = (session.beforeSend ?: session.record).entries
-            session.record = Handovers.startOver(session.record, member, userEntryId, before)
+            session.record = Handovers.startOver(session.record, member, turn.userEntryId, session.beforeTurn)
             session.turn = null
-            updateReply(session, "")
+            updateReply(session, turn.replyId, "")
             runCatching { session.history.write(session.record) }
-            worker.execute { attempt(session, generation, kind) { startTurn(session, generation, member, userEntryId, request.text, retried = true) } }
+            worker.execute { attempt(session, generation, kind) { startTurn(session, generation, turn, retried = true) } }
         }
     }
 
-    private fun updateReply(session: Session, text: String) {
-        val entries = session.record.entries
-        val reply = entries.lastOrNull() as? ChatEntry.Assistant ?: return
-        session.record = session.record.copy(entries = entries.dropLast(1) + reply.copy(text = text.take(ChatLimits.REPLY)))
+    private fun updateReply(session: Session, replyId: String, text: String) {
+        session.record = session.record.copy(entries = session.record.entries.map {
+            if (it is ChatEntry.Assistant && it.id == replyId) it.copy(text = text.take(ChatLimits.REPLY)) else it
+        })
+    }
+
+    /**
+     * The turn in progress failed after its message was saved: the message stays, unanswered, an
+     * empty reply goes, and [kind] (when the turn failed rather than was ended) is why, until a turn succeeds.
+     */
+    private fun fail(session: Session, kind: ChatFailureKind?, resetsAt: Instant?, state: ChatState, notice: String, release: Boolean = true) {
+        session.inFlight?.let { turn ->
+            session.record = session.record.copy(entries = session.record.entries.mapNotNull {
+                when {
+                    it is ChatEntry.User && it.id == turn.userEntryId -> it.copy(status = UserStatus.UNANSWERED)
+                    it is ChatEntry.Assistant && it.id == turn.replyId && it.text.isEmpty() -> null
+                    else -> it
+                }
+            })
+            if (kind != null) session.failure = ChatFailureReport(kind, turn.member, resetsAt?.truncatedTo(ChronoUnit.MILLIS)?.toString())
+        }
+        end(session, state, notice, release)
     }
 
     /**
@@ -317,7 +381,7 @@ internal class DesktopChat(
      * worker; a VM error is then rethrown.
      */
     private fun attempt(session: Session, generation: Int, runtime: RuntimeId,
-        onFailure: () -> Unit = { end(session, ChatState.ERROR, couldNotComplete(runtime)) }, work: () -> Unit) {
+        onFailure: () -> Unit = { fail(session, ChatFailureKind.UNEXPECTED, null, ChatState.ERROR, couldNotComplete(runtime)) }, work: () -> Unit) {
         try { work() } catch (error: Throwable) {
             synchronized(gate) { if (live(session, generation) && session.state != ChatState.DISCONNECTED) onFailure() }
             if (error is VirtualMachineError) throw error
@@ -327,7 +391,7 @@ internal class DesktopChat(
     /** [release] ends the work of the runtimes this view used; a failure a runtime reported, or a graceful stop, has already ended its own. */
     private fun end(session: Session, state: ChatState, notice: String, release: Boolean = true) {
         session.generation++; session.state = state; session.notice = notice
-        session.turn = null; session.speak = false; session.handover = null; session.beforeSend = null
+        session.turn = null; session.speak = false; session.handover = null; session.inFlight = null
         if (release) session.used.forEach { runtimes[it]?.release() }
         speech.stop()
         runCatching { session.history.write(session.record) }
@@ -336,7 +400,8 @@ internal class DesktopChat(
     private fun invalidateLocked(keepEnded: Boolean) {
         val session = active; active = null
         session?.let {
-            end(it, ChatState.ERROR, "This chat was closed. Reconnect to continue.")
+            // A reply cut off by the closed view leaves its message unanswered, for a retry after reconnecting.
+            fail(it, null, null, ChatState.ERROR, "This chat was closed. Reconnect to continue.")
             if (keepEnded) ended = it.scope to view(it)
         }
         speech.stop()
@@ -350,6 +415,16 @@ internal class DesktopChat(
         }
         try { closeInReverse(runtimes.values.toList()) } finally { speech.close() }
     }
+}
+
+/** The kind the page reads for a failed turn. A conversation lost twice is unexpected. */
+private fun failureKind(failure: ChatFailure) = when (failure) {
+    ChatFailure.SignedOut -> ChatFailureKind.SIGNED_OUT
+    is ChatFailure.UsageLimit -> ChatFailureKind.USAGE_LIMIT
+    ChatFailure.ModelUnavailable -> ChatFailureKind.MODEL_UNAVAILABLE
+    ChatFailure.Temporary -> ChatFailureKind.TEMPORARY
+    ChatFailure.Lockdown -> ChatFailureKind.LOCKDOWN
+    ChatFailure.ConversationLost, ChatFailure.Unexpected -> ChatFailureKind.UNEXPECTED
 }
 
 /** A lost sign-in leaves the chat "disconnected"; every other failure is an error the person can retry. */

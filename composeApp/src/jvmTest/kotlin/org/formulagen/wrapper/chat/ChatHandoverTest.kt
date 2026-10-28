@@ -80,6 +80,18 @@ class ChatHandoverTest {
         assertTrue(Handovers.consumed(caughtUp, RuntimeId.CODEX).pendingContext.isEmpty())
     }
 
+    @Test fun aRuntimeThatTookItsHandoverHasSeenEverythingBeforeIt() {
+        val question = user("And then?")
+        val handed = Handovers.entry(codex, sonnet, HandoverMethod.SUMMARY, HandoverReason.MANUAL, "They said hi.")
+        val record = ChatRecord(conversations = mapOf(RuntimeId.CLAUDE_CODE to session, RuntimeId.CODEX to thread),
+            entries = listOf(user("Hi"), reply(codex, "Hello"), handed, question))
+        assertEquals(listOf(question), Handovers.unseen(record, RuntimeId.CLAUDE_CODE))
+        // Still owed the summary, it has seen nothing since its own last reply.
+        assertEquals(3, Handovers.unseen(record.copy(pendingContext = mapOf(RuntimeId.CLAUDE_CODE to "the summary")), RuntimeId.CLAUDE_CODE).size)
+        assertEquals(listOf(question), Handovers.unseen(record, RuntimeId.CODEX))
+        assertEquals(3, Handovers.unseen(record.copy(conversations = emptyMap()), RuntimeId.CODEX).size)
+    }
+
     @Test fun aLostConversationGetsWhatItWasOwedAndTheRecentMessagesWithANote() {
         val question = user("And then?")
         val record = ChatRecord(

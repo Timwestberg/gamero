@@ -54,6 +54,8 @@ class DesktopChatTeamTest {
         ChatSend(scope.profile, scope.companionId, scope.name, scope.sessionId, member, UUID.randomUUID().toString(), text, false)
     private fun handover(from: TeamMember?, to: TeamMember, id: String = UUID.randomUUID().toString()) =
         ChatHandover(scope.profile, scope.companionId, scope.name, scope.sessionId, from, HandoverReason.MANUAL, id, to)
+    private fun retry(entryId: String, member: TeamMember) =
+        ChatRetry(scope.profile, scope.companionId, scope.name, scope.sessionId, entryId, member, UUID.randomUUID().toString(), false)
     private fun chat(vararg runtimes: ChatRuntime) = DesktopChat(root, runtimes.toList(), Speech())
     private fun state(chat: DesktopChat) = runBlocking { chat.snapshot(scope) }
     private fun saved() = ChatHistory(root.resolve("local/companion-chats/${scope.companionId}.json")).read()
@@ -276,13 +278,18 @@ class DesktopChatTeamTest {
             assertEquals("Install Claude Code on this Mac, then restart Hovel to use Claude.", missing.notice)
             assertTrue(missing.messages.isEmpty())
             val sent = chat.send(send(sonnet))
-            assertEquals(ChatState.DISCONNECTED, sent.state); assertTrue(sent.messages.isEmpty())
+            assertEquals(ChatState.DISCONNECTED, sent.state)
+            assertEquals(ChatFailureReport(ChatFailureKind.UNAVAILABLE, sonnet), sent.failure)
+            assertEquals(UserStatus.UNANSWERED, (sent.messages.last() as ChatEntry.User).status)
         }
         // A build that does not offer Claude says so, rather than asking to install it.
+        Files.delete(root.resolve("local/companion-chats/${scope.companionId}.json"))
         DesktopChat(root, listOf(Fake(RuntimeId.CODEX)), Speech(), offered = setOf(RuntimeId.CODEX)).use { chat ->
             chat.open(scope)
             assertEquals("Claude is not available in this version of Hovel.", chat.handover(handover(codex, sonnet)).notice)
-            assertEquals("Claude is not available in this version of Hovel.", chat.send(send(sonnet)).notice)
+            val refused = chat.send(send(sonnet))
+            assertEquals("Claude is not available in this version of Hovel.", refused.notice)
+            assertTrue(refused.messages.isEmpty(), "A refused send adds no entry"); assertEquals(ChatState.READY, refused.state)
         }
     }
 
@@ -292,7 +299,9 @@ class DesktopChatTeamTest {
             chat.open(scope)
             chat.send(send(sonnet)); await { state(chat).state == ChatState.DISCONNECTED }
             assertEquals("Sign in to Claude Code again.", chat.snapshot(scope).notice)
-            assertTrue(chat.snapshot(scope).messages.isEmpty(), "Nothing reached Claude Code, so nothing is kept")
+            // Nothing reached Claude Code; the message stays, unanswered, and the page can offer Providers.
+            assertEquals(ChatFailureReport(ChatFailureKind.SIGNED_OUT, sonnet), chat.snapshot(scope).failure)
+            assertEquals(UserStatus.UNANSWERED, (chat.snapshot(scope).messages.last() as ChatEntry.User).status)
             claude.readiness = Readiness.Unavailable("Update Claude Code to use it here. Hovel needs version 2.1.304 or later.")
             chat.send(send(sonnet)); await { state(chat).state == ChatState.DISCONNECTED || state(chat).state == ChatState.ERROR }
             assertEquals(ChatState.ERROR, chat.snapshot(scope).state)
@@ -360,6 +369,76 @@ class DesktopChatTeamTest {
             assertEquals(0, codexRuntime.releases + codexRuntime.stops)
             chat.closeSession(scope)
             assertEquals(1, codexRuntime.releases); assertEquals(0, claude.releases)
+        }
+    }
+
+    @Test fun aFailedTurnLeavesItsMessageUnansweredAndARetryAnswersIt() = runBlocking {
+        val claude = Fake(RuntimeId.CLAUDE_CODE)
+        chat(claude).use { chat ->
+            chat.open(scope)
+            turn(chat, claude, sonnet, "Hi", "Hello", session)
+            val question = send(sonnet, "Tell me a story")
+            chat.send(question); await { claude.events.size == 2 }
+            claude.events[1].accepted(); claude.events[1].partial("Once")
+            val resetsAt = java.time.Instant.parse("2026-10-27T15:00:00Z")
+            claude.events[1].failed(ChatFailure.UsageLimit(resetsAt))
+            val failed = chat.snapshot(scope)
+            assertEquals(ChatState.ERROR, failed.state)
+            assertEquals(ChatFailureReport(ChatFailureKind.USAGE_LIMIT, sonnet, "2026-10-27T15:00:00Z"), failed.failure)
+            val message = failed.messages.single { it.id == question.requestId } as ChatEntry.User
+            assertEquals(UserStatus.UNANSWERED, message.status)
+            assertEquals("Once", (failed.messages.last() as ChatEntry.Assistant).text, "Text that came is kept")
+
+            // Refused while a reply runs, or for a message that has its reply.
+            val answered = failed.messages.first { it is ChatEntry.User }.id
+            assertEquals("Only a message without a reply can be sent again.", chat.retry(retry(answered, opus)).notice)
+
+            val again = retry(question.requestId, opus)
+            val retrying = chat.retry(again)
+            assertEquals(ChatState.RESPONDING, retrying.state)
+            assertEquals(failed.messages.count { it is ChatEntry.User }, retrying.messages.count { it is ChatEntry.User }, "No new user entry")
+            val i = retrying.messages.indexOfFirst { it.id == question.requestId }
+            val note = retrying.messages[i - 1] as ChatEntry.Handover
+            assertEquals(listOf(sonnet, opus, HandoverMethod.SAME_CONVERSATION, HandoverReason.HOST), listOf(note.from, note.to, note.method, note.reason))
+            assertEquals(ChatEntry.Assistant(again.requestId, opus, ""), retrying.messages[i + 1], "The failed reply is replaced by the retry's")
+            assertEquals(i + 2, retrying.messages.size)
+            assertEquals("Wait for the reply to finish, or stop it, before trying again.", chat.retry(retry(question.requestId, opus)).notice)
+            await { claude.events.size == 3 }
+            assertEquals("Tell me a story", claude.requests[2].text); assertEquals("opus", claude.requests[2].model)
+            assertEquals(session, claude.requests[2].conversation?.id)
+            claude.events[2].accepted(); claude.events[2].completed("Once upon a time", session)
+            val answeredNow = chat.snapshot(scope)
+            assertNull(answeredNow.failure); assertEquals(ChatState.READY, answeredNow.state)
+            assertNull((answeredNow.messages[i] as ChatEntry.User).status)
+            assertEquals("Once upon a time", (answeredNow.messages[i + 1] as ChatEntry.Assistant).text)
+            // A repeated retry runs one turn.
+            assertEquals(answeredNow, chat.retry(again))
+            assertEquals(3, claude.events.size)
+            assertEquals(answeredNow.messages, saved().entries)
+        }
+    }
+
+    @Test fun aRetryOnAnotherRuntimeIsNotedByTheHandoverRules() = runBlocking {
+        val codexRuntime = Fake(RuntimeId.CODEX); val claude = Fake(RuntimeId.CLAUDE_CODE)
+        chat(codexRuntime, claude).use { chat ->
+            chat.open(scope)
+            turn(chat, codexRuntime, codex, "Hi", "Hello", thread)
+            chat.handover(handover(codex, sonnet)); await { state(chat).state == ChatState.READY }
+            turn(chat, claude, sonnet, "Claude?", "Here", session)
+            val question = send(sonnet, "And then?")
+            chat.send(question); await { claude.events.size == 2 }
+            claude.events[1].failed(ChatFailure.Temporary)
+            assertEquals(ChatFailureKind.TEMPORARY, chat.snapshot(scope).failure?.kind)
+            // Codex missed Claude's reply, so the retry with Codex catches it up first.
+            chat.retry(retry(question.requestId, codex)); await { codexRuntime.events.size == 2 }
+            val entries = chat.snapshot(scope).messages
+            val note = entries[entries.indexOfFirst { it.id == question.requestId } - 1] as ChatEntry.Handover
+            assertEquals(listOf(sonnet, codex, HandoverMethod.RECENT_MESSAGES, HandoverReason.HOST), listOf(note.from, note.to, note.method, note.reason))
+            assertEquals("Earlier in this conversation (the most recent messages):\n<<<\nPerson: Claude?\nCompanion: Here\n>>>", codexRuntime.requests[1].context)
+            assertEquals("And then?", codexRuntime.requests[1].text)
+            codexRuntime.events[1].accepted(); codexRuntime.events[1].completed("Then a dragon", thread)
+            assertNull(chat.snapshot(scope).failure)
+            assertEquals(codex, (chat.snapshot(scope).messages.last() as ChatEntry.Assistant).author)
         }
     }
 

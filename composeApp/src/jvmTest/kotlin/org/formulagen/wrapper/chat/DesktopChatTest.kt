@@ -144,8 +144,11 @@ class DesktopChatTest {
         chat(root, Speech()) { receive -> Rpc(receive).also { rpc=it; all += it; it.connected=false } }.use { chat ->
             val a=scope(); chat.open(a); chat.send(send(a)); await { state(chat,a).state==ChatState.DISCONNECTED }
             assertEquals("Connect Codex in Profile → Providers to message your companion.", chat.snapshot(a).notice)
-            // Nothing reached Codex, so the message is not kept; a resend checks the account again.
-            assertTrue(chat.snapshot(a).messages.isEmpty())
+            // Nothing reached Codex: the message stays, unanswered, with why; a resend checks the account again.
+            val failed = chat.snapshot(a)
+            assertEquals(UserStatus.UNANSWERED, (failed.messages.last() as ChatEntry.User).status)
+            assertEquals(ChatFailureReport(ChatFailureKind.SIGNED_OUT, codex), failed.failure)
+            assertTrue(failed.messages.none { it is ChatEntry.Assistant }, "No empty reply is left")
             chat.send(send(a)); await { state(chat,a).state==ChatState.DISCONNECTED }
             assertEquals(listOf("account/read", "account/read"), rpcs().flatMap { it.calls }.toList())
             await { rpc.closed }
@@ -268,9 +271,11 @@ class DesktopChatTest {
         DesktopChat(Files.createTempDirectory("chat-no-codex"), emptyList(), Speech()).use { chat ->
             val a = scope()
             assertEquals(ChatState.READY, chat.open(a).state)
-            // Nothing was sent, so nothing is saved.
+            // Codex is offered but not installed: the message stays, unanswered, for a retry with another member.
             val sent = chat.send(send(a))
-            assertEquals(ChatState.DISCONNECTED, sent.state); assertTrue(sent.messages.isEmpty())
+            assertEquals(ChatState.DISCONNECTED, sent.state)
+            assertEquals(listOf(UserStatus.UNANSWERED), sent.messages.filterIsInstance<ChatEntry.User>().map { it.status })
+            assertEquals(ChatFailureReport(ChatFailureKind.UNAVAILABLE, codex), sent.failure)
             assertEquals("Install Codex on this Mac, then restart Hovel to connect.", chat.snapshot(a).notice)
             assertFails { chat.snapshot(scope()) }
             chat.closeSession(a); assertFails { chat.snapshot(a) }
