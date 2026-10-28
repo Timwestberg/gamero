@@ -6,9 +6,9 @@ import Foundation
 // FluidAudio is not linked.
 //
 // Expected FluidAudio surface, from the PocketTTS manager:
-//   PocketTtsManager()
-//   synthesizeStreaming(text) -> AsyncThrowingStream of frames
-//   each frame is 24 kHz mono, 1920 samples (80 ms)
+//   PocketTtsManager() is created once per conversation, then initialize()
+//   and cloneVoice(from:) run once. Later speaks only makeSession on that clone.
+//   Each frame is 24 kHz mono, 1920 samples (80 ms). The bundled named voice is not used.
 
 @_cdecl("ember_voice_fluid_create")
 public func emberVoiceFluidCreate(
@@ -105,6 +105,8 @@ final class FluidBox {
     let seed: Int32
     var lastTtfaMs: Double = 0
     var lastSamples: Int32 = 0
+    private var manager: PocketTtsManager?
+    private var voiceData: PocketTtsVoiceData?
     init(voiceWav: String, temperature: Float, seed: Int32) {
         self.voiceWav = voiceWav
         self.temperature = temperature
@@ -127,16 +129,29 @@ final class FluidBox {
         let cap = maxFrames > 0 ? Int(maxFrames) * 1920 : Int.max
         let voiceURL = URL(fileURLWithPath: voiceWav)
         let temperature = self.temperature
+        let cachedManager = manager
+        let cachedVoice = voiceData
         Task.detached {
             defer { sem.signal() }
             do {
-                let manager = PocketTtsManager()
-                try await manager.initialize()
-                // Clone the caller's clip. Do not fall through to the bundled
-                // named voice; that clip is not the CC0 reference this app speaks.
-                let voiceData = try await manager.cloneVoice(from: voiceURL)
-                let session = try await manager.makeSession(
-                    voiceData: voiceData,
+                let activeManager: PocketTtsManager
+                let activeVoice: PocketTtsVoiceData
+                if let cachedManager, let cachedVoice {
+                    activeManager = cachedManager
+                    activeVoice = cachedVoice
+                } else {
+                    let created = PocketTtsManager()
+                    try await created.initialize()
+                    // Clone the caller's clip once. Do not fall through to the
+                    // bundled named voice; that clip is not the CC0 reference.
+                    let cloned = try await created.cloneVoice(from: voiceURL)
+                    self.manager = created
+                    self.voiceData = cloned
+                    activeManager = created
+                    activeVoice = cloned
+                }
+                let session = try await activeManager.makeSession(
+                    voiceData: activeVoice,
                     temperature: temperature,
                     seed: UInt64(UInt32(bitPattern: seed))
                 )
