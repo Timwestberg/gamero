@@ -7,12 +7,6 @@ import kotlinx.serialization.Serializable
 import org.formulagen.wrapper.bridge.HandoverLimits
 import org.formulagen.wrapper.bridge.RuntimeId
 
-/** The name players see for a runtime ("Claude"). */
-internal val RuntimeId.product: String get() = when (this) { RuntimeId.CODEX -> "Codex"; RuntimeId.CLAUDE_CODE -> "Claude" }
-
-/** What players install and sign in to ("Claude Code"). */
-internal val RuntimeId.program: String get() = when (this) { RuntimeId.CODEX -> "Codex"; RuntimeId.CLAUDE_CODE -> "Claude Code" }
-
 /**
  * A runtime's own conversation with one companion: Codex's thread id or Claude Code's session id.
  * [personaHash] is the [Persona.hash] the conversation was last used with, or empty when it was

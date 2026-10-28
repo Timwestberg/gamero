@@ -18,9 +18,11 @@ import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.providers.CLAUDE_FALLBACK_MODEL
 import org.formulagen.wrapper.providers.CLAUDE_MODELS
+import org.formulagen.wrapper.providers.CLAUDE_STATUS_UNKNOWN
+import org.formulagen.wrapper.process.readBoundedLine
+import org.formulagen.wrapper.process.signalInterrupt
 import org.formulagen.wrapper.providers.ClaudeConnection
 import org.formulagen.wrapper.providers.ClaudeRuntime
-import org.formulagen.wrapper.providers.readBoundedLine
 
 /**
  * Claude Code behind [ChatRuntime]: one locked-down `claude -p` process per turn, on the player's
@@ -31,7 +33,8 @@ import org.formulagen.wrapper.providers.readBoundedLine
  */
 internal class ClaudeChatRuntime(
     private val claude: ClaudeRuntime,
-    private val connection: ClaudeConnection = ClaudeConnection(claude),
+    /** The one Claude Code sign-in reader, shared with the Providers card. */
+    private val connection: ClaudeConnection,
 ) : ChatRuntime {
     override val id = RuntimeId.CLAUDE_CODE
     private val running = ConcurrentHashMap.newKeySet<Turn>()
@@ -44,7 +47,7 @@ internal class ClaudeChatRuntime(
         return when (status.state) {
             ProviderState.CONNECTED -> Readiness.Ready
             ProviderState.DISCONNECTED -> Readiness.SignedOut
-            else -> Readiness.Unavailable(status.message ?: "Claude status could not be checked.")
+            else -> Readiness.Unavailable(status.message ?: CLAUDE_STATUS_UNKNOWN)
         }
     }
 
@@ -192,9 +195,3 @@ internal fun userMessage(input: String): String = buildJsonObject {
     putJsonObject("message") { put("role", "user"); put("content", input) }
     put("parent_tool_use_id", JsonNull)
 }.toString()
-
-/** SIGINT, which the JVM cannot send itself: Claude Code then ends the turn and keeps the text so far. */
-private fun signalInterrupt(process: Process) {
-    if (!process.isAlive) return
-    runCatching { ProcessBuilder("/bin/kill", "-INT", process.pid().toString()).redirectErrorStream(true).start().waitFor(2, TimeUnit.SECONDS) }
-}

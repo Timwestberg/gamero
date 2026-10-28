@@ -2,6 +2,7 @@ package org.formulagen.wrapper.chat
 
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import org.formulagen.wrapper.providers.copy
 import org.formulagen.wrapper.bridge.ChatEntry
 import org.formulagen.wrapper.bridge.HandoverLimits
 import org.formulagen.wrapper.bridge.HandoverMethod
@@ -88,7 +89,7 @@ internal object Handovers {
 
     /** "Claude (sonnet)", "Codex (its default model)": how a member is named to another runtime. */
     fun label(member: TeamMember): String =
-        "${member.runtimeId.product} (${if (member.modelId == RUNTIME_DEFAULT_MODEL) "its default model" else member.modelId})"
+        "${member.runtimeId.copy.product} (${if (member.modelId == RUNTIME_DEFAULT_MODEL) "its default model" else member.modelId})"
 
     private fun block(source: String, text: String) = "Earlier in this conversation ($source):\n<<<\n$text\n>>>"
 

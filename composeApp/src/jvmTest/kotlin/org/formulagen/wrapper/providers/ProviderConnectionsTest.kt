@@ -114,21 +114,34 @@ class ProviderConnectionsTest {
         } finally { root.toFile().deleteRecursively() }
     }
 
+    private class MutableClock(var now: Instant = Instant.EPOCH) : Clock() {
+        override fun getZone() = ZoneOffset.UTC
+        override fun withZone(zone: java.time.ZoneId) = this
+        override fun instant() = now
+    }
+
+    /** A Codex provider whose account processes are [Rpc]s recorded in [processes]. */
+    private fun codex(root: Path, processes: MutableList<Rpc>, events: MutableList<String> = mutableListOf(), executable: Path? = Path.of("/bin/echo"),
+        clock: Clock = Clock.systemUTC(), onDisconnect: () -> Unit = {}, models: () -> JsonObject = { JsonObject(emptyMap()) }) =
+        CodexProvider(root, executable, openBrowser = {}, onDisconnect = onDisconnect, clock = clock, createConnection = { _, open ->
+            val rpc = object : Rpc() {
+                override fun call(method: String, params: JsonObject) =
+                    (if (method == "model/list") models() else super.call(method, params)).also { events += method }
+            }
+            processes += rpc
+            CodexConnection(rpc, open)
+        })
+
     @Test fun registryClosesThePreviousProfileAndSignsChatsOutFirst() = runBlocking {
         val root = Files.createTempDirectory("hovel-provider-registry")
         val processes = mutableListOf<Rpc>()
         val events = mutableListOf<String>()
-        val registry = DesktopProviders(root, Path.of("/bin/echo"), openBrowser = {}, onDisconnect = { events += "chat invalidated" },
-            createConnection = { _, open ->
-                val rpc = object : Rpc() { override fun call(method: String, params: JsonObject) = super.call(method, params).also { events += method } }
-                processes += rpc
-                CodexConnection(rpc, open)
-            })
+        val registry = DesktopProviders(listOf(codex(root, processes, events, onDisconnect = { events += "chat invalidated" })))
         fun scope(profile: String = "local") = ProviderScope(profile, RuntimeId.CODEX)
         try {
             assertFails { registry.perform(ProviderAction.STATUS, scope("../../.codex")) }
             assertTrue(processes.isEmpty())
-            assertEquals(ProviderState.DISCONNECTED, registry.perform(ProviderAction.STATUS, scope()).state)
+            assertEquals(ProviderStatus(RuntimeId.CODEX, ProviderState.DISCONNECTED, detail = ProviderDetail.SIGNED_OUT), registry.perform(ProviderAction.STATUS, scope()))
             registry.perform(ProviderAction.CONNECT, scope())
             registry.perform(ProviderAction.STATUS, scope(LOGIN_ID))
             assertEquals(2, processes.size)
@@ -143,46 +156,34 @@ class ProviderConnectionsTest {
 
     @Test fun registryWithoutCodexIsUnavailable() = runBlocking<Unit> {
         val root = Files.createTempDirectory("hovel-provider-none")
-        DesktopProviders(root, null).use { registry ->
+        DesktopProviders(listOf(CodexProvider(root, null))).use { registry ->
             val status = registry.perform(ProviderAction.CONNECT, ProviderScope("local", RuntimeId.CODEX))
-            assertEquals(ProviderStatus(RuntimeId.CODEX, ProviderState.UNAVAILABLE, message = "Install Codex on this Mac, then restart Hovel to connect."), status)
+            assertEquals(ProviderStatus(RuntimeId.CODEX, ProviderState.UNAVAILABLE, message = "Install Codex on this Mac, then restart Hovel to connect.",
+                detail = ProviderDetail.NOT_INSTALLED), status)
         }
         root.toFile().deleteRecursively()
     }
 
-    /** Claude's sign-in as a test sets it, counting each check. */
-    private class ClaudeSignIn : ProviderConnection {
-        var checks = 0
-        var status = ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.CONNECTED, accountLabel = "player@example.test", plan = "max")
-        var closed = false
-        override fun perform(action: ProviderAction): ProviderStatus { assertEquals(ProviderAction.STATUS, action); checks++; return status }
-        override fun close() { closed = true }
-    }
-
-    private class MutableClock(var now: Instant = Instant.EPOCH) : Clock() {
-        override fun getZone() = ZoneOffset.UTC
-        override fun withZone(zone: java.time.ZoneId) = this
-        override fun instant() = now
-    }
-
     @Test fun claudeIsRoutedApartFromCodexAndNeverSignedInOrOut() = runBlocking<Unit> {
         val root = Files.createTempDirectory("hovel-provider-claude")
-        val claude = ClaudeSignIn(); val clock = MutableClock(); val codexCalls = mutableListOf<String>(); var invalidated = 0
-        val registry = DesktopProviders(root, Path.of("/bin/echo"), claude = claude, openBrowser = {}, onDisconnect = { invalidated++ },
-            createConnection = { _, open -> CodexConnection(object : Rpc() { override fun call(method: String, params: JsonObject) = super.call(method, params).also { codexCalls += method } }, open) },
-            clock = clock)
+        val fake = FakeClaude(); val clock = MutableClock(); val processes = mutableListOf<Rpc>(); val codexCalls = mutableListOf<String>(); var invalidated = 0
+        val signIn = ClaudeConnection(fake.runtime(), clock = clock)
+        val registry = DesktopProviders(listOf(codex(root, processes, codexCalls, onDisconnect = { invalidated++ }), ClaudeProvider(signIn)))
         fun scope(runtime: RuntimeId) = ProviderScope(LOGIN_ID, runtime)
+        val connected = ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.CONNECTED, accountLabel = "player@example.test", plan = "max")
         try {
-            assertEquals(claude.status, registry.perform(ProviderAction.STATUS, scope(RuntimeId.CLAUDE_CODE)))
+            assertEquals(connected, registry.perform(ProviderAction.STATUS, scope(RuntimeId.CLAUDE_CODE)))
             for (action in listOf(ProviderAction.CONNECT, ProviderAction.CANCEL, ProviderAction.REOPEN, ProviderAction.DISCONNECT)) {
-                assertEquals(claude.status.copy(message = "Sign in and out in Claude Code."), registry.perform(action, scope(RuntimeId.CLAUDE_CODE)))
+                assertEquals(connected.copy(message = "Sign in and out in Claude Code."), registry.perform(action, scope(RuntimeId.CLAUDE_CODE)))
             }
-            // Several views ask on focus; one check answers them for a few seconds.
-            assertEquals(1, claude.checks)
-            clock.now = clock.now.plusMillis(CLAUDE_STATUS_TTL_MILLIS)
-            claude.status = ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.DISCONNECTED)
-            assertEquals(ProviderState.DISCONNECTED, registry.perform(ProviderAction.STATUS, scope(RuntimeId.CLAUDE_CODE)).state)
-            assertEquals(2, claude.checks)
+            // Several views ask on focus; one check answers them for a few seconds, and chat readiness shares it.
+            assertEquals(org.formulagen.wrapper.chat.Readiness.Ready, org.formulagen.wrapper.chat.ClaudeChatRuntime(fake.runtime(), signIn).use { it.readiness("local") })
+            assertEquals(2, fake.calls().size, "One --version and one auth status")
+            clock.now = clock.now.plusMillis(CLAUDE_STATUS_TTL.inWholeMilliseconds)
+            fake.scenario(auth = FakeClaude.fixture("auth-status-signed-out.json"), authExit = 1)
+            assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.DISCONNECTED, detail = ProviderDetail.SIGNED_OUT,
+                message = "Sign in to Claude Code with your Claude subscription: run `claude auth login` in Terminal, then choose Check again."),
+                registry.perform(ProviderAction.STATUS, scope(RuntimeId.CLAUDE_CODE)))
             assertEquals(0, invalidated, "Claude's disconnect signs nobody out, so open chats keep going")
             assertTrue(codexCalls.isEmpty())
             assertEquals(ProviderState.DISCONNECTED, registry.perform(ProviderAction.STATUS, scope(RuntimeId.CODEX)).state)
@@ -190,41 +191,47 @@ class ProviderConnectionsTest {
             assertEquals(listOf("account/read", "account/read"), codexCalls)
             assertFails { registry.perform(ProviderAction.STATUS, ProviderScope("../x", RuntimeId.CLAUDE_CODE)) }
         } finally { registry.close(); root.toFile().deleteRecursively() }
-        assertTrue(claude.closed)
     }
 
-    @Test fun theListOffersClaudeOnlyBehindTheGateAndCodexAlways() = runBlocking<Unit> {
+    @Test fun aRuntimeThisBuildDoesNotOfferHasNoCardAndAnswersNotOffered() = runBlocking<Unit> {
         val root = Files.createTempDirectory("hovel-provider-list")
-        DesktopProviders(root, null).use { registry ->
+        DesktopProviders(listOf(CodexProvider(root, null))).use { registry ->
             assertEquals(ProviderList(listOf(RuntimeId.CODEX)), registry.list("local"))
-            assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.UNAVAILABLE, message = "Claude is not available in this version of Hovel."),
-                registry.perform(ProviderAction.STATUS, ProviderScope("local", RuntimeId.CLAUDE_CODE)))
+            val notOffered = ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.UNAVAILABLE, message = "Claude is not available in this version of Hovel.",
+                detail = ProviderDetail.NOT_OFFERED)
+            for (action in ProviderAction.entries) assertEquals(notOffered, registry.perform(action, ProviderScope("local", RuntimeId.CLAUDE_CODE)))
             assertEquals(ProviderModels(emptyList(), RuntimeId.CLAUDE_CODE), registry.models(ProviderScope("local", RuntimeId.CLAUDE_CODE)))
             assertFails { registry.list("../x") }
         }
-        DesktopProviders(root, null, claude = ClaudeConnection(null)).use { registry ->
-            assertEquals(ProviderList(listOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE)), registry.list(LOGIN_ID))
+        DesktopProviders(listOf(ClaudeProvider(ClaudeConnection(null)), CodexProvider(root, null))).use { registry ->
+            assertEquals(ProviderList(listOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE)), registry.list(LOGIN_ID), "The contract's order")
             // Offered but not installed: the card says how to install it.
-            assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.UNAVAILABLE, message = "Install Claude Code on this Mac to use Claude."),
-                registry.perform(ProviderAction.STATUS, ProviderScope("local", RuntimeId.CLAUDE_CODE)))
+            assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.UNAVAILABLE, message = "Install Claude Code on this Mac, then restart Hovel to use Claude.",
+                detail = ProviderDetail.NOT_INSTALLED), registry.perform(ProviderAction.STATUS, ProviderScope("local", RuntimeId.CLAUDE_CODE)))
         }
         root.toFile().deleteRecursively()
     }
 
-    @Test fun modelsComeFromCodexAndFromClaudesAliases() = runBlocking<Unit> {
+    @Test fun modelsComeFromTheAccountProcessAndFromClaudesAliases() = runBlocking<Unit> {
         val root = Files.createTempDirectory("hovel-provider-models")
-        val codexModels = listOf(ProviderModel("GPT-6.1 Sol", true, "gpt-6.1-sol"))
+        val processes = mutableListOf<Rpc>(); val events = mutableListOf<String>(); val clock = MutableClock()
         var fail = false
-        val registry = DesktopProviders(root, Path.of("/bin/echo"), claude = ClaudeConnection(null),
-            codexModels = { runtime -> assertEquals(codexProfileHome(root, LOGIN_ID), runtime.home); if (fail) error("Codex stopped"); codexModels })
+        val catalog = json("""{"data":[{"model":"gpt-6.1-sol","displayName":"GPT-6.1 Sol","hidden":false,"isDefault":true}],"nextCursor":null}""")
+        val registry = DesktopProviders(listOf(codex(root, processes, events, clock = clock, models = { if (fail) throw CodexRequestRejected(); catalog }),
+            ClaudeProvider(ClaudeConnection(null))))
         try {
-            assertEquals(ProviderModels(codexModels, RuntimeId.CODEX), registry.models(ProviderScope(LOGIN_ID, RuntimeId.CODEX)))
-            fail = true
+            val sol = ProviderModels(listOf(ProviderModel("GPT-6.1 Sol", true, "gpt-6.1-sol")), RuntimeId.CODEX)
+            assertEquals(sol, registry.models(ProviderScope(LOGIN_ID, RuntimeId.CODEX)))
+            registry.perform(ProviderAction.STATUS, ProviderScope(LOGIN_ID, RuntimeId.CODEX))
+            // The card's account process answers models too, and its list answers again for a minute.
+            assertEquals(sol, registry.models(ProviderScope(LOGIN_ID, RuntimeId.CODEX)))
+            assertEquals(1, processes.size); assertEquals(1, events.count { it == "model/list" })
+            clock.now = clock.now.plusMillis(MODELS_TTL_MILLIS); fail = true
             assertEquals(ProviderModels(emptyList(), RuntimeId.CODEX), registry.models(ProviderScope(LOGIN_ID, RuntimeId.CODEX)), "Nothing known is an empty list")
             assertEquals(ProviderModels(listOf(ProviderModel("Sonnet", true, "sonnet"), ProviderModel("Opus", false, "opus"), ProviderModel("Haiku", false, "haiku")),
                 RuntimeId.CLAUDE_CODE), registry.models(ProviderScope(LOGIN_ID, RuntimeId.CLAUDE_CODE)))
         } finally { registry.close() }
-        DesktopProviders(root, null).use { assertEquals(ProviderModels(emptyList(), RuntimeId.CODEX), it.models(ProviderScope("local", RuntimeId.CODEX))) }
+        DesktopProviders(listOf(CodexProvider(root, null))).use { assertEquals(ProviderModels(emptyList(), RuntimeId.CODEX), it.models(ProviderScope("local", RuntimeId.CODEX))) }
         root.toFile().deleteRecursively()
     }
 

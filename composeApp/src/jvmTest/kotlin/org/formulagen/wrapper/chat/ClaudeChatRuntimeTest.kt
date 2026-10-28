@@ -10,6 +10,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
+import org.formulagen.wrapper.providers.ClaudeConnection
 import org.formulagen.wrapper.providers.FakeClaude
 import org.formulagen.wrapper.providers.argv
 import org.formulagen.wrapper.providers.env
@@ -35,6 +36,9 @@ class ClaudeChatRuntimeTest {
         while (!check()) { if (System.nanoTime() > until) fail(message); Thread.sleep(10) }
     }
 
+    /** The runtime with a sign-in reader that checks every time, since tests change the fake's answers. */
+    private fun claude(fake: FakeClaude) = fake.runtime().let { ClaudeChatRuntime(it, ClaudeConnection(it, ttl = kotlin.time.Duration.ZERO)) }
+
     private fun request(conversation: NativeConversation? = null, model: String? = "haiku", context: String? = null) =
         TurnRequest(profile, "20000000-0000-4000-8000-000000000002", persona, model, conversation, context, "Hello")
 
@@ -42,7 +46,7 @@ class ClaudeChatRuntimeTest {
     private fun turn(fake: FakeClaude, turn: String, exit: Int = 0, request: TurnRequest = request()): Events {
         fake.scenario(turn = FakeClaude.fixture(turn), exit = exit)
         val events = Events()
-        ClaudeChatRuntime(fake.runtime()).use { claude -> claude.startTurn(request, events); await { events.ended() } }
+        claude(fake).use { claude -> claude.startTurn(request, events); await { events.ended() } }
         return events
     }
 
@@ -102,12 +106,12 @@ class ClaudeChatRuntimeTest {
         val early = FakeClaude.fixture("turn-success.ndjson").lines().filter { it.isNotBlank() }.let { lines -> lines.drop(1) }.joinToString("\n")
         fake.scenario(turn = early)
         val refused = Events()
-        ClaudeChatRuntime(fake.runtime()).use { it.startTurn(request(), refused); await { refused.ended() } }
+        claude(fake).use { it.startTurn(request(), refused); await { refused.ended() } }
         assertEquals(listOf("failed Lockdown"), refused.seen)
         // So is an init for another session than the one asked for.
         fake.scenario(turn = FakeClaude.fixture("turn-success.ndjson").replaceFirst("\"session_id\":\"SESSION_ID\"", "\"session_id\":\"${UUID.randomUUID()}\""))
         val other = Events()
-        ClaudeChatRuntime(fake.runtime()).use { it.startTurn(request(), other); await { other.ended() } }
+        claude(fake).use { it.startTurn(request(), other); await { other.ended() } }
         assertEquals(listOf("failed Lockdown"), other.seen)
     }
 
@@ -123,13 +127,13 @@ class ClaudeChatRuntimeTest {
         // A process that exits without a result is unexpected.
         fake.scenario(turn = "", exit = 3)
         val crashed = Events()
-        ClaudeChatRuntime(fake.runtime()).use { it.startTurn(request(), crashed); await { crashed.ended() } }
+        claude(fake).use { it.startTurn(request(), crashed); await { crashed.ended() } }
         assertEquals(listOf("failed Unexpected"), crashed.seen)
     }
 
     @Test fun anotherPersonaOrAnUnknownModelNeverStartsAProcess() {
         val fake = FakeClaude()
-        ClaudeChatRuntime(fake.runtime()).use { claude ->
+        claude(fake).use { claude ->
             val renamed = Events()
             claude.startTurn(request(NativeConversation("9d6b5d91-5085-4e72-a576-7d379498daf0", Persona.companion("Pip").hash)), renamed)
             assertEquals(listOf("failed ConversationLost"), renamed.seen)
@@ -149,7 +153,7 @@ class ClaudeChatRuntimeTest {
         val fake = FakeClaude()
         fake.scenario(turn = FakeClaude.fixture("turn-sigint.ndjson"))
         val events = Events()
-        ClaudeChatRuntime(fake.runtime()).use { claude ->
+        claude(fake).use { claude ->
             val handle = claude.startTurn(request(), events)
             await { events.seen.lastOrNull() == "partial 1. Juicy apple\n2. Sweet banana\n3." }
             handle.stop()
@@ -164,7 +168,7 @@ class ClaudeChatRuntimeTest {
         val fake = FakeClaude()
         fake.scenario(turn = FakeClaude.fixture("turn-sigint.ndjson").replace("{\"__fake\":\"wait_for_sigint\"}", "{\"__fake\":\"wait_for_sigint\"}\n{\"__fake\":\"wait_for_sigint\"}"))
         val events = Events()
-        ClaudeChatRuntime(fake.runtime()).use { claude ->
+        claude(fake).use { claude ->
             claude.startTurn(request(), events)
             await { events.seen.any { it.startsWith("partial") } }
             claude.release()
@@ -178,23 +182,23 @@ class ClaudeChatRuntimeTest {
         val fake = FakeClaude()
         val long = "s".repeat(3000)
         fake.scenario(turn = FakeClaude.fixture("turn-success.ndjson").replace("You asked me to say \\\"hello,\\\" and my name is Ember.", long))
-        val summary = ClaudeChatRuntime(fake.runtime()).use { it.summarize(SummaryRequest(profile, persona, "haiku", "user: Hello\nassistant: Hi", timeout = 10.seconds)) }
+        val summary = claude(fake).use { it.summarize(SummaryRequest(profile, persona, "haiku", "user: Hello\nassistant: Hi", timeout = 10.seconds)) }
         assertEquals("s".repeat(SUMMARY_LIMIT), summary)
         val call = fake.turns().single()
         assertEquals(claudeTurnArguments("haiku", persona) + "--no-session-persistence", call.argv())
         assertEquals(userMessage(summaryInstruction("user: Hello\nassistant: Hi")) + "\n", call.getValue("stdin").jsonPrimitive.content)
 
         fake.scenario(turn = FakeClaude.fixture("turn-bad-model.ndjson"), exit = 1)
-        assertFails { ClaudeChatRuntime(fake.runtime()).use { it.summarize(SummaryRequest(profile, persona, "haiku", "user: Hello")) } }
+        assertFails { claude(fake).use { it.summarize(SummaryRequest(profile, persona, "haiku", "user: Hello")) } }
         fake.scenario(turn = FakeClaude.fixture("turn-sigint.ndjson"))
         val started = System.nanoTime()
-        assertFails { ClaudeChatRuntime(fake.runtime()).use { it.summarize(SummaryRequest(profile, persona, "haiku", "user: Hello", timeout = 1.seconds)) } }
+        assertFails { claude(fake).use { it.summarize(SummaryRequest(profile, persona, "haiku", "user: Hello", timeout = 1.seconds)) } }
         assertTrue(System.nanoTime() - started < TimeUnit.SECONDS.toNanos(5))
     }
 
     @Test fun readinessFollowsTheProviderStatus() {
         val fake = FakeClaude()
-        ClaudeChatRuntime(fake.runtime()).use { claude ->
+        claude(fake).use { claude ->
             assertEquals(Readiness.Ready, claude.readiness(profile))
             fake.scenario(auth = FakeClaude.fixture("auth-status-signed-out.json"), authExit = 1)
             assertEquals(Readiness.SignedOut, claude.readiness(profile))
@@ -202,7 +206,7 @@ class ClaudeChatRuntimeTest {
             assertEquals(Readiness.Unavailable("Update Claude Code to use it here. Hovel needs version 2.1.304 or later."), claude.readiness(profile))
         }
         assertTrue(fake.calls().none { "login" in it.argv() || "logout" in it.argv() })
-        assertFails { ClaudeChatRuntime(fake.runtime()).use { it.startTurn(request().copy(profile = "../x"), Events()) } }
+        assertFails { claude(fake).use { it.startTurn(request().copy(profile = "../x"), Events()) } }
         assertFalse(Files.exists(Path.of(fake.providers.toString(), "..", "x")))
     }
 }

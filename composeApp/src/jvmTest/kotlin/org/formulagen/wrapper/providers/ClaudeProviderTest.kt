@@ -4,6 +4,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import kotlin.time.Duration.Companion.milliseconds
+import org.formulagen.wrapper.bridge.ProviderDetail
 import org.formulagen.wrapper.bridge.ProviderState
 import org.formulagen.wrapper.bridge.ProviderStatus
 import org.formulagen.wrapper.bridge.RuntimeId
@@ -53,34 +54,60 @@ class ClaudeProviderTest {
         assertNull(findClaudeExecutable(mapOf("HOME" to root.resolve("nobody").toString()), none))
     }
 
-    @Test fun releaseBuildsNeverOfferClaude() {
-        assertTrue(claudeProviderEnabled(mapOf("HOVEL_CLAUDE_PROVIDER" to "1"), release = false))
-        assertFalse(claudeProviderEnabled(mapOf("HOVEL_CLAUDE_PROVIDER" to "1"), release = true))
-        assertFalse(claudeProviderEnabled(mapOf("HOVEL_CLAUDE_PROVIDER" to "true"), release = false))
-        assertFalse(claudeProviderEnabled(emptyMap(), release = false))
+    @Test fun claudeIsOfferedOnlyByADevelopmentBuildThatAsksForIt() {
+        val asked = mapOf("HOVEL_CLAUDE_PROVIDER" to "1")
+        assertTrue(claudeProviderEnabled(asked, release = false, development = true))
+        assertFalse(claudeProviderEnabled(asked, release = false, development = false), "An unmarked build fails closed")
+        assertFalse(claudeProviderEnabled(asked, release = true, development = true), "A release build never offers it")
+        assertFalse(claudeProviderEnabled(mapOf("HOVEL_CLAUDE_PROVIDER" to "true"), release = false, development = true))
+        assertFalse(claudeProviderEnabled(emptyMap(), release = false, development = true))
     }
 
     @Test fun eachInstallAndSignInMapsToOneCardState() {
         val current = MIN_CLAUDE_VERSION
-        assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.UNAVAILABLE, message = "Install Claude Code on this Mac to use Claude."),
+        fun status(state: ProviderState, detail: ProviderDetail, message: String?) = ProviderStatus(RuntimeId.CLAUDE_CODE, state, message = message, detail = detail)
+        assertEquals(status(ProviderState.UNAVAILABLE, ProviderDetail.NOT_INSTALLED, "Install Claude Code on this Mac, then restart Hovel to use Claude."),
             claudeProviderStatus(false, null, null))
-        val outdated = ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.UNAVAILABLE, message = "Update Claude Code to use it here. Hovel needs version 2.1.304 or later.")
-        assertEquals(outdated, claudeProviderStatus(true, ClaudeVersion(2, 1, 303), subscription))
-        assertEquals(outdated, claudeProviderStatus(true, null, subscription))
-        assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.ERROR, message = "Claude status could not be checked."), claudeProviderStatus(true, current, null))
-        assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.DISCONNECTED), claudeProviderStatus(true, current, ClaudeAuthStatus(false, "none")))
-        assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.ERROR, message = "Claude Code is using an API key. Sign in with your Claude subscription to use it here."),
+        assertEquals(status(ProviderState.UNAVAILABLE, ProviderDetail.OUTDATED, "Update Claude Code to use it here. Hovel needs version 2.1.304 or later."),
+            claudeProviderStatus(true, ClaudeVersion(2, 1, 303), subscription))
+        val unknown = status(ProviderState.ERROR, ProviderDetail.UNKNOWN, "Claude status could not be checked.")
+        assertEquals(unknown, claudeProviderStatus(true, null, subscription), "An unreadable version is unknown, not outdated")
+        assertEquals(unknown, claudeProviderStatus(true, current, null))
+        assertEquals(status(ProviderState.DISCONNECTED, ProviderDetail.SIGNED_OUT,
+            "Sign in to Claude Code with your Claude subscription: run `claude auth login` in Terminal, then choose Check again."),
+            claudeProviderStatus(true, current, ClaudeAuthStatus(false)))
+        assertEquals(status(ProviderState.ERROR, ProviderDetail.API_KEY, "Claude Code is using an API key. Sign in with your Claude subscription to use it here."),
             claudeProviderStatus(true, current, ClaudeAuthStatus(true, "api_key")))
         assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.CONNECTED, accountLabel = "player@example.test", plan = "max"), claudeProviderStatus(true, current, subscription))
         // The page names the plan; the host passes Claude Code's own value.
         assertEquals("max_20x", claudeProviderStatus(true, current, subscription.copy(subscriptionType = "max_20x")).plan)
         val long = claudeProviderStatus(true, current, subscription.copy(email = "x".repeat(321), subscriptionType = null))
         assertEquals(ProviderState.CONNECTED, long.state); assertNull(long.accountLabel); assertNull(long.plan)
+        assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.UNAVAILABLE, message = "Claude is not available in this version of Hovel.",
+            detail = ProviderDetail.NOT_OFFERED), notOfferedStatus(RuntimeId.CLAUDE_CODE))
+    }
+
+    @Test fun oneCheckAnswersAgainForAFewSecondsAndASignedOutReplyMayLeaveOutItsMethod() {
+        val fake = FakeClaude()
+        var now = java.time.Instant.EPOCH
+        val clock = object : java.time.Clock() {
+            override fun getZone() = java.time.ZoneOffset.UTC
+            override fun withZone(zone: java.time.ZoneId) = this
+            override fun instant() = now
+        }
+        val connection = ClaudeConnection(fake.runtime(), clock = clock)
+        assertEquals(ProviderState.CONNECTED, connection.status().state)
+        fake.scenario(auth = """{"loggedIn":false}""", authExit = 1)
+        assertEquals(ProviderState.CONNECTED, connection.status().state)
+        assertEquals(2, fake.calls().size)
+        now = now.plusMillis(CLAUDE_STATUS_TTL.inWholeMilliseconds)
+        assertEquals(ProviderDetail.SIGNED_OUT, connection.status().detail)
+        assertEquals(4, fake.calls().size)
     }
 
     @Test fun statusReadsOnlyVersionAndAuthStatusAndNeverSignsInOrOut() {
         val fake = FakeClaude()
-        val connection = ClaudeConnection(fake.runtime(), timeout = 2_000.milliseconds)
+        val connection = ClaudeConnection(fake.runtime(), timeout = 2_000.milliseconds, ttl = kotlin.time.Duration.ZERO)
         assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.CONNECTED, accountLabel = "player@example.test", plan = "max"), connection.status())
         fake.scenario(auth = FakeClaude.fixture("auth-status-signed-out.json"), authExit = 1)
         assertEquals(ProviderState.DISCONNECTED, connection.status().state)
@@ -89,18 +116,19 @@ class ClaudeProviderTest {
         // Output that disagrees with the exit code, an odd exit, or text that is not the JSON is unknown, never "signed out".
         for ((auth, exit) in listOf(FakeClaude.fixture("auth-status-subscription.json") to 1, "Not logged in" to 1, "{}" to 0, FakeClaude.fixture("auth-status-subscription.json") to 2)) {
             fake.scenario(auth = auth, authExit = exit)
-            assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.ERROR, message = "Claude status could not be checked."), connection.status(), auth)
+            assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.ERROR, message = "Claude status could not be checked.", detail = ProviderDetail.UNKNOWN),
+                connection.status(), auth)
         }
         fake.scenario(version = "2.1.200 (Claude Code)")
         assertEquals(ProviderState.UNAVAILABLE, connection.status().state)
         val calls = fake.calls().size
         fake.scenario(version = "garbage")
-        assertEquals(ProviderState.UNAVAILABLE, connection.status().state)
+        assertEquals(ProviderDetail.UNKNOWN, connection.status().detail, "An unreadable version is unknown, not outdated")
         assertEquals(calls + 1, fake.calls().size, "An unusable version is not asked for its sign-in")
 
         val started = System.nanoTime()
         fake.scenario(authSleepSeconds = 5.0)
-        assertEquals(ProviderState.ERROR, ClaudeConnection(fake.runtime(), timeout = 300.milliseconds).status().state)
+        assertEquals(ProviderDetail.UNKNOWN, ClaudeConnection(fake.runtime(), timeout = 300.milliseconds).status().detail)
         assertTrue(System.nanoTime() - started < 4_000_000_000)
 
         val argv = fake.calls().map { it.argv() }.toSet()
@@ -110,6 +138,6 @@ class ClaudeProviderTest {
 
         Files.delete(fake.executable)
         assertEquals(ProviderState.UNAVAILABLE, connection.status().state)
-        assertEquals("Install Claude Code on this Mac to use Claude.", ClaudeConnection(null).status().message)
+        assertEquals(ProviderDetail.NOT_INSTALLED, ClaudeConnection(null).status().detail)
     }
 }

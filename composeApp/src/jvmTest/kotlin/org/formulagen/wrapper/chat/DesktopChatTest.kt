@@ -271,7 +271,7 @@ class DesktopChatTest {
             // Nothing was sent, so nothing is saved.
             val sent = chat.send(send(a))
             assertEquals(ChatState.DISCONNECTED, sent.state); assertTrue(sent.messages.isEmpty())
-            assertEquals("Install Codex on this Mac and restart Hovel.", chat.snapshot(a).notice)
+            assertEquals("Install Codex on this Mac, then restart Hovel to connect.", chat.snapshot(a).notice)
             assertFails { chat.snapshot(scope()) }
             chat.closeSession(a); assertFails { chat.snapshot(a) }
         }

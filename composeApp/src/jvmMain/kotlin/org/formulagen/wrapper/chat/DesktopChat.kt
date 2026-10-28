@@ -9,6 +9,7 @@ import java.time.format.FormatStyle
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import org.formulagen.wrapper.providers.copy
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.closeInReverse
 
@@ -16,12 +17,13 @@ import org.formulagen.wrapper.closeInReverse
  * Owns one view's conversation lease: its history, request dedupe, the reply watchdog, speech and
  * handovers between team members. Each reply runs on the [ChatRuntime] of the member that sends it;
  * workers never mutate a newer view or replay a send. [runtimes] are the runtimes found on this
- * Mac; the chat closes them.
+ * Mac; the chat closes them. [offered] are the runtimes this build offers, found or not.
  */
 internal class DesktopChat(
     private val providerRoot: Path,
     runtimes: List<ChatRuntime>,
     private val speech: ChatSpeech,
+    private val offered: Set<RuntimeId> = RuntimeId.entries.toSet(),
 ) : ChatCapability, AutoCloseable {
     private val runtimes = runtimes.associateBy { it.id }
     private val gate = Any()
@@ -76,7 +78,7 @@ internal class DesktopChat(
         check(session.state in setOf(ChatState.READY, ChatState.CANCELLED, ChatState.DISCONNECTED))
         val kind = args.member.runtimeId
         if (kind !in runtimes) {
-            session.state = ChatState.DISCONNECTED; session.notice = notInstalled(kind)
+            session.state = ChatState.DISCONNECTED; session.notice = missing(kind)
             return@synchronized view(session)
         }
         speech.stop()
@@ -113,7 +115,7 @@ internal class DesktopChat(
         if (session.state == ChatState.RESPONDING) return@synchronized view(session).copy(notice = "Wait for the reply to finish, or stop it, before switching.")
         if (session.state == ChatState.HANDING_OVER) return@synchronized view(session).copy(notice = "Another switch is still in progress.")
         val to = args.to.runtimeId
-        if (to !in runtimes) { session.notice = notInstalled(to); return@synchronized view(session) }
+        if (to !in runtimes) { session.notice = missing(to); return@synchronized view(session) }
         val from = args.from
         val canSummarize = from != null && from.runtimeId in runtimes && session.record.conversations[from.runtimeId] != null
         val plan = Handovers.plan(session.record, from, args.to, canSummarize)
@@ -162,6 +164,9 @@ internal class DesktopChat(
 
     /** Called when the document or provider login changes. A still-open view reads why and can reconnect. */
     fun invalidate() = synchronized(gate) { invalidateLocked(keepEnded = true) }
+
+    /** Why a member's runtime cannot answer here: this build does not offer it, or Hovel did not find it. */
+    private fun missing(runtime: RuntimeId) = if (runtime in offered) runtime.copy.notInstalled else runtime.copy.notOffered
 
     private fun current(scope: ChatScope): Session = checkNotNull(active?.takeIf { !closed && it.scope == scope }) { "Chat view expired" }
     private fun live(session: Session, generation: Int = session.generation) = !closed && active === session && generation == session.generation
@@ -384,25 +389,20 @@ private fun notReadyNotice(runtime: RuntimeId, readiness: Readiness) = when (rea
     else -> signedOutNotice(runtime)
 }
 
-private fun notInstalled(runtime: RuntimeId) = "Install ${runtime.program} on this Mac and restart Hovel."
+private fun signedOutNotice(runtime: RuntimeId) = runtime.copy.signedOut
 
-private fun signedOutNotice(runtime: RuntimeId) = when (runtime) {
-    RuntimeId.CODEX -> "Connect Codex in Profile → Providers to message your companion."
-    RuntimeId.CLAUDE_CODE -> "Sign in to Claude Code again."
-}
-
-private fun couldNotComplete(runtime: RuntimeId) = "${runtime.program} could not complete the request. Reconnect or retry when ready."
+private fun couldNotComplete(runtime: RuntimeId) = "${runtime.copy.program} could not complete the request. Reconnect or retry when ready."
 
 /** The person-facing reason a turn failed. Raw runtime output never reaches it. */
 internal fun failureNotice(runtime: RuntimeId, failure: ChatFailure, zone: ZoneId = ZoneId.systemDefault()): String = when (failure) {
     ChatFailure.SignedOut -> signedOutNotice(runtime)
-    is ChatFailure.UsageLimit -> "You've reached your ${runtime.product} usage limit. " +
+    is ChatFailure.UsageLimit -> "You've reached your ${runtime.copy.product} usage limit. " +
         (failure.resetsAt?.let { "It resets at ${resetTime(it, zone)}." } ?: "Try again later.")
-    ChatFailure.ModelUnavailable -> "${runtime.product} can't use this model. Choose another model and try again."
-    ChatFailure.Temporary -> "The reply stopped. Try again when ${runtime.product} is ready."
-    ChatFailure.ConversationLost -> "${runtime.product} could not continue this conversation. Send your message again to start fresh."
-    ChatFailure.Lockdown -> "${runtime.program} started with tools or plugins that companion chat does not allow, so the reply was stopped."
-    ChatFailure.Unexpected -> "${runtime.product} could not finish this reply. Check Providers and try again."
+    ChatFailure.ModelUnavailable -> "${runtime.copy.product} can't use this model. Choose another model and try again."
+    ChatFailure.Temporary -> "The reply stopped. Try again when ${runtime.copy.product} is ready."
+    ChatFailure.ConversationLost -> "${runtime.copy.product} could not continue this conversation. Send your message again to start fresh."
+    ChatFailure.Lockdown -> "${runtime.copy.program} started with tools or plugins that companion chat does not allow, so the reply was stopped."
+    ChatFailure.Unexpected -> "${runtime.copy.product} could not finish this reply. Check Providers and try again."
 }
 
 /** "3:00 PM" today, otherwise the date too, in the Mac's time zone. */

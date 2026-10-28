@@ -26,8 +26,11 @@ import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.hovel.HovelCompanionCapability
 import org.formulagen.wrapper.pet.DesktopPetLauncher
 import org.formulagen.wrapper.progression.embedded.DesktopGameLauncher
+import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.providers.ClaudeConnection
+import org.formulagen.wrapper.providers.ClaudeProvider
 import org.formulagen.wrapper.providers.ClaudeRuntime
+import org.formulagen.wrapper.providers.CodexProvider
 import org.formulagen.wrapper.providers.DesktopProviders
 import org.formulagen.wrapper.providers.claudeProviderEnabled
 import org.formulagen.wrapper.providers.codexProfileHome
@@ -86,13 +89,19 @@ internal class DesktopServices private constructor(
                 val codex = findCodexExecutable(environment)
                 val origin = URI(appUrl).let { URI(it.scheme, null, it.host, it.port, null, null, null).toASCIIString() }
                 val providerRoot = support.resolve("providers").resolve(HovelCompanion.sha256(origin))
-                // Claude stays off in release builds until Anthropic confirms a companion persona on a player's subscription.
-                val claudeOffered = claudeProviderEnabled(environment, release = System.getProperty("gamero.release") == "true")
+                // Claude is offered only by a development build that asks for it, until Anthropic confirms a
+                // companion persona on a player's subscription is allowed; anything else fails closed.
+                val claudeOffered = claudeProviderEnabled(environment, release = System.getProperty("gamero.release") == "true",
+                    development = System.getProperty("gamero.dev") == "true")
                 val claude = if (claudeOffered) findClaudeExecutable(environment)?.let { ClaudeRuntime(it, providerRoot, environment) } else null
-                val runtimes = listOfNotNull(codex?.let { CodexChatRuntime(providerRoot, it) }, claude?.let { ClaudeChatRuntime(it) })
-                val chat = own(DesktopChat(providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment))))
-                val providers = own(DesktopProviders(providerRoot, codex, claude = if (claudeOffered) ClaudeConnection(claude) else null,
-                    onDisconnect = chat::invalidate))
+                // One reader of Claude Code's sign-in, for the Providers card and chat readiness alike.
+                val claudeSignIn = if (claudeOffered) ClaudeConnection(claude) else null
+                val runtimes = listOfNotNull(codex?.let { CodexChatRuntime(providerRoot, it) },
+                    claude?.let { ClaudeChatRuntime(it, checkNotNull(claudeSignIn)) })
+                val offered = setOfNotNull(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE.takeIf { claudeOffered })
+                val chat = own(DesktopChat(providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment)), offered))
+                val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex, onDisconnect = chat::invalidate),
+                    claudeSignIn?.let(::ClaudeProvider))))
                 val pet = own(DesktopPetLauncher(environment, support.resolve("ember-pet.log")))
                 val workspace = environment["GAMERO_WORKSPACE"]?.let(Path::of)
                 val companion = if (product == HOVEL_PRODUCT && System.getProperty("os.name").contains("Mac") &&

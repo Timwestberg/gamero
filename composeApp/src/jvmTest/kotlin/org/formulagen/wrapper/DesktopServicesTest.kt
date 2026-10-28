@@ -53,10 +53,12 @@ class DesktopServicesTest {
         suspend fun runtimes(environment: Map<String, String>) = DesktopServices.create("http://127.0.0.1:8133/", support, environment,
             GAMERO_PRODUCT_NAME, window = null).use { it.providers.list("local").runtimes }
         try {
+            assertEquals(listOf(RuntimeId.CODEX), runtimes(gateOn), "An unmarked build fails closed")
+            System.setProperty("gamero.dev", "true")
             assertEquals(listOf(RuntimeId.CODEX), runtimes(gateOn - "HOVEL_CLAUDE_PROVIDER"))
             assertEquals(listOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE), runtimes(gateOn))
             System.setProperty("gamero.release", "true")
             assertEquals(listOf(RuntimeId.CODEX), runtimes(gateOn), "A release build ignores the setting")
-        } finally { System.clearProperty("gamero.release"); support.toFile().deleteRecursively() }
+        } finally { System.clearProperty("gamero.release"); System.clearProperty("gamero.dev"); support.toFile().deleteRecursively() }
     }
 }

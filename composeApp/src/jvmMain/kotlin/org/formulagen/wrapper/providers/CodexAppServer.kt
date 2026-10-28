@@ -2,7 +2,7 @@ package org.formulagen.wrapper.providers
 
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.companion.terminateProcessTree
-import java.io.BufferedReader
+import org.formulagen.wrapper.process.readBoundedLine
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutionException
@@ -131,30 +131,3 @@ internal class StdioCodexAppServer(
 
 /** Codex answered with a JSON-RPC error. Unlike a timeout or a stopped process, the app-server is still usable. */
 internal class CodexRequestRejected : IllegalStateException("Codex rejected the request")
-
-/** Longest protocol message kept, in UTF-16 units. Larger messages are dropped whole. */
-internal const val MAX_PROTOCOL_LINE = 256 * 1024
-
-/**
- * The next newline-delimited message, or null at end of stream. A message longer than [limit] is
- * discarded up to its newline without being buffered, and reading continues with the next message;
- * a request still waiting for that reply then fails by its own timeout.
- */
-internal fun readBoundedLine(reader: BufferedReader, limit: Int = MAX_PROTOCOL_LINE): String? {
-    val line = StringBuilder()
-    var dropping = false
-    while (true) {
-        val next = reader.read()
-        when {
-            next == -1 -> return line.takeIf { !dropping && it.isNotEmpty() }?.toString()
-            next == '\n'.code -> {
-                if (!dropping && line.isNotEmpty()) return line.toString()
-                dropping = false
-                line.setLength(0)
-            }
-            dropping -> Unit
-            line.length >= limit -> { dropping = true; line.setLength(0) }
-            else -> line.append(next.toChar())
-        }
-    }
-}

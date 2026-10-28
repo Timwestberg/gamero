@@ -35,7 +35,8 @@ class DesktopChatSmokeTest {
         val executable = System.getenv("HOVEL_CHAT_CLAUDE_SMOKE")
         assumeTrue("Set HOVEL_CHAT_CLAUDE_SMOKE to an installed claude executable", executable != null)
         val root = Files.createTempDirectory("hovel-claude-smoke")
-        val claude = ClaudeChatRuntime(ClaudeRuntime(Path.of(requireNotNull(executable)), root))
+        val runtime = ClaudeRuntime(Path.of(requireNotNull(executable)), root)
+        val claude = ClaudeChatRuntime(runtime, org.formulagen.wrapper.providers.ClaudeConnection(runtime))
         claude.use {
             assertEquals(Readiness.Ready, claude.readiness("local"))
             val persona = Persona.companion("Ember")

@@ -287,10 +287,16 @@ class DesktopChatTeamTest {
         chat(Fake(RuntimeId.CODEX)).use { chat ->
             chat.open(scope)
             val missing = chat.handover(handover(codex, sonnet))
-            assertEquals("Install Claude Code on this Mac and restart Hovel.", missing.notice)
+            assertEquals("Install Claude Code on this Mac, then restart Hovel to use Claude.", missing.notice)
             assertTrue(missing.messages.isEmpty())
             val sent = chat.send(send(sonnet))
             assertEquals(ChatState.DISCONNECTED, sent.state); assertTrue(sent.messages.isEmpty())
+        }
+        // A build that does not offer Claude says so, rather than asking to install it.
+        DesktopChat(root, listOf(Fake(RuntimeId.CODEX)), Speech(), offered = setOf(RuntimeId.CODEX)).use { chat ->
+            chat.open(scope)
+            assertEquals("Claude is not available in this version of Hovel.", chat.handover(handover(codex, sonnet)).notice)
+            assertEquals("Claude is not available in this version of Hovel.", chat.send(send(sonnet)).notice)
         }
     }
 

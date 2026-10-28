@@ -5,14 +5,19 @@ import java.time.Clock
 import java.util.UUID
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.ProviderAction
+import org.formulagen.wrapper.bridge.ProviderDetail
 import org.formulagen.wrapper.bridge.ProviderLimits
+import org.formulagen.wrapper.bridge.ProviderModel
 import org.formulagen.wrapper.bridge.ProviderState
 import org.formulagen.wrapper.bridge.ProviderStatus
 import org.formulagen.wrapper.bridge.RuntimeId
+import org.formulagen.wrapper.bridge.SharedRules
 
-/** An independently replaceable provider connection behind the desktop registry. */
+/** One profile's Codex account process behind [CodexProvider], replaceable in tests. */
 internal interface ProviderConnection : AutoCloseable {
     fun perform(action: ProviderAction): ProviderStatus
+    /** The models this account's plan offers a team member. */
+    fun models(): List<ProviderModel>
 }
 
 /** Codex owns OAuth and tokens; this adapter exposes only display state and explicit actions. */
@@ -62,7 +67,7 @@ internal class CodexConnection(
         if (account == JsonNull) {
             if (pending != null && rpc.loginResult(pending.id) == true) login = null
             return if (login != null) reply(ProviderState.SIGNING_IN, "Finish signing in in your browser, then return here.")
-                else reply(ProviderState.DISCONNECTED)
+                else reply(ProviderState.DISCONNECTED, detail = ProviderDetail.SIGNED_OUT)
         }
         require(account is JsonObject && account["type"] == JsonPrimitive("chatgpt")) { "A ChatGPT subscription login is required" }
         login = null
@@ -95,9 +100,35 @@ internal class CodexConnection(
         login = null
     }
 
+    override fun models(): List<ProviderModel> = codexModelList(rpc)
+
     /** Keep provider internals out of the web-facing display contract. */
-    private fun reply(state: ProviderState, message: String? = null) = ProviderStatus(RuntimeId.CODEX, state, message = message)
+    private fun reply(state: ProviderState, message: String? = null, detail: ProviderDetail? = null) =
+        ProviderStatus(RuntimeId.CODEX, state, message = message, detail = detail)
 
     /** Terminating this owned process also cancels its pending browser callback. */
     override fun close() = rpc.close()
+}
+
+/**
+ * The models Codex offers the signed-in plan, for a team member to choose from: visible ones whose
+ * id can be a `modelId`, the runtime's default marked, at most [ProviderLimits.MODELS].
+ */
+internal fun codexModelList(rpc: CodexAppServer): List<ProviderModel> {
+    val models = mutableListOf<ProviderModel>()
+    var cursor: String? = null
+    var pages = 0
+    while (pages++ < 4 && models.size < ProviderLimits.MODELS) {
+        val result = rpc.call("model/list", buildJsonObject { put("includeHidden", false); cursor?.let { put("cursor", it) } })
+        for (item in (result["data"] as? JsonArray).orEmpty()) {
+            val model = item as? JsonObject ?: continue
+            if ((model["hidden"] as? JsonPrimitive)?.booleanOrNull != false) continue
+            val id = (model["model"] as? JsonPrimitive)?.contentOrNull ?: continue
+            if (!SharedRules.isModelId(id) || models.any { it.modelId == id }) continue
+            val name = (model["displayName"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() && it.length <= ProviderLimits.DISPLAY_NAME } ?: id
+            models += ProviderModel(name, (model["isDefault"] as? JsonPrimitive)?.booleanOrNull == true, id)
+        }
+        cursor = (result["nextCursor"] as? JsonPrimitive)?.contentOrNull ?: break
+    }
+    return models.take(ProviderLimits.MODELS)
 }

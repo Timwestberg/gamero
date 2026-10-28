@@ -214,8 +214,12 @@ compose.desktop {
     }
 }
 
+// Development launches (Gradle run tasks and the local jpackage prototypes) are marked, so features gated to
+// development builds may turn on; release packaging uses compose.desktop's jvmArgs and is never marked.
+val developmentJvmOptions = listOf("-Dgamero.dev=true")
+
 // Required by the existing KCEF desktop WebView implementation.
-tasks.withType<JavaExec>().configureEach { jvmArgs(desktopAddOpens) }
+tasks.withType<JavaExec>().configureEach { jvmArgs(desktopAddOpens + developmentJvmOptions) }
 
 val jvmMainCompilation = kotlin.targets.getByName("jvm").compilations.getByName("main")
 
@@ -238,9 +242,10 @@ val runtimeJarNames = providers.provider { requireNotNull(jvmMainCompilation.run
     .filter { it.extension == "jar" }.sortedBy { it.absolutePath }
     .mapIndexed { index, file -> file to "$index-${file.name}" }.toMap() }
 
-// desktopAddOpens, one option per line, for the jpackage scripts (scripts/dev-env.sh reads it).
+// desktopAddOpens and the development marker, one option per line, for the local jpackage scripts
+// (scripts/dev-env.sh reads it). tools/build-release.sh packages through compose.desktop instead.
 val desktopJvmOptions = tasks.register("desktopJvmOptions") {
-    val options = desktopAddOpens
+    val options = desktopAddOpens + developmentJvmOptions
     val output = layout.buildDirectory.file("desktop-app/jvm-options.txt")
     inputs.property("options", options)
     outputs.file(output)
