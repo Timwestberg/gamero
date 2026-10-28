@@ -2,7 +2,9 @@ package org.formulagen.wrapper.chat
 
 import java.time.Instant
 import kotlinx.serialization.json.*
+import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
 import org.formulagen.wrapper.providers.FakeClaude
+import org.formulagen.wrapper.bridge.*
 import kotlin.test.*
 
 /** Parsing, lockdown and classification on trimmed output recorded from Claude Code 2.1.304. */

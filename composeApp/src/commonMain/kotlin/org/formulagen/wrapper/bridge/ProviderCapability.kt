@@ -4,14 +4,24 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
- * A profile's account connections. Every action answers the connection's display status; tokens,
+ * A profile's runtime connections. Every action answers the connection's display status; tokens,
  * keys and the sign-in URL stay native.
  */
-fun interface ProviderCapability {
+interface ProviderCapability {
     suspend fun perform(action: ProviderAction, scope: ProviderScope): ProviderStatus
+
+    /** The runtimes this host offers [profile]. A gated runtime is absent, so the page shows no card for it. */
+    suspend fun list(profile: String): ProviderList
+
+    /** The models a team member on [ProviderScope.runtimeId] may use. */
+    suspend fun models(scope: ProviderScope): ProviderModels
 }
 
-/** `connect` opens the provider's sign-in page in the system browser, `reopen` opens a pending one again, `cancel` abandons it, `disconnect` signs out. */
+/**
+ * `connect` opens the provider's sign-in page in the system browser, `reopen` opens a pending one
+ * again, `cancel` abandons it, `disconnect` signs out. Claude Code signs in outside Hovel, so for it
+ * the four answer the status unchanged, with a message.
+ */
 enum class ProviderAction(val wireName: String) {
     STATUS("status"),
     CONNECT("connect"),
@@ -20,17 +30,14 @@ enum class ProviderAction(val wireName: String) {
     DISCONNECT("disconnect"),
 }
 
-/** Bounds of the display state a provider connection shows. */
+/** Bounds of what a page may see about providers. */
 object ProviderLimits { // mirrors PROVIDER_LIMITS
     const val ACCOUNT_LABEL = 320
+    const val DISPLAY_NAME = 80
     const val MESSAGE = 500
+    const val MODELS = 32
     const val PLAN = 80
-}
-
-/** Codex signs in with the person's ChatGPT account. */
-@Serializable
-enum class ProviderId {
-    @SerialName("codex") CODEX,
+    const val RUNTIMES = 8
 }
 
 @Serializable
@@ -42,19 +49,38 @@ enum class ProviderState {
     @SerialName("error") ERROR,
 }
 
-/** One profile's connection to one provider. Native code keeps each profile's sign-in in its own folder. */
+/** One profile's connection to one runtime. Each profile keeps its own Codex sign-in; every profile shares the Mac's one Claude Code sign-in. */
 @Serializable
-data class ProviderScope(val profile: String, val providerId: ProviderId)
+data class ProviderScope(val profile: String, val runtimeId: RuntimeId)
 
-/** [accountLabel] is the account's email and [plan] its plan name, sent only when [state] is connected. */
+@Serializable
+data class ProviderListArgs(val profile: String)
+
+/**
+ * [accountLabel] is the account's email and [plan] its plan name, sent only when [state] is
+ * connected. [providerId] is always the company behind [runtimeId].
+ */
 @Serializable
 data class ProviderStatus(
-    val providerId: ProviderId,
+    val runtimeId: RuntimeId,
     val state: ProviderState,
     val accountLabel: String? = null,
     val plan: String? = null,
     val message: String? = null,
-)
+    val providerId: RuntimeProviderId = runtimeId.providerId,
+) {
+    init { require(providerId == runtimeId.providerId) { "A provider status names the provider of its runtime" } }
+}
+
+@Serializable
+data class ProviderList(val runtimes: List<RuntimeId>)
+
+/** One model a team member may use: the runtime's own [displayName], and whether it is the runtime's default. */
+@Serializable
+data class ProviderModel(val displayName: String, val isDefault: Boolean, val modelId: String)
+
+@Serializable
+data class ProviderModels(val models: List<ProviderModel>, val runtimeId: RuntimeId)
 
 /** Mirrors event-contracts/host-bridge/providers.ts. */
 object ProviderMethods {
@@ -66,10 +92,15 @@ object ProviderMethods {
     val CANCEL = method(ProviderAction.CANCEL)
     val REOPEN = method(ProviderAction.REOPEN)
     val DISCONNECT = method(ProviderAction.DISCONNECT)
+    val LIST = BridgeMethod("providers.list", ProviderListArgs.serializer(), ProviderList.serializer()) { SharedRules.isProfileId(it.profile) }
+    val MODELS = BridgeMethod("providers.models", ProviderScope.serializer(), ProviderModels.serializer()) { SharedRules.isProfileId(it.profile) }
 
     fun pack(providers: Capability<ProviderCapability>): CapabilityPack = binder.pack(providers)
 
     internal val binder = CapabilityBinder("providers", listOf(STATUS, CONNECT, CANCEL, REOPEN, DISCONNECT)
         .zip(ProviderAction.entries)
-        .map { (method, action) -> method.handle { providers: ProviderCapability, scope -> providers.perform(action, scope) } })
+        .map { (method, action) -> method.handle { providers: ProviderCapability, scope -> providers.perform(action, scope) } } + listOf(
+        LIST.handle { providers: ProviderCapability, args -> providers.list(args.profile) },
+        MODELS.handle { providers: ProviderCapability, scope -> providers.models(scope) },
+    ))
 }

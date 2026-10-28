@@ -3,7 +3,9 @@ package org.formulagen.wrapper.bridge
 /** Protocol fixtures exercise dispatch without starting a provider, pet or game process. */
 class FakeProviderCapability : ProviderCapability {
     override suspend fun perform(action: ProviderAction, scope: ProviderScope) =
-        ProviderStatus(scope.providerId, if (action == ProviderAction.CONNECT) ProviderState.SIGNING_IN else ProviderState.DISCONNECTED)
+        ProviderStatus(scope.runtimeId, if (action == ProviderAction.CONNECT) ProviderState.SIGNING_IN else ProviderState.DISCONNECTED)
+    override suspend fun list(profile: String) = ProviderList(RuntimeId.entries)
+    override suspend fun models(scope: ProviderScope) = ProviderModels(listOf(ProviderModel("Sonnet", true, "sonnet")), scope.runtimeId)
 }
 
 class FakePetCapability : PetCapability {

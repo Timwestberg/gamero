@@ -9,64 +9,31 @@ import java.util.UUID
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.formulagen.wrapper.bridge.ChatEntry
 import org.formulagen.wrapper.bridge.ChatLimits
-import org.formulagen.wrapper.bridge.ChatMessage
-import org.formulagen.wrapper.bridge.ChatRole
+import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
+import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
+import org.formulagen.wrapper.bridge.TeamMember
 import org.formulagen.wrapper.providers.codexProfileHome
 
 /**
  * One companion's conversation for one profile, shared by every runtime on its team (version 2).
- * Native ids and handover text stay here; the page sees only the entries.
+ * Native ids and handover text stay here; the page sees only the entries, in their wire shape.
  */
 @Serializable
 internal data class ChatRecord(
     val version: Int = 2,
     /** Each runtime's own conversation with the companion: Codex's thread id, Claude Code's session id. */
-    val conversations: Map<RuntimeKind, NativeConversation> = emptyMap(),
+    val conversations: Map<RuntimeId, NativeConversation> = emptyMap(),
     /** Oldest first, at most [ChatLimits.HISTORY]; the oldest drop first, handover entries included. */
-    val entries: List<HistoryEntry> = emptyList(),
+    val entries: List<ChatEntry> = emptyList(),
     /** Handover text owed to one runtime's next turn, independent of the visible history. */
     val pendingContext: PendingContext? = null,
 )
 
 @Serializable
-internal data class PendingContext(val runtimeId: RuntimeKind, val text: String)
-
-/** One conversation entry, by `role`. The shape mirrors the chat contract's `chatEntry`, so the bridge type can replace it. */
-@Serializable
-internal sealed interface HistoryEntry {
-    val id: String
-
-    @Serializable @SerialName("user")
-    data class User(override val id: String, val text: String) : HistoryEntry
-
-    @Serializable @SerialName("assistant")
-    data class Assistant(override val id: String, val author: MemberRef, val text: String) : HistoryEntry
-
-    /** A switch between members; [at] is an ISO-8601 instant and [from] is null for the first member of a conversation. */
-    @Serializable @SerialName("handover")
-    data class Handover(
-        override val id: String,
-        val at: String,
-        val from: MemberRef?,
-        val to: MemberRef,
-        val method: HandoverMethod,
-        val reason: HandoverReason,
-        val summary: String? = null,
-    ) : HistoryEntry
-}
-
-@Serializable
-internal enum class HandoverMethod {
-    @SerialName("same-conversation") SAME_CONVERSATION,
-    @SerialName("summary") SUMMARY,
-    @SerialName("recent-messages") RECENT_MESSAGES,
-    @SerialName("fresh") FRESH,
-}
-
-@Serializable
-internal enum class HandoverReason { @SerialName("manual") MANUAL }
+internal data class PendingContext(val runtimeId: RuntimeId, val text: String)
 
 /** Longest handover text a runtime is owed: recent messages (8,000 characters) or a summary, with their framing. */
 internal const val PENDING_CONTEXT_LIMIT = 12_000
@@ -112,8 +79,8 @@ internal fun companionChatHistory(providerRoot: Path, profile: String, companion
 
 private const val MAX_RECORD_BYTES = 3_000_000
 private val PERSONA_HASH = Regex("^([0-9a-f]{64})?$")
-/** Writes `version` explicitly; the polymorphic entries are told apart by `role`, as on the wire. */
-private val historyJson = Json { classDiscriminator = "role"; encodeDefaults = true }
+/** Writes `version` explicitly. Entries keep their wire shape, told apart by `role`. */
+private val historyJson = Json { encodeDefaults = true }
 
 private fun ChatRecord.validated(): ChatRecord = also { record ->
     require(record.version == 2 && record.entries.size <= ChatLimits.HISTORY)
@@ -121,9 +88,9 @@ private fun ChatRecord.validated(): ChatRecord = also { record ->
     record.entries.forEach { entry ->
         UUID.fromString(entry.id)
         when (entry) {
-            is HistoryEntry.User -> require(entry.text.length <= ChatLimits.REPLY)
-            is HistoryEntry.Assistant -> require(entry.text.length <= ChatLimits.REPLY && entry.author.valid())
-            is HistoryEntry.Handover -> {
+            is ChatEntry.User -> require(entry.text.length <= ChatLimits.REPLY)
+            is ChatEntry.Assistant -> require(entry.text.length <= ChatLimits.REPLY && entry.author.valid())
+            is ChatEntry.Handover -> {
                 Instant.parse(entry.at)
                 require(entry.from?.valid() != false && entry.to.valid() && (entry.summary?.length ?: 0) <= SUMMARY_LIMIT)
             }
@@ -132,24 +99,30 @@ private fun ChatRecord.validated(): ChatRecord = also { record ->
     record.pendingContext?.let { require(it.text.length <= PENDING_CONTEXT_LIMIT) }
 }
 
-private fun MemberRef.valid() = MODEL_ID.matches(modelId)
+private fun TeamMember.valid() = SharedRules.isModelId(modelId)
 
 /** The version 1 record: one Codex thread and its messages. Its writer left out default values. */
 @Serializable
-private data class LegacyRecord(val version: Int = 1, val threadId: String? = null, val messages: List<ChatMessage> = emptyList())
+private data class LegacyRecord(val version: Int = 1, val threadId: String? = null, val messages: List<LegacyMessage> = emptyList())
+
+@Serializable
+private data class LegacyMessage(val id: String, val role: LegacyRole, val text: String)
+
+@Serializable
+private enum class LegacyRole { @SerialName("user") USER, @SerialName("assistant") ASSISTANT }
 
 /** Version 1 → 2: the thread becomes Codex's conversation, and Codex at its default model wrote every reply. */
 private fun migrate(file: Path): ChatRecord {
     require(Files.size(file) <= MAX_RECORD_BYTES)
     val old = Json.decodeFromString<LegacyRecord>(Files.readString(file))
     require(old.version == 1 && old.messages.size <= ChatLimits.HISTORY)
-    val codex = MemberRef(RuntimeKind.CODEX, RUNTIME_DEFAULT_MODEL)
+    val codex = TeamMember(RuntimeId.CODEX, RUNTIME_DEFAULT_MODEL)
     return ChatRecord(
-        conversations = old.threadId?.let { mapOf(RuntimeKind.CODEX to NativeConversation(it, personaHash = "")) }.orEmpty(),
+        conversations = old.threadId?.let { mapOf(RuntimeId.CODEX to NativeConversation(it, personaHash = "")) }.orEmpty(),
         entries = old.messages.map {
             when (it.role) {
-                ChatRole.USER -> HistoryEntry.User(it.id, it.text)
-                ChatRole.ASSISTANT -> HistoryEntry.Assistant(it.id, codex, it.text)
+                LegacyRole.USER -> ChatEntry.User(it.id, it.text)
+                LegacyRole.ASSISTANT -> ChatEntry.Assistant(it.id, codex, it.text)
             }
         },
     ).validated()

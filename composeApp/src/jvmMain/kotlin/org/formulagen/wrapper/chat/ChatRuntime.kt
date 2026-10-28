@@ -3,30 +3,15 @@ package org.formulagen.wrapper.chat
 import java.time.Instant
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.formulagen.wrapper.bridge.HandoverLimits
+import org.formulagen.wrapper.bridge.RuntimeId
 
-/**
- * A program that can hold a companion's conversation. Stands in for the host bridge's `RuntimeId`
- * until the chat contract names team members; the serial names are the same, so stored history
- * keeps its shape when the bridge type replaces this one. [product] is the name players see
- * ("Claude"); [program] names what they install and sign in to ("Claude Code").
- */
-@Serializable
-internal enum class RuntimeKind(val product: String, val program: String) {
-    @SerialName("codex") CODEX("Codex", "Codex"),
-    @SerialName("claude-code") CLAUDE_CODE("Claude", "Claude Code"),
-}
+/** The name players see for a runtime ("Claude"). */
+internal val RuntimeId.product: String get() = when (this) { RuntimeId.CODEX -> "Codex"; RuntimeId.CLAUDE_CODE -> "Claude" }
 
-/** Hovel Brain's sentinel for "the runtime's own default model". */
-internal const val RUNTIME_DEFAULT_MODEL = "runtime-default"
-
-/** The host bridge's `modelId`: it starts with a letter or digit, so it can never read as a command-line flag. */
-internal val MODEL_ID = Regex("^[a-z0-9][a-z0-9._-]{0,63}$")
-
-/** A team member as native history records it: the bridge's `teamMember` shape, `{modelId, runtimeId}`. */
-@Serializable
-internal data class MemberRef(val runtimeId: RuntimeKind, val modelId: String)
+/** What players install and sign in to ("Claude Code"). */
+internal val RuntimeId.program: String get() = when (this) { RuntimeId.CODEX -> "Codex"; RuntimeId.CLAUDE_CODE -> "Claude Code" }
 
 /**
  * A runtime's own conversation with one companion: Codex's thread id or Claude Code's session id.
@@ -42,7 +27,7 @@ internal data class NativeConversation(val id: String, val personaHash: String)
  * the chat calls [release] and [TurnHandle.stop] while holding its own.
  */
 internal interface ChatRuntime : AutoCloseable {
-    val id: RuntimeKind
+    val id: RuntimeId
 
     /** A short local check, for "Not connected" without starting a turn. It may block briefly, so callers run it off the bridge thread. */
     fun readiness(profile: String): Readiness
@@ -66,7 +51,7 @@ internal interface ChatRuntime : AutoCloseable {
 }
 
 /**
- * What one turn needs. [model] is a model id or [RUNTIME_DEFAULT_MODEL] (null means the same).
+ * What one turn needs. [model] is a model id or `runtime-default` (null means the same).
  * [context] is handover text owed to this runtime, sent as data ahead of the person's [text].
  */
 internal data class TurnRequest(
@@ -137,8 +122,7 @@ internal data class SummaryRequest(
     val timeout: Duration = SUMMARY_TIMEOUT,
 )
 
-/** HANDOVER_LIMITS.summary in the chat contract. */
-internal const val SUMMARY_LIMIT = 2000
+internal const val SUMMARY_LIMIT = HandoverLimits.SUMMARY
 internal val SUMMARY_TIMEOUT: Duration = 60.seconds
 
 /** The one summary request both runtimes send; the transcript is delimited data, never instructions. */

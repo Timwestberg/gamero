@@ -41,7 +41,7 @@ class DesktopServicesTest {
             assertTrue("companion.capabilities" in hovel.knownMethods)
             assertNull(services.companion, "the Gamero product never starts Hovel's companion")
             assertNull(services.games)
-            assertEquals(ProviderState.UNAVAILABLE, services.providers.perform(ProviderAction.STATUS, ProviderScope("local", ProviderId.CODEX)).state)
+            assertEquals(ProviderState.UNAVAILABLE, services.providers.perform(ProviderAction.STATUS, ProviderScope("local", RuntimeId.CODEX)).state)
             gamero.close(); hovel.close()
         } finally { services.close(); scope.cancel(); support.toFile().deleteRecursively() }
         assertFails { services.pet.status() }

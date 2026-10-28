@@ -9,9 +9,11 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.*
+import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
 import org.formulagen.wrapper.providers.FakeClaude
 import org.formulagen.wrapper.providers.argv
 import org.formulagen.wrapper.providers.env
+import org.formulagen.wrapper.bridge.*
 import kotlin.test.*
 
 /** [ClaudeChatRuntime] against [FakeClaude], which replays output recorded from the real Claude Code. */

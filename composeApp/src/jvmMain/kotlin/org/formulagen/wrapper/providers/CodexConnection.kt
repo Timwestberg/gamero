@@ -5,10 +5,10 @@ import java.time.Clock
 import java.util.UUID
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.ProviderAction
-import org.formulagen.wrapper.bridge.ProviderId
 import org.formulagen.wrapper.bridge.ProviderLimits
 import org.formulagen.wrapper.bridge.ProviderState
 import org.formulagen.wrapper.bridge.ProviderStatus
+import org.formulagen.wrapper.bridge.RuntimeId
 
 /** An independently replaceable provider connection behind the desktop registry. */
 internal interface ProviderConnection : AutoCloseable {
@@ -66,7 +66,7 @@ internal class CodexConnection(
         }
         require(account is JsonObject && account["type"] == JsonPrimitive("chatgpt")) { "A ChatGPT subscription login is required" }
         login = null
-        return ProviderStatus(ProviderId.CODEX, ProviderState.CONNECTED,
+        return ProviderStatus(RuntimeId.CODEX, ProviderState.CONNECTED,
             accountLabel = (account["email"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.length <= ProviderLimits.ACCOUNT_LABEL },
             plan = (account["planType"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.length <= ProviderLimits.PLAN })
     }
@@ -96,7 +96,7 @@ internal class CodexConnection(
     }
 
     /** Keep provider internals out of the web-facing display contract. */
-    private fun reply(state: ProviderState, message: String? = null) = ProviderStatus(ProviderId.CODEX, state, message = message)
+    private fun reply(state: ProviderState, message: String? = null) = ProviderStatus(RuntimeId.CODEX, state, message = message)
 
     /** Terminating this owned process also cancels its pending browser callback. */
     override fun close() = rpc.close()

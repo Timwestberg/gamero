@@ -9,7 +9,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.ChatLimits
+import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.ProviderState
+import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
 import org.formulagen.wrapper.companion.terminateProcessTree
 import org.formulagen.wrapper.companion.terminateProcessTreeInBackground
 import org.formulagen.wrapper.logger.LogLevel
@@ -31,7 +33,7 @@ internal class ClaudeChatRuntime(
     private val claude: ClaudeRuntime,
     private val connection: ClaudeConnection = ClaudeConnection(claude),
 ) : ChatRuntime {
-    override val id = RuntimeKind.CLAUDE_CODE
+    override val id = RuntimeId.CLAUDE_CODE
     private val running = ConcurrentHashMap.newKeySet<Turn>()
     /** Sends SIGINT and, if a stopped turn lingers, ends it, off the caller's thread. */
     private val stopper = Executors.newSingleThreadScheduledExecutor(loggingDaemonThreads("hovel-claude-stop"))

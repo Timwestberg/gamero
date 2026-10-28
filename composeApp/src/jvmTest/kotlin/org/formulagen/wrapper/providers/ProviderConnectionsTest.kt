@@ -124,7 +124,7 @@ class ProviderConnectionsTest {
                 processes += rpc
                 CodexConnection(rpc, open)
             })
-        fun scope(profile: String = "local") = ProviderScope(profile, ProviderId.CODEX)
+        fun scope(profile: String = "local") = ProviderScope(profile, RuntimeId.CODEX)
         try {
             assertFails { registry.perform(ProviderAction.STATUS, scope("../../.codex")) }
             assertTrue(processes.isEmpty())
@@ -144,8 +144,8 @@ class ProviderConnectionsTest {
     @Test fun registryWithoutCodexIsUnavailable() = runBlocking<Unit> {
         val root = Files.createTempDirectory("hovel-provider-none")
         DesktopProviders(root, null).use { registry ->
-            val status = registry.perform(ProviderAction.CONNECT, ProviderScope("local", ProviderId.CODEX))
-            assertEquals(ProviderStatus(ProviderId.CODEX, ProviderState.UNAVAILABLE, message = "Install Codex on this Mac, then restart Hovel to connect."), status)
+            val status = registry.perform(ProviderAction.CONNECT, ProviderScope("local", RuntimeId.CODEX))
+            assertEquals(ProviderStatus(RuntimeId.CODEX, ProviderState.UNAVAILABLE, message = "Install Codex on this Mac, then restart Hovel to connect."), status)
         }
         root.toFile().deleteRecursively()
     }

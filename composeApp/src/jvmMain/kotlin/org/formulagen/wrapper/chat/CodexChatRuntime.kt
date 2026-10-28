@@ -11,6 +11,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.ChatLimits
+import org.formulagen.wrapper.bridge.RuntimeId
+import org.formulagen.wrapper.bridge.SharedRules
+import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
 import org.formulagen.wrapper.providers.CodexAppServer
 import org.formulagen.wrapper.providers.CodexRequestRejected
 import org.formulagen.wrapper.providers.CodexRuntime
@@ -28,7 +31,7 @@ internal class CodexChatRuntime(
     private val executable: Path,
     private val createRpc: (CodexRuntime, (String, JsonObject) -> Unit) -> CodexAppServer = ::chatCodex,
 ) : ChatRuntime {
-    override val id = RuntimeKind.CODEX
+    override val id = RuntimeId.CODEX
     /** Guards [connection], [epoch] and each connection's turn. Never held while calling Codex or delivering events. */
     private val lock = Any()
     /** Serializes event delivery, so events buffered before a turn's acknowledgement keep their order with later ones. */
@@ -268,7 +271,7 @@ internal class CodexChatRuntime(
 /** An explicit Codex model, "" for Codex's own default, or null for an id that is not a model id. */
 private fun explicitModel(model: String?): String? = when {
     model == null || model == RUNTIME_DEFAULT_MODEL -> ""
-    MODEL_ID.matches(model) -> model
+    SharedRules.isModelId(model) -> model
     else -> null
 }
 
