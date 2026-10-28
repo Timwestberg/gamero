@@ -1,6 +1,7 @@
 package org.formulagen.wrapper.chat
 
 import java.nio.file.Files
+import java.util.UUID
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import kotlinx.serialization.json.*
@@ -109,5 +110,24 @@ class ChatHistoryTest {
         rejects(ChatRecord(pendingContext = mapOf(RuntimeId.CODEX to "x".repeat(PENDING_CONTEXT_LIMIT + 1))))
         Files.writeString(file, " ".repeat(3_000_001)); assertFails { history.read() }
         assertFails { companionChatHistory(root, "../../.codex", companion) }
+    }
+
+    @Test fun aRecordTooLargeToReadBackLosesItsOldestStepDetailsFirst() {
+        val sonnet = TeamMember(RuntimeId.CLAUDE_CODE, "sonnet")
+        fun worked(detail: String) = ChatEntry.Assistant(UUID.randomUUID().toString(), sonnet, "Done.",
+            Activity((1..50).map { ActivityStep(ActivityKind.COMMAND, "step $it", ActivityStatus.DONE, detail) }, false))
+        val record = ChatRecord(entries = List(4) { worked("d".repeat(400)) })
+        val whole = fitted(record, limit = 1_000_000)
+        assertEquals(record, Json { ignoreUnknownKeys = true }.decodeFromString<ChatRecord>(whole))
+        // Under a tighter cap, the oldest reply's details go first; its steps stay.
+        val trimmed = Json { ignoreUnknownKeys = true }.decodeFromString<ChatRecord>(fitted(record, limit = 70_000))
+        val first = trimmed.entries.first() as ChatEntry.Assistant
+        assertTrue(first.activity!!.steps.all { it.detail == null } && first.activity!!.steps.size == 50)
+        assertEquals("d".repeat(400), (trimmed.entries.last() as ChatEntry.Assistant).activity!!.steps.first().detail)
+        // Then steps go, and a reply keeps an empty, truncated activity, so it still reads as work.
+        val bare = Json { ignoreUnknownKeys = true }.decodeFromString<ChatRecord>(fitted(record, limit = 6_000))
+        assertTrue(bare.entries.all { (it as ChatEntry.Assistant).activity != null })
+        assertTrue((bare.entries.first() as ChatEntry.Assistant).activity!!.truncated)
+        assertFails { fitted(record, limit = 100) }
     }
 }

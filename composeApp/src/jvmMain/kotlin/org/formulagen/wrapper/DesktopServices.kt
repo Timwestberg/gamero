@@ -45,6 +45,7 @@ import org.formulagen.wrapper.providers.ClaudeRuntime
 import org.formulagen.wrapper.providers.CodexProvider
 import org.formulagen.wrapper.providers.DesktopProviders
 import org.formulagen.wrapper.providers.claudeProviderEnabled
+import org.formulagen.wrapper.providers.codexWorkEnabled
 import org.formulagen.wrapper.providers.findClaudeExecutable
 import org.formulagen.wrapper.providers.findCodexExecutable
 
@@ -114,20 +115,23 @@ internal class DesktopServices private constructor(
                 val runtimes = listOfNotNull(codex?.let { CodexChatRuntime(providerRoot, it) },
                     claude?.let { ClaudeChatRuntime(it, checkNotNull(claudeSignIn)) })
                 val offered = setOfNotNull(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE.takeIf { claudeOffered })
+                // Which offered runtimes may work in a project folder: the page reads it from providers.list, the chat runs it.
+                // Codex's working protocol is read from its schema only, so it stays off until verified live.
+                val working = setOfNotNull(RuntimeId.CLAUDE_CODE.takeIf { claudeOffered }, RuntimeId.CODEX.takeIf {
+                    codexWorkEnabled(environment, release = System.getProperty("gamero.release") == "true", development = System.getProperty("gamero.dev") == "true")
+                })
                 // Working members: only native dialogs answer, in front of this window.
                 val dialogs = ComposeDialogPresenter { window }
                 val nativeDialogs = NativeDialogs(dialogs)
                 val broker = DialogApprovalBroker(nativeDialogs)
                 val workspaces = WorkspaceStore(providerRoot, NativeFolderPicker { window })
-                // Codex's working protocol is read from its schema only, so it stays off until verified live.
-                val codexWork = environment["HOVEL_CODEX_WORK"] == "1"
-                val workers = listOfNotNull(claude?.let { ClaudeWorkRuntime(it, checkNotNull(claudeSignIn), broker) },
-                    codex?.takeIf { codexWork }?.let { CodexWorkRuntime(providerRoot, it, broker) })
-                val work = ChatWork(workspaces, StartOfWork(nativeDialogs), workers, gated = setOfNotNull(RuntimeId.CODEX.takeIf { !codexWork }))
+                val workers = listOfNotNull(claude?.takeIf { RuntimeId.CLAUDE_CODE in working }?.let { ClaudeWorkRuntime(it, checkNotNull(claudeSignIn), broker) },
+                    codex?.takeIf { RuntimeId.CODEX in working }?.let { CodexWorkRuntime(providerRoot, it, broker) })
+                val work = ChatWork(workspaces, StartOfWork(nativeDialogs), workers)
                 val chat = own(DesktopChat(providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment)), offered, work))
                 // Both runtimes sign in outside Hovel, on the player's own install, so a status check never signs a chat out.
                 val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),
-                    claudeSignIn?.let(::ClaudeProvider))))
+                    claudeSignIn?.let(::ClaudeProvider)), working))
                 val pet = own(DesktopPetLauncher(environment, support.resolve("ember-pet.log")))
                 val workspace = environment["GAMERO_WORKSPACE"]?.let(Path::of)
                 val companion = if (product == HOVEL_PRODUCT && System.getProperty("os.name").contains("Mac") &&

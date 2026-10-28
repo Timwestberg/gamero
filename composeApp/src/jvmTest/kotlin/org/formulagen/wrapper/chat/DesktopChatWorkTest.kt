@@ -33,7 +33,7 @@ class DesktopChatWorkTest {
     }
 
     /** A runtime the test drives by hand. */
-    private class Fake(override val id: RuntimeId) : ChatRuntime {
+    private class Fake(override val id: RuntimeId) : ChatRuntime, WorkRuntime {
         val requests = CopyOnWriteArrayList<TurnRequest>()
         val events = CopyOnWriteArrayList<TurnEvents>()
         @Volatile var stops = 0
@@ -47,9 +47,9 @@ class DesktopChatWorkTest {
 
     /** The native dialogs as the test answers them: each one shown, and its answer when the test gives it. */
     private class Screen : DialogPresenter {
-        val shown = CopyOnWriteArrayList<Pair<NativeDialog, (Int) -> Unit>>()
-        val dismissed = CopyOnWriteArrayList<NativeDialog>()
-        override fun present(dialog: NativeDialog, answer: (Int) -> Unit): () -> Unit { shown += dialog to answer; return { dismissed += dialog } }
+        val shown = CopyOnWriteArrayList<Pair<NativeDialog<*>, (Int) -> Unit>>()
+        val dismissed = CopyOnWriteArrayList<NativeDialog<*>>()
+        override fun present(dialog: NativeDialog<*>, answer: (Int) -> Unit): () -> Unit { shown += Pair(dialog, answer); return { dismissed += dialog } }
     }
 
     private val talkClaude = Fake(RuntimeId.CLAUDE_CODE)
@@ -59,8 +59,8 @@ class DesktopChatWorkTest {
     private var picked: Path? = project
     private val workspaces = WorkspaceStore(root, FolderPicker { _, _ -> picked })
 
-    private fun chat(gated: Set<RuntimeId> = setOf(RuntimeId.CODEX)) = DesktopChat(root, listOf(talkClaude, talkCodex), Speech(),
-        work = ChatWork(workspaces, StartOfWork(NativeDialogs(screen, timeout = 10.seconds)), listOf(workClaude), gated))
+    private fun chat() = DesktopChat(root, listOf(talkClaude, talkCodex), Speech(),
+        work = ChatWork(workspaces, StartOfWork(NativeDialogs(screen, timeout = 10.seconds)), listOf(workClaude)))
 
     private fun send(member: TeamMember = sonnet, mode: MemberMode? = MemberMode.WORK, text: String = "Fix the date test") =
         ChatSend(scope.profile, scope.companionId, scope.name, scope.sessionId, member, UUID.randomUUID().toString(), text, false, mode)
@@ -86,6 +86,7 @@ class DesktopChatWorkTest {
             assertEquals(ChatWaiting(WaitingKind.START, "Ember wants to start working in game with Claude · Sonnet."), waiting.waiting)
             assertEquals("Ember wants to start working in game with Claude · Sonnet.", screen.shown.single().first.title)
             assertEquals(ANSWER_FIRST, chat.send(send(text = "Hello?")).notice)
+            assertEquals(ANSWER_FIRST, state(chat).notice, "A refusal's notice stays until the state changes")
             assertEquals(ANSWER_FIRST, chat.retry(ChatRetry(scope.profile, scope.companionId, scope.name, scope.sessionId, UUID.randomUUID().toString(),
                 sonnet, UUID.randomUUID().toString(), false, MemberMode.WORK)).notice)
             assertEquals(ANSWER_FIRST, chat.handover(ChatHandover(scope.profile, scope.companionId, scope.name, scope.sessionId, sonnet,
@@ -93,6 +94,7 @@ class DesktopChatWorkTest {
             assertEquals(entries, state(chat).messages, "Refusals change nothing")
             screen.shown.single().second(0)
             await { workClaude.requests.isNotEmpty() }
+            assertNull(state(chat).notice, "The refusal ends with the state it was given in")
             val request = workClaude.requests.single()
             assertEquals(WorkScope(project, scope.sessionId, "Ember", sonnet), request.work)
             assertEquals(Persona.working("Ember"), request.persona)
@@ -150,7 +152,7 @@ class DesktopChatWorkTest {
             screen.shown.last().second(1)
             talked(talkClaude, "Claude · Sonnet answered without working. Choose Start working to let them work in game.")
             chat.send(send(codex))
-            talked(talkCodex, CODEX_WORK_GATED)
+            talked(talkCodex, "Codex can't work in projects yet in this version of Hovel.")
             Files.delete(project)
             chat.send(send())
             talked(talkClaude, "The project folder game was moved or deleted. Choose it again to let Claude · Sonnet work.")
@@ -213,10 +215,61 @@ class DesktopChatWorkTest {
             await { state(chat).state == ChatState.READY && state(chat).messages.last() is ChatEntry.Handover }
             val note = state(chat).messages.last() as ChatEntry.Handover
             assertEquals(HandoverMethod.SUMMARY, note.method)
-            assertEquals("Files changed: src/date.ts.\nCommands: git push (denied).\nDenied: git push.\nWhere it stopped: Fixed; not pushed.", note.workLog)
+            assertEquals(WorkLog(listOf("src/date.ts"), listOf(ActivityStep(ActivityKind.COMMAND, "git push", ActivityStatus.DENIED)), listOf("git push"),
+                "Fixed; not pushed."), note.workLog)
             chat.send(send(codex, mode = null, text = "Can you push it?"))
             await { talkCodex.requests.size == 1 }
             assertContains(talkCodex.requests.single().context!!, "Earlier in this conversation (the work log):\n<<<\nFiles changed: src/date.ts.")
+        }
+    }
+
+    @Test fun theStartIsConfirmedPerMemberAndForgottenWithTheView() = runBlocking {
+        workspaces.choose(scope.profile, scope.companionId)
+        val opus = TeamMember(RuntimeId.CLAUDE_CODE, "opus")
+        chat().use { chat ->
+            chat.open(scope)
+            chat.send(send())
+            await { screen.shown.size == 1 }
+            screen.shown.last().second(0)
+            await { workClaude.requests.size == 1 }
+            workClaude.events.last().completed("Done.", "40000000-0000-4000-8000-000000000004")
+            // The dialog named Sonnet; Opus asks again.
+            chat.send(send(opus))
+            await { screen.shown.size == 2 }
+            assertEquals("Ember wants to start working in game with Claude · Opus.", screen.shown.last().first.title)
+            screen.shown.last().second(0)
+            await { workClaude.requests.size == 2 }
+            workClaude.events.last().completed("Done.", "40000000-0000-4000-8000-000000000004")
+            // Another companion's view replaces this one, and this conversation's confirmations go with it.
+            chat.open(scope.copy(companionId = UUID.randomUUID().toString()))
+            chat.open(scope.copy(sessionId = scope.sessionId))
+            chat.send(send())
+            await { screen.shown.size == 3 }
+        }
+    }
+
+    @Test fun aRetryOfAFailedWorkingReplyKeepsItsFinishedSteps() = runBlocking {
+        workspaces.choose(scope.profile, scope.companionId)
+        chat().use { chat ->
+            chat.open(scope)
+            chat.send(send())
+            await { screen.shown.size == 1 }
+            screen.shown.last().second(0)
+            await { workClaude.requests.size == 1 }
+            val read = ActivityStep(ActivityKind.READ, "src/date.ts", ActivityStatus.DONE)
+            workClaude.events.last().activity(Activity(listOf(read), false))
+            workClaude.events.last().failed(ChatFailure.Temporary)
+            val failed = state(chat)
+            assertEquals(ChatState.ERROR, failed.state)
+            assertEquals(listOf(read), reply(chat).activity?.steps, "A failed working reply keeps what it finished")
+            val message = failed.messages.filterIsInstance<ChatEntry.User>().last()
+            chat.retry(ChatRetry(scope.profile, scope.companionId, scope.name, scope.sessionId, message.id, sonnet, UUID.randomUUID().toString(), false, MemberMode.WORK))
+            await { workClaude.requests.size == 2 }
+            assertEquals(listOf(read), reply(chat).activity?.steps, "The retry starts with the steps already done")
+            val edit = ActivityStep(ActivityKind.EDIT, "src/date.ts", ActivityStatus.DONE, "+1 -1")
+            workClaude.events.last().activity(Activity(listOf(edit), false))
+            assertEquals(listOf(read, edit), reply(chat).activity?.steps)
+            assertEquals(1, state(chat).messages.filterIsInstance<ChatEntry.Assistant>().size, "The failed reply was replaced")
         }
     }
 }

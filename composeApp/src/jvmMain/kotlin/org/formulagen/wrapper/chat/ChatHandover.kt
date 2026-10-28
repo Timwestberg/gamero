@@ -3,8 +3,8 @@ package org.formulagen.wrapper.chat
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID
-import org.formulagen.wrapper.approvals.shortened
 import org.formulagen.wrapper.bridge.ActivityKind
+import org.formulagen.wrapper.bridge.ActivityLimits
 import org.formulagen.wrapper.bridge.ActivityStatus
 import org.formulagen.wrapper.bridge.ActivityStep
 import org.formulagen.wrapper.bridge.ChatEntry
@@ -15,7 +15,12 @@ import org.formulagen.wrapper.bridge.HandoverReason
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
 import org.formulagen.wrapper.bridge.TeamMember
+import org.formulagen.wrapper.bridge.WorkLog
 import org.formulagen.wrapper.providers.copy
+import org.formulagen.wrapper.util.shortened
+
+/** A reply a working member wrote: it carries its activity, which a talk-only reply never does. */
+internal val ChatEntry.Assistant.worked: Boolean get() = activity != null
 
 /** What a `chat.handover` will do, decided from the record before any runtime runs. */
 internal sealed interface HandoverPlan {
@@ -94,7 +99,7 @@ internal object Handovers {
         if (record.conversations[runtime] == null || owedTo(record, runtime) != null) return null
         val unseen = unseen(record, runtime)
         // Its own working replies happened in its working conversation, so its talk conversation missed them too.
-        if (unseen.none { it is ChatEntry.Assistant && (it.author.runtimeId != runtime || it.activity != null) }) return null
+        if (unseen.none { it is ChatEntry.Assistant && (it.author.runtimeId != runtime || it.worked) }) return null
         val context = recentMessages(unseen) ?: return null
         return handover(record, entry(currentMember(record.entries), member, HandoverMethod.RECENT_MESSAGES, HandoverReason.HOST), context)
     }
@@ -157,7 +162,7 @@ internal object Handovers {
         fun turns(from: Int) = entries.drop(from).filter { it is ChatEntry.User || it is ChatEntry.Assistant }
         if (record.conversations[runtime] == null) return turns(0)
         // A working reply ran in the runtime's working conversation, not this one.
-        val replied = entries.indexOfLast { it is ChatEntry.Assistant && it.author.runtimeId == runtime && it.activity == null }
+        val replied = entries.indexOfLast { it is ChatEntry.Assistant && it.author.runtimeId == runtime && !it.worked }
         val handed = if (owedTo(record, runtime) != null) -1 else entries.indexOfLast { it is ChatEntry.Handover && it.to.runtimeId == runtime }
         return turns(maxOf(replied, handed) + 1)
     }
@@ -186,7 +191,7 @@ internal object Handovers {
 
     /** The handover record, which is also its note in the conversation. Every caller says who decided on it. */
     fun entry(from: TeamMember?, to: TeamMember, method: HandoverMethod, reason: HandoverReason, summary: String? = null,
-        id: String = UUID.randomUUID().toString(), at: Instant = Instant.now(), workLog: String? = null) =
+        id: String = UUID.randomUUID().toString(), at: Instant = Instant.now(), workLog: WorkLog? = null) =
         ChatEntry.Handover(id, at.truncatedTo(ChronoUnit.MILLIS).toString(), from, to, method, reason, summary?.takeIf { method == HandoverMethod.SUMMARY },
             workLog = workLog?.takeIf { method == HandoverMethod.SUMMARY || method == HandoverMethod.RECENT_MESSAGES })
 
@@ -198,7 +203,7 @@ internal object Handovers {
      */
     fun workContext(record: ChatRecord, runtime: RuntimeId, before: List<ChatEntry>): String? {
         val since = if (record.workConversations[runtime] == null) 0
-            else before.indexOfLast { it is ChatEntry.Assistant && it.author.runtimeId == runtime && it.activity != null } + 1
+            else before.indexOfLast { it is ChatEntry.Assistant && it.author.runtimeId == runtime && it.worked } + 1
         val unseen = before.drop(since).filter { it is ChatEntry.User || it is ChatEntry.Assistant }
         val owed = if (record.workConversations[runtime] == null) owedTo(record, runtime) else null
         val recent = recentMessages(unseen)?.let { withWorkLog(it, lastWorkLog(before.drop(since))) }
@@ -206,40 +211,44 @@ internal object Handovers {
     }
 
     /**
-     * The work log of [from]'s working replies since the last handover: files changed, commands run
-     * and their results, connectors used, what was denied, and where it stopped. Null when it did
+     * The work log of [from]'s working replies since the last handover: the files changed, the
+     * commands run with their results, what was denied, and where the work stopped. Null when it did
      * not work since.
      */
-    fun workLog(entries: List<ChatEntry>, from: TeamMember): String? =
-        workLogOf(sinceLastHandover(entries).filterIsInstance<ChatEntry.Assistant>().filter { it.activity != null && it.author.runtimeId == from.runtimeId })
+    fun workLog(entries: List<ChatEntry>, from: TeamMember): WorkLog? =
+        workLogOf(sinceLastHandover(entries).filterIsInstance<ChatEntry.Assistant>().filter { it.worked && it.author.runtimeId == from.runtimeId })
 
     /** The last work log there was: of the working replies since the last handover, else the one that handover carried. */
-    fun lastWorkLog(entries: List<ChatEntry>): String? =
-        workLogOf(sinceLastHandover(entries).filterIsInstance<ChatEntry.Assistant>().filter { it.activity != null })
+    fun lastWorkLog(entries: List<ChatEntry>): WorkLog? =
+        workLogOf(sinceLastHandover(entries).filterIsInstance<ChatEntry.Assistant>().filter { it.worked })
             ?: entries.filterIsInstance<ChatEntry.Handover>().lastOrNull()?.workLog
 
     private fun sinceLastHandover(entries: List<ChatEntry>) = entries.drop(entries.indexOfLast { it is ChatEntry.Handover } + 1)
 
-    private fun workLogOf(replies: List<ChatEntry.Assistant>): String? {
+    /** The contract's work log from [replies], each list within its bounds (the newest commands kept). */
+    private fun workLogOf(replies: List<ChatEntry.Assistant>): WorkLog? {
         if (replies.isEmpty()) return null
         val steps = replies.flatMap { it.activity?.steps.orEmpty() }
-        fun files(kind: ActivityKind) = steps.filter { it.kind == kind && it.status == ActivityStatus.DONE }.map { it.label }.distinct()
-        fun outcome(step: ActivityStep) = "${step.label} (${step.status.name.lowercase()}${step.detail?.let { ": " + it.lines().first().shortened(120) }.orEmpty()})"
-        val lines = listOfNotNull(
-            files(ActivityKind.EDIT).takeIf { it.isNotEmpty() }?.let { "Files changed: ${it.joinToString(", ")}." },
-            steps.filter { it.kind == ActivityKind.COMMAND }.takeIf { it.isNotEmpty() }?.let { "Commands: ${it.joinToString("; ", transform = ::outcome)}." },
-            steps.filter { it.kind == ActivityKind.CONNECTOR }.takeIf { it.isNotEmpty() }?.let { "Connectors: ${it.joinToString("; ", transform = ::outcome)}." },
-            listOf(files(ActivityKind.READ).size to "files read", steps.count { it.kind == ActivityKind.SEARCH && it.status == ActivityStatus.DONE } to "searches",
-                steps.count { it.kind == ActivityKind.WEB && it.status == ActivityStatus.DONE } to "web lookups")
-                .filter { it.first > 0 }.takeIf { it.isNotEmpty() }?.joinToString(", ") { "${it.first} ${it.second}" }?.let { "Also: $it." },
-            steps.filter { it.status == ActivityStatus.DENIED }.map { it.label }.distinct().takeIf { it.isNotEmpty() }?.let { "Denied: ${it.joinToString(", ")}." },
-            replies.last().text.takeIf { it.isNotBlank() }?.let { "Where it stopped: ${it.trim().shortened(400)}" },
+        return WorkLog(
+            changed = steps.filter { it.kind == ActivityKind.EDIT && it.status == ActivityStatus.DONE }.map { it.label }.distinct().take(ActivityLimits.STEPS),
+            commands = steps.filter { it.kind == ActivityKind.COMMAND }.takeLast(ActivityLimits.STEPS),
+            denied = steps.filter { it.status == ActivityStatus.DENIED }.map { it.label }.distinct().take(ActivityLimits.STEPS),
+            stoppedAt = replies.last().text.trim().takeIf { it.isNotEmpty() }?.shortened(ActivityLimits.DETAIL),
         )
-        return lines.joinToString("\n").takeIf { it.isNotEmpty() }?.shortened(HandoverLimits.WORK_LOG)
     }
 
+    /** A work log as the incoming model reads it. */
+    fun workLogProse(log: WorkLog): String = listOfNotNull(
+        log.changed.takeIf { it.isNotEmpty() }?.let { "Files changed: ${it.joinToString(", ")}." },
+        log.commands.takeIf { it.isNotEmpty() }?.let { commands ->
+            "Commands: ${commands.joinToString("; ") { "${it.label} (${it.status.name.lowercase()}${it.detail?.let { d -> ": " + d.lines().first() }.orEmpty()})" }}."
+        },
+        log.denied.takeIf { it.isNotEmpty() }?.let { "Denied: ${it.joinToString(", ")}." },
+        log.stoppedAt?.let { "Where it stopped: $it" },
+    ).joinToString("\n").ifEmpty { "Worked, with nothing to report." }
+
     /** [context] with [workLog] after it, delimited as data. */
-    private fun withWorkLog(context: String, workLog: String?) = workLog?.let { "$context\n\n${block("the work log", it)}" } ?: context
+    private fun withWorkLog(context: String, workLog: WorkLog?) = workLog?.let { "$context\n\n${block("the work log", workLogProse(it))}" } ?: context
 
     /** "Claude (sonnet)", "Codex (its default model)": how a member is named to another runtime. */
     fun label(member: TeamMember): String =

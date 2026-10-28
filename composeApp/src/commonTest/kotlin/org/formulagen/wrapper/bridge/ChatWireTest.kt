@@ -85,7 +85,8 @@ class ChatWireTest {
                 Activity(steps, truncated = false)),
             ChatEntry.Handover(id(4), "2026-10-28T09:10:00Z", sonnet, codex, HandoverMethod.SUMMARY, HandoverReason.MANUAL,
                 "The person asked for the failing date test to be fixed. Ember fixed the parser.",
-                workLog = "Changed src/date.ts to keep the offset. Ran npm test: 12 passing. Left to do: push the branch; the person denied git push."),
+                workLog = WorkLog(changed = listOf("src/date.ts"), commands = steps.filter { it.kind == ActivityKind.COMMAND }, denied = listOf("git push"),
+                    stoppedAt = "The parser dropped the offset. I fixed it and the tests pass.")),
             ChatEntry.User(id(5), "Add a test for leap years."),
         ), waiting = ChatWaiting(WaitingKind.APPROVAL, "Codex wants to edit tests/date.test.ts in hovel-notes."))
         assertEquals(fixture, Json.parseToJsonElement(BridgeEnvelopes.success(bridgeJson.encodeToJsonElement(ChatSnapshot.serializer(), snapshot))))
@@ -101,6 +102,13 @@ class ChatWireTest {
         assertEquals("""{"folder":null}""", bridgeJson.encodeToString(WorkspaceStatus.serializer(), WorkspaceStatus(null)))
         assertEquals(WorkspaceStatus(null), bridgeJson.decodeFromString(WorkspaceStatus.serializer(), """{"folder":null}"""))
         assertEquals(listOf("talk", "work"), MemberMode.entries.map { bridgeJson.encodeToString(MemberMode.serializer(), it).trim('"') })
+    }
+
+    @Test fun theProviderListNamesTheRuntimesThatMayWork() {
+        val fixture = Json.parseToJsonElement(HostBridgeFixtures.ENVELOPES.getValue("success-providers-list.json")).jsonObject.getValue("value")
+        val list = ProviderList(listOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE), working = listOf(RuntimeId.CLAUDE_CODE))
+        assertEquals(fixture, Json.parseToJsonElement(BridgeEnvelopes.success(bridgeJson.encodeToJsonElement(ProviderList.serializer(), list))))
+        kotlin.test.assertFails { ProviderList(listOf(RuntimeId.CODEX), working = listOf(RuntimeId.CLAUDE_CODE)) }
     }
 
     @Test fun providerStatusesNameTheProviderOfTheirRuntime() {

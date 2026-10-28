@@ -2,7 +2,9 @@ package org.formulagen.wrapper.providers
 
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.companion.terminateProcessTree
-import org.formulagen.wrapper.process.readBoundedLine
+import org.formulagen.wrapper.process.MAX_PROTOCOL_LINE
+import org.formulagen.wrapper.process.ProtocolLine
+import org.formulagen.wrapper.process.readProtocolLine
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutionException
@@ -34,6 +36,8 @@ internal class StdioCodexAppServer(
      * every request, as a talk-only or account process always does.
      */
     private val onRequest: ((String, JsonObject, (JsonObject?) -> Unit) -> Unit)? = null,
+    /** Longest protocol line kept; a longer server request is refused from its opening, and a longer notification reported as `transport/dropped`. */
+    private val lineLimit: Int = MAX_PROTOCOL_LINE,
 ) : CodexAppServer {
     private val process = runtime.builder(arguments + listOf("app-server", "--listen", "stdio://"))
         .redirectError(ProcessBuilder.Redirect.DISCARD).start()
@@ -47,7 +51,10 @@ internal class StdioCodexAppServer(
             try {
                 process.inputStream.bufferedReader().use { reader ->
                     while (true) {
-                        val line = readBoundedLine(reader) ?: break
+                        val line = when (val read = readProtocolLine(reader, lineLimit) ?: break) {
+                            is ProtocolLine.Whole -> read.text
+                            is ProtocolLine.Dropped -> { dropped(read.prefix); continue }
+                        }
                         val message = Json.parseToJsonElement(line).jsonObject
                         val id = (message["id"] as? JsonPrimitive)?.intOrNull
                         val method = (message["method"] as? JsonPrimitive)?.contentOrNull
@@ -106,6 +113,18 @@ internal class StdioCodexAppServer(
             close(); throw IllegalStateException("Codex did not complete the request", error)
         } catch (error: Exception) { close(); throw IllegalStateException("Codex did not complete the request", error) }
         finally { pending.remove(id) }
+    }
+
+    /** A message too long to keep, answered from its opening: a request is refused, a reply fails its call, a notification is reported by name. */
+    private fun dropped(prefix: String) {
+        val method = Regex("\"method\"\\s*:\\s*\"([^\"]+)\"").find(prefix)?.groupValues?.get(1)
+        // JSON-RPC ids here are numbers; a string "id" is an item's, deeper in the message.
+        val id = Regex("\"id\"\\s*:\\s*(\\d+)").find(prefix)?.groupValues?.get(1)?.let { JsonPrimitive(it.toInt()) }
+        when {
+            method != null && id != null -> refuse(id)
+            id != null -> (id as? JsonPrimitive)?.intOrNull?.let { pending.remove(it)?.completeExceptionally(CodexRequestRejected()) }
+            method != null -> onNotification("transport/dropped", buildJsonObject { put("method", method) })
+        }
     }
 
     private fun refuse(requestId: JsonElement) = send(buildJsonObject {

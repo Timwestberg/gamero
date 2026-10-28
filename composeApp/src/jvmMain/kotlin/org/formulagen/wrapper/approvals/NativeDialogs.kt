@@ -8,11 +8,15 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 
 /**
- * One native question for the player: a [title], its [lines], and its [buttons] in order. Closing
- * the dialog answers [dismissIndex] (Deny, Not now).
+ * One native question for the player: a [title], its [lines], and its [buttons] in order, each with
+ * the value it answers. [dismiss] is the default: what closing the dialog, Escape or Enter answers
+ * (Deny, Not now), and the only button that is the dialog's primary one.
  */
-internal data class NativeDialog(val title: String, val lines: List<String>, val buttons: List<String>, val dismissIndex: Int) {
-    init { require(buttons.isNotEmpty() && dismissIndex in buttons.indices) }
+internal data class NativeDialog<T>(val title: String, val lines: List<String>, val buttons: List<Pair<String, T>>, val dismiss: T) {
+    init { require(buttons.isNotEmpty() && buttons.any { it.second == dismiss }) }
+
+    /** The dismiss button's position, for the screen. */
+    val dismissIndex: Int get() = buttons.indexOfFirst { it.second == dismiss }
 }
 
 /**
@@ -22,7 +26,7 @@ internal data class NativeDialog(val title: String, val lines: List<String>, val
  * a timeout or a cancel), and is safe to call more than once.
  */
 internal fun interface DialogPresenter {
-    fun present(dialog: NativeDialog, answer: (Int) -> Unit): () -> Unit
+    fun present(dialog: NativeDialog<*>, answer: (Int) -> Unit): () -> Unit
 }
 
 /**
@@ -33,8 +37,8 @@ internal fun interface DialogPresenter {
 internal class NativeDialogs(private val presenter: DialogPresenter, private val timeout: Duration = APPROVAL_TIMEOUT) {
     private val turn = Semaphore(1, true)
 
-    /** The chosen button's index, or null for no answer. Blocks. */
-    fun ask(dialog: NativeDialog, cancel: CancelSignal): Int? {
+    /** The chosen button's value, or null for no answer. [shown] runs once the dialog is on screen. Blocks. */
+    fun <T> ask(dialog: NativeDialog<T>, cancel: CancelSignal, shown: () -> Unit = {}): T? {
         val answer = CompletableFuture<Int?>()
         cancel.onCancel { answer.complete(null) }.use {
             if (answer.isDone) return null
@@ -43,9 +47,11 @@ internal class NativeDialogs(private val presenter: DialogPresenter, private val
             try {
                 if (answer.isDone) return null
                 val dismiss = presenter.present(dialog) { choice -> answer.complete(choice.takeIf { it in dialog.buttons.indices }) }
-                try { return answer.get(timeout.inWholeMilliseconds, TimeUnit.MILLISECONDS) }
-                catch (_: TimeoutException) { return null }
-                finally { dismiss() }
+                shown()
+                val index = try { answer.get(timeout.inWholeMilliseconds, TimeUnit.MILLISECONDS) }
+                    catch (_: TimeoutException) { null }
+                    finally { dismiss() }
+                return index?.let { dialog.buttons[it].second }
             } finally { turn.release() }
         }
     }
@@ -53,3 +59,6 @@ internal class NativeDialogs(private val presenter: DialogPresenter, private val
 
 /** How long an approval or start-of-work dialog waits for the player before it counts as Deny. */
 internal val APPROVAL_TIMEOUT: Duration = 10.minutes
+
+/** How long a new dialog's buttons stay disabled, so a click or key press meant for something else cannot answer it. */
+internal const val DIALOG_ARMING_MILLIS = 750L

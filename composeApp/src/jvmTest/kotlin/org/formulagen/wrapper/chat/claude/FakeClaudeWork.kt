@@ -23,10 +23,14 @@ internal class FakeClaudeWork {
             #!/usr/bin/python3
             import json, os, sys, threading, time, queue
             here = os.path.dirname(os.path.abspath(__file__))
-            turns = json.load(open(os.path.join(here, "work-scenario.json")))["turns"]
+            scenario = json.load(open(os.path.join(here, "work-scenario.json")))
+            turns = scenario["turns"]
             args = sys.argv[1:]
             session = next((args[i + 1] for i, a in enumerate(args) if a in ("--session-id", "--resume")), "no-session")
-            with open(os.path.join(here, "calls.jsonl"), "a") as f: f.write(json.dumps({"argv": args, "env": dict(os.environ), "cwd": os.getcwd()}) + "\n")
+            with open(os.path.join(here, "calls.jsonl"), "a") as f: f.write(json.dumps({"argv": args, "env": dict(os.environ), "cwd": os.getcwd(), "started": time.time()}) + "\n")
+            if "--resume" in args and session in scenario.get("missing", []):
+                sys.stdout.write(json.dumps({"type": "result", "subtype": "error_during_execution", "is_error": True,
+                    "errors": ["No conversation found with session ID: " + session]}) + "\n"); sys.stdout.flush(); sys.exit(1)
             lock = threading.Lock(); cond = threading.Condition(); answers = {}; interrupts = [0]; users = queue.Queue()
             def out(o):
                 with lock: sys.stdout.write(json.dumps(o).replace("SESSION_ID", session) + "\n"); sys.stdout.flush()
@@ -62,15 +66,21 @@ internal class FakeClaudeWork {
                         with cond: cond.wait_for(lambda: interrupts[0] >= step["wait_interrupt"], timeout=20)
                     elif "cancel" in step: out({"type": "control_cancel_request", "request_id": step["cancel"]})
                     elif "exit" in step: sys.stdout.flush(); os._exit(step["exit"])
+            with open(os.path.join(here, "exits.jsonl"), "a") as f: f.write(json.dumps({"session": session, "ended": time.time()}) + "\n")
         """.trimIndent())
         Files.setPosixFilePermissions(executable, PosixFilePermissions.fromString("rwx------"))
         turns()
     }
 
-    /** The turns the next process plays, in order. */
-    fun turns(vararg turns: List<JsonObject>) {
-        Files.writeString(dir.resolve("work-scenario.json"), buildJsonObject { put("turns", JsonArray(turns.map { JsonArray(it) })) }.toString())
+    /** The turns the next process plays, in order; resuming a session in [missing] fails as Claude Code does for one it does not have. */
+    fun turns(vararg turns: List<JsonObject>, missing: List<String> = emptyList()) {
+        Files.writeString(dir.resolve("work-scenario.json"), buildJsonObject {
+            put("turns", JsonArray(turns.map { JsonArray(it) })); putJsonArray("missing") { missing.forEach { add(it) } }
+        }.toString())
     }
+
+    /** When each process that ended on its own (end of input) ended. */
+    fun exits(): List<JsonObject> = read("exits.jsonl")
 
     fun calls(): List<JsonObject> = read("calls.jsonl")
     fun stdin(): List<JsonObject> = read("stdin.jsonl")

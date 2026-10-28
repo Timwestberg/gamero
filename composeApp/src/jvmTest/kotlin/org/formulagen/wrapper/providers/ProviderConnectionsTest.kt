@@ -28,8 +28,8 @@ class ProviderConnectionsTest {
         override fun close() { closed = true }
     }
     private fun chatgpt() = buildJsonObject { put("type", "chatgpt"); put("email", "player@example.test"); put("planType", "plus") }
-    private val signedOut = ProviderStatus(RuntimeId.CODEX, ProviderState.DISCONNECTED, detail = ProviderDetail.SIGNED_OUT,
-        message = "Uses your Codex sign-in on this Mac. Run `codex login` in Terminal, then choose Check again.")
+    /** The page owns the sign-in help, so a signed-out card carries no message. */
+    private val signedOut = ProviderStatus(RuntimeId.CODEX, ProviderState.DISCONNECTED, detail = ProviderDetail.SIGNED_OUT)
 
     @Test fun codexIsTheExternalSignInThePlayerManagesInTerminal() {
         val rpc = Rpc()
@@ -46,7 +46,7 @@ class ProviderConnectionsTest {
         assertEquals(chatgpt(), rpc.account, "Disconnect never signs the player out")
         rpc.account = buildJsonObject { put("type", "apiKey") }
         assertEquals(ProviderStatus(RuntimeId.CODEX, ProviderState.ERROR, detail = ProviderDetail.API_KEY,
-            message = "Codex is using an API key. Sign in with your ChatGPT subscription to use it here: run `codex login` in Terminal."),
+            message = "Codex is using an API key. Sign in with your ChatGPT subscription to use it here."),
             connection.perform(ProviderAction.STATUS))
         rpc.account = buildJsonObject { put("type", "somethingNew") }
         assertFails { connection.perform(ProviderAction.STATUS) }
@@ -140,8 +140,7 @@ class ProviderConnectionsTest {
             assertEquals(2, fake.calls().size, "One --version and one auth status")
             clock.now = clock.now.plusMillis(CLAUDE_STATUS_TTL.inWholeMilliseconds)
             fake.scenario(auth = FakeClaude.fixture("auth-status-signed-out.json"), authExit = 1)
-            assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.DISCONNECTED, detail = ProviderDetail.SIGNED_OUT,
-                message = "Sign in to Claude Code with your Claude subscription: run `claude auth login` in Terminal, then choose Check again."),
+            assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.DISCONNECTED, detail = ProviderDetail.SIGNED_OUT),
                 registry.perform(ProviderAction.STATUS, scope(RuntimeId.CLAUDE_CODE)))
             assertTrue(codexCalls.isEmpty())
             assertEquals(ProviderState.DISCONNECTED, registry.perform(ProviderAction.STATUS, scope(RuntimeId.CODEX)).state)
@@ -154,15 +153,16 @@ class ProviderConnectionsTest {
     @Test fun aRuntimeThisBuildDoesNotOfferHasNoCardAndAnswersNotOffered() = runBlocking<Unit> {
         val root = Files.createTempDirectory("hovel-provider-list")
         DesktopProviders(listOf(CodexProvider(root, null))).use { registry ->
-            assertEquals(ProviderList(listOf(RuntimeId.CODEX)), registry.list("local"))
+            assertEquals(ProviderList(listOf(RuntimeId.CODEX), working = emptyList()), registry.list("local"))
             val notOffered = ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.UNAVAILABLE, message = "Claude is not available in this version of Hovel.",
                 detail = ProviderDetail.NOT_OFFERED)
             for (action in ProviderAction.entries) assertEquals(notOffered, registry.perform(action, ProviderScope("local", RuntimeId.CLAUDE_CODE)))
             assertEquals(ProviderModels(emptyList(), RuntimeId.CLAUDE_CODE), registry.models(ProviderScope("local", RuntimeId.CLAUDE_CODE)))
             assertFails { registry.list("../x") }
         }
-        DesktopProviders(listOf(ClaudeProvider(ClaudeConnection(null)), CodexProvider(root, null))).use { registry ->
-            assertEquals(ProviderList(listOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE)), registry.list(LOGIN_ID), "The contract's order")
+        DesktopProviders(listOf(ClaudeProvider(ClaudeConnection(null)), CodexProvider(root, null)), working = setOf(RuntimeId.CLAUDE_CODE)).use { registry ->
+            assertEquals(ProviderList(listOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE), working = listOf(RuntimeId.CLAUDE_CODE)), registry.list(LOGIN_ID),
+                "The contract's order, and only the runtimes that may work")
             // Offered but not installed: the card says how to install it.
             assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.UNAVAILABLE, message = "Install Claude Code on this Mac, then restart Hovel to use Claude.",
                 detail = ProviderDetail.NOT_INSTALLED), registry.perform(ProviderAction.STATUS, ProviderScope("local", RuntimeId.CLAUDE_CODE)))

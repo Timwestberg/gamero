@@ -1,9 +1,9 @@
 package org.formulagen.wrapper.workspace
 
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import org.formulagen.wrapper.bridge.WorkspaceCapability
 import org.formulagen.wrapper.bridge.WorkspaceFolder
 import org.formulagen.wrapper.bridge.WorkspaceScope
@@ -11,13 +11,22 @@ import org.formulagen.wrapper.bridge.WorkspaceStatus
 
 /**
  * `workspace.*` on the desktop, backed by [store]. The router has validated the scope; the store
- * checks it again before building any path. One picker at a time, off the bridge thread.
+ * checks it again before building any path. One folder picker at a time: a second Choose while one
+ * is open answers the current status. The picker runs on its own thread and is never interrupted:
+ * if the bridge call times out meanwhile, whatever the person chooses is still kept when it closes.
  */
 internal class DesktopWorkspace(private val store: WorkspaceStore) : WorkspaceCapability {
-    private val picker = Mutex()
+    private val picking = AtomicBoolean()
 
-    override suspend fun choose(scope: WorkspaceScope): WorkspaceStatus = picker.withLock {
-        runInterruptible(Dispatchers.IO) { workspaceStatus(store.choose(scope.profile, scope.companionId)) }
+    override suspend fun choose(scope: WorkspaceScope): WorkspaceStatus {
+        if (!picking.compareAndSet(false, true)) return status(scope)
+        val chosen = CompletableDeferred<WorkspaceStatus>()
+        Thread.ofPlatform().daemon().name("hovel-folder-picker").start {
+            try { chosen.complete(workspaceStatus(store.choose(scope.profile, scope.companionId))) }
+            catch (error: Throwable) { chosen.completeExceptionally(error) }
+            finally { picking.set(false) }
+        }
+        return chosen.await()
     }
 
     override suspend fun clear(scope: WorkspaceScope): WorkspaceStatus =

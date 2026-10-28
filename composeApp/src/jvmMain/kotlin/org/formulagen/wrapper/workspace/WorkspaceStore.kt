@@ -9,6 +9,7 @@ import java.util.UUID
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.formulagen.wrapper.bridge.SharedRules
+import org.formulagen.wrapper.bridge.WorkspaceLimits
 
 /**
  * A companion's project folder: where its working members work, and whose `CLAUDE.md` and
@@ -17,11 +18,9 @@ import org.formulagen.wrapper.bridge.SharedRules
  */
 internal data class ProjectFolder(val path: Path, val exists: Boolean) {
     /** The folder's own name, as the page shows it. */
-    val name: String get() = (path.fileName?.toString() ?: path.toString()).take(FOLDER_NAME_LIMIT)
+    val name: String get() = (path.fileName?.toString() ?: path.toString()).take(WorkspaceLimits.FOLDER_NAME)
 }
 
-/** Longest folder name the page is shown (the contract's `workspaceStatus.folder.name`). */
-internal const val FOLDER_NAME_LIMIT = 255
 
 /**
  * Each companion's project folder, per Hovel profile, at `<providers root>/<profile>/workspaces.json`
@@ -36,17 +35,20 @@ internal class WorkspaceStore(private val root: Path, private val picker: Folder
 
     /**
      * Open the Mac's folder picker and keep the folder the person chooses for the companion. Cancelling
-     * changes nothing and answers the folder it already had. [companionName] titles the picker.
+     * changes nothing and answers the folder it already had. [companionName] titles the picker. The
+     * store is not held while the picker is open, so status and clear still answer meanwhile.
      */
-    @Synchronized fun choose(profile: String, companionId: String, companionName: String? = null): ProjectFolder? {
+    fun choose(profile: String, companionId: String, companionName: String? = null): ProjectFolder? {
         val id = key(companionId)
-        val record = read(profile)
-        val current = record.folders[id]?.let(Path::of)
+        val current = synchronized(this) { read(profile).folders[id]?.let(Path::of) }
         val title = companionName?.let { "Choose a project folder for $it" } ?: "Choose a project folder"
-        val picked = picker.choose(title, current) ?: return current?.let(::folder)
+        val picked = picker.choose(title, current) ?: return folder(profile, companionId)
         val chosen = picked.toAbsolutePath().normalize().toRealPath()
         require(Files.isDirectory(chosen)) { "A project folder must be a folder" }
-        write(profile, record.copy(folders = record.folders + (id to chosen.toString())).validated())
+        synchronized(this) {
+            val record = read(profile)
+            write(profile, record.copy(folders = record.folders + (id to chosen.toString())).validated())
+        }
         return folder(chosen)
     }
 

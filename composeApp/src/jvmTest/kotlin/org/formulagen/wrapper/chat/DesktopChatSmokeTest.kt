@@ -83,9 +83,12 @@ class DesktopChatSmokeTest {
         val notes = Files.writeString(folder.resolve("notes.txt"), "first note line\n")
         val runtime = ClaudeRuntime(Path.of(requireNotNull(executable)), root.resolve("providers"))
         val asked = java.util.concurrent.CopyOnWriteArrayList<String>()
-        val broker = org.formulagen.wrapper.approvals.ApprovalBroker { request, _ ->
+        val broker = org.formulagen.wrapper.approvals.ApprovalBroker { request, _, shown ->
+            shown()
             asked += "${request.kind} ${request.title}"
-            if (request.kind == org.formulagen.wrapper.approvals.ApprovalKind.EDIT && request.title.endsWith(" notes.txt"))
+            // The dialog names the file in full; only notes.txt in the scratch folder is allowed.
+            val edit = request.subject as? org.formulagen.wrapper.approvals.ApprovalSubject.Edit
+            if (edit != null && edit.files.map { it.toAbsolutePath().normalize() } == listOf(notes.toAbsolutePath().normalize()))
                 org.formulagen.wrapper.approvals.ApprovalDecision.ALLOW_ONCE else org.formulagen.wrapper.approvals.ApprovalDecision.DENY
         }
         val haiku = org.formulagen.wrapper.bridge.TeamMember(org.formulagen.wrapper.bridge.RuntimeId.CLAUDE_CODE, "haiku")

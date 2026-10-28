@@ -105,7 +105,7 @@ class WorkspaceStoreTest {
     }
 
     @Test fun aLongFolderNameIsShortenedForThePage() {
-        assertEquals(FOLDER_NAME_LIMIT, ProjectFolder(Path.of("/x/" + "n".repeat(300)), true).name.length)
+        assertEquals(org.formulagen.wrapper.bridge.WorkspaceLimits.FOLDER_NAME, ProjectFolder(Path.of("/x/" + "n".repeat(300)), true).name.length)
         assertEquals("/", ProjectFolder(Path.of("/"), true).name)
     }
 
@@ -121,5 +121,24 @@ class WorkspaceStoreTest {
         assertEquals(chosen.copy(folder = chosen.folder!!.copy(exists = false)), workspace.status(scope), "A deleted folder stays chosen")
         assertEquals(org.formulagen.wrapper.bridge.WorkspaceStatus(null), workspace.clear(scope))
         assertEquals(org.formulagen.wrapper.bridge.WorkspaceStatus(null), workspace.status(scope))
+    }
+
+    @Test fun onePickerAtATimeNeverInterruptedAndItsChoiceKeptAfterTheCallGaveUp() = kotlinx.coroutines.runBlocking {
+        val game = project("hovel-notes")
+        val open = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val workspace = DesktopWorkspace(WorkspaceStore(root, FolderPicker { _, _ -> open.countDown(); release.await(); game }))
+        val scope = org.formulagen.wrapper.bridge.WorkspaceScope(companion, "local")
+        // The bridge gives up on the first Choose while the picker is still open.
+        val first = kotlinx.coroutines.withTimeoutOrNull(300) { workspace.choose(scope) }
+        assertNull(first)
+        open.await()
+        // A second Choose while one is open answers the current status at once, and Status still answers.
+        assertEquals(org.formulagen.wrapper.bridge.WorkspaceStatus(null), workspace.choose(scope))
+        assertEquals(org.formulagen.wrapper.bridge.WorkspaceStatus(null), workspace.status(scope))
+        release.countDown()
+        val until = System.nanoTime() + 5_000_000_000L
+        while (workspace.status(scope).folder == null) { check(System.nanoTime() < until) { "The choice was never kept" }; Thread.sleep(10) }
+        assertEquals("hovel-notes", workspace.status(scope).folder?.name)
     }
 }

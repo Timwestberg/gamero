@@ -114,29 +114,35 @@ class ChatHandoverTest {
     private fun worked(author: TeamMember, text: String, vararg steps: ActivityStep) = ChatEntry.Assistant(id(), author, text, Activity(steps.toList(), false))
 
     @Test fun aWorkLogNamesTheChangesCommandsDenialsAndWhereTheWorkStopped() {
+        val failing = ActivityStep(ActivityKind.COMMAND, "npm test", ActivityStatus.FAILED, "1 failing\nmore")
+        val passing = ActivityStep(ActivityKind.COMMAND, "npm test", ActivityStatus.DONE, "12 passing")
+        val push = ActivityStep(ActivityKind.COMMAND, "git push", ActivityStatus.DENIED)
         val entries = listOf(user("Fix the date test"),
             worked(sonnet, "Reading first.", ActivityStep(ActivityKind.READ, "src/date.ts", ActivityStatus.DONE),
                 ActivityStep(ActivityKind.SEARCH, "parseDate", ActivityStatus.DONE, "2 files")),
-            worked(sonnet, "The parser dropped the offset. Fixed; I did not push.",
-                ActivityStep(ActivityKind.COMMAND, "npm test", ActivityStatus.FAILED, "1 failing\nmore"),
-                ActivityStep(ActivityKind.EDIT, "src/date.ts", ActivityStatus.DONE, "+3 -1"),
-                ActivityStep(ActivityKind.COMMAND, "npm test", ActivityStatus.DONE, "12 passing"),
-                ActivityStep(ActivityKind.CONNECTOR, "linear · create_issue", ActivityStatus.DONE),
-                ActivityStep(ActivityKind.COMMAND, "git push", ActivityStatus.DENIED)))
+            worked(sonnet, "The parser dropped the offset. Fixed; I did not push.", failing,
+                ActivityStep(ActivityKind.EDIT, "src/date.ts", ActivityStatus.DONE, "+3 -1"), passing,
+                ActivityStep(ActivityKind.CONNECTOR, "linear · create_issue", ActivityStatus.DONE), push))
+        val log = WorkLog(changed = listOf("src/date.ts"), commands = listOf(failing, passing, push), denied = listOf("git push"),
+            stoppedAt = "The parser dropped the offset. Fixed; I did not push.")
+        assertEquals(log, Handovers.workLog(entries, sonnet))
+        // The incoming model reads it as prose, line breaks in a result cut to its first line.
         assertEquals("""
             Files changed: src/date.ts.
             Commands: npm test (failed: 1 failing); npm test (done: 12 passing); git push (denied).
-            Connectors: linear · create_issue (done).
-            Also: 1 files read, 1 searches.
             Denied: git push.
-            Where it stopped: The parser dropped the offset. Fixed; I did not push.""".trimIndent(), Handovers.workLog(entries, sonnet))
+            Where it stopped: The parser dropped the offset. Fixed; I did not push.""".trimIndent(), Handovers.workLogProse(log))
         // Only the outgoing member's own work since the last handover, and nothing when nobody worked.
         assertNull(Handovers.workLog(entries, codex))
         assertNull(Handovers.workLog(listOf(user("Hi"), reply(sonnet, "Hello")), sonnet))
         val after = entries + Handovers.entry(sonnet, codex, HandoverMethod.UP_TO_DATE, HandoverReason.MANUAL)
         assertNull(Handovers.workLog(after, sonnet))
-        assertEquals(HandoverLimits.WORK_LOG, Handovers.workLog(listOf(worked(sonnet, "x".repeat(10),
-            *(1..50).map { ActivityStep(ActivityKind.EDIT, "f$it/" + "n".repeat(200), ActivityStatus.DONE) }.toTypedArray())), sonnet)!!.length)
+        // Each list stays within the contract's bounds, the newest commands kept.
+        fun steps(range: IntRange) = range.map { ActivityStep(ActivityKind.COMMAND, "step $it", ActivityStatus.DONE) }.toTypedArray()
+        val busy = Handovers.workLog(listOf(worked(sonnet, "first", *steps(1..30)), worked(sonnet, "x".repeat(1000), *steps(31..60))), sonnet)!!
+        assertEquals(ActivityLimits.STEPS, busy.commands.size); assertEquals("step 60", busy.commands.last().label)
+        assertEquals(ActivityLimits.DETAIL, busy.stoppedAt!!.length)
+        assertTrue(worked(sonnet, "x").worked); assertFalse(reply(sonnet, "y").worked)
     }
 
     @Test fun aRecentMessagesHandoverCarriesTheLastWorkLogAndOwesIt() {
@@ -145,14 +151,15 @@ class ChatHandoverTest {
         val handed = Handovers.handover(record, Handovers.entry(sonnet, codex, HandoverMethod.RECENT_MESSAGES, HandoverReason.MANUAL),
             Handovers.recentMessages(record.entries))
         val note = notes(handed).single()
-        assertEquals("Files changed: a.txt.\nWhere it stopped: Fixed.", note.workLog)
+        val log = WorkLog(listOf("a.txt"), emptyList(), emptyList(), "Fixed.")
+        assertEquals(log, note.workLog)
         assertTrue(Handovers.owedTo(handed, RuntimeId.CODEX)!!.endsWith("Earlier in this conversation (the work log):\n<<<\nFiles changed: a.txt.\nWhere it stopped: Fixed.\n>>>"))
         // A summary or a fresh start carries only what it is given.
-        assertNull(Handovers.entry(sonnet, codex, HandoverMethod.UP_TO_DATE, HandoverReason.MANUAL, workLog = "x").workLog)
-        assertEquals("x", Handovers.entry(sonnet, codex, HandoverMethod.SUMMARY, HandoverReason.MANUAL, "s", workLog = "x").workLog)
+        assertNull(Handovers.entry(sonnet, codex, HandoverMethod.UP_TO_DATE, HandoverReason.MANUAL, workLog = log).workLog)
+        assertEquals(log, Handovers.entry(sonnet, codex, HandoverMethod.SUMMARY, HandoverReason.MANUAL, "s", workLog = log).workLog)
         // With no working reply since, the last handover's log is the last work log there was.
         val later = handed.copy(entries = handed.entries + user("And now?") + reply(codex, "Sure"))
-        assertEquals(note.workLog, Handovers.lastWorkLog(later.entries))
+        assertEquals(log, Handovers.lastWorkLog(later.entries))
     }
 
     @Test fun workingAndTalkingConversationsOfOneRuntimeCatchEachOtherUp() {
@@ -169,7 +176,7 @@ class ChatHandoverTest {
         // The talk-only conversation missed the working reply, so the next talk turn is caught up, with the work log.
         val caught = assertNotNull(Handovers.catchUp(working, sonnet))
         assertEquals(listOf(HandoverMethod.RECENT_MESSAGES), notes(caught).map { it.method })
-        assertEquals("Files changed: a.txt.\nWhere it stopped: Fixed.", notes(caught).single().workLog)
+        assertEquals(WorkLog(listOf("a.txt"), emptyList(), emptyList(), "Fixed."), notes(caught).single().workLog)
         assertContains(Handovers.owedTo(caught, RuntimeId.CLAUDE_CODE)!!, "Person: Fix it\nCompanion: Fixed.")
     }
 }

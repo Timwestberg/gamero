@@ -88,8 +88,15 @@ data class ProviderStatus(
     init { require(providerId == runtimeId.providerId) { "A provider status names the provider of its runtime" } }
 }
 
+/**
+ * The runtimes a host offers a profile, each shown as one card. [working] lists those this host
+ * lets work in a project folder: the page offers "Works in the project" only for these, and a
+ * gated runtime is absent.
+ */
 @Serializable
-data class ProviderList(val runtimes: List<RuntimeId>)
+data class ProviderList(val runtimes: List<RuntimeId>, val working: List<RuntimeId>) {
+    init { require(runtimes.containsAll(working)) { "A working runtime is one the host offers" } }
+}
 
 /** One model a team member may use: the runtime's own [displayName], and whether it is the runtime's default. */
 @Serializable

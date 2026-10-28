@@ -7,6 +7,7 @@ import org.formulagen.wrapper.bridge.ActivityKind
 import org.formulagen.wrapper.bridge.ActivityStatus
 import org.formulagen.wrapper.chat.ActivityLog
 import org.formulagen.wrapper.chat.WorkPaths
+import org.formulagen.wrapper.util.text
 
 /**
  * A working Claude turn's activity, from its `stream-json` lines (abilities spike, 2026-10-28):
@@ -18,14 +19,16 @@ import org.formulagen.wrapper.chat.WorkPaths
  */
 internal class ClaudeActivity(folder: Path) {
     private val paths = WorkPaths(folder)
-    private val log = ActivityLog()
+    private val log = ActivityLog(paths)
     /** Tool uses seen but not finished, by id. */
     private val open = LinkedHashMap<String, Pair<String, JsonObject>>()
     private val finished = mutableSetOf<String>()
 
     /**
-     * Claude Code denied a tool without asking Hovel (`system/permission_denied`): the permission
-     * prompt never reached the host, which a working turn must treat as broken.
+     * Claude Code denied a tool because it needed the player's approval, without asking Hovel
+     * (`system/permission_denied` saying the permission "needs approval" or "haven't granted it
+     * yet"): the permission prompt never reached the host. A denial by the player's own rules says
+     * neither, and does not count.
      */
     var deniedWithoutAsking = false
         private set
@@ -38,7 +41,11 @@ internal class ClaudeActivity(folder: Path) {
     /** Apply one line; true when it added a step. */
     fun receive(message: JsonObject): Boolean {
         val type = message.text("type")
-        if (type == "system" && message.text("subtype") == "permission_denied") { deniedWithoutAsking = true; return false }
+        if (type == "system" && message.text("subtype") == "permission_denied") {
+            val why = message.text("message").orEmpty()
+            if ("needs approval" in why || "haven't granted" in why) deniedWithoutAsking = true
+            return false
+        }
         if (message["parent_tool_use_id"].let { it != null && it != JsonNull }) return false
         return when (type) {
             "assistant" -> { content(message).filter { it.text("type") == "tool_use" }.forEach { use ->
@@ -67,7 +74,7 @@ internal class ClaudeActivity(folder: Path) {
         val failed = (result["is_error"] as? JsonPrimitive)?.booleanOrNull == true
         val status = when { denied -> ActivityStatus.DENIED; failed -> ActivityStatus.FAILED; else -> ActivityStatus.DONE }
         val detail = if (status == ActivityStatus.DONE) outcome(name, message["tool_use_result"], result) else text(result["content"])
-        step(name, input, status, detail?.let(paths::scrub))
+        step(name, input, status, detail)
         return true
     }
 
@@ -103,7 +110,7 @@ internal class ClaudeActivity(folder: Path) {
             name == "WebFetch" -> input.text("url").orEmpty()
             name == "WebSearch" -> input.text("query").orEmpty()
             else -> input.text("description")?.let { "$name: $it" } ?: name
-        }.let(paths::scrub)
+        }
     }
 
     private fun content(message: JsonObject): List<JsonObject> =
@@ -115,8 +122,6 @@ internal class ClaudeActivity(folder: Path) {
         is JsonArray -> content.mapNotNull { (it as? JsonObject)?.takeIf { block -> block.text("type") == "text" }?.text("text") }.joinToString("\n")
         else -> null
     }?.takeIf { it.isNotBlank() }
-
-    private fun JsonObject.text(key: String) = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
 
     companion object {
         /** Reading, searching, editing, commands, connectors, the web, or anything else. */

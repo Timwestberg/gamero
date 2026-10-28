@@ -85,20 +85,19 @@ object ChatLimits { // mirrors CHAT_LIMITS
     const val NOTICE = 300
 }
 
-/**
- * What one member hands the next: a summary, or the last [RECENT_MESSAGES] entries within
- * [RECENT_CHARS], and a working member's [WORK_LOG].
- */
+/** What one member hands the next: a summary, or the last [RECENT_MESSAGES] entries within [RECENT_CHARS]. */
 object HandoverLimits { // mirrors HANDOVER_LIMITS
     /** An engine's id and version, as Hovel Brain bounds them. */
     const val ENGINE_IDENTIFIER = 256
     const val RECENT_CHARS = 8000
     const val RECENT_MESSAGES = 10
     const val SUMMARY = 2000
-    const val WORK_LOG = 2000
 }
 
-/** Bounds of a working reply's activity: at most [STEPS] steps, each a [LABEL] and a shortened [DETAIL]. */
+/**
+ * Bounds of a working reply's activity: at most [STEPS] steps, each a [LABEL] and a shortened
+ * [DETAIL]. A handover's [WorkLog] uses the same bounds.
+ */
 object ActivityLimits { // mirrors ACTIVITY_LIMITS
     const val DETAIL = 400
     const val LABEL = 240
@@ -142,6 +141,20 @@ data class ActivityStep(val kind: ActivityKind, val label: String, val status: A
 @Serializable
 data class Activity(val steps: List<ActivityStep>, val truncated: Boolean) {
     init { require(steps.size <= ActivityLimits.STEPS) }
+}
+
+/**
+ * What a working member did since the last handover, in fields a routing engine and the page read
+ * without parsing prose: the files [changed] (relative to the project folder), the [commands] run
+ * with their status and shortened result, the labels of the steps [denied], and [stoppedAt], the
+ * opening of the last working reply. Native code writes the prose the incoming model reads.
+ */
+@Serializable
+data class WorkLog(val changed: List<String>, val commands: List<ActivityStep>, val denied: List<String>, val stoppedAt: String? = null) {
+    init {
+        require(changed.size <= ActivityLimits.STEPS && commands.size <= ActivityLimits.STEPS && denied.size <= ActivityLimits.STEPS)
+        require((changed + denied).all { it.length <= ActivityLimits.LABEL } && (stoppedAt?.length ?: 0) <= ActivityLimits.DETAIL)
+    }
 }
 
 /**
@@ -253,7 +266,7 @@ sealed interface ChatEntry {
         val summary: String? = null,
         /** The engine that decided; only with reason `engine`. */
         val engine: HandoverEngine? = null,
-        val workLog: String? = null,
+        val workLog: WorkLog? = null,
     ) : ChatEntry
 }
 
@@ -287,7 +300,7 @@ data class ChatSnapshot(val state: ChatState = ChatState.READY, val messages: Li
 internal object HandoverSerializer : KSerializer<ChatEntry.Handover> {
     @Serializable @SerialName("handover")
     private class Wire(val id: String, val at: String, val from: Previous, val to: TeamMember, val method: HandoverMethod,
-        val reason: HandoverReason, val summary: String? = null, val engine: HandoverEngine? = null, val workLog: String? = null)
+        val reason: HandoverReason, val summary: String? = null, val engine: HandoverEngine? = null, val workLog: WorkLog? = null)
 
     @Serializable(with = PreviousSerializer::class)
     private class Previous(val member: TeamMember?)

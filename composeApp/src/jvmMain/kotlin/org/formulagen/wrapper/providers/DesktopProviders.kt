@@ -16,9 +16,10 @@ import org.formulagen.wrapper.closeInReverse
 /**
  * The `providers.*` capability, routed by runtime with credentials kept off the bridge. [runtimes]
  * are the runtimes this build offers; one gated off is absent, so it has no card and every call for
- * it answers "not offered". Each runtime runs one call at a time.
+ * it answers "not offered". [working] are those it lets work in a project folder, by the same
+ * answer the chat runs on. Each runtime runs one call at a time.
  */
-internal class DesktopProviders(runtimes: List<RuntimeProvider>) : ProviderCapability, AutoCloseable {
+internal class DesktopProviders(runtimes: List<RuntimeProvider>, private val working: Set<RuntimeId> = emptySet()) : ProviderCapability, AutoCloseable {
     private val runtimes = runtimes.associateBy { it.id }
     private val locks = runtimes.associate { it.id to Mutex() }
     @Volatile private var closed = false
@@ -30,10 +31,11 @@ internal class DesktopProviders(runtimes: List<RuntimeProvider>) : ProviderCapab
         return locks.getValue(runtime.id).withLock { check(!closed); runInterruptible { runtime.status(scope.profile, action) } }
     }
 
-    /** The offered runtimes, in the contract's order. */
+    /** The offered runtimes, in the contract's order, and those of them that may work. */
     override suspend fun list(profile: String): ProviderList {
         require(SharedRules.isProfileId(profile)) { "Invalid profile" }
-        return ProviderList(RuntimeId.entries.filter { it in runtimes })
+        val offered = RuntimeId.entries.filter { it in runtimes }
+        return ProviderList(offered, offered.filter { it in working })
     }
 
     /** Nothing known is an empty list, never an error: the page still offers the runtime's default. */

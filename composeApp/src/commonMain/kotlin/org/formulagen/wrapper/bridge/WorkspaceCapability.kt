@@ -24,7 +24,7 @@ interface WorkspaceCapability {
 }
 
 /** Bounds of what a page may see about a project folder. */
-object WorkspaceLimits { // mirrors WORKSPACE_LIMITS
+object WorkspaceLimits { // mirrors WORKSPACE_LIMITS (limits.json)
     const val FOLDER_NAME = 255
 }
 

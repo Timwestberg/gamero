@@ -11,7 +11,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.formulagen.wrapper.bridge.ChatEntry
 import org.formulagen.wrapper.bridge.ChatLimits
-import org.formulagen.wrapper.bridge.HandoverLimits
+import org.formulagen.wrapper.bridge.Activity
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
@@ -59,17 +59,37 @@ internal class ChatHistory(private val file: Path, private val legacy: Path? = n
         return migrated
     }
 
-    /** Replace only after the complete new record has been written privately. */
+    /** Replace only after the complete new record has been written privately, always small enough to [read] back. */
     fun write(record: ChatRecord) {
+        val text = fitted(record)
         Files.createDirectories(file.parent)
         Files.setPosixFilePermissions(file.parent, PosixFilePermissions.fromString("rwx------"))
         val temp = Files.createTempFile(file.parent, ".chat-", ".tmp",
             PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))
         try {
-            Files.writeString(temp, historyJson.encodeToString(record))
+            Files.writeString(temp, text)
             Files.move(temp, file, ATOMIC_MOVE, REPLACE_EXISTING)
         } finally { Files.deleteIfExists(temp) }
     }
+}
+
+/**
+ * [record] as written, within [MAX_RECORD_BYTES] so it can always be read back: working replies'
+ * step details go first, oldest reply first, then their steps (the reply keeps an empty, truncated
+ * activity, so it still reads as work). Fails only when the messages alone do not fit.
+ */
+internal fun fitted(record: ChatRecord, limit: Int = MAX_RECORD_BYTES): String {
+    var current = record
+    fun encoded() = historyJson.encodeToString(current).takeIf { it.toByteArray().size <= limit }
+    encoded()?.let { return it }
+    val worked = record.entries.withIndex().filter { (it.value as? ChatEntry.Assistant)?.activity != null }.map { it.index }
+    fun trim(index: Int, trim: (Activity) -> Activity) {
+        val reply = current.entries[index] as ChatEntry.Assistant
+        current = current.copy(entries = current.entries.toMutableList().also { it[index] = reply.copy(activity = trim(checkNotNull(reply.activity))) })
+    }
+    for (index in worked) { trim(index) { it.copy(steps = it.steps.map { step -> step.copy(detail = null) }) }; encoded()?.let { return it } }
+    for (index in worked) { trim(index) { Activity(emptyList(), truncated = true) }; encoded()?.let { return it } }
+    error("Chat record too large")
 }
 
 /**
@@ -101,8 +121,7 @@ private fun ChatRecord.validated(): ChatRecord = also { record ->
             is ChatEntry.Assistant -> require(entry.text.length <= ChatLimits.REPLY && entry.author.valid())
             is ChatEntry.Handover -> {
                 Instant.parse(entry.at)
-                require(entry.from?.valid() != false && entry.to.valid() && (entry.summary?.length ?: 0) <= SUMMARY_LIMIT &&
-                    (entry.workLog?.length ?: 0) <= HandoverLimits.WORK_LOG)
+                require(entry.from?.valid() != false && entry.to.valid() && (entry.summary?.length ?: 0) <= SUMMARY_LIMIT)
             }
         }
     }

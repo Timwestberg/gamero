@@ -55,21 +55,32 @@ class ClaudeControlTest {
         assertEquals(json(ClaudeControl.allowOnce(bare)), json(ClaudeControl.answer(bare, ApprovalDecision.ALLOW_FOR_CONVERSATION)))
     }
 
-    @Test fun theDialogShowsTheEditOrCommandWithPathsInsideTheProject() {
+    @Test fun theDialogShowsExactlyWhatClaudeAsksAndThePageOnlyItsSummary() {
         val records = fixture("decisions.jsonl").map { permission(it.getValue("request").jsonObject) }
         val edit = ClaudeControl.approvalRequest(records[0], "Ember", opus, folder)
         assertEquals(ApprovalKind.EDIT, edit.kind)
-        assertEquals("Edit notes.txt", edit.title)
+        assertEquals("Edit /private/tmp/hovel-fixture/project/notes.txt", edit.title)
         assertEquals("- first note line\n+ first note line\nhello from Ember", edit.detail)
         assertEquals("Allow all edits in project for this conversation", edit.sessionLabel)
-        assertEquals(listOf("Ember", opus, folder), listOf(edit.companion, edit.member, edit.folder))
+        assertEquals(listOf("Ember", opus, folder), listOf(edit.companionName, edit.member, edit.folder))
         val command = ClaudeControl.approvalRequest(records[5], "Ember", opus, folder)
         assertEquals(ApprovalKind.COMMAND, command.kind)
         assertEquals("echo 'from echo' >> notes.txt", command.title)
-        assertEquals("Append 'from echo' to notes.txt\nNeeds access to notes.txt", command.detail)
+        assertEquals("Append 'from echo' to notes.txt\nNeeds access to /private/tmp/hovel-fixture/project/notes.txt", command.detail)
         // The project folder Claude would add is already the working folder, so only the command is named.
         assertEquals("Allow `echo 'from echo' >> notes.txt` for this conversation", command.sessionLabel)
-        assertFalse((edit.title + edit.detail + command.title + command.detail).contains("/private/tmp"))
+        // The page's summary is relative to the project folder.
+        assertEquals("Ember wants to edit files: Edit notes.txt", edit.summary())
+        assertFalse((edit.summary() + command.summary()).contains("/private/tmp"))
+        // A command that reaches outside the project appears verbatim in the dialog, its grant too.
+        val outside = permission(json("""{"type":"control_request","request_id":"r","request":{"subtype":"can_use_tool","tool_name":"Bash",
+            "input":{"command":"cp notes.txt /Users/player/Desktop/notes.txt"},"blocked_path":"/Users/player/Desktop/notes.txt","tool_use_id":"t",
+            "permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"cp notes.txt /Users/player/Desktop/notes.txt"}],"behavior":"allow","destination":"localSettings"},
+            {"type":"addDirectories","directories":["/Users/player/Desktop"],"destination":"session"}]}}""").jsonObject)
+        val asked = ClaudeControl.approvalRequest(outside, "Ember", opus, folder)
+        assertEquals("cp notes.txt /Users/player/Desktop/notes.txt", asked.title)
+        assertEquals("Needs access to /Users/player/Desktop/notes.txt", asked.detail)
+        assertEquals("Allow `cp notes.txt /Users/player/Desktop/notes.txt` and access to /Users/player/Desktop for this conversation", asked.sessionLabel)
     }
 
     @Test fun connectorsAndOtherToolsAreNamedAndUnknownGrantsAreNeverOffered() {
@@ -88,7 +99,7 @@ class ClaudeControlTest {
         assertNull(label("[]"))
         assertNull(label("""[{"type":"removeRules","rules":[],"destination":"session"}]"""), "A grant Hovel cannot describe is not offered")
         assertNull(label("""[{"type":"setMode","mode":"bypassPermissions","destination":"session"}]"""))
-        assertEquals("Allow `npm test …` and access to Downloads for this conversation", label("""[
+        assertEquals("Allow `npm test …` and access to /Users/player/Downloads for this conversation", label("""[
             {"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"npm test:*"}],"behavior":"allow","destination":"localSettings"},
             {"type":"addDirectories","directories":["/Users/player/Downloads","/private/tmp/hovel-fixture/project/src"],"destination":"session"}]"""))
     }

@@ -1,6 +1,7 @@
 package org.formulagen.wrapper.providers
 
 import org.formulagen.wrapper.bridge.RuntimeId
+import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
 
 /**
  * What players read about a runtime, in one place for chat and providers. [product] is the name
@@ -15,9 +16,14 @@ internal class RuntimeCopy(
     val notOffered: String,
     /** A chat notice when the runtime's sign-in ended. */
     val signedOut: String,
-    /** How to sign in, for the Providers card: both runtimes sign in outside Hovel, in the player's own install. */
-    val signInHint: String,
-)
+    /** A working message to this runtime answers as talk with this when this build does not let it work. */
+    val cannotWork: String,
+    /** A model's name for the player, by its id; null when the runtime has no names of its own for its models. */
+    private val modelNames: Map<String, String> = emptyMap(),
+) {
+    /** "Sonnet" for `sonnet`, "default model" for the runtime's default, the id itself otherwise. */
+    fun modelName(modelId: String): String = if (modelId == RUNTIME_DEFAULT_MODEL) "default model" else modelNames[modelId] ?: modelId
+}
 
 internal val RuntimeId.copy: RuntimeCopy get() = when (this) {
     RuntimeId.CODEX -> CODEX_COPY
@@ -30,7 +36,7 @@ private val CODEX_COPY = RuntimeCopy(
     notInstalled = "Install Codex on this Mac, then restart Hovel to connect.",
     notOffered = "Codex is not available in this version of Hovel.",
     signedOut = "Sign in to Codex again: run `codex login` in Terminal.",
-    signInHint = "Uses your Codex sign-in on this Mac. Run `codex login` in Terminal, then choose Check again.",
+    cannotWork = "Codex can't work in projects yet in this version of Hovel.",
 )
 
 private val CLAUDE_COPY = RuntimeCopy(
@@ -39,5 +45,6 @@ private val CLAUDE_COPY = RuntimeCopy(
     notInstalled = "Install Claude Code on this Mac, then restart Hovel to use Claude.",
     notOffered = "Claude is not available in this version of Hovel.",
     signedOut = "Sign in to Claude Code again.",
-    signInHint = "Sign in to Claude Code with your Claude subscription: run `claude auth login` in Terminal, then choose Check again.",
+    cannotWork = "Claude can't work in projects in this version of Hovel.",
+    modelNames = CLAUDE_MODELS.associate { it.modelId to it.displayName },
 )

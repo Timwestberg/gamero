@@ -1,6 +1,15 @@
 package org.formulagen.wrapper.approvals
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
@@ -30,12 +39,12 @@ import java.awt.Window
  */
 internal class ComposeDialogPresenter(private val window: () -> Window?) : DialogPresenter {
     /** A dialog on screen and where its answer goes. */
-    internal class Shown(val dialog: NativeDialog, val answer: (Int) -> Unit)
+    internal class Shown(val dialog: NativeDialog<*>, val answer: (Int) -> Unit)
 
     var shown by mutableStateOf<Shown?>(null)
         private set
 
-    override fun present(dialog: NativeDialog, answer: (Int) -> Unit): () -> Unit {
+    override fun present(dialog: NativeDialog<*>, answer: (Int) -> Unit): () -> Unit {
         val entry = Shown(dialog, answer)
         EventQueue.invokeLater {
             shown = entry
@@ -46,26 +55,39 @@ internal class ComposeDialogPresenter(private val window: () -> Window?) : Dialo
     }
 }
 
-/** Renders the dialog [presenter] shows, if any. Closing the window answers its dismiss button (Deny, Not now). */
+/**
+ * Renders the dialog [presenter] shows, if any. Its buttons stay disabled for
+ * [DIALOG_ARMING_MILLIS] after it appears, so a click or key press meant for something else cannot
+ * answer it. The dismiss button (Deny, Not now) is the primary one, and closing the window, Escape
+ * and Enter all choose it.
+ */
 @Composable
 internal fun NativeDialogHost(presenter: ComposeDialogPresenter) {
     val shown = presenter.shown ?: return
     key(shown) {
+        var armed by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { delay(DIALOG_ARMING_MILLIS); armed = true }
+        val dismiss = shown.dialog.dismissIndex
         DialogWindow(
-            onCloseRequest = { shown.answer(shown.dialog.dismissIndex) },
-            state = rememberDialogState(size = DpSize(520.dp, 300.dp)),
+            onCloseRequest = { shown.answer(dismiss) },
+            state = rememberDialogState(size = DpSize(560.dp, 360.dp)),
             title = "Hovel",
             resizable = true,
             alwaysOnTop = true,
+            onPreviewKeyEvent = { event ->
+                val decline = event.type == KeyEventType.KeyDown && (event.key == Key.Escape || event.key == Key.Enter || event.key == Key.NumPadEnter)
+                if (decline) shown.answer(dismiss)
+                decline
+            },
         ) {
             Surface {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(shown.dialog.title, style = MaterialTheme.typography.titleMedium)
                     shown.dialog.lines.forEach { Text(it, style = MaterialTheme.typography.bodyMedium) }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        shown.dialog.buttons.forEachIndexed { index, label ->
-                            if (index == shown.dialog.dismissIndex) OutlinedButton(onClick = { shown.answer(index) }) { Text(label) }
-                            else Button(onClick = { shown.answer(index) }) { Text(label) }
+                        shown.dialog.buttons.forEachIndexed { index, (label, _) ->
+                            if (index == dismiss) Button(onClick = { shown.answer(index) }, enabled = armed) { Text(label) }
+                            else OutlinedButton(onClick = { shown.answer(index) }, enabled = armed) { Text(label) }
                         }
                     }
                 }

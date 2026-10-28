@@ -5,9 +5,10 @@ import kotlinx.serialization.json.*
 import org.formulagen.wrapper.approvals.ApprovalDecision
 import org.formulagen.wrapper.approvals.ApprovalKind
 import org.formulagen.wrapper.approvals.ApprovalRequest
-import org.formulagen.wrapper.approvals.shortened
+import org.formulagen.wrapper.approvals.ApprovalSubject
+import org.formulagen.wrapper.approvals.displayPath
 import org.formulagen.wrapper.bridge.TeamMember
-import org.formulagen.wrapper.chat.WorkPaths
+import org.formulagen.wrapper.util.text
 
 /**
  * One `can_use_tool` request from a working Claude Code process: what [toolName] wants to do with
@@ -116,21 +117,25 @@ internal object ClaudeControl {
         (suggestion as? JsonObject)?.let { JsonObject(it + ("destination" to JsonPrimitive("session"))) } ?: suggestion
     })
 
-    /** What the native dialog shows for [permission], by a member of [companion] working in [folder]. */
-    fun approvalRequest(permission: ToolPermission, companion: String, member: TeamMember, folder: Path): ApprovalRequest {
-        val paths = WorkPaths(folder)
-        val kind = kindOf(permission.toolName, permission.mcpServer)
+    /**
+     * What the native dialog shows for [permission], by a member of [companionName] working in
+     * [folder]: exactly what Claude Code asks, the command verbatim and every path in full (relative
+     * paths resolved against the folder). The page's summary is worked out from it separately.
+     */
+    fun approvalRequest(permission: ToolPermission, companionName: String, member: TeamMember, folder: Path): ApprovalRequest {
         val input = permission.input
-        val file = input.text("file_path") ?: input.text("notebook_path")
-        val (title, detail) = when (kind) {
-            ApprovalKind.EDIT -> "${if (permission.toolName == "Write") "Write" else "Edit"} ${file?.let(paths::label) ?: "a file"}" to editPreview(permission.toolName, input)
-            ApprovalKind.COMMAND -> paths.scrub(input.text("command").orEmpty()) to listOfNotNull(permission.description,
-                permission.blockedPath?.let { "Needs access to ${paths.label(it)}" }).joinToString("\n")
-            ApprovalKind.CONNECTOR -> connectorLabel(permission.toolName) to paths.scrub(compact(input))
-            ApprovalKind.OTHER -> (permission.displayName ?: permission.toolName) to paths.scrub(permission.description ?: compact(input))
+        fun path(raw: String) = runCatching { Path.of(raw) }.getOrNull()?.let { if (it.isAbsolute) it else folder.resolve(it) }?.normalize()
+        val subject = when (kindOf(permission.toolName, permission.mcpServer)) {
+            ApprovalKind.EDIT -> ApprovalSubject.Edit(if (permission.toolName == "Write") "Write" else "Edit",
+                listOfNotNull((input.text("file_path") ?: input.text("notebook_path"))?.let(::path)), editPreview(permission.toolName, input))
+            ApprovalKind.COMMAND -> ApprovalSubject.Command(input.text("command").orEmpty(), cwd = null,
+                needs = permission.blockedPath?.let(::path), reason = permission.description)
+            ApprovalKind.CONNECTOR -> connectorLabel(permission.toolName).split(" · ", limit = 2).let { parts ->
+                ApprovalSubject.Connector(permission.mcpServer ?: parts.first(), parts.getOrElse(1) { permission.toolName }, input.toString())
+            }
+            ApprovalKind.OTHER -> ApprovalSubject.Other(permission.displayName ?: permission.toolName, permission.description ?: input.toString())
         }
-        return ApprovalRequest(companion, member, folder, kind, title.shortened(TITLE_LIMIT), detail.shortened(DETAIL_LIMIT),
-            sessionLabel(permission.suggestions, folder))
+        return ApprovalRequest(companionName, member, folder, subject, sessionLabel(permission.suggestions, folder))
     }
 
     /** Edits, commands and connectors as the dialog groups them; a tool of an MCP server is a connector. */
@@ -142,14 +147,15 @@ internal object ClaudeControl {
     }
 
     /**
-     * The "for this conversation" button, named as Claude Code means the grant: accept-edits is
-     * "all edits in <folder>", a command rule is that command, a connector rule is `server · tool`.
-     * A directory inside the folder adds nothing; one outside it is named. Null when there is nothing
-     * to grant, or any suggestion is of a kind Hovel cannot describe, so no such button is offered.
+     * The "for this conversation" button, named exactly as Claude Code means the grant: accept-edits
+     * is "all edits in <folder>", a command rule is that command verbatim, a connector rule is
+     * `server · tool`. A directory inside the folder adds nothing; one outside it is named in full.
+     * Null when there is nothing to grant, or any suggestion is of a kind Hovel cannot describe, so
+     * no such button is offered.
      */
     fun sessionLabel(suggestions: JsonArray, folder: Path): String? {
         if (suggestions.isEmpty()) return null
-        val paths = WorkPaths(folder)
+        val bases = listOfNotNull(folder.toAbsolutePath().normalize(), runCatching { folder.toRealPath() }.getOrNull())
         val parts = mutableListOf<String>()
         for (suggestion in suggestions) {
             val grant = suggestion as? JsonObject ?: return null
@@ -162,17 +168,18 @@ internal object ClaudeControl {
                         val tool = r.text("toolName") ?: return null
                         val content = r.text("ruleContent")
                         parts += when {
-                            tool == "Bash" && content != null -> "`${paths.scrub(content.removeSuffix(":*"))}${if (content.endsWith(":*")) " …" else ""}`"
+                            tool == "Bash" && content != null -> "`${content.removeSuffix(":*")}${if (content.endsWith(":*")) " …" else ""}`"
                             tool.startsWith("mcp__") -> connectorLabel(tool)
-                            content != null -> "$tool(${paths.scrub(content)})"
+                            content != null -> "$tool($content)"
                             else -> tool
                         }
                     }
                 }
                 "addDirectories" -> for (directory in grant["directories"] as? JsonArray ?: return null) {
                     // The project folder and anything in it are already the working folder; only one outside it is named.
-                    val label = paths.label((directory as? JsonPrimitive)?.contentOrNull ?: return null)
-                    if (label.startsWith("…/")) parts += "access to ${label.removePrefix("…/")}"
+                    val raw = (directory as? JsonPrimitive)?.contentOrNull ?: return null
+                    val path = runCatching { Path.of(raw) }.getOrNull()?.takeIf { it.isAbsolute }?.normalize() ?: return null
+                    if (bases.none { path.startsWith(it) }) parts += "access to ${displayPath(path)}"
                 }
                 else -> return null
             }
@@ -202,8 +209,6 @@ internal object ClaudeControl {
         else -> input.text("new_source")?.let { "+ $it" }.orEmpty()
     }
 
-    private fun compact(input: JsonObject) = input.toString()
-
     private fun request(requestId: String, body: JsonObjectBuilder.() -> Unit) = line {
         put("type", "control_request"); put("request_id", requestId); putJsonObject("request", body)
     }
@@ -215,9 +220,5 @@ internal object ClaudeControl {
 
     private fun line(body: JsonObjectBuilder.() -> Unit) = buildJsonObject(body).toString()
 
-    private fun JsonObject.text(key: String) = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
-
     private val EDIT_TOOLS = setOf("Edit", "Write", "MultiEdit", "NotebookEdit")
-    private const val TITLE_LIMIT = 240
-    private const val DETAIL_LIMIT = 400
 }

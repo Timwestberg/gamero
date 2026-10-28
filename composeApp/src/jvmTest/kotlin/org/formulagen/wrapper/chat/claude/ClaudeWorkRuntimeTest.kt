@@ -22,6 +22,7 @@ import org.formulagen.wrapper.bridge.WaitingKind
 import org.formulagen.wrapper.chat.*
 import org.formulagen.wrapper.providers.ClaudeConnection
 import org.formulagen.wrapper.providers.ClaudeRuntime
+import org.formulagen.wrapper.providers.claudeWorkEnvironment
 import kotlin.test.*
 import org.formulagen.wrapper.chat.claude.FakeClaudeWork.Companion.ask
 import org.formulagen.wrapper.chat.claude.FakeClaudeWork.Companion.cancel
@@ -46,8 +47,9 @@ class ClaudeWorkRuntimeTest {
         val queue = ArrayDeque(answers.toList())
         val asked = CopyOnWriteArrayList<ApprovalRequest>()
         val cancelled = CopyOnWriteArrayList<Boolean>()
-        override fun ask(request: ApprovalRequest, cancel: CancelSignal): ApprovalDecision {
+        override fun ask(request: ApprovalRequest, cancel: CancelSignal, shown: () -> Unit): ApprovalDecision {
             asked += request
+            shown()
             if (hold) {
                 val until = System.nanoTime() + 10_000_000_000L
                 while (!cancel.isCancelled && System.nanoTime() < until) Thread.sleep(10)
@@ -73,12 +75,13 @@ class ClaudeWorkRuntimeTest {
         fun outcome() = end.get(20, TimeUnit.SECONDS)
     }
 
-    private fun runtime(broker: ApprovalBroker) = ClaudeWorkRuntime(ClaudeRuntime(fake.executable, fake.dir.resolve("providers"), parent),
-        ClaudeConnection(null), broker, environment = { claudeWorkEnvironment(parent, "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", fake.executable) })
+    private fun runtime(broker: ApprovalBroker, lineLimit: Int = WORK_LINE_LIMIT) = ClaudeWorkRuntime(ClaudeRuntime(fake.executable, fake.dir.resolve("providers"), parent),
+        ClaudeConnection(null), broker, environment = { claudeWorkEnvironment(parent, "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", fake.executable) },
+        lineLimit = lineLimit)
 
-    private fun request(conversation: NativeConversation? = null, text: String = "Read notes.txt, then append a line.") =
-        TurnRequest("local", "20000000-0000-4000-8000-000000000002", persona, "sonnet", conversation, context = null, text = text,
-            work = WorkScope(folder, "lease-1", "Ember", sonnet))
+    private fun request(conversation: NativeConversation? = null, text: String = "Read notes.txt, then append a line.", model: String = "sonnet") =
+        TurnRequest("local", "20000000-0000-4000-8000-000000000002", persona, model, conversation, context = null, text = text,
+            work = WorkScope(folder, "lease-1", "Ember", TeamMember(RuntimeId.CLAUDE_CODE, model)))
 
     /** The recorded turns of [name] as fake turns: each permission request is asked, everything else emitted, split at each result. */
     private fun recordedTurns(name: String): List<List<JsonObject>> {
@@ -118,13 +121,12 @@ class ClaudeWorkRuntimeTest {
             // The dialog showed each request, relative to the project folder, with Claude's own grant named.
             assertEquals(listOf(ApprovalKind.EDIT, ApprovalKind.COMMAND, ApprovalKind.EDIT, ApprovalKind.EDIT), broker.asked.map { it.kind })
             assertEquals("Allow all edits in project for this conversation", broker.asked[0].sessionLabel)
-            assertEquals(listOf("Ember", sonnet), listOf(broker.asked[0].companion, broker.asked[0].member))
+            assertEquals(listOf("Ember", sonnet), listOf(broker.asked[0].companionName, broker.asked[0].member))
             // The page saw "awaiting you" for each, and then not.
             assertEquals(WaitingKind.APPROVAL, first.waitings.first()?.kind)
             assertEquals("Ember wants to edit files: Edit notes.txt", first.waitings.first()?.summary)
             assertNull(first.waitings.last())
-            // Activity from the start, then each step as it finished.
-            assertEquals(Activity(emptyList(), false), first.activities.first())
+            // Each step as it finished.
             assertEquals(listOf(ActivityKind.READ to ActivityStatus.DONE, ActivityKind.EDIT to ActivityStatus.DONE, ActivityKind.COMMAND to ActivityStatus.DENIED),
                 first.activities.last().steps.map { it.kind to it.status })
             assertEquals(listOf("opened $session", "accepted"), first.seen.take(2))
@@ -210,11 +212,9 @@ class ClaudeWorkRuntimeTest {
             emit(withdrawn), cancel("withdrawn"),
             ask(Json.parseToJsonElement("""{"type":"control_request","request_id":"last","request":{"subtype":"can_use_tool","tool_name":"Read","input":{"file_path":"notes.txt"},"tool_use_id":"t4"}}""").jsonObject),
             emit("""{"type":"result","subtype":"success","is_error":false,"result":"Done.","session_id":"SESSION_ID","terminal_reason":"completed"}""")))
-        val broker = object : ApprovalBroker {
-            override fun ask(request: ApprovalRequest, cancel: CancelSignal): ApprovalDecision {
-                if (request.title == "npm test") { while (!cancel.isCancelled) Thread.sleep(10) }
-                return ALLOW_ONCE
-            }
+        val broker = ApprovalBroker { request, cancel, _ ->
+            if (request.title == "npm test") { while (!cancel.isCancelled) Thread.sleep(10) }
+            ALLOW_ONCE
         }
         runtime(broker).use { claude ->
             val events = Events()
@@ -238,7 +238,90 @@ class ClaudeWorkRuntimeTest {
         val env = claudeWorkEnvironment(parent, null, Path.of("/Users/player/.local/bin/claude"))
         assertEquals("/Users/player/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin", env["PATH"])
         assertEquals(setOf("HOME", "USER", "PATH", "LANG", "CLAUDE_CONFIG_DIR", "PROJECT_TOOL_HOME"), env.keys)
-        val path = readLoginShellPath(System.getenv())
+        val path = org.formulagen.wrapper.process.readLoginShellPath(System.getenv())
         assertTrue(path == null || path.split(":").all { it.isEmpty() || it.startsWith("/") })
+    }
+
+    private val success = """{"type":"result","subtype":"success","is_error":false,"result":"Done.","session_id":"SESSION_ID","terminal_reason":"completed"}"""
+
+    @Test fun aSessionClaudeCannotResumeIsALostConversationAndANewOneStarts() {
+        val gone = "50000000-0000-4000-8000-000000000005"
+        fake.turns(listOf(emit(init), emit(success)), missing = listOf(gone))
+        runtime(Broker()).use { claude ->
+            val lost = Events()
+            claude.startTurn(request(NativeConversation(gone, persona.hash, playerLogin = true)), lost)
+            assertEquals("failed ConversationLost", lost.outcome())
+            val fresh = Events()
+            claude.startTurn(request(), fresh)
+            assertEquals("completed", fresh.outcome())
+            assertEquals(listOf("--resume", "--session-id"), fake.calls().map { call -> call.getValue("argv").jsonArray.map { it.jsonPrimitive.content }.first { it.startsWith("--") && it in setOf("--resume", "--session-id") } })
+        }
+    }
+
+    @Test fun anotherModelReplacesTheProcessResumingTheSessionAfterTheOldOneExits() {
+        fake.turns(listOf(emit(init), emit(success)), listOf(emit(init), emit(success)))
+        runtime(Broker()).use { claude ->
+            val first = Events()
+            claude.startTurn(request(), first)
+            assertEquals("completed", first.outcome())
+            val session = first.seen.first().removePrefix("opened ")
+            val second = Events()
+            claude.startTurn(request(NativeConversation(session, persona.hash, true), model = "opus"), second)
+            assertEquals("completed", second.outcome())
+            val calls = fake.calls()
+            assertEquals(2, calls.size)
+            val argv = calls[1].getValue("argv").jsonArray.map { it.jsonPrimitive.content }
+            assertEquals(listOf("--model", "opus"), argv.subList(argv.indexOf("--model"), argv.indexOf("--model") + 2))
+            assertEquals(listOf("--resume", session), argv.takeLast(2))
+            // The old process had ended before the new one started, so the two never shared the session.
+            val exited = fake.exits().first().getValue("ended").jsonPrimitive.double
+            assertTrue(exited <= calls[1].getValue("started").jsonPrimitive.double)
+        }
+    }
+
+    @Test fun linesTooLongToKeepAreStillAnswered() {
+        val huge = "x".repeat(5_000)
+        fake.turns(listOf(emit(init),
+            ask(Json.parseToJsonElement("""{"type":"control_request","request_id":"big","request":{"subtype":"can_use_tool","tool_name":"Write","input":{"file_path":"notes.txt","content":"$huge"},"tool_use_id":"t9"}}""").jsonObject),
+            emit("""{"type":"result","subtype":"success","is_error":false,"result":"$huge","session_id":"SESSION_ID"}""")))
+        runtime(Broker(ALLOW_ONCE), lineLimit = 2_000).use { claude ->
+            val events = Events()
+            claude.startTurn(request(), events)
+            // The request is denied without a dialog; the result too long to read ends the turn.
+            assertEquals("failed Unexpected", events.outcome())
+            val answer = fake.stdin().single { it.type() == "control_response" }.getValue("response").jsonObject
+            assertEquals(JsonPrimitive("big"), answer["request_id"])
+            assertEquals(JsonPrimitive("deny"), answer.getValue("response").jsonObject["behavior"])
+            assertEquals(listOf("A request too long to show"), events.activities.last().steps.map { it.label })
+        }
+    }
+
+    @Test fun aRequestAfterTheTurnEndedIsDeniedWithoutADialog() {
+        val late = Json.parseToJsonElement("""{"type":"control_request","request_id":"late","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"},"tool_use_id":"t5"}}""").jsonObject
+        fake.turns(listOf(emit(init), emit(success), ask(late)))
+        val broker = Broker(ALLOW_ONCE)
+        runtime(broker).use { claude ->
+            val events = Events()
+            claude.startTurn(request(), events)
+            assertEquals("completed", events.outcome())
+            val until = System.nanoTime() + 5_000_000_000L
+            while (fake.stdin().none { it.type() == "control_response" }) { check(System.nanoTime() < until) { "Never answered" }; Thread.sleep(10) }
+            assertEquals(JsonPrimitive("deny"), fake.stdin().single { it.type() == "control_response" }.getValue("response").jsonObject.getValue("response").jsonObject["behavior"])
+            assertTrue(broker.asked.isEmpty())
+        }
+    }
+
+    @Test fun aModeThatDeniesOnItsOwnIsNotABrokenPromptAndTheReplyNeverShowsTheFoldersPath() {
+        fake.turns(listOf(emit(init.replace("\"default\"", "\"dontAsk\"")),
+            emit("""{"type":"system","subtype":"permission_denied","tool_name":"Edit","tool_use_id":"t","message":"Claude requested permissions to write to notes.txt, but you haven't granted it yet."}"""),
+            emit("""{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"I left $folder/notes.txt as it was."}},"parent_tool_use_id":null}"""),
+            emit(success)))
+        runtime(Broker()).use { claude ->
+            val events = Events()
+            claude.startTurn(request(), events)
+            assertEquals("completed", events.outcome())
+            assertEquals("completed I left ./notes.txt as it was.", events.seen.last())
+            assertTrue(events.seen.none { "/private/tmp" in it })
+        }
     }
 }

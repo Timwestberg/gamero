@@ -63,7 +63,9 @@ class CodexWorkRuntimeTest {
     private class Broker(vararg answers: ApprovalDecision) : ApprovalBroker {
         val queue = ArrayDeque(answers.toList())
         val asked = CopyOnWriteArrayList<ApprovalRequest>()
-        override fun ask(request: ApprovalRequest, cancel: CancelSignal): ApprovalDecision { asked += request; return synchronized(queue) { queue.removeFirst() } }
+        override fun ask(request: ApprovalRequest, cancel: CancelSignal, shown: () -> Unit): ApprovalDecision {
+            asked += request; shown(); return synchronized(queue) { queue.removeFirst() }
+        }
     }
 
     private fun request() = TurnRequest("local", "20000000-0000-4000-8000-000000000002", Persona.working("Ember"), null, null, null,
@@ -90,6 +92,8 @@ class CodexWorkRuntimeTest {
                 answers += ask("item/tool/requestUserInput", buildJsonObject { put("threadId", thread) })
                 answers += ask("item/permissions/requestApproval", buildJsonObject { put("threadId", thread) })
                 answers += ask("applyPatchApproval", buildJsonObject {})
+                // An approval that does not say exactly what it would run is declined without a dialog.
+                answers += ask("item/commandExecution/requestApproval", buildJsonObject { put("itemId", "unknown"); put("threadId", thread) })
                 notify("item/agentMessage/delta", buildJsonObject { put("threadId", thread); put("turnId", "turn-1"); put("itemId", "m"); put("delta", "Added it; 13 passing.") })
                 notify("turn/completed", buildJsonObject { put("threadId", thread); putJsonObject("turn") { put("id", "turn-1"); put("status", "completed") } })
             }
@@ -108,9 +112,10 @@ class CodexWorkRuntimeTest {
             assertEquals(listOf(
                 buildJsonObject { put("decision", "acceptForSession") }, buildJsonObject { put("decision", "accept") },
                 buildJsonObject { put("action", "decline"); put("content", JsonNull) }, buildJsonObject { putJsonObject("answers") {} },
-                buildJsonObject { putJsonObject("permissions") {}; put("scope", "turn") }, null), answers.toList())
+                buildJsonObject { putJsonObject("permissions") {}; put("scope", "turn") }, null, buildJsonObject { put("decision", "decline") }), answers.toList())
             // The dialog names the file from its item and the command without its shell wrapper.
-            assertEquals(listOf(ApprovalKind.EDIT to "Edit tests/date.test.ts", ApprovalKind.COMMAND to "npm test"), broker.asked.map { it.kind to it.title })
+            assertEquals(listOf(ApprovalKind.EDIT to "Edit $folder/tests/date.test.ts", ApprovalKind.COMMAND to "npm test"), broker.asked.map { it.kind to it.title })
+            assertEquals("Ember wants to edit files: Edit tests/date.test.ts", broker.asked[0].summary())
             assertEquals("Allow `npm test` for this conversation", broker.asked[1].sessionLabel)
             assertEquals(WaitingKind.APPROVAL, events.waitings.first()?.kind); assertNull(events.waitings.last())
             assertEquals(listOf(
@@ -119,6 +124,7 @@ class CodexWorkRuntimeTest {
                 ActivityStep(ActivityKind.CONNECTOR, "linear", ActivityStatus.DENIED, "Declined: a connector asked a question Hovel cannot show yet."),
                 ActivityStep(ActivityKind.OTHER, "A question for you", ActivityStatus.DENIED, "Declined: answer in the chat instead."),
                 ActivityStep(ActivityKind.OTHER, "More permissions", ActivityStatus.DENIED, "Declined: Hovel does not grant Codex more permissions than your own settings."),
+                ActivityStep(ActivityKind.COMMAND, "A request Hovel could not show", ActivityStatus.DENIED, "Declined: Hovel could not show exactly what it would do."),
             ), events.activities.last().steps)
             assertEquals(listOf("opened $thread", "accepted"), events.seen.take(2))
             assertEquals("completed Added it; 13 passing.", events.seen.last())
@@ -128,11 +134,10 @@ class CodexWorkRuntimeTest {
     @Test fun aStopCancelsWhatWaitsAndInterruptsTheTurn() {
         val servers = CopyOnWriteArrayList<Server>()
         val answer = CompletableFuture<JsonObject?>()
-        val broker = object : ApprovalBroker {
-            override fun ask(request: ApprovalRequest, cancel: CancelSignal): ApprovalDecision {
-                while (!cancel.isCancelled) Thread.sleep(10)
-                return ApprovalDecision.ALLOW_ONCE
-            }
+        val broker = ApprovalBroker { _, cancel, shown ->
+            shown()
+            while (!cancel.isCancelled) Thread.sleep(10)
+            ApprovalDecision.ALLOW_ONCE
         }
         val codex = CodexWorkRuntime(root, Path.of("/usr/bin/true"), broker) { _, notify, request -> Server(notify, request).also { server ->
             server.onTurn = { answer.complete(ask("item/commandExecution/requestApproval", buildJsonObject { put("itemId", "i"); put("command", "rm -rf build") })) }

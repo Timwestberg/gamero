@@ -1,6 +1,5 @@
 package org.formulagen.wrapper.chat.claude
 
-import java.io.File
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -11,30 +10,28 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.approvals.ApprovalBroker
-import org.formulagen.wrapper.approvals.ApprovalDecision
-import org.formulagen.wrapper.approvals.CancelSignal
+import org.formulagen.wrapper.approvals.ApprovalRelay
 import org.formulagen.wrapper.bridge.ActivityKind
 import org.formulagen.wrapper.bridge.ActivityStatus
 import org.formulagen.wrapper.bridge.ChatLimits
-import org.formulagen.wrapper.bridge.ChatWaiting
 import org.formulagen.wrapper.bridge.ProviderState
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.TeamMember
-import org.formulagen.wrapper.bridge.WaitingKind
 import org.formulagen.wrapper.chat.ChatFailure
-import org.formulagen.wrapper.chat.ChatRuntime
 import org.formulagen.wrapper.chat.ClaudeEvent
 import org.formulagen.wrapper.chat.ClaudeFailures
 import org.formulagen.wrapper.chat.ClaudeStream
 import org.formulagen.wrapper.chat.Persona
 import org.formulagen.wrapper.chat.Readiness
-import org.formulagen.wrapper.chat.SummaryRequest
 import org.formulagen.wrapper.chat.TurnEvents
 import org.formulagen.wrapper.chat.TurnHandle
 import org.formulagen.wrapper.chat.TurnRequest
+import org.formulagen.wrapper.chat.WorkPaths
+import org.formulagen.wrapper.chat.WorkRuntime
 import org.formulagen.wrapper.chat.claudeModel
 import org.formulagen.wrapper.chat.loggingDaemonThreads
 import org.formulagen.wrapper.chat.userMessage
@@ -42,37 +39,47 @@ import org.formulagen.wrapper.companion.terminateProcessTree
 import org.formulagen.wrapper.companion.terminateProcessTreeInBackground
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
-import org.formulagen.wrapper.process.readBoundedLine
-import org.formulagen.wrapper.process.runBounded
+import org.formulagen.wrapper.process.ProtocolLine
+import org.formulagen.wrapper.process.readLoginShellPath
+import org.formulagen.wrapper.process.readProtocolLine
 import org.formulagen.wrapper.providers.CLAUDE_STATUS_UNKNOWN
 import org.formulagen.wrapper.providers.ClaudeConnection
 import org.formulagen.wrapper.providers.ClaudeRuntime
+import org.formulagen.wrapper.providers.claudeWorkEnvironment
+import org.formulagen.wrapper.util.text
 
 /**
  * Claude Code working in a companion's project folder, with exactly the player's own setup: one
  * long-lived `claude -p … --permission-prompt-tool stdio --append-system-prompt <working persona>`
- * per (chat lease, member), in the folder, with no `--safe-mode`, `--tools`, `--strict-mcp-config`
- * or `--permission-mode`, so the player's settings, `CLAUDE.md`, skills, plugins and MCP servers
- * apply as in their terminal. Everything Claude Code would ask the player goes to [broker] (the
- * native dialog); the page only sees `awaiting-you`. A grant for the conversation lives in the
- * process, which is why the process lives as long as the conversation.
+ * per chat lease (a lease's working conversation is the runtime's, whichever Claude member sends),
+ * in the folder, with no `--safe-mode`, `--tools`, `--strict-mcp-config` or `--permission-mode`, so
+ * the player's settings, `CLAUDE.md`, skills, plugins and MCP servers apply as in their terminal.
+ * Everything Claude Code would ask the player goes through one [ApprovalRelay] per process to
+ * [broker] (the native dialog). A grant for the conversation lives in the process, which is why the
+ * process lives as long as the conversation; another model or folder replaces it, resuming the
+ * session once the old process has exited.
  *
  * Stop is `control_request interrupt` (the process and its grants stay); release, close and a
- * broken process end the process tree. Talk-only Claude members are [org.formulagen.wrapper.chat.ClaudeChatRuntime],
- * unchanged. [environment] is the working child's whole environment ([claudeWorkEnvironment]).
+ * broken process end the process tree. A session Claude Code cannot resume is a lost conversation.
+ * Talk-only Claude members are [org.formulagen.wrapper.chat.ClaudeChatRuntime], unchanged.
  */
 internal class ClaudeWorkRuntime(
     private val claude: ClaudeRuntime,
     private val connection: ClaudeConnection,
     private val broker: ApprovalBroker,
+    /** The working child's whole environment ([claudeWorkEnvironment]). */
     private val environment: () -> Map<String, String> = { claudeWorkEnvironment(System.getenv(), loginShellPath.value, claude.executable) },
-    /** How long a stopped turn may take to report its end before its process is replaced. */
-    private val settle: kotlin.time.Duration = 10.seconds,
-) : ChatRuntime {
+    /** How long a stopped turn or a replaced process may take to end before it is ended for it. */
+    private val settle: Duration = 10.seconds,
+    /** Longest protocol line kept from this trusted local child; a longer one is answered from its prefix. */
+    private val lineLimit: Int = WORK_LINE_LIMIT,
+) : WorkRuntime {
     override val id = RuntimeId.CLAUDE_CODE
-    private val sessions = ConcurrentHashMap<Pair<String, TeamMember>, WorkProcess>()
+    private val processes = ConcurrentHashMap<String, WorkProcess>()
     /** Approvals block on the native dialog, so each one waits on its own thread. */
     private val approvals = Executors.newCachedThreadPool(loggingDaemonThreads("hovel-claude-approval"))
+    /** Changes on every release; a process started across one is ended at once. */
+    private val epoch = AtomicInteger()
     @Volatile private var closed = false
 
     override fun readiness(profile: String): Readiness {
@@ -92,30 +99,40 @@ internal class ClaudeWorkRuntime(
         if (saved != null && saved.personaHash != turn.persona.hash) { events.failed(ChatFailure.ConversationLost); return TurnHandle {} }
         if (!Files.isDirectory(work.folder)) { events.failed(ChatFailure.Unexpected); return TurnHandle {} }
         check(!closed) { "Chat closed" }
-        val key = work.lease to work.member
-        var process = sessions[key]?.takeIf { it.fits(work.folder, model, turn.persona, saved?.id) && it.ready(settle) }
-        if (process == null) {
-            sessions.remove(key)?.close()
+        val started = epoch.get()
+        val current = processes[work.lease]
+        val process = current?.takeIf { it.fits(work.folder, model, turn.persona, saved?.id) && it.ready(settle) } ?: run {
+            // Another model, folder or session, or a turn that would not end: the old process exits first.
+            current?.let { processes.remove(work.lease, it); it.closeAndWait() }
             val session = saved?.id ?: UUID.randomUUID().toString()
-            process = WorkProcess(work.folder, model, turn.persona, session, opens = saved == null, work.companion, work.member)
-            sessions[key] = process
-            if (closed) { process.close(); error("Chat closed") }
-            try { process.start() } catch (error: Exception) { sessions.remove(key, process); process.close(); throw error }
+            WorkProcess(work.folder, model, turn.persona, session, opens = saved == null, work.companion, work.member).also { fresh ->
+                processes[work.lease] = fresh
+                try { fresh.start() } catch (error: Exception) {
+                    processes.remove(work.lease, fresh); fresh.close()
+                    if (error is LostSession) { events.failed(ChatFailure.ConversationLost); return TurnHandle {} }
+                    throw error
+                }
+            }
         }
+        // A release or close while it started: it ends now, and the chat has ended the turn already.
+        if (closed || epoch.get() != started) { processes.remove(work.lease, process); process.close(); events.failed(ChatFailure.Temporary); return TurnHandle {} }
         return process.turn(turn.input(), events)
     }
 
-    /** Summaries come from the member's talk-only runtime; a working process never writes one. */
-    override fun summarize(request: SummaryRequest): String = throw UnsupportedOperationException("Working members summarize through their talk runtime")
-
     /** End every working process: their pending approvals are denied and their trees ended. */
-    override fun release() { sessions.keys.toList().forEach { key -> sessions.remove(key)?.close() } }
+    override fun release() {
+        epoch.incrementAndGet()
+        processes.keys.toList().forEach { lease -> processes.remove(lease)?.close() }
+    }
 
     override fun close() {
         closed = true
         release()
         approvals.shutdownNow()
     }
+
+    /** Claude Code could not resume the session it was given. */
+    private class LostSession : IllegalStateException("Claude Code could not resume the session")
 
     /** One working `claude -p` process: a session in a folder with a model and a persona. */
     private inner class WorkProcess(
@@ -124,25 +141,28 @@ internal class ClaudeWorkRuntime(
         val persona: Persona,
         val session: String,
         private var opens: Boolean,
-        private val companion: String,
+        private val companionName: String,
         private val member: TeamMember,
     ) {
+        private val paths = WorkPaths(folder)
+        private val relay = ApprovalRelay(broker)
         private lateinit var process: Process
         private lateinit var writer: java.io.BufferedWriter
         private val initialized = CompletableFuture<Unit>()
         private val sequence = AtomicInteger()
         private val ended = AtomicBoolean()
-        /** Pending permission requests by request id, with what the dialog shows. */
-        private val pending = ConcurrentHashMap<String, Pair<CancelSignal, ChatWaiting>>()
+        @Volatile private var initializeId: String? = null
+        /** Claude Code reported, before any turn, that it has no such session. */
+        @Volatile private var sessionMissing = false
         /** Whether Claude Code has asked Hovel anything yet: proof the permission prompt reaches the host. */
         @Volatile private var asked = false
         @Volatile private var current: WorkTurn? = null
 
         fun fits(folder: Path, model: String, persona: Persona, session: String?) =
-            !ended.get() && process.isAlive && this.folder == folder && this.model == model && this.persona == persona && (session == null || session == this.session)
+            !ended.get() && process.isAlive && this.folder == folder && this.model == model && this.persona == persona && session == this.session
 
         /** No earlier turn still running: a stopped one gets [wait] to report its end. */
-        fun ready(wait: kotlin.time.Duration): Boolean {
+        fun ready(wait: Duration): Boolean {
             val previous = current ?: return true
             return previous.finished.awaitQuietly(wait) && !ended.get()
         }
@@ -156,20 +176,23 @@ internal class ClaudeWorkRuntime(
             writer = process.outputStream.bufferedWriter()
             Thread.ofPlatform().daemon().name("hovel-claude-work").start { read() }
             val id = "hovel-${sequence.incrementAndGet()}"
-            pendingInitialize = id
-            send(ClaudeControl.initialize(id))
+            initializeId = id
+            runCatching { send(ClaudeControl.initialize(id)) }
             // The answer names the player's account; it is only waited for, never kept or shown.
             try { initialized.get(INITIALIZE_SECONDS, TimeUnit.SECONDS) }
-            catch (error: Exception) { close(); throw IllegalStateException("Claude Code did not start working", error) }
+            catch (error: Exception) {
+                val exited = !process.isAlive
+                close()
+                // A session that cannot be resumed ends the process before it starts working.
+                if (!opens && (sessionMissing || exited)) throw LostSession()
+                throw IllegalStateException("Claude Code did not start working", error)
+            }
         }
-
-        @Volatile private var pendingInitialize: String? = null
 
         fun turn(input: String, events: TurnEvents): TurnHandle {
             val turn = WorkTurn(events, ClaudeActivity(folder))
             current = turn
-            // A working reply carries its activity from the start.
-            events.activity(turn.activity.activity())
+            if (ended.get()) { turn.fail(ChatFailure.Temporary); return TurnHandle {} }
             try { send(userMessage(input)) } catch (_: IOException) { turn.fail(ChatFailure.Temporary); close() }
             return TurnHandle { stop(turn) }
         }
@@ -177,7 +200,7 @@ internal class ClaudeWorkRuntime(
         /** Deny what the turn waits on, then ask Claude Code to stop the turn; the process and its grants stay. */
         private fun stop(turn: WorkTurn) {
             if (!turn.stop()) return
-            pending.values.forEach { it.first.cancel() }
+            relay.cancelAll()
             approvals.execute { runCatching { send(ClaudeControl.interrupt("hovel-${sequence.incrementAndGet()}")) } }
         }
 
@@ -185,55 +208,69 @@ internal class ClaudeWorkRuntime(
             try {
                 process.inputStream.bufferedReader().use { reader ->
                     while (true) {
-                        val line = readBoundedLine(reader) ?: break
-                        val message = runCatching { Json.parseToJsonElement(line) as? JsonObject }.getOrNull() ?: continue
-                        when (val control = ClaudeControl.decode(message)) {
-                            null -> current?.receive(line, message)
-                            is ClaudeControlMessage.Response -> if (control.requestId == pendingInitialize) {
-                                if (control.success) initialized.complete(Unit) else initialized.completeExceptionally(IllegalStateException("initialize refused"))
-                            }
-                            is ClaudeControlMessage.CanUseTool -> {
-                                asked = true
-                                // Registered before the next line is read, so a withdrawal right after it finds it.
-                                val request = ClaudeControl.approvalRequest(control.permission, companion, member, folder)
-                                val cancel = CancelSignal()
-                                pending[control.permission.requestId] = cancel to ChatWaiting(WaitingKind.APPROVAL, request.summary())
-                                approvals.execute { approve(control.permission, request, cancel) }
-                            }
-                            is ClaudeControlMessage.Unreadable -> {
-                                asked = true
-                                send(ClaudeControl.deny(control.requestId, control.toolUseId, ClaudeControl.UNREADABLE))
-                                current?.note("A request Hovel could not show", ClaudeControl.UNREADABLE)
-                            }
-                            is ClaudeControlMessage.Unsupported -> send(ClaudeControl.error(control.requestId))
-                            is ClaudeControlMessage.Cancel -> pending[control.requestId]?.first?.cancel()
+                        when (val line = readProtocolLine(reader, lineLimit) ?: break) {
+                            is ProtocolLine.Whole -> receive(line.text)
+                            is ProtocolLine.Dropped -> dropped(line.prefix)
                         }
                     }
                 }
             } catch (_: IOException) { /* The process ended; reported below. */ }
             finally {
                 initialized.completeExceptionally(IllegalStateException("Claude Code stopped"))
-                if (ended.compareAndSet(false, true)) pending.values.forEach { it.first.cancel() }
+                if (ended.compareAndSet(false, true)) relay.cancelAll()
                 // A turn still open when the process goes stopped unexpectedly: its finished steps stay, and it can be retried.
                 current?.fail(ChatFailure.Temporary)
             }
         }
 
-        /** Ask the player natively; the dialog's answer, a stop, a cancel or the timeout decides. */
-        private fun approve(permission: ToolPermission, request: org.formulagen.wrapper.approvals.ApprovalRequest, cancel: CancelSignal) {
-            val turn = current
-            if (turn == null || turn.stopped || ended.get()) cancel.cancel()
-            if (!cancel.isCancelled) turn?.events?.waiting(ChatWaiting(WaitingKind.APPROVAL, request.summary()))
-            val asked = try { broker.ask(request, cancel) } catch (error: Exception) {
-                if (error is InterruptedException) Thread.currentThread().interrupt()
-                ApprovalDecision.DENY
+        private fun receive(line: String) {
+            val message = runCatching { Json.parseToJsonElement(line) as? JsonObject }.getOrNull() ?: return
+            when (val control = ClaudeControl.decode(message)) {
+                null -> {
+                    val turn = current
+                    if (turn != null) turn.receive(line, message)
+                    // Before any turn, a result can only be Claude Code refusing the session it was given.
+                    else if (message.text("type") == "result") sessionMissing = true
+                }
+                is ClaudeControlMessage.Response -> if (control.requestId == initializeId) {
+                    if (control.success) initialized.complete(Unit) else initialized.completeExceptionally(IllegalStateException("initialize refused"))
+                }
+                is ClaudeControlMessage.CanUseTool -> {
+                    asked = true
+                    val turn = current
+                    val permission = control.permission
+                    // Registered before the next line is read, so a withdrawal right after it finds it; then checked against a
+                    // stop, so a stop either finds it or is seen here. Nothing to show it for (no turn, or one that ended) denies.
+                    val pending = relay.register(permission.requestId, ClaudeControl.approvalRequest(permission, companionName, member, folder), turn?.events)
+                    if (turn == null || turn.isDone || turn.stopped || ended.get()) pending.cancel.cancel()
+                    approvals.execute { runCatching { send(ClaudeControl.answer(permission, relay.ask(permission.requestId, pending))) } }
+                }
+                is ClaudeControlMessage.Unreadable -> {
+                    asked = true
+                    send(ClaudeControl.deny(control.requestId, control.toolUseId, ClaudeControl.UNREADABLE))
+                    current?.note("A request Hovel could not show", ClaudeControl.UNREADABLE)
+                }
+                is ClaudeControlMessage.Unsupported -> send(ClaudeControl.error(control.requestId))
+                is ClaudeControlMessage.Cancel -> relay.cancel(control.requestId)
             }
-            // A stopped turn, a closed chat or a withdrawn request is never allowed, whatever the dialog said last.
-            val decision = if (cancel.isCancelled) ApprovalDecision.DENY else asked
-            pending.remove(permission.requestId)
-            // Another request may still be waiting on its own dialog; the page shows that one next.
-            turn?.events?.waiting(pending.values.firstOrNull()?.second)
-            runCatching { send(ClaudeControl.answer(permission, decision)) }
+        }
+
+        /**
+         * A line too long to keep: it is still answered from its opening. A permission request is
+         * denied, another request refused, and a turn's `result` ends the turn as unexpected.
+         */
+        private fun dropped(prefix: String) {
+            val type = TYPE.find(prefix)?.groupValues?.get(1)
+            val requestId = REQUEST_ID.find(prefix)?.groupValues?.get(1)
+            when {
+                type == "control_request" && requestId != null && "\"can_use_tool\"" in prefix -> {
+                    asked = true
+                    send(ClaudeControl.deny(requestId, TOOL_USE_ID.find(prefix)?.groupValues?.get(1), ClaudeControl.UNREADABLE))
+                    current?.note("A request too long to show", ClaudeControl.UNREADABLE)
+                }
+                type == "control_request" && requestId != null -> send(ClaudeControl.error(requestId))
+                type == "result" -> current?.fail(ChatFailure.Unexpected)
+            }
         }
 
         @Synchronized private fun send(line: String) {
@@ -241,18 +278,31 @@ internal class ClaudeWorkRuntime(
         }
 
         fun close() {
-            if (ended.compareAndSet(false, true)) pending.values.forEach { it.first.cancel() }
+            if (ended.compareAndSet(false, true)) relay.cancelAll()
             current?.fail(ChatFailure.Temporary)
             if (::process.isInitialized && process.isAlive) terminateProcessTreeInBackground(process, "hovel-claude-work-end")
+        }
+
+        /** End this process and wait for it, so a replacement never shares its session with it. */
+        fun closeAndWait() {
+            if (ended.compareAndSet(false, true)) relay.cancelAll()
+            current?.fail(ChatFailure.Temporary)
+            if (::process.isInitialized && process.isAlive) {
+                runCatching { writer.close() }
+                if (!process.waitFor(settle.inWholeMilliseconds, TimeUnit.MILLISECONDS)) terminateProcessTree(process)
+            }
         }
 
         /** One turn on this process, from the person's message to its `result`. */
         private inner class WorkTurn(val events: TurnEvents, val activity: ClaudeActivity) {
             val finished = CompletableFuture<Unit>()
             private val done = AtomicBoolean()
+            val isDone: Boolean get() = done.get()
             @Volatile var stopped = false
                 private set
             private var verified = false
+            /** The player's own permission mode, from this turn's `system/init`. */
+            private var permissionMode: String? = null
             private val text = StringBuilder()
             private var assistantError: String? = null
             private var rateLimit: ClaudeEvent.RateLimit? = null
@@ -265,12 +315,13 @@ internal class ClaudeWorkRuntime(
                 when (val event = ClaudeStream.parse(line)) {
                     is ClaudeEvent.Init -> if (!verified) {
                         verified = true
+                        permissionMode = event.permissionMode
                         if (event.sessionId != session) return fail(ChatFailure.Unexpected)
                         if (opens) { opens = false; report { events.opened(session) } }
                         report { events.accepted() }
                     }
                     is ClaudeEvent.TextDelta -> if (text.length < ChatLimits.REPLY) {
-                        text.append(event.text); report { events.partial(text.take(ChatLimits.REPLY).toString()) }
+                        text.append(event.text); report { events.partial(reply()) }
                     }
                     is ClaudeEvent.RateLimit -> rateLimit = event
                     is ClaudeEvent.AssistantError -> assistantError = event.error
@@ -279,19 +330,28 @@ internal class ClaudeWorkRuntime(
                 }
             }
 
+            /** The reply as the page sees it: the project folder as `.`, the home folder as `~`. */
+            private fun reply(fallback: String = "") = paths.scrub(text.toString().ifBlank { fallback }).take(ChatLimits.REPLY)
+
             private fun finish(result: ClaudeEvent.Result) {
                 if (!done.compareAndSet(false, true)) return
                 finished.complete(Unit)
                 if (stopped) return
                 val succeeded = !result.isError && result.terminalReason in setOf(null, "completed")
+                val failure = if (succeeded) null else ClaudeFailures.classify(result, assistantError, rateLimit)
                 when {
-                    // Claude Code denied a tool without asking: the permission prompt never reached Hovel.
-                    activity.deniedWithoutAsking && !asked -> {
-                        log(LogLevel.Warn, "claude", "Working turn refused; a permission was denied without reaching Hovel")
+                    // Claude Code needed an approval and never asked Hovel: the permission prompt does not reach the host.
+                    // A mode that denies on its own (the player's choice) is not that.
+                    activity.deniedWithoutAsking && !asked && permissionMode !in SILENT_MODES -> {
+                        log(LogLevel.Warn, "claude", "Working turn refused; a permission needing approval was denied without reaching Hovel")
                         events.failed(ChatFailure.Unexpected)
                     }
-                    succeeded -> events.completed(text.toString().ifBlank { result.result.orEmpty() }.take(ChatLimits.REPLY), session)
-                    else -> events.failed(ClaudeFailures.classify(result, assistantError, rateLimit))
+                    failure == null -> events.completed(reply(result.result.orEmpty()), session)
+                    else -> {
+                        events.failed(failure)
+                        // The session is gone: the next try starts a new one in a new process.
+                        if (failure == ChatFailure.ConversationLost) approvals.execute { processes.values.remove(this@WorkProcess); close() }
+                    }
                 }
             }
 
@@ -317,14 +377,20 @@ internal class ClaudeWorkRuntime(
 
     private companion object {
         const val INITIALIZE_SECONDS = 60L
+        /** Permission modes in which Claude Code denies without asking, by the player's own choice. */
+        val SILENT_MODES = setOf("dontAsk", "bypassPermissions", "auto")
+        val TYPE = Regex("\"type\"\\s*:\\s*\"([a-z_]+)\"")
+        val REQUEST_ID = Regex("\"request_id\"\\s*:\\s*\"([^\"]+)\"")
+        val TOOL_USE_ID = Regex("\"tool_use_id\"\\s*:\\s*\"([^\"]+)\"")
         /** The player's login-shell `PATH`, read once: a Mac app started from Finder has only the system folders. */
         val loginShellPath = lazy { readLoginShellPath(System.getenv()) }
     }
 }
 
-private fun JsonObject.text(key: String) = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+/** Longest protocol line kept from a trusted local working child: tool results can be large. */
+internal const val WORK_LINE_LIMIT = 16 * 1024 * 1024
 
-private fun CompletableFuture<Unit>.awaitQuietly(wait: kotlin.time.Duration): Boolean =
+private fun CompletableFuture<Unit>.awaitQuietly(wait: Duration): Boolean =
     try { get(wait.inWholeMilliseconds, TimeUnit.MILLISECONDS); true } catch (_: Exception) { false }
 
 /**
@@ -337,31 +403,3 @@ internal fun claudeWorkArguments(model: String, persona: Persona): List<String> 
     "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
     "--permission-prompt-tool", "stdio", "--append-system-prompt", persona.instructions, "--model", model,
 )
-
-/**
- * A working child's whole environment: the player's own ([parent]), with their login shell's `PATH`
- * ([loginPath]) so their tools are found, and the Claude executable's folder on it. Removed:
- * `ANTHROPIC_*` (an API key or another endpoint instead of the subscription) and the variables
- * another Claude Code session sets for its children (`CLAUDECODE`, `CLAUDE_CODE_*`, every other
- * `CLAUDE_*`), except `CLAUDE_CONFIG_DIR`, which is where the player keeps their own setup.
- */
-internal fun claudeWorkEnvironment(parent: Map<String, String>, loginPath: String?, executable: Path): Map<String, String> {
-    val kept = parent.filterKeys { key ->
-        !key.startsWith("ANTHROPIC_") && key != "CLAUDECODE" && (!key.startsWith("CLAUDE_") || key == "CLAUDE_CONFIG_DIR")
-    }
-    val path = (loginPath ?: parent["PATH"]).orEmpty().split(File.pathSeparator).filter { it.isNotBlank() }
-    val withClaude = (listOfNotNull(executable.parent?.toString()).filter { it !in path } + path +
-        listOf("/usr/bin", "/bin", "/usr/sbin", "/sbin").filter { it !in path })
-    return kept + ("PATH" to withClaude.joinToString(File.pathSeparator)) + ("HOME" to (parent["HOME"] ?: System.getProperty("user.home")))
-}
-
-/** The `PATH` the player's login shell sets up, or null when it cannot be read in a few seconds. */
-internal fun readLoginShellPath(parent: Map<String, String>): String? {
-    val shell = parent["SHELL"]?.takeIf { Path.of(it).isAbsolute && Files.isExecutable(Path.of(it)) } ?: "/bin/zsh"
-    val marker = "__HOVEL_PATH__"
-    val output = runBounded(ProcessBuilder(shell, "-l", "-c", "printf '$marker%s' \"\$PATH\"").directory(File(System.getProperty("user.home"))), 5.seconds)
-        ?.takeIf { it.exitCode == 0 }?.output ?: return null
-    return output.substringAfterLast(marker, "").trim().takeIf { value ->
-        value.isNotEmpty() && value.split(File.pathSeparator).all { it.isEmpty() || it.startsWith("/") }
-    }
-}

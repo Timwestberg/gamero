@@ -312,36 +312,49 @@ internal val CHAT_CODEX_METHODS = setOf("account/read", "config/read", "thread/s
 private const val MCP_STARTUP = "mcpServer/startupStatus/updated"
 
 /**
- * A thread's `config` overrides: the whole talk-only lockdown, applied to the thread itself. The
- * process-level `-c` settings ([chatProcessArguments]) are kept, but they do not reach everything a
- * thread loads (the player's plugins' MCP servers and Codex's Apps server start despite
- * `-c features.plugins=false`), while the thread's own `config` does. On top of the fixed lockdown,
- * it turns off what the player's own configuration ([config], from `config/read`) turns on: every
- * MCP server and plugin it lists and every feature it enables. Codex merges these into the player's
- * tables (an empty `mcp_servers={}` leaves them all running), so each one is named, as a nested
- * table rather than a dotted key so that a name with a dot is turned off too.
+ * The talk-only lockdown, once: features that give a companion a tool, a hook, memory or another
+ * agent off; no web search; no `notify` program (the player's, run after every turn like a hook);
+ * no bundled skills or their instructions; no agents; no project docs; a read-only sandbox and no
+ * approvals. The process gets it as `-c` arguments ([chatProcessArguments]) and every thread
+ * again as its own `config` ([talkOnlyOverrides]).
  */
-internal fun talkOnlyOverrides(config: JsonObject): JsonObject = buildJsonObject {
-    fun names(key: String) = (config[key] as? JsonObject)?.keys.orEmpty().sorted()
-    val servers = names("mcp_servers")
-    if (servers.isNotEmpty()) putJsonObject("mcp_servers") { servers.forEach { putJsonObject(it) { put("enabled", false) } } }
-    val plugins = names("plugins")
-    if (plugins.isNotEmpty()) putJsonObject("plugins") { plugins.forEach { putJsonObject(it) { put("enabled", false) } } }
-    val enabled = (config["features"] as? JsonObject)?.filterValues { it == JsonPrimitive(true) }?.keys.orEmpty()
-    putJsonObject("features") { (DISABLED_FEATURES + enabled).toSortedSet().forEach { put(it, false) } }
+internal val TALK_ONLY_LOCKDOWN: JsonObject = buildJsonObject {
+    putJsonObject("features") {
+        listOf("shell_tool", "apps", "plugins", "remote_plugin", "hooks", "multi_agent", "multi_agent_v2",
+            "computer_use", "browser_use", "browser_use_external", "in_app_browser", "image_generation", "view_image",
+            "unified_exec", "code_mode_host", "workspace_dependencies", "worktrees", "shell_snapshot",
+            "chronicle", "goals", "sleep_tool", "tool_suggest", "realtime_conversation",
+            "memories", "skill_search", "skill_mcp_dependency_install", "request_permissions_tool").forEach { put(it, false) }
+    }
     put("web_search", "disabled")
     putJsonArray("notify") {}
     putJsonObject("skills") { putJsonObject("bundled") { put("enabled", false) }; put("include_instructions", false) }
     putJsonObject("agents") { put("enabled", false) }
     put("project_doc_max_bytes", 0)
+    put("sandbox_mode", "read-only")
+    put("approval_policy", "never")
 }
 
-/** Codex features that give a talk-only companion a tool, a hook, memory or another agent; all off. */
-private val DISABLED_FEATURES = listOf("shell_tool", "apps", "plugins", "remote_plugin", "hooks", "multi_agent", "multi_agent_v2",
-    "computer_use", "browser_use", "browser_use_external", "in_app_browser", "image_generation", "view_image",
-    "unified_exec", "code_mode_host", "workspace_dependencies", "worktrees", "shell_snapshot",
-    "chronicle", "goals", "sleep_tool", "tool_suggest", "realtime_conversation",
-    "memories", "skill_search", "skill_mcp_dependency_install", "request_permissions_tool")
+/**
+ * A thread's `config` overrides: [TALK_ONLY_LOCKDOWN] applied to the thread itself, because the
+ * process-level `-c` settings do not reach everything a thread loads (the player's plugins' MCP
+ * servers and Codex's Apps server start despite `-c features.plugins=false`), while the thread's own
+ * `config` does. On top of it, everything the player's own configuration ([config], from
+ * `config/read`) turns on is turned off: every MCP server and plugin it lists and every feature it
+ * enables. Codex merges these into the player's tables (an empty `mcp_servers={}` leaves them all
+ * running), so each one is named, as a nested table rather than a dotted key so that a name with a
+ * dot is turned off too.
+ */
+internal fun talkOnlyOverrides(config: JsonObject): JsonObject = buildJsonObject {
+    fun names(key: String) = (config[key] as? JsonObject)?.keys.orEmpty().sorted()
+    TALK_ONLY_LOCKDOWN.forEach { (key, value) -> if (key != "features") put(key, value) }
+    val servers = names("mcp_servers")
+    if (servers.isNotEmpty()) putJsonObject("mcp_servers") { servers.forEach { putJsonObject(it) { put("enabled", false) } } }
+    val plugins = names("plugins")
+    if (plugins.isNotEmpty()) putJsonObject("plugins") { plugins.forEach { putJsonObject(it) { put("enabled", false) } } }
+    val enabled = (config["features"] as? JsonObject)?.filterValues { it == JsonPrimitive(true) }?.keys.orEmpty()
+    putJsonObject("features") { (TALK_ONLY_LOCKDOWN.getValue("features").jsonObject.keys + enabled).toSortedSet().forEach { put(it, false) } }
+}
 
 /**
  * The text of one Codex reply as its notifications build it: a delta extends the current agent
@@ -396,16 +409,16 @@ internal fun chatCodex(runtime: CodexRuntime, receive: (String, JsonObject) -> U
         allowedMethods = CHAT_CODEX_METHODS,
         arguments = chatProcessArguments(), onNotification = receive, timeoutSeconds = 15)
 
-/** Explicit tool restrictions apply at process startup, before any thread can run; each thread repeats them ([talkOnlyOverrides]). */
-internal fun chatProcessArguments(): List<String> {
-    // Every thread repeats this lockdown in its own `config` and turns off the player's MCP servers by name
-    // (talkOnlyOverrides): `mcp_servers={}` would leave the player's running.
-    // `notify` is a program from the player's configuration that would run after every turn, like a hook.
-    return DISABLED_FEATURES.flatMap { listOf("-c", "features.$it=false") } + listOf(
-        "-c", "web_search=\"disabled\"", "-c", "notify=[]", "-c", "skills.bundled.enabled=false",
-        "-c", "skills.include_instructions=false", "-c", "agents.enabled=false",
-        "-c", "project_doc_max_bytes=0", "-c", "sandbox_mode=\"read-only\"", "-c", "approval_policy=\"never\"",
-    )
+/** [TALK_ONLY_LOCKDOWN] as `-c` arguments, applied at process startup before any thread can run; each thread repeats it ([talkOnlyOverrides]). */
+internal fun chatProcessArguments(): List<String> = flattened(TALK_ONLY_LOCKDOWN).flatMap { (key, value) -> listOf("-c", "$key=$value") }
+
+/** Dotted keys and TOML values for every leaf of [table]. */
+private fun flattened(table: JsonObject, prefix: String = ""): List<Pair<String, String>> = table.flatMap { (key, value) ->
+    when (value) {
+        is JsonObject -> flattened(value, "$prefix$key.")
+        is JsonArray -> listOf("$prefix$key" to "[${value.joinToString(",")}]")
+        else -> listOf("$prefix$key" to value.toString())
+    }
 }
 
 /**
@@ -416,10 +429,10 @@ internal fun chatProcessArguments(): List<String> {
  * An [ephemeral] thread is never written to Codex's history.
  */
 internal fun chatThreadParams(persona: Persona, cwd: String, threadId: String?, ephemeral: Boolean = false,
-    overrides: JsonObject = JsonObject(emptyMap())): JsonObject = buildJsonObject {
+    overrides: JsonObject): JsonObject = buildJsonObject {
     threadId?.let { put("threadId", it); put("excludeTurns", true) }
     if (ephemeral) put("ephemeral", true)
     put("cwd", cwd); put("sandbox", "read-only"); put("approvalPolicy", "never")
     put("baseInstructions", persona.instructions)
-    if (overrides.isNotEmpty()) put("config", overrides)
+    put("config", overrides)
 }

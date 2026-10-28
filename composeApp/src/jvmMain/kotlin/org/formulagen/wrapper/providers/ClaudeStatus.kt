@@ -32,7 +32,8 @@ internal fun claudeProviderStatus(installed: Boolean, version: ClaudeVersion?, a
         version < MIN_CLAUDE_VERSION -> claude(ProviderState.UNAVAILABLE, ProviderDetail.OUTDATED,
             "Update Claude Code to use it here. Hovel needs version $MIN_CLAUDE_VERSION or later.")
         auth == null -> unknownClaudeStatus()
-        !auth.loggedIn -> claude(ProviderState.DISCONNECTED, ProviderDetail.SIGNED_OUT, copy.signInHint)
+        // The page owns the sign-in help for a signed-out card.
+        !auth.loggedIn -> claude(ProviderState.DISCONNECTED, ProviderDetail.SIGNED_OUT, null)
         // Only a Claude subscription may pay for companion chat; an API key or any other method is refused.
         auth.authMethod != "claude.ai" -> claude(ProviderState.ERROR, ProviderDetail.API_KEY,
             "Claude Code is using an API key. Sign in with your Claude subscription to use it here.")

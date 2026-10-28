@@ -1,7 +1,7 @@
 package org.formulagen.wrapper.chat
 
 import java.nio.file.Path
-import org.formulagen.wrapper.approvals.shortened
+import org.formulagen.wrapper.util.shortened
 import org.formulagen.wrapper.bridge.Activity
 import org.formulagen.wrapper.bridge.ActivityKind
 import org.formulagen.wrapper.bridge.ActivityLimits
@@ -16,16 +16,18 @@ import org.formulagen.wrapper.bridge.ActivityStep
 
 /**
  * Collects a reply's steps within [ActivityLimits]: the first [ActivityLimits.STEPS] are kept, a
- * later one marks the activity truncated, and every label and detail is shortened to fit.
+ * later one marks the activity truncated, and every label and detail is scrubbed by [paths] (the
+ * project folder as `.`, the home folder as `~`) and shortened to fit. This is the one place a
+ * step's text is made fit for the page.
  */
-internal class ActivityLog {
+internal class ActivityLog(private val paths: WorkPaths) {
     private val steps = mutableListOf<ActivityStep>()
     private var truncated = false
 
     fun add(kind: ActivityKind, label: String, status: ActivityStatus, detail: String?) {
         if (steps.size >= ActivityLimits.STEPS) { truncated = true; return }
-        steps += ActivityStep(kind, label.ifBlank { kind.name.lowercase() }.shortened(ActivityLimits.LABEL), status,
-            detail?.trim()?.takeIf { it.isNotEmpty() }?.shortened(ActivityLimits.DETAIL))
+        steps += ActivityStep(kind, paths.scrub(label).ifBlank { kind.name.lowercase() }.shortened(ActivityLimits.LABEL), status,
+            detail?.let(paths::scrub)?.trim()?.takeIf { it.isNotEmpty() }?.shortened(ActivityLimits.DETAIL))
     }
 
     fun activity(): Activity = Activity(steps.toList(), truncated)

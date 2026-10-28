@@ -95,7 +95,8 @@ class StdioCodexAppServerTest {
             StdioCodexAppServer(runtime, onNotification = { method, _ -> notifications += method }).use { rpc ->
                 assertEquals(JsonNull, rpc.call("account/read")["account"])
                 assertEquals(JsonNull, rpc.call("account/read")["account"])
-                assertEquals(listOf("turn/completed", "turn/completed"), notifications.toList())
+                // The message too long to keep is reported by its name, and reading goes on.
+                assertEquals(listOf("transport/dropped", "turn/completed", "transport/dropped", "turn/completed"), notifications.toList())
             }
         } finally { root.toFile().deleteRecursively() }
     }

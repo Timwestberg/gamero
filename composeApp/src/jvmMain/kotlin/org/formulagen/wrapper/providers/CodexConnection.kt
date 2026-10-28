@@ -43,7 +43,7 @@ internal class CodexConnection(private val rpc: CodexAppServer) : ProviderConnec
 internal const val CODEX_SIGN_IN_ELSEWHERE = "Sign in and out with `codex login` in Terminal."
 
 /** An API-key login is never used: companion chat and tasks run only on the player's ChatGPT subscription. */
-internal const val CODEX_API_KEY = "Codex is using an API key. Sign in with your ChatGPT subscription to use it here: run `codex login` in Terminal."
+internal const val CODEX_API_KEY = "Codex is using an API key. Sign in with your ChatGPT subscription to use it here."
 
 /**
  * The card state for `account/read`'s `account`: none is signed out, a ChatGPT account is connected
@@ -51,10 +51,8 @@ internal const val CODEX_API_KEY = "Codex is using an API key. Sign in with your
  * and throws.
  */
 internal fun codexAccountStatus(account: JsonElement?): ProviderStatus {
-    val copy = RuntimeId.CODEX.copy
-    if (account == null || account == JsonNull) {
-        return ProviderStatus(RuntimeId.CODEX, ProviderState.DISCONNECTED, message = copy.signInHint, detail = ProviderDetail.SIGNED_OUT)
-    }
+    // The page owns the sign-in help for a signed-out card.
+    if (account == null || account == JsonNull) return ProviderStatus(RuntimeId.CODEX, ProviderState.DISCONNECTED, detail = ProviderDetail.SIGNED_OUT)
     require(account is JsonObject) { "Invalid Codex account" }
     return when ((account["type"] as? JsonPrimitive)?.contentOrNull) {
         "chatgpt" -> ProviderStatus(RuntimeId.CODEX, ProviderState.CONNECTED,

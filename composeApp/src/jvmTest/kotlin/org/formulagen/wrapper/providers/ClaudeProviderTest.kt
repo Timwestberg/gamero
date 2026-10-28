@@ -73,9 +73,8 @@ class ClaudeProviderTest {
         val unknown = status(ProviderState.ERROR, ProviderDetail.UNKNOWN, "Claude status could not be checked.")
         assertEquals(unknown, claudeProviderStatus(true, null, subscription), "An unreadable version is unknown, not outdated")
         assertEquals(unknown, claudeProviderStatus(true, current, null))
-        assertEquals(status(ProviderState.DISCONNECTED, ProviderDetail.SIGNED_OUT,
-            "Sign in to Claude Code with your Claude subscription: run `claude auth login` in Terminal, then choose Check again."),
-            claudeProviderStatus(true, current, ClaudeAuthStatus(false)))
+        // The page owns the sign-in help for a signed-out card.
+        assertEquals(status(ProviderState.DISCONNECTED, ProviderDetail.SIGNED_OUT, null), claudeProviderStatus(true, current, ClaudeAuthStatus(false)))
         assertEquals(status(ProviderState.ERROR, ProviderDetail.API_KEY, "Claude Code is using an API key. Sign in with your Claude subscription to use it here."),
             claudeProviderStatus(true, current, ClaudeAuthStatus(true, "api_key")))
         assertEquals(ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.CONNECTED, accountLabel = "player@example.test", plan = "max"), claudeProviderStatus(true, current, subscription))
