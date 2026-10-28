@@ -179,7 +179,7 @@ class DesktopChatTest {
             assertEquals("Fresh hello", chat.snapshot(again).messages.last().text)
             val saved = ChatHistory(root.resolve("local/companion-chats/${a.companionId}.json")).read()
             assertEquals(freshThreadId, saved.conversations[RuntimeId.CODEX]?.id)
-            assertNull(saved.pendingContext)
+            assertTrue(saved.pendingContext.isEmpty())
             // Codex's first turn is noted as a fresh start, and its new thread as getting the recent messages.
             assertEquals(listOf("handover", "user", "assistant", "handover", "user", "assistant"), saved.entries.map { it::class.simpleName!!.lowercase() })
             val note = saved.entries[3] as ChatEntry.Handover
@@ -226,7 +226,7 @@ class DesktopChatTest {
         val a = scope()
         val history = ChatHistory(root.resolve("local/companion-chats/${a.companionId}.json"))
         val context = "Earlier in this conversation (written by Claude · Sonnet):\n<<<\nuser: Hi\n>>>"
-        history.write(ChatRecord(pendingContext = PendingContext(RuntimeId.CODEX, context)))
+        history.write(ChatRecord(pendingContext = mapOf(RuntimeId.CODEX to context)))
         fun input(rpc: Rpc, turn: Int) = rpc.params.filterIndexed { index, _ -> rpc.calls[index] == "turn/start" }[turn]
             .getValue("input").jsonArray.single().jsonObject.getValue("text").jsonPrimitive.content
         chat(root, Speech()) { receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
@@ -234,18 +234,18 @@ class DesktopChatTest {
             chat.send(send(a, false)); await { rpcs.isNotEmpty() && rpcs[0].calls.contains("turn/start") }
             assertEquals("$context\n\nHello", input(rpcs[0], 0))
             rpcs[0].complete(); await { state(chat,a).state == ChatState.READY }
-            assertNull(history.read().pendingContext)
+            assertTrue(history.read().pendingContext.isEmpty())
             chat.send(send(a, false)); await { rpcs[0].calls.count { it == "turn/start" } == 2 }
             assertEquals("Hello", input(rpcs[0], 1))
         }
-        history.write(history.read().copy(pendingContext = PendingContext(RuntimeId.CLAUDE_CODE, context)))
+        history.write(history.read().copy(pendingContext = mapOf(RuntimeId.CLAUDE_CODE to context)))
         chat(root, Speech()) { receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
             val again = a.copy(sessionId = UUID.randomUUID().toString())
             chat.open(again); await { state(chat,again).state == ChatState.READY }
             chat.send(send(again, false)); await { rpcs.size == 2 && rpcs.last().calls.contains("turn/start") }
             assertEquals("Hello", input(rpcs.last(), 0))
             rpcs.last().complete(); await { state(chat,again).state == ChatState.READY }
-            assertEquals(RuntimeId.CLAUDE_CODE, history.read().pendingContext?.runtimeId)
+            assertEquals(setOf(RuntimeId.CLAUDE_CODE), history.read().pendingContext.keys)
         }
     }
 
@@ -289,9 +289,10 @@ class DesktopChatTest {
         chat(Files.createTempDirectory("chat-release"), Speech()) { receive ->
             Rpc(receive).also { rpcs += it; it.onClose = { closing.countDown(); release.await(5, TimeUnit.SECONDS) } }
         }.use { chat ->
+            // Stop during a reply closes the app-server, which here takes long to exit.
             val a = scope(); chat.open(a); chat.send(send(a, false)); await { rpcs.isNotEmpty() && rpcs[0].calls.contains("turn/start") }
             val rpc = rpcs[0]
-            rpc.complete(); await { state(chat,a).state == ChatState.READY }
+            Thread.sleep(50)
             val started = System.nanoTime()
             assertEquals(ChatState.CANCELLED, chat.stop(a).state)
             assertEquals(ChatState.CANCELLED, chat.snapshot(a).state)

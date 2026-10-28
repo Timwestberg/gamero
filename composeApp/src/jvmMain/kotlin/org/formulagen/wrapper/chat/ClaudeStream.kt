@@ -18,6 +18,8 @@ internal sealed interface ClaudeEvent {
         val plugins: List<Plugin>?,
         val permissionMode: String?,
         val apiKeySource: String?,
+        val agents: List<String>? = emptyList(),
+        val outputStyle: String? = "default",
     ) : ClaudeEvent
 
     data class Plugin(val name: String?, val path: String?)
@@ -76,6 +78,8 @@ internal object ClaudeStream {
         plugins = (message["plugins"] as? JsonArray)?.map { (it as? JsonObject).let { p -> ClaudeEvent.Plugin(p?.text("name"), p?.text("path")) } },
         permissionMode = message.text("permissionMode"),
         apiKeySource = message.text("apiKeySource"),
+        agents = (message["agents"] as? JsonArray)?.map { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content.orEmpty() },
+        outputStyle = message.text("output_style"),
     )
 
     /** Only the main reply's text: `parent_tool_use_id` is set for a subagent's. */
@@ -95,6 +99,8 @@ internal object ClaudeStream {
 internal object ClaudeLockdown {
     /** The plugins Claude Code always loads from inside itself; with no tools they have nothing to act through. */
     val BUILTIN_PLUGINS = setOf("cc-plugin-agents-md", "cc-plugin-plugin-authoring")
+    /** The agents Claude Code always lists; with no Task tool none can run. A custom agent is someone's configuration. */
+    val BUILTIN_AGENTS = setOf("claude", "Explore", "general-purpose", "Plan")
 
     /** The names of the fields that break the lockdown; empty when the turn may run. Only these names are ever logged. */
     fun verify(init: ClaudeEvent.Init): Set<String> = buildSet {
@@ -105,6 +111,9 @@ internal object ClaudeLockdown {
         if (init.plugins == null || init.plugins.any { it.path != "builtin" || it.name !in BUILTIN_PLUGINS }) add("plugins")
         if (init.permissionMode != "dontAsk") add("permissionMode")
         if (init.apiKeySource != "none") add("apiKeySource")
+        if (init.agents == null || !BUILTIN_AGENTS.containsAll(init.agents)) add("agents")
+        // A custom output style is someone's instructions, not the companion's persona.
+        if (init.outputStyle != "default") add("output_style")
     }
 }
 

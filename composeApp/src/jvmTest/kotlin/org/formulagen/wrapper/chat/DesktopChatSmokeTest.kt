@@ -44,6 +44,7 @@ class DesktopChatSmokeTest {
                 val done = java.util.concurrent.CompletableFuture<Pair<String, String>>()
                 claude.startTurn(TurnRequest("local", java.util.UUID.randomUUID().toString(), persona, "haiku", conversation, null, text), object : TurnEvents {
                     override fun opened(conversation: String) = Unit
+                    override fun accepted() = Unit
                     override fun partial(text: String) = Unit
                     override fun completed(text: String, conversation: String) { done.complete(text to conversation) }
                     override fun failed(failure: ChatFailure) { done.completeExceptionally(AssertionError("Turn failed: $failure")) }

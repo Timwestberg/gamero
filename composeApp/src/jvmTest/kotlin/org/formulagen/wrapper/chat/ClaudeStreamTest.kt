@@ -38,8 +38,16 @@ class ClaudeStreamTest {
         assertEquals(setOf("plugins"), ClaudeLockdown.verify(clean.copy(plugins = null)))
         assertEquals(setOf("permissionMode", "apiKeySource"), ClaudeLockdown.verify(clean.copy(permissionMode = "bypassPermissions", apiKeySource = "ANTHROPIC_API_KEY")))
         assertEquals(emptySet(), ClaudeLockdown.verify(clean.copy(plugins = emptyList())))
+        // A custom agent or output style is someone's configuration, not the companion.
+        assertEquals(listOf("claude", "Explore", "general-purpose", "Plan"), clean.agents)
+        assertEquals("default", clean.outputStyle)
+        assertEquals(setOf("agents"), ClaudeLockdown.verify(clean.copy(agents = clean.agents!! + "my-agent")))
+        assertEquals(setOf("agents"), ClaudeLockdown.verify(clean.copy(agents = null)))
+        assertEquals(setOf("output_style"), ClaudeLockdown.verify(clean.copy(outputStyle = "Pirate")))
+        assertEquals(setOf("output_style"), ClaudeLockdown.verify(clean.copy(outputStyle = null)))
         val missing = ClaudeStream.parse("""{"type":"system","subtype":"init","session_id":"s"}""") as ClaudeEvent.Init
-        assertEquals(setOf("tools", "mcp_servers", "skills", "slash_commands", "plugins", "permissionMode", "apiKeySource"), ClaudeLockdown.verify(missing))
+        assertEquals(setOf("tools", "mcp_servers", "skills", "slash_commands", "plugins", "permissionMode", "apiKeySource", "agents", "output_style"),
+            ClaudeLockdown.verify(missing))
     }
 
     @Test fun failuresAreClassifiedByErrorCodeNotSubtype() {

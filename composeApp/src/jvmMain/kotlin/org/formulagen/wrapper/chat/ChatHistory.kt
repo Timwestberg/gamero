@@ -28,12 +28,9 @@ internal data class ChatRecord(
     val conversations: Map<RuntimeId, NativeConversation> = emptyMap(),
     /** Oldest first, at most [ChatLimits.HISTORY]; the oldest drop first, handover entries included. */
     val entries: List<ChatEntry> = emptyList(),
-    /** Handover text owed to one runtime's next turn, independent of the visible history. */
-    val pendingContext: PendingContext? = null,
+    /** Handover text each runtime is owed for its next turn, independent of the visible history. */
+    val pendingContext: Map<RuntimeId, String> = emptyMap(),
 )
-
-@Serializable
-internal data class PendingContext(val runtimeId: RuntimeId, val text: String)
 
 /** Longest handover text a runtime is owed: recent messages (8,000 characters) or a summary, with their framing. */
 internal const val PENDING_CONTEXT_LIMIT = 12_000
@@ -79,8 +76,11 @@ internal fun companionChatHistory(providerRoot: Path, profile: String, companion
 
 private const val MAX_RECORD_BYTES = 3_000_000
 private val PERSONA_HASH = Regex("^([0-9a-f]{64})?$")
-/** Writes `version` explicitly. Entries keep their wire shape, told apart by `role`. */
-private val historyJson = Json { encodeDefaults = true }
+/**
+ * Writes `version` explicitly. Entries keep their wire shape, told apart by `role`. A field this
+ * build does not know (a later build's) is skipped, so a record a newer build wrote still opens.
+ */
+private val historyJson = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
 private fun ChatRecord.validated(): ChatRecord = also { record ->
     require(record.version == 2 && record.entries.size <= ChatLimits.HISTORY)
@@ -88,7 +88,7 @@ private fun ChatRecord.validated(): ChatRecord = also { record ->
     record.entries.forEach { entry ->
         UUID.fromString(entry.id)
         when (entry) {
-            is ChatEntry.User -> require(entry.text.length <= ChatLimits.REPLY)
+            is ChatEntry.User -> require(entry.text.length <= ChatLimits.MESSAGE)
             is ChatEntry.Assistant -> require(entry.text.length <= ChatLimits.REPLY && entry.author.valid())
             is ChatEntry.Handover -> {
                 Instant.parse(entry.at)
@@ -96,7 +96,7 @@ private fun ChatRecord.validated(): ChatRecord = also { record ->
             }
         }
     }
-    record.pendingContext?.let { require(it.text.length <= PENDING_CONTEXT_LIMIT) }
+    record.pendingContext.values.forEach { require(it.length <= PENDING_CONTEXT_LIMIT) }
 }
 
 private fun TeamMember.valid() = SharedRules.isModelId(modelId)

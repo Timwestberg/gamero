@@ -39,7 +39,8 @@ class DesktopChatTeamTest {
         @Volatile var summary: () -> String = { "They said hello." }
         @Volatile var releases = 0
         override fun readiness(profile: String): Readiness { checks++; return readiness }
-        override fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle { requests += turn; this.events += events; return TurnHandle {} }
+        override fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle { requests += turn; this.events += events; return TurnHandle { stops++ } }
+        @Volatile var stops = 0
         override fun summarize(request: SummaryRequest): String {
             summaries += request
             summaryGate?.await(5, TimeUnit.SECONDS)
@@ -61,11 +62,11 @@ class DesktopChatTeamTest {
         while (!check()) { if (System.nanoTime() > until) fail("Condition timed out"); Thread.sleep(10) }
     }
 
-    /** Send as [member] and answer with [reply] in [conversation]. */
+    /** Send as [member] and answer with [reply] in [conversation], as a runtime that took the turn does. */
     private fun turn(chat: DesktopChat, fake: Fake, member: TeamMember, text: String, reply: String, conversation: String) = runBlocking {
         val before = fake.events.size
         chat.send(send(member, text)); await { fake.events.size == before + 1 }
-        fake.events.last().opened(conversation); fake.events.last().completed(reply, conversation)
+        fake.events.last().opened(conversation); fake.events.last().accepted(); fake.events.last().completed(reply, conversation)
         assertEquals(ChatState.READY, chat.snapshot(scope).state)
     }
 
@@ -83,20 +84,26 @@ class DesktopChatTeamTest {
             val entries = chat.snapshot(scope).messages
             assertEquals(listOf("handover", "user", "assistant", "handover", "user", "assistant"), entries.map { it::class.simpleName!!.lowercase() })
             val fresh = entries[0] as ChatEntry.Handover
-            assertEquals(listOf(null, codex, HandoverMethod.FRESH), listOf(fresh.from, fresh.to, fresh.method))
+            assertEquals(listOf(null, codex, HandoverMethod.FRESH, HandoverReason.HOST), listOf(fresh.from, fresh.to, fresh.method, fresh.reason))
             val joined = entries[3] as ChatEntry.Handover
-            assertEquals(listOf(codex, sonnet, HandoverMethod.RECENT_MESSAGES), listOf(joined.from, joined.to, joined.method))
+            assertEquals(listOf(codex, sonnet, HandoverMethod.RECENT_MESSAGES, HandoverReason.HOST), listOf(joined.from, joined.to, joined.method, joined.reason))
             assertEquals(listOf(codex, sonnet), entries.filterIsInstance<ChatEntry.Assistant>().map { it.author })
             assertEquals(entries.map { it.id }, chat.snapshot(scope).messages.map { it.id }, "Entry ids are stable across polls")
             val record = saved()
             val hash = Persona.companion("Ember").hash
-            // Claude members always name their model; Codex here used its default.
-            assertEquals(mapOf(RuntimeId.CODEX to NativeConversation(thread, hash), RuntimeId.CLAUDE_CODE to NativeConversation(session, hash, explicitModel = true)),
-                record.conversations)
-            assertNull(record.pendingContext)
-            // Each runtime then continues its own conversation, with nothing owed.
+            assertEquals(mapOf(RuntimeId.CODEX to NativeConversation(thread, hash), RuntimeId.CLAUDE_CODE to NativeConversation(session, hash)), record.conversations)
+            assertTrue(record.pendingContext.isEmpty())
+            // Codex becomes active again without a handover (the team changed in the editor): it continues its own
+            // conversation and is caught up on the reply it missed.
             turn(chat, codexRuntime, codex, "Back to you", "Welcome back", thread)
-            assertEquals(thread, codexRuntime.requests[1].conversation?.id); assertNull(codexRuntime.requests[1].context)
+            assertEquals(thread, codexRuntime.requests[1].conversation?.id)
+            assertEquals("Earlier in this conversation (the most recent messages):\n<<<\nPerson: And you?\nCompanion: Hello from Claude\n>>>",
+                codexRuntime.requests[1].context)
+            val caughtUp = chat.snapshot(scope).messages.dropLast(2).last() as ChatEntry.Handover
+            assertEquals(listOf(sonnet, codex, HandoverMethod.RECENT_MESSAGES, HandoverReason.HOST), listOf(caughtUp.from, caughtUp.to, caughtUp.method, caughtUp.reason))
+            // Caught up, it is owed nothing more.
+            turn(chat, codexRuntime, codex, "And now?", "Now", thread)
+            assertNull(codexRuntime.requests[2].context)
         }
     }
 
@@ -130,7 +137,7 @@ class DesktopChatTeamTest {
             turn(chat, claude, opus, "Think harder", "Thinking", session)
             val entries = chat.snapshot(scope).messages
             val note = entries[entries.size - 3] as ChatEntry.Handover
-            assertEquals(listOf(sonnet, opus, HandoverMethod.SAME_CONVERSATION, HandoverReason.MANUAL), listOf(note.from, note.to, note.method, note.reason))
+            assertEquals(listOf(sonnet, opus, HandoverMethod.SAME_CONVERSATION, HandoverReason.HOST), listOf(note.from, note.to, note.method, note.reason))
             assertEquals(1, switches().size)
             assertEquals(session, claude.requests.last().conversation?.id); assertEquals("opus", claude.requests.last().model)
             assertNull(claude.requests.last().context)
@@ -142,27 +149,6 @@ class DesktopChatTeamTest {
             chat.handover(handover(sonnet, opus))
             turn(chat, claude, opus, "Once more", "Sure", session)
             assertEquals(3, switches().size)
-        }
-    }
-
-    @Test fun aConversationRemembersThatATurnNamedAModel() = runBlocking {
-        val codexRuntime = Fake(RuntimeId.CODEX)
-        val luna = TeamMember(RuntimeId.CODEX, "gpt-6-luna")
-        chat(codexRuntime).use { chat ->
-            chat.open(scope)
-            turn(chat, codexRuntime, codex, "Hi", "Hello", thread)
-            assertEquals(false, saved().conversations[RuntimeId.CODEX]?.explicitModel)
-            // A started turn counts even when the reply is then stopped.
-            chat.send(send(luna)); await { codexRuntime.events.size == 2 }
-            await { saved().conversations[RuntimeId.CODEX]?.explicitModel == true }
-            chat.stop(scope)
-            turn(chat, codexRuntime, codex, "Back to the default", "Ok", thread)
-            assertEquals(NativeConversation(thread, Persona.companion("Ember").hash, explicitModel = true), codexRuntime.requests.last().conversation)
-            assertEquals(true, saved().conversations[RuntimeId.CODEX]?.explicitModel)
-            // A new conversation starts without one.
-            chat.send(send(codex)); await { codexRuntime.events.size == 4 }
-            codexRuntime.events.last().opened(session); codexRuntime.events.last().completed("Fresh", session)
-            assertEquals(false, saved().conversations[RuntimeId.CODEX]?.explicitModel)
         }
     }
 
@@ -207,7 +193,7 @@ class DesktopChatTeamTest {
             turn(chat, claude, sonnet, "What were we saying?", "We said hello", session)
             assertEquals("Earlier in this conversation (written by Codex (its default model)):\n<<<\nThey said hello.\n>>>", claude.requests[0].context)
             assertEquals(1, chat.snapshot(scope).messages.count { it is ChatEntry.Handover && it.to == sonnet })
-            assertNull(saved().pendingContext)
+            assertTrue(saved().pendingContext.isEmpty())
             // Back to Codex: it hears only what it missed, summarized by Claude.
             claude.summary = { "Claude said hello too." }
             chat.handover(handover(sonnet, codex)); await { state(chat).state == ChatState.READY }
@@ -255,7 +241,7 @@ class DesktopChatTeamTest {
             assertEquals(ChatState.READY, stopped.state); assertEquals(before, stopped.messages)
             assertEquals(releases + 1, codexRuntime.releases, "The outgoing runtime abandons its summary")
             gate.countDown(); Thread.sleep(100)
-            assertEquals(before, chat.snapshot(scope).messages); assertNull(saved().pendingContext)
+            assertEquals(before, chat.snapshot(scope).messages); assertTrue(saved().pendingContext.isEmpty())
             // Codex is still the member, and a later switch works.
             turn(chat, codexRuntime, codex, "Still here", "Yes", thread)
             codexRuntime.summaryGate = null
@@ -323,6 +309,57 @@ class DesktopChatTeamTest {
             assertEquals(4, claude.checks)
             claude.events.last().failed(ChatFailure.UsageLimit(null))
             assertEquals("You've reached your Claude usage limit. Try again later.", chat.snapshot(scope).notice)
+        }
+    }
+
+    @Test fun whatARuntimeIsOwedIsSpentOnceItTakesTheTurn() = runBlocking {
+        val codexRuntime = Fake(RuntimeId.CODEX); val claude = Fake(RuntimeId.CLAUDE_CODE)
+        chat(codexRuntime, claude).use { chat ->
+            chat.open(scope)
+            turn(chat, codexRuntime, codex, "Hi", "Hello", thread)
+            chat.handover(handover(codex, sonnet)); await { state(chat).state == ChatState.READY }
+            // Claude takes the turn with its summary, then fails: the summary reached it, so it is not sent twice.
+            chat.send(send(sonnet)); await { claude.events.size == 1 }
+            assertNotNull(claude.requests[0].context)
+            claude.events[0].opened(session); claude.events[0].accepted(); claude.events[0].failed(ChatFailure.Temporary)
+            assertTrue(saved().pendingContext.isEmpty())
+            chat.open(scope); turn(chat, claude, sonnet, "Again", "Hi", session)
+            assertNull(claude.requests[1].context)
+            // A turn that fails before its runtime took it keeps what that runtime is owed.
+            chat.handover(handover(sonnet, codex)); await { state(chat).state == ChatState.READY }
+            chat.send(send(codex)); await { codexRuntime.events.size == 2 }
+            val owed = assertNotNull(codexRuntime.requests[1].context)
+            codexRuntime.events[1].failed(ChatFailure.Temporary)
+            assertEquals(mapOf(RuntimeId.CODEX to owed), saved().pendingContext)
+            chat.open(scope); turn(chat, codexRuntime, codex, "Once more", "Ok", thread)
+            assertEquals(owed, codexRuntime.requests[2].context)
+        }
+    }
+
+    @Test fun switchingBackToARuntimeThatMissedNothingIsUpToDate() = runBlocking {
+        val codexRuntime = Fake(RuntimeId.CODEX); val claude = Fake(RuntimeId.CLAUDE_CODE)
+        chat(codexRuntime, claude).use { chat ->
+            chat.open(scope)
+            turn(chat, codexRuntime, codex, "Hi", "Hello", thread)
+            chat.handover(handover(codex, sonnet)); await { state(chat).state == ChatState.READY }
+            val back = chat.handover(handover(sonnet, codex))
+            val entry = back.messages.last() as ChatEntry.Handover
+            assertEquals(listOf(sonnet, codex, HandoverMethod.UP_TO_DATE, HandoverReason.MANUAL), listOf(entry.from, entry.to, entry.method, entry.reason))
+            assertEquals(ChatState.READY, back.state)
+            assertEquals(1, codexRuntime.summaries.size + claude.summaries.size, "Only the switch to Claude needed a summary")
+        }
+    }
+
+    @Test fun stopWithNothingInProgressChangesNothingAndClosingEndsOnlyWhatTheViewUsed() = runBlocking {
+        val codexRuntime = Fake(RuntimeId.CODEX); val claude = Fake(RuntimeId.CLAUDE_CODE)
+        chat(codexRuntime, claude).use { chat ->
+            chat.open(scope)
+            turn(chat, codexRuntime, codex, "Hi", "Hello", thread)
+            val before = chat.snapshot(scope)
+            assertEquals(before, chat.stop(scope))
+            assertEquals(0, codexRuntime.releases + codexRuntime.stops)
+            chat.closeSession(scope)
+            assertEquals(1, codexRuntime.releases); assertEquals(0, claude.releases)
         }
     }
 

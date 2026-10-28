@@ -25,6 +25,7 @@ class ClaudeChatRuntimeTest {
     private class Events : TurnEvents {
         val seen = CopyOnWriteArrayList<String>()
         override fun opened(conversation: String) { seen += "opened $conversation" }
+        override fun accepted() { seen += "accepted" }
         override fun partial(text: String) { seen += "partial $text" }
         override fun completed(text: String, conversation: String) { seen += "completed $text @ $conversation" }
         override fun failed(failure: ChatFailure) { seen += "failed $failure" }
@@ -61,6 +62,7 @@ class ClaudeChatRuntimeTest {
         assertFalse("--resume" in argv)
         assertEquals(listOf(
             "opened $session",
+            "accepted",
             "partial You asked me",
             "partial You asked me to say \"hello,\" and my",
             "partial You asked me to say \"hello,\" and my name is Ember.",
@@ -117,7 +119,7 @@ class ClaudeChatRuntimeTest {
 
     @Test fun eachErrorMapsToOneFailure() {
         val fake = FakeClaude()
-        assertEquals(listOf("failed ModelUnavailable"), turn(fake, "turn-bad-model.ndjson", exit = 1).seen.filterNot { it.startsWith("opened") })
+        assertEquals(listOf("failed ModelUnavailable"), turn(fake, "turn-bad-model.ndjson", exit = 1).seen.filterNot { it.startsWith("opened") || it == "accepted" })
         assertEquals("failed SignedOut", turn(fake, "turn-authentication-failed.ndjson", exit = 1).seen.last())
         assertEquals("failed ${ChatFailure.UsageLimit(Instant.ofEpochSecond(1793158800))}", turn(fake, "turn-rate-limit.ndjson", exit = 1).seen.last())
         val lost = turn(fake, "turn-resume-unknown.ndjson", exit = 1, request = request(NativeConversation("ffac2249-90d9-4ca8-8855-cad61ba645ed", persona.hash)))
@@ -176,6 +178,71 @@ class ClaudeChatRuntimeTest {
         }
         assertFalse(fake.interrupted)
         assertTrue(events.seen.none { it.startsWith("completed") || it.startsWith("failed") })
+    }
+
+    @Test fun aSummaryEndsAtOnceWhenItsTurnIsAbandoned() {
+        val fake = FakeClaude()
+        fake.scenario(turn = FakeClaude.fixture("turn-sigint.ndjson"))
+        claude(fake).use { claude ->
+            val failure = java.util.concurrent.CompletableFuture<Throwable>()
+            Thread.ofPlatform().daemon().start {
+                runCatching { claude.summarize(SummaryRequest(profile, persona, "haiku", "user: Hello", timeout = 60.seconds)) }
+                    .exceptionOrNull().let { failure.complete(it) }
+            }
+            await { fake.turns().isNotEmpty() }
+            Thread.sleep(200)
+            val started = System.nanoTime()
+            claude.release()
+            assertNotNull(failure.get(5, TimeUnit.SECONDS), "A cancelled handover does not wait for the summary's timeout")
+            assertTrue(System.nanoTime() - started < TimeUnit.SECONDS.toNanos(5))
+        }
+    }
+
+    @Test fun aFailureWhileReadingIsReported() {
+        val fake = FakeClaude()
+        val events = object : TurnEvents {
+            val seen = CopyOnWriteArrayList<String>()
+            override fun opened(conversation: String) = Unit
+            override fun accepted() = Unit
+            override fun partial(text: String) { error("The chat could not take this text") }
+            override fun completed(text: String, conversation: String) { seen += "completed" }
+            override fun failed(failure: ChatFailure) { seen += "failed $failure" }
+        }
+        claude(fake).use { it.startTurn(request(), events); await { events.seen.isNotEmpty() } }
+        assertEquals(listOf("failed Unexpected"), events.seen)
+    }
+
+    @Test fun aNewTurnOnASessionWaitsForItsStoppedProcess() {
+        val fake = FakeClaude()
+        val session = "9d6b5d91-5085-4e72-a576-7d379498daf0"
+        fake.scenario(turn = FakeClaude.fixture("turn-sigint.ndjson").replace("{\"__fake\":\"wait_for_sigint\"}", "{\"__fake\":\"wait_for_sigint\"}\n{\"__fake\":\"linger\"}"))
+        claude(fake).use { claude ->
+            val first = Events()
+            val handle = claude.startTurn(request(NativeConversation(session, persona.hash)), first)
+            await { first.seen.any { it.startsWith("partial") } }
+            handle.stop()
+            await { fake.interrupted }
+            fake.scenario(turn = FakeClaude.fixture("turn-success.ndjson"))
+            val second = Events()
+            claude.startTurn(request(NativeConversation(session, persona.hash)), second)
+            await { second.ended() }
+            assertTrue(second.seen.last().startsWith("completed"), second.seen.toString())
+        }
+        assertEquals(listOf(false, false), fake.turns().map { it.getValue("overlap").jsonPrimitive.boolean })
+    }
+
+    @Test fun aCleanExitWithoutAResultKeepsTheStreamedText() {
+        val fake = FakeClaude()
+        val withoutResult = FakeClaude.fixture("turn-success.ndjson").lines().filterNot { it.contains("\"type\":\"result\"") }.joinToString("\n")
+        fake.scenario(turn = withoutResult)
+        val events = Events()
+        claude(fake).use { it.startTurn(request(), events); await { events.ended() } }
+        assertTrue(events.seen.last().startsWith("completed You asked me to say \"hello,\" and my name is Ember."), events.seen.toString())
+        // Without a verified start, or after a failure, the stream is never used.
+        fake.scenario(turn = withoutResult, exit = 1)
+        val failed = Events()
+        claude(fake).use { it.startTurn(request(), failed); await { failed.ended() } }
+        assertEquals("failed Unexpected", failed.seen.last())
     }
 
     @Test fun aSummaryIsNeverSavedAsASession() {

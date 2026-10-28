@@ -10,7 +10,9 @@ import kotlinx.serialization.json.*
  * answers; `-p` reads stdin to the end, refuses to run (exit 97) if any `ANTHROPIC_*` or `CLAUDE_*`
  * variable other than the two allowed settings reached it, then replays the scenario's NDJSON with
  * `SESSION_ID` replaced by the session it was given. A `{"__fake":"wait_for_sigint"}` line waits
- * for SIGINT. Every call is recorded with its argv, environment, cwd and stdin.
+ * for SIGINT, and `{"__fake":"linger"}` keeps the process alive a moment longer. Every call is
+ * recorded with its argv, environment, cwd and stdin, and whether another process was still
+ * running on the same session when it started (`overlap`).
  */
 internal class FakeClaude {
     val dir: Path = Files.createTempDirectory("fake-claude")
@@ -35,18 +37,27 @@ internal class FakeClaude {
             if args[:2] == ["auth", "status"]:
                 record(); time.sleep(scenario["authSleep"]); sys.stdout.write(scenario["auth"]); sys.stdout.flush(); sys.exit(scenario["authExit"])
             if "-p" in args:
-                record(stdin=sys.stdin.read())
-                allowed = ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "CLAUDE_CODE_DISABLE_AUTO_MEMORY")
-                if any(k.startswith("ANTHROPIC") or (k.startswith("CLAUDE") and k not in allowed) for k in os.environ): sys.exit(97)
                 session = next((args[i + 1] for i, a in enumerate(args) if a in ("--session-id", "--resume")), "no-session")
-                for line in open(os.path.join(here, "turn.ndjson")):
-                    if line.startswith('{"__fake":"wait_for_sigint"}'):
-                        deadline = time.time() + 10
-                        while not interrupted and time.time() < deadline: time.sleep(0.01)
-                        if interrupted: open(os.path.join(here, "sigint"), "w").write("1")
-                        continue
-                    sys.stdout.write(line.replace("SESSION_ID", session)); sys.stdout.flush()
-                sys.exit(scenario["exit"])
+                lock = os.path.join(here, "running-" + session)
+                overlap = os.path.exists(lock)
+                open(lock, "w").close()
+                try:
+                    record(stdin=sys.stdin.read(), overlap=overlap)
+                    allowed = ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "CLAUDE_CODE_DISABLE_AUTO_MEMORY")
+                    if any(k.startswith("ANTHROPIC") or (k.startswith("CLAUDE") and k not in allowed) for k in os.environ): sys.exit(97)
+                    for line in open(os.path.join(here, "turn.ndjson")):
+                        if line.startswith('{"__fake":"wait_for_sigint"}'):
+                            deadline = time.time() + 10
+                            while not interrupted and time.time() < deadline: time.sleep(0.01)
+                            if interrupted: open(os.path.join(here, "sigint"), "w").write("1")
+                            continue
+                        if line.startswith('{"__fake":"linger"}'):
+                            time.sleep(1.5)
+                            continue
+                        sys.stdout.write(line.replace("SESSION_ID", session)); sys.stdout.flush()
+                    sys.exit(scenario["exit"])
+                finally:
+                    os.remove(lock)
             record(); sys.exit(2)
         """.trimIndent())
         Files.setPosixFilePermissions(executable, PosixFilePermissions.fromString("rwx------"))

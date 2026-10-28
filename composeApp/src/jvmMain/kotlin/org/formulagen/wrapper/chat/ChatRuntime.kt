@@ -10,12 +10,10 @@ import org.formulagen.wrapper.bridge.RuntimeId
 /**
  * A runtime's own conversation with one companion: Codex's thread id or Claude Code's session id.
  * [personaHash] is the [Persona.hash] the conversation was last used with, or empty when it was
- * migrated from a record that did not track it. [explicitModel] is set once a turn in it named a
- * model other than the runtime default: Codex keeps that model for later turns, so going back to
- * its default must name the default.
+ * migrated from a record that did not track it.
  */
 @Serializable
-internal data class NativeConversation(val id: String, val personaHash: String, val explicitModel: Boolean = false)
+internal data class NativeConversation(val id: String, val personaHash: String)
 
 /**
  * The seam [DesktopChat] talks to: one implementation per runtime. Implementations deliver
@@ -71,6 +69,9 @@ internal data class TurnRequest(
 internal interface TurnEvents {
     /** The runtime started a new native conversation; the caller saves it before the reply ends, so a stopped turn keeps it. */
     fun opened(conversation: String)
+
+    /** The runtime took the turn, with its context (Codex: `turn/start` answered; Claude: a verified start), so the context is no longer owed. */
+    fun accepted()
 
     /** The reply so far. Each call replaces the previous text: Codex restarts it when a new message item begins. */
     fun partial(text: String)

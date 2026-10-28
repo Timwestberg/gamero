@@ -33,7 +33,7 @@ class ChatHistoryTest {
         assertEquals(2, record.version)
         assertEquals(mapOf(RuntimeId.CODEX to NativeConversation(thread, "")), record.conversations)
         assertEquals(listOf(ChatEntry.User(user, "Hello"), ChatEntry.Assistant(reply, TeamMember(RuntimeId.CODEX, RUNTIME_DEFAULT_MODEL), "Hi there")), record.entries)
-        assertNull(record.pendingContext)
+        assertTrue(record.pendingContext.isEmpty())
         assertFalse(Files.exists(legacy)); assertTrue(Files.exists(file))
         assertEquals("rw-------", permissions(file)); assertEquals("rwx------", permissions(file.parent))
         assertEquals(record, history.read())
@@ -68,14 +68,14 @@ class ChatHistoryTest {
         val (file, _) = paths(root)
         val claude = TeamMember(RuntimeId.CLAUDE_CODE, "sonnet")
         val record = ChatRecord(
-            conversations = mapOf(RuntimeId.CODEX to NativeConversation(thread, "", explicitModel = true), RuntimeId.CLAUDE_CODE to NativeConversation(session, hash)),
+            conversations = mapOf(RuntimeId.CODEX to NativeConversation(thread, ""), RuntimeId.CLAUDE_CODE to NativeConversation(session, hash)),
             entries = listOf(
                 ChatEntry.User(user, "Hello"),
                 ChatEntry.Handover(handover, "2026-10-27T12:00:00Z", TeamMember(RuntimeId.CODEX, RUNTIME_DEFAULT_MODEL), claude,
                     HandoverMethod.SUMMARY, HandoverReason.MANUAL, summary = "They said hello."),
                 ChatEntry.Assistant(reply, claude, "Hi there"),
             ),
-            pendingContext = PendingContext(RuntimeId.CLAUDE_CODE, "Earlier in this conversation:\n<<<\nHello\n>>>"),
+            pendingContext = mapOf(RuntimeId.CLAUDE_CODE to "Earlier in this conversation:\n<<<\nHello\n>>>", RuntimeId.CODEX to "Earlier:\n<<<\nHi\n>>>"),
         )
         val history = ChatHistory(file)
         history.write(record)
@@ -83,15 +83,15 @@ class ChatHistoryTest {
         val json = Json.parseToJsonElement(Files.readString(file)).jsonObject
         assertEquals(JsonPrimitive(2), json["version"])
         assertEquals(setOf("codex", "claude-code"), json.getValue("conversations").jsonObject.keys)
-        assertEquals(JsonPrimitive(true), json.getValue("conversations").jsonObject.getValue("codex").jsonObject["explicitModel"])
-        // A record written before conversations remembered named models reads as not named.
-        Files.writeString(file, Files.readString(file).replace(",\"explicitModel\":false", ""))
-        assertEquals(false, history.read().conversations.getValue(RuntimeId.CLAUDE_CODE).explicitModel)
+        assertEquals(setOf("claude-code", "codex"), json.getValue("pendingContext").jsonObject.keys)
+        // A field a later build adds is skipped, so its record still opens here.
+        Files.writeString(file, Files.readString(file).replaceFirst("{", "{\"laterField\":{\"x\":1},"))
+        assertEquals(record, history.read())
         val entries = json.getValue("entries").jsonArray.map { it.jsonObject }
         assertEquals(listOf("user", "handover", "assistant"), entries.map { it.getValue("role").jsonPrimitive.content })
         assertEquals(buildJsonObject { put("runtimeId", "claude-code"); put("modelId", "sonnet") }, entries[2]["author"])
         assertEquals(JsonPrimitive("summary"), entries[1]["method"]); assertEquals(JsonPrimitive("manual"), entries[1]["reason"])
-        assertEquals(JsonPrimitive("claude-code"), json.getValue("pendingContext").jsonObject["runtimeId"])
+
     }
 
     @Test fun recordsOutsideTheLimitsAreRejected() {
@@ -102,11 +102,11 @@ class ChatHistoryTest {
         rejects(ChatRecord(version = 3))
         rejects(ChatRecord(entries = List(41) { ChatEntry.User(java.util.UUID.randomUUID().toString(), "x") }))
         rejects(ChatRecord(entries = listOf(ChatEntry.Assistant(reply, TeamMember(RuntimeId.CODEX, "--model"), ""))))
-        rejects(ChatRecord(entries = listOf(ChatEntry.User(user, "x".repeat(16_001)))))
+        rejects(ChatRecord(entries = listOf(ChatEntry.User(user, "x".repeat(4_001)))))
         rejects(ChatRecord(conversations = mapOf(RuntimeId.CODEX to NativeConversation(thread, "short"))))
         rejects(ChatRecord(conversations = mapOf(RuntimeId.CLAUDE_CODE to NativeConversation("../session", hash))))
         rejects(ChatRecord(entries = listOf(ChatEntry.Handover(handover, "yesterday", null, TeamMember(RuntimeId.CODEX, "x"), HandoverMethod.FRESH, HandoverReason.MANUAL))))
-        rejects(ChatRecord(pendingContext = PendingContext(RuntimeId.CODEX, "x".repeat(PENDING_CONTEXT_LIMIT + 1))))
+        rejects(ChatRecord(pendingContext = mapOf(RuntimeId.CODEX to "x".repeat(PENDING_CONTEXT_LIMIT + 1))))
         Files.writeString(file, " ".repeat(3_000_001)); assertFails { history.read() }
         assertFails { companionChatHistory(root, "../../.codex", companion) }
     }

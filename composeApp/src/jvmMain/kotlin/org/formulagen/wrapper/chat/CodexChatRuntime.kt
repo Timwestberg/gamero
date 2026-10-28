@@ -31,6 +31,8 @@ import org.formulagen.wrapper.providers.codexProfileHome
 internal class CodexChatRuntime(
     private val providerRoot: Path,
     private val executable: Path,
+    /** How often Codex is asked for its default model. */
+    private val defaultModelRefresh: kotlin.time.Duration = kotlin.time.Duration.parse("1m"),
     private val createRpc: (CodexRuntime, (String, JsonObject) -> Unit) -> CodexAppServer = ::chatCodex,
 ) : ChatRuntime {
     override val id = RuntimeId.CODEX
@@ -41,8 +43,8 @@ internal class CodexChatRuntime(
     /** Closing an app-server can wait seconds for its process tree, so it never runs on a caller's thread. */
     private val releaser = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-chat-release"))
     private var connection: Connection? = null
-    /** Codex's default model by profile, from `model/list`, with when it was read (System.nanoTime). */
-    private val defaults = ConcurrentHashMap<String, Pair<Long, String>>()
+    /** Codex's default model by profile, from `model/list`: the last one known, and when it was last asked for (System.nanoTime). */
+    private val defaults = ConcurrentHashMap<String, Pair<Long, String?>>()
     /** Changes on every connect and release; events from an older app-server are ignored. */
     private var epoch = 0
     private var closed = false
@@ -58,8 +60,7 @@ internal class CodexChatRuntime(
     private class Turn(val thread: String, val events: TurnEvents) {
         /** Set once `turn/start` answers; events before then are held in [early]. */
         var id: String? = null
-        var item: String? = null
-        var text = ""
+        val reply = ReplyText()
         val early = mutableListOf<Pair<String, JsonObject>>()
     }
 
@@ -72,8 +73,9 @@ internal class CodexChatRuntime(
         val connection = connect(turn.profile)
         if (!chatgpt(connection)) { events.failed(ChatFailure.SignedOut); return TurnHandle {} }
         val thread = thread(connection, turn, events) ?: run { events.failed(ChatFailure.ConversationLost); return TurnHandle {} }
-        // Codex keeps a named model for later turns of a thread, so its default is named to go back to it.
-        val sent = model.ifEmpty { if (turn.conversation?.explicitModel == true && thread == turn.conversation.id) defaultModel(connection).orEmpty() else "" }
+        // Codex keeps a named model for the later turns of a thread, so "runtime-default" names Codex's own
+        // default whenever it is known; only when it never was is the model left out.
+        val sent = model.ifEmpty { defaultModel(connection).orEmpty() }
         val active = Turn(thread, events)
         synchronized(lock) { current(connection); connection.turn = active }
         val started = connection.rpc.call("turn/start", buildJsonObject {
@@ -88,6 +90,8 @@ internal class CodexChatRuntime(
                 if (this.connection !== connection || connection.turn !== active) null
                 else { active.id = turnId; active.early.toList().also { active.early.clear() } }
             }
+            // Codex answered turn/start, so the turn and its context reached it.
+            if (early != null) events.accepted()
             early?.forEach { (method, params) -> handle(connection, active, method, params) }
         }
         return TurnHandle { detach(connection) }
@@ -168,13 +172,16 @@ internal class CodexChatRuntime(
         return id
     }
 
-    /** Codex's own default model for the profile, read at most once a minute; null when `model/list` cannot say. */
+    /**
+     * Codex's own default model for the profile, asked for at most once a minute. A failed or empty
+     * answer keeps the last one known; null only when none ever was.
+     */
     private fun defaultModel(connection: Connection): String? {
-        defaults[connection.profile]?.takeIf { System.nanoTime() - it.first < DEFAULT_MODEL_TTL_NANOS }?.let { return it.second }
-        val model = try { codexModelList(connection.rpc).firstOrNull { it.isDefault }?.modelId } catch (_: Exception) { null } ?: return null
+        val known = defaults[connection.profile]
+        if (known != null && System.nanoTime() - known.first < defaultModelRefresh.inWholeNanoseconds) return known.second
+        val fresh = try { codexModelList(connection.rpc).firstOrNull { it.isDefault }?.modelId } catch (_: Exception) { null }
         current(connection)
-        defaults[connection.profile] = System.nanoTime() to model
-        return model
+        return (fresh ?: known?.second).also { defaults[connection.profile] = System.nanoTime() to it }
     }
 
     private fun workspace(connection: Connection): Path = connection.home.resolve("conversation-workspace").also { Files.createDirectories(it) }
@@ -210,25 +217,12 @@ internal class CodexChatRuntime(
         if (synchronized(lock) { connection.turn !== turn }) return
         val eventTurn = (params["turnId"] as? JsonPrimitive)?.contentOrNull ?: ((params["turn"] as? JsonObject)?.get("id") as? JsonPrimitive)?.contentOrNull
         if (eventTurn != turn.id) return
+        if (turn.reply.receive(method, params)) { turn.events.partial(turn.reply.text); return }
         when (method) {
-            "item/agentMessage/delta" -> {
-                val item = (params["itemId"] as? JsonPrimitive)?.contentOrNull ?: return
-                val delta = (params["delta"] as? JsonPrimitive)?.contentOrNull ?: return
-                turn.text = ((if (turn.item == item) turn.text else "") + delta).take(ChatLimits.REPLY)
-                turn.item = item
-                turn.events.partial(turn.text)
-            }
-            "item/completed" -> {
-                val item = params["item"] as? JsonObject
-                if (item?.get("type") == JsonPrimitive("agentMessage")) {
-                    turn.text = (item["text"] as? JsonPrimitive)?.contentOrNull.orEmpty().take(ChatLimits.REPLY)
-                    turn.events.partial(turn.text)
-                }
-            }
             "turn/completed" -> {
                 if (!finish(connection, turn)) return
                 val ended = params["turn"] as? JsonObject
-                if ((ended?.get("status") as? JsonPrimitive)?.contentOrNull == "completed") turn.events.completed(turn.text, turn.thread)
+                if ((ended?.get("status") as? JsonPrimitive)?.contentOrNull == "completed") turn.events.completed(turn.reply.text, turn.thread)
                 else turn.events.failed(codexFailure(ended?.get("error") as? JsonObject))
             }
             "error" -> if (params["willRetry"] != JsonPrimitive(true)) {
@@ -259,19 +253,12 @@ internal class CodexChatRuntime(
     /** The one reply of an ephemeral summary thread. Fed with [delivery] held. */
     private class Summary {
         val result = CompletableFuture<String>()
-        private var item: String? = null
-        private var text = ""
+        private val reply = ReplyText()
 
         fun receive(method: String, params: JsonObject) {
+            if (reply.receive(method, params)) return
             when (method) {
-                "item/agentMessage/delta" -> {
-                    val item = (params["itemId"] as? JsonPrimitive)?.contentOrNull ?: return
-                    text = ((if (this.item == item) text else "") + (params["delta"] as? JsonPrimitive)?.contentOrNull.orEmpty()).take(ChatLimits.REPLY)
-                    this.item = item
-                }
-                "item/completed" -> (params["item"] as? JsonObject)?.takeIf { it["type"] == JsonPrimitive("agentMessage") }
-                    ?.let { text = (it["text"] as? JsonPrimitive)?.contentOrNull.orEmpty().take(ChatLimits.REPLY) }
-                "turn/completed" -> if (((params["turn"] as? JsonObject)?.get("status") as? JsonPrimitive)?.contentOrNull == "completed") result.complete(text)
+                "turn/completed" -> if (((params["turn"] as? JsonObject)?.get("status") as? JsonPrimitive)?.contentOrNull == "completed") result.complete(reply.text)
                     else fail()
                 "error" -> if (params["willRetry"] != JsonPrimitive(true)) fail()
             }
@@ -281,10 +268,36 @@ internal class CodexChatRuntime(
     }
 }
 
-private val DEFAULT_MODEL_TTL_NANOS = TimeUnit.MINUTES.toNanos(1)
-
 /** What a chat app-server may be asked: the account, its conversation, and the model list for naming Codex's default. */
 internal val CHAT_CODEX_METHODS = setOf("account/read", "thread/start", "thread/resume", "turn/start", "turn/interrupt", "model/list")
+
+/**
+ * The text of one Codex reply as its notifications build it: a delta extends the current agent
+ * message, a new message item starts the text over, and a completed agent message replaces it.
+ */
+private class ReplyText {
+    var text = ""
+        private set
+    private var item: String? = null
+
+    /** Apply [method] if it is reply text; false for any other notification. */
+    fun receive(method: String, params: JsonObject): Boolean {
+        when (method) {
+            "item/agentMessage/delta" -> {
+                val item = (params["itemId"] as? JsonPrimitive)?.contentOrNull ?: return false
+                val delta = (params["delta"] as? JsonPrimitive)?.contentOrNull ?: return false
+                text = ((if (this.item == item) text else "") + delta).take(ChatLimits.REPLY)
+                this.item = item
+            }
+            "item/completed" -> {
+                val item = (params["item"] as? JsonObject)?.takeIf { it["type"] == JsonPrimitive("agentMessage") } ?: return false
+                text = (item["text"] as? JsonPrimitive)?.contentOrNull.orEmpty().take(ChatLimits.REPLY)
+            }
+            else -> return false
+        }
+        return true
+    }
+}
 
 /** An explicit Codex model, "" for Codex's own default, or null for an id that is not a model id. */
 private fun explicitModel(model: String?): String? = when {

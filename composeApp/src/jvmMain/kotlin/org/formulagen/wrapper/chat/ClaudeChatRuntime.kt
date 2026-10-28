@@ -38,6 +38,8 @@ internal class ClaudeChatRuntime(
 ) : ChatRuntime {
     override val id = RuntimeId.CLAUDE_CODE
     private val running = ConcurrentHashMap.newKeySet<Turn>()
+    /** The latest turn on each session, until its process has ended. */
+    private val sessions = ConcurrentHashMap<String, Turn>()
     /** Sends SIGINT and, if a stopped turn lingers, ends it, off the caller's thread. */
     private val stopper = Executors.newSingleThreadScheduledExecutor(loggingDaemonThreads("hovel-claude-stop"))
     @Volatile private var closed = false
@@ -57,22 +59,25 @@ internal class ClaudeChatRuntime(
         // A Claude session keeps the first system prompt it was given, so another persona needs a new session.
         if (saved != null && saved.personaHash != turn.persona.hash) { events.failed(ChatFailure.ConversationLost); return TurnHandle {} }
         val session = saved?.id ?: UUID.randomUUID().toString()
+        // A stopped turn's process may still be saving the session; two processes never share one.
+        sessions[session]?.settle()
         val conversation = if (saved == null) listOf("--session-id", session) else listOf("--resume", session)
         val started = Turn(events, session, opens = saved == null)
         started.start(claudeTurnArguments(model, turn.persona) + conversation, turn.profile, turn.input())
         return TurnHandle { started.stop() }
     }
 
-    /** A turn that Claude Code never saves, so the companion's session is untouched. */
+    /** A turn that Claude Code never saves, so the companion's session is untouched. Abandoning it (a cancelled handover) ends the wait at once. */
     override fun summarize(request: SummaryRequest): String {
         val model = claudeModel(request.model) ?: error("Unknown model")
         val summary = CompletableFuture<String>()
         val turn = Turn(object : TurnEvents {
             override fun opened(conversation: String) = Unit
+            override fun accepted() = Unit
             override fun partial(text: String) = Unit
             override fun completed(text: String, conversation: String) { summary.complete(text) }
             override fun failed(failure: ChatFailure) { summary.completeExceptionally(IllegalStateException("No summary: $failure")) }
-        }, session = null, opens = false)
+        }, session = null, opens = false, onEnd = { summary.completeExceptionally(IllegalStateException("Summary ended")) })
         turn.start(claudeTurnArguments(model, request.persona) + "--no-session-persistence", request.profile, summaryInstruction(request.transcript))
         return try { boundSummary(summary.get(request.timeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)) }
         catch (error: Exception) { turn.abandon(); throw error }
@@ -86,17 +91,33 @@ internal class ClaudeChatRuntime(
         stopper.shutdown()
     }
 
-    /** One `claude -p` process. [session] is the session it must report, or null for a summary. */
-    private inner class Turn(private val events: TurnEvents, private val session: String?, private val opens: Boolean) {
+    /**
+     * One `claude -p` process. [session] is the session it must report, or null for a summary.
+     * [onEnd] runs once the process has ended, however it ended.
+     */
+    private inner class Turn(private val events: TurnEvents, private val session: String?, private val opens: Boolean, private val onEnd: () -> Unit = {}) {
         private lateinit var process: Process
         /** Set once the turn is stopped, abandoned or has reported its end; nothing is reported after. */
         private val ended = AtomicBoolean()
+        private val finished = AtomicBoolean()
 
         fun start(args: List<String>, profile: String, input: String) {
             process = claude.builder(args, claude.workspace(profile)).redirectError(ProcessBuilder.Redirect.DISCARD).start()
             running += this
+            session?.let { sessions[it] = this }
             if (closed) abandon()
-            Thread.ofPlatform().daemon().name("hovel-claude-turn").start { runCatching { read() }.onFailure { abandon(); report(ChatFailure.Unexpected) } }
+            Thread.ofPlatform().daemon().name("hovel-claude-turn").start {
+                try { read() }
+                catch (error: Throwable) {
+                    // Report before ending the process: a failure the turn never reports would leave the chat waiting.
+                    report(ChatFailure.Unexpected); abandon()
+                    if (error is VirtualMachineError) throw error
+                } finally {
+                    running -= this
+                    session?.let { sessions.remove(it, this) }
+                    finish()
+                }
+            }
             // One user message, then end of input: the process answers it and exits.
             try { process.outputStream.bufferedWriter().use { it.write(userMessage(input)); it.newLine() } } catch (_: IOException) { /* It exited; the reader reports why. */ }
         }
@@ -110,6 +131,14 @@ internal class ClaudeChatRuntime(
         fun abandon() {
             ended.set(true)
             if (process.isAlive) terminateProcessTreeInBackground(process, "hovel-claude-end")
+            finish()
+        }
+
+        private fun finish() { if (finished.compareAndSet(false, true)) onEnd() }
+
+        /** Wait briefly for this process to exit after a stop, then end it. */
+        fun settle() {
+            if (!process.waitFor(5, TimeUnit.SECONDS)) { ended.set(true); terminateProcessTree(process) }
         }
 
         private fun read() {
@@ -127,7 +156,11 @@ internal class ClaudeChatRuntime(
                             is ClaudeEvent.Init -> {
                                 val broken = ClaudeLockdown.verify(event) + (if (session != null && event.sessionId != session) setOf("session_id") else emptySet())
                                 if (broken.isNotEmpty()) return refuse(broken)
-                                if (!verified && opens) deliver { events.opened(session!!) }
+                                if (!verified) {
+                                    if (opens) deliver { events.opened(session!!) }
+                                    // The message was written before the start was verified, so the turn and its context reached Claude Code.
+                                    deliver { events.accepted() }
+                                }
                                 verified = true
                             }
                             is ClaudeEvent.TextDelta -> {
@@ -143,9 +176,11 @@ internal class ClaudeChatRuntime(
                 }
             } catch (_: IOException) { /* The process ended; its exit decides. */ }
             val exit = if (process.waitFor(5, TimeUnit.SECONDS)) process.exitValue() else { terminateProcessTree(process); null }
-            running -= this
             val outcome = result
+            // A result line can be dropped (longer than a protocol line); a clean exit after a verified start keeps the streamed text.
+            val streamed = exit == 0 && verified && outcome == null && assistantError == null && text.isNotBlank()
             when {
+                streamed -> if (ended.compareAndSet(false, true)) events.completed(text.take(ChatLimits.REPLY).toString(), session.orEmpty())
                 !ClaudeFailures.succeeded(exit, outcome) -> report(ClaudeFailures.classify(outcome, assistantError, rateLimit))
                 // A reply without a verified init is never used.
                 !verified -> report(ChatFailure.Lockdown)
@@ -155,13 +190,11 @@ internal class ClaudeChatRuntime(
             }
         }
 
-        /** Fail closed: end the process tree first, then report only which fields broke the lockdown. */
+        /** Fail closed: report only which fields broke the lockdown, then end the process tree. */
         private fun refuse(broken: Set<String>) {
             log(LogLevel.Warn, "claude", "Claude Code turn refused; unexpected ${broken.sorted().joinToString()}")
-            val first = ended.compareAndSet(false, true)
+            report(ChatFailure.Lockdown)
             terminateProcessTree(process)
-            running -= this
-            if (first) events.failed(ChatFailure.Lockdown)
         }
 
         private fun report(failure: ChatFailure) { if (ended.compareAndSet(false, true)) events.failed(failure) }
