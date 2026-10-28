@@ -148,8 +148,10 @@ class ApprovalBrokerTest {
         val first = relay.register("a", edit(), events)
         val second = relay.register("b", command("npm test"), events)
         val asked = async { relay.ask("a", first) }
-        val queued = async { relay.ask("b", second) }
         screen.await(1)
+        // ask the second only once the first is showing, so arrival order is fixed
+        val queued = async { relay.ask("b", second) }
+        Thread.sleep(100)
         assertEquals(listOf<ChatWaiting?>(ChatWaiting(WaitingKind.APPROVAL, "Ember wants to edit files: Edit notes.txt")), waitings.toList(),
             "The page waits only once a dialog is on screen")
         screen.shown[0].answer(0)
