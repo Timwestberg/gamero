@@ -70,7 +70,7 @@ These are the refinements the rest of the plan follows.
 2. **The live recognizer is the streaming Zipformer, not Parakeet and not Kroko.** Kroko's ONNX files are non-commercial. Parakeet TDT 0.6B v3 is CC-BY-4.0 and accurate, and the sherpa build is an offline recognizer of about 630 MB. Waiting to decode the whole utterance misses the budget. It can be a later Mac rescoring experiment. It is not the live path.
 3. **Barge-in is `speech.stop()` plus `chat.stop()`, and it is not `stopSpeaking`.** `stopSpeaking` leaves the provider writing. Once sentences enqueue from `partial`, Ember would start again over the person. Cancel the turn. Keep the partial bubble. The new utterance is a new `chat.send` with `speak: true`.
 4. **Enqueue, do not call `speak` per sentence.** `speak` flushes. Add `enqueue` that appends one piece to the live generation.
-5. **The 800 ms budget counts the silence we wait for, and the model's time to first token.** Local stages have hard caps. The cloud stage is measured and reported beside them. There is no canned "mm-hmm" in Ember's voice. She speaks the model's words.
+5. **The 800 ms budget counts the silence we wait for, and the model's time to first token.** Local stages have hard caps. The cloud stage is measured and reported beside them. When that wait passes the filler threshold, Ember plays one short lead-in in the voice she is already using. The lead-in is her voice, cached ahead of time. The model's words still follow, and they replace the lead-in.
 6. **Hearing is a new contract, `ember-hearing.v1`.** It does not grow ember-voice.v2. v2 is the TTS recipe.
 7. **The page shows state and the live transcript. It does not receive PCM.** The Mac host owns the microphone even when the catalog is the JCEF page.
 8. **A browser without the host cannot run Codex or Claude.** The web milestone draws the control and, later, runs the same models in WASM for a local loop. It does not add a server speech proxy.
@@ -96,8 +96,9 @@ sequenceDiagram
     ASR->>Page: partial transcript on the snapshot
     Hear->>Chat: endpoint, final text
     Chat->>Prov: chat.send talk, speak true
+    Chat->>TTS: one cached filler if the reply is still unspoken at the threshold
     Prov->>Chat: partial, full text so far
-    Chat->>TTS: enqueue each finished sentence
+    Chat->>TTS: enqueue each finished sentence, which cuts the filler
     TTS->>Graph: 24 kHz PCM, the far-end reference
     VAD->>Hear: barge-in, 160 ms of speech while she talks
     Hear->>TTS: stop, flush
@@ -231,6 +232,24 @@ Permission copy, shown before the first capture, in the catalog and in the nativ
 
 The Kokoro row (Sam, Jamie, Riley, Harper) stays the place the voice is chosen. The mic control joins that row for the first Mac loop, then moves to the catalog composer. Both call the same host method.
 
+### 5.4 Fillers
+
+Tim wants the human beat from the start (review of #58, 28 Oct 2026). Fillers are on by default. We will turn them off later if the logs show they get in the way. One flag does that.
+
+A filler is a short lead-in Ember already has as audio: "Hmm,", "Let me think,", or "Okay, so". It is not a second reply, and it is not sent to the provider.
+
+- **When.** The clock starts at the hearing endpoint (push-to-talk release counts). If the reply's first speakable piece is not ready within the threshold, she plays one clip. Phase 1 speaks the whole reply from `completed`, so "first speakable piece" there is the start of that `speak`. Phase 2 moves the same signal to the first `enqueue`. The flag and the threshold do not change.
+- **Instant.** Each of the four blends has its own clips, synthesized once when that voice's engine is warm and kept as PCM. Playing them writes the buffer. It does not call Kokoro again. A cache that is not warm yet skips the filler and logs `filler skipped cache-cold`. It does not synthesize on the threshold.
+- **Varied.** The three lines rotate. The same line is never played on two turns in a row.
+- **Once.** At most one filler per hearing turn. A typed send does not arm one.
+- **Already arriving.** If `speak` or the first `enqueue` has started, the filler is not started. If the clip is already playing when the reply's audio starts, `speak` / `enqueue` stops it with the same flush as `stop`, then the reply plays.
+- **Barge-in.** `speech.stop()` flushes the clip. In Phase 1 a hold during the filler (and only during the filler) is that stop plus cancelling the turn, then the new hold. A hold during the model's own audio stays idle until Phase 2.
+- **Flag.** `VoiceConfig.fillersEnabled`, default true. `HOVEL_VOICE_FILLERS=0` (also `off` or `false`) disables. Unset leaves them on.
+- **Threshold.** `VoiceConfig.fillerThresholdMs`, default 450. `HOVEL_VOICE_FILLER_MS` overrides it. The value is milliseconds from the endpoint to the moment we give up waiting.
+- **Log.** Every play logs category `hearing`, `filler line="…" voice=<id> waitedMs=<n>`. A skip logs `filler skipped` and the reason (`disabled`, `reply-ready`, `cache-cold`, `already-played`). That log is how we decide to turn them off.
+
+The 160 ms sentence gap and the lookahead player are unchanged. The filler is before the reply, not between its sentences.
+
 ### 5.3 Barge-in
 
 While Ember is speaking, or while a reply is still streaming:
@@ -297,7 +316,7 @@ On each partial:
 
 The clock starts at the last speech sample (the acoustic end), and stops when the first Kokoro sample is audible. Log one line per turn with these marks, category `hearing`, using the existing logger:
 
-`vad_end`, `endpoint`, `asr_final`, `send`, `first_token`, `piece_enqueued`, `first_audio`, `speaker_start`.
+`vad_end`, `endpoint`, `asr_final`, `send`, `filler`, `first_token`, `piece_enqueued`, `first_audio`, `speaker_start`.
 
 | Stage | Cap | Notes |
 | --- | --- | --- |
@@ -321,7 +340,7 @@ End to end, acoustic end to first audio, for a short utterance (240 ms hangover)
 - A first token at 400 ms lands near 1.0 s (575 + 400). A first token at 800 ms lands near 1.4 s. Those turns are reported as provider time, not as a hearing regression.
 - A long utterance uses the 400 ms hangover, so the same fast token lands 160 ms later. That is the cost of not cutting a sentence in half.
 
-No filler word is synthesized to hide the provider. The overlap #56 already added (next sentence synthesized while the current one plays) keeps the rest of the reply from gaping once the first piece has started. The 160 ms sentence gap stays.
+If `speaker_start` has not happened by `fillerThresholdMs` after the endpoint, the `filler` mark is a cached clip starting. That clip is audio, so the first thing Tim hears can be the filler rather than the model's first word. The model's first word is still `speaker_start` of the reply, and the stage log keeps those apart. The overlap #56 already added (next sentence synthesized while the current one plays) keeps the rest of the reply from gaping once the first piece has started. The 160 ms sentence gap stays.
 
 Barge-in flush, from the decision to the device flush, is at most 50 ms. It does not wait for the provider process to exit.
 
@@ -445,7 +464,7 @@ gamero, new:
 - `voice/src/jvmMain/kotlin/org/formulagen/wrapper/voice/SherpaHearing.kt` — Silero plus the online Zipformer, behind a small interface the tests fake.
 - `voice/native/ember_audio.h` and the ObjC implementation — the voice-processing graph.
 - `composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/chat/DesktopHearing.kt` — thread, capture, commit into `DesktopChat`.
-- `scripts/fetch-hearing.sh` — Silero v5 and the Zipformer files, hash-pinned, license-checked.
+- `scripts/fetch-voice.sh` — also fetches Silero v5 and the Zipformer files, hash-pinned, license-checked. Same script as the Kokoro download, so one command installs hearing and speech.
 - `voice/hearing-check.sh`, `voice/hearing/expected-0.txt` after the first real decode.
 
 gamero, edit on top of #56:
@@ -471,7 +490,7 @@ Each milestone is one PR series, based on #56 for gamero. Ship them in order. A 
 
 **Size:** one fetch script, one JNI-free wrapper, one check script. No UI and no chat.
 
-**Files:** `scripts/fetch-hearing.sh`, `SherpaHearing.kt`, `voice/hearing-check.sh`.
+**Files:** `scripts/fetch-voice.sh`, `SherpaHearing.kt`, `voice/hearing-check.sh`.
 
 **Produces:** `HearingEngine` with `fun accept(samples: FloatArray)`, `fun partial(): String`, `fun finalText(): String`, `fun release()`.
 
@@ -495,7 +514,8 @@ Each milestone is one PR series, based on #56 for gamero. Ship them in order. A 
 - [ ] Hold on the voice row opens `TargetDataLine` at 16 kHz and closes it on release.
 - [ ] Release with text sends one talk turn to `currentMember`. Release with empty text sends nothing. A null member shows the notice in section 8 and sends nothing.
 - [ ] `awaiting-you` does not send.
-- [ ] The reply still speaks through today's `completed` path. The hold control stays idle while the chat is `responding` or the voice state is `preparing` or `speaking`. Sentence streaming and barge-in are the next milestone.
+- [ ] The reply still speaks through today's `completed` path. The hold control stays idle while the chat is `responding` or the model's audio is `preparing` or `speaking`. A hold during a filler cuts that clip and the turn. Sentence streaming and barge-in of the model's audio are the next milestone.
+- [ ] Fillers from section 5.4 are on: cached per blend, one per hearing turn, skipped when the reply has started, flushed by stop, flag defaulting on, threshold 450 ms, and a `hearing` log line each time one plays.
 - [ ] Typed chat and Kokoro preview still pass their tests.
 
 **Done when:** holding the control on a Mac, saying a sentence, and releasing it produces a user bubble and a spoken reply. This VM cannot run that check.
@@ -589,7 +609,7 @@ Recommended answers, so implementation does not stall. A different answer is a c
 
 1. **Push-to-talk or hands-free first?** Push-to-talk, then the shared graph. The phone call is milestone 3, not milestone 1.
 2. **Which recognizer?** The 74 MB Zipformer int8, chunk-16, left context 128, greedy search, sherpa-onnx 2.0.0. Kroko is out. Parakeet is a later experiment. Moonshine only if the consented script's errors are ordinary sentences missed, and only a MIT card.
-3. **Is 800 ms a promise?** It is the goal when the provider returns a speakable piece quickly. The enforceable caps are 80 ms from endpoint to send, 280 ms from enqueue to audio for a short piece, and 50 ms to flush on barge-in. Provider time is reported beside those.
+3. **Is 800 ms a promise?** It is the goal when the provider returns a speakable piece quickly. The enforceable caps are 80 ms from endpoint to send, 280 ms from enqueue to audio for a short piece, and 50 ms to flush on barge-in. Provider time is reported beside those. Fillers are on (section 5.4). They are a lead-in when the reply misses the threshold, not a substitute for those caps. `HOVEL_VOICE_FILLERS=0` turns them off without another code change.
 4. **Cancel the provider on barge-in?** Yes. Flush first, then stop the turn, keep the partial text, send the new utterance as a new message with `speak: true`.
 5. **Where is the button?** On the native Kokoro row until the page can pass `member` and `effort`. Then in the catalog composer, backed by a presentational control from tool-webkit. One capture at a time.
 6. **Store audio?** No. The chat message is stored as typed messages already are. PCM is dropped. Debug wavs require `HOVEL_HEARING_DEBUG=1`.
@@ -613,6 +633,7 @@ Recommended answers, so implementation does not stall. A different answer is a c
 | Stream the reply into TTS by sentence | Section 6.1, milestone 2 |
 | Barge-in via the flush | Sections 5.3 and 8 |
 | About 800 ms | Section 7 |
+| Fillers on, cached, one per turn, flagged | Section 5.4, milestone 1 |
 | Architecture and the diagram | Section 3 |
 | UX: push-to-talk, hands-free, indicator, transcript, mute, permission | Section 5 |
 | Endpoint tuning | Section 6 |
