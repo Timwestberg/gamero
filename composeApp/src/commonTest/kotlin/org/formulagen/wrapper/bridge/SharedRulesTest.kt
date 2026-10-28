@@ -33,7 +33,8 @@ class SharedRulesTest {
         assertTrue(ChatMethods.SEND.accepts(send("Hi", "gpt-6.1-sol")))
         assertFalse(ChatMethods.SEND.accepts(send("Hi", "--dangerously-skip-permissions")))
         assertFalse(ChatMethods.SEND.accepts(send("Hi", "Sonnet")))
-        assertFalse(ChatMethods.SEND.accepts(send("Hi", "x".repeat(65))))
+        assertTrue(ChatMethods.SEND.accepts(send("Hi", "x".repeat(128))))
+        assertFalse(ChatMethods.SEND.accepts(send("Hi", "x".repeat(129))))
     }
 
     @Test fun companionNamesAreRejectedRatherThanTrimmed() {

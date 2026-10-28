@@ -57,6 +57,21 @@ data class ProviderScope(val profile: String, val runtimeId: RuntimeId)
 data class ProviderListArgs(val profile: String)
 
 /**
+ * The case behind a state, so the page need not match message text: `not-installed`, `outdated` and
+ * `not-offered` (this host gates the runtime off) with unavailable; `signed-out` with disconnected;
+ * `api-key` and `unknown` with error.
+ */
+@Serializable
+enum class ProviderDetail {
+    @SerialName("not-installed") NOT_INSTALLED,
+    @SerialName("outdated") OUTDATED,
+    @SerialName("signed-out") SIGNED_OUT,
+    @SerialName("api-key") API_KEY,
+    @SerialName("unknown") UNKNOWN,
+    @SerialName("not-offered") NOT_OFFERED,
+}
+
+/**
  * [accountLabel] is the account's email and [plan] its plan name, sent only when [state] is
  * connected. [providerId] is always the company behind [runtimeId].
  */
@@ -67,6 +82,7 @@ data class ProviderStatus(
     val accountLabel: String? = null,
     val plan: String? = null,
     val message: String? = null,
+    val detail: ProviderDetail? = null,
     val providerId: RuntimeProviderId = runtimeId.providerId,
 ) {
     init { require(providerId == runtimeId.providerId) { "A provider status names the provider of its runtime" } }

@@ -42,10 +42,39 @@ class ChatWireTest {
         assertEquals(snapshot, bridgeJson.decodeFromJsonElement(ChatSnapshot.serializer(), fixture.jsonObject.getValue("result")))
     }
 
+    /** An unanswered message, the failure behind it, and every handover method and reason. */
+    @Test fun theUnansweredSnapshotEnvelopeMatchesTheContractFixture() {
+        val fixture = Json.parseToJsonElement(HostBridgeFixtures.ENVELOPES.getValue("success-chat-snapshot-unanswered.json")).jsonObject.getValue("value")
+        val sol = TeamMember(RuntimeId.CODEX, "gpt-6.1-sol"); val opus = TeamMember(RuntimeId.CLAUDE_CODE, "opus")
+        fun id(n: Int) = "60000000-0000-4000-8000-0000000000" + n.toString().padStart(2, '0')
+        val snapshot = ChatSnapshot(ChatState.ERROR, listOf(
+            ChatEntry.Handover(id(1), "2026-10-27T12:00:00Z", null, codex, HandoverMethod.FRESH, HandoverReason.HOST),
+            ChatEntry.User(id(2), "Hello"),
+            ChatEntry.Assistant(id(3), codex, "Hi! What are we doing today?"),
+            ChatEntry.Handover(id(4), "2026-10-27T12:01:00Z", codex, sonnet, HandoverMethod.SUMMARY, HandoverReason.MANUAL,
+                "The person said hello, and Ember asked about their plans for today."),
+            ChatEntry.Handover(id(5), "2026-10-27T12:02:00Z", sonnet, codex, HandoverMethod.UP_TO_DATE, HandoverReason.MANUAL),
+            ChatEntry.Handover(id(6), "2026-10-27T12:03:00Z", codex, sol, HandoverMethod.SAME_CONVERSATION, HandoverReason.HOST),
+            ChatEntry.User(id(7), "Tell me a story."),
+            ChatEntry.Assistant(id(8), sol, "Once, a small robot found a lantern in the hovel."),
+            ChatEntry.Handover(id(9), "2026-10-27T12:04:00Z", sol, opus, HandoverMethod.RECENT_MESSAGES, HandoverReason.ENGINE,
+                engine = HandoverEngine("hovel-rules", "1.0.0")),
+            ChatEntry.User(id(10), "And then?", UserStatus.UNANSWERED),
+        ), notice = "You've reached your Claude usage limit. It resets at 3:00 PM.",
+            failure = ChatFailureReport(ChatFailureKind.USAGE_LIMIT, opus, "2026-10-27T15:00:00Z"))
+        assertEquals(fixture, Json.parseToJsonElement(BridgeEnvelopes.success(bridgeJson.encodeToJsonElement(ChatSnapshot.serializer(), snapshot))))
+        assertEquals(snapshot, bridgeJson.decodeFromJsonElement(ChatSnapshot.serializer(), fixture.jsonObject.getValue("result")))
+    }
+
     @Test fun providerStatusesNameTheProviderOfTheirRuntime() {
         assertEquals("""{"runtimeId":"claude-code","state":"connected","plan":"Max","providerId":"anthropic"}""",
             bridgeJson.encodeToString(ProviderStatus.serializer(), ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.CONNECTED, plan = "Max")))
         assertEquals(RuntimeProviderId.OPENAI, ProviderStatus(RuntimeId.CODEX, ProviderState.DISCONNECTED).providerId)
         kotlin.test.assertFails { ProviderStatus(RuntimeId.CODEX, ProviderState.DISCONNECTED, providerId = RuntimeProviderId.ANTHROPIC) }
+        val signedOut = Json.parseToJsonElement(HostBridgeFixtures.ENVELOPES.getValue("success-providers-status-claude-signed-out.json")).jsonObject.getValue("value")
+        assertEquals(signedOut, Json.parseToJsonElement(BridgeEnvelopes.success(bridgeJson.encodeToJsonElement(ProviderStatus.serializer(),
+            ProviderStatus(RuntimeId.CLAUDE_CODE, ProviderState.DISCONNECTED,
+                message = "Sign in to Claude Code with your Claude subscription: run `claude auth login` in Terminal, then choose Check again.",
+                detail = ProviderDetail.SIGNED_OUT)))))
     }
 }

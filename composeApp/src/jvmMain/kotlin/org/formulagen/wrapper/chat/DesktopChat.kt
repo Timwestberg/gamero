@@ -128,6 +128,11 @@ internal class DesktopChat(
         view(session)
     }
 
+    /** Running an unanswered message again arrives with unanswered messages; until then the answer is a notice. */
+    override suspend fun retry(args: ChatRetry): ChatSnapshot = synchronized(gate) {
+        view(current(args.scope())).copy(notice = "This message cannot be sent again yet.")
+    }
+
     /** Stop ends the reply gracefully, cancels a handover being prepared, or ends the runtimes' work when nothing has started. */
     override suspend fun stop(scope: ChatScope): ChatSnapshot = synchronized(gate) {
         val session = current(scope)

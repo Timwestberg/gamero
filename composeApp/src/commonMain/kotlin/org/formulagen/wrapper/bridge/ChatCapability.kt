@@ -17,6 +17,8 @@ interface ChatCapability {
     suspend fun send(args: ChatSend): ChatSnapshot
     /** Make [ChatHandover.to] the active member. Refused while a reply is responding. */
     suspend fun handover(args: ChatHandover): ChatSnapshot
+    /** Run the turn of an unanswered user entry again, with [ChatRetry.member]; it adds no user entry. */
+    suspend fun retry(args: ChatRetry): ChatSnapshot
     suspend fun stop(scope: ChatScope): ChatSnapshot
     suspend fun stopSpeaking(scope: ChatScope): ChatSnapshot
     suspend fun closeSession(scope: ChatScope)
@@ -39,10 +41,20 @@ data class ChatSend(val profile: String, val companionId: String, val name: Stri
     fun scope() = ChatScope(profile, companionId, name, sessionId)
 }
 
-/** Make [to] the active member, taking over from [from] (null when none was active). [requestId] makes a retry one entry. */
+/**
+ * Make [to] the active member, taking over from [from] (null when none was active). [requestId]
+ * makes a retry one entry. A page asks only for [HandoverReason.MANUAL] ones.
+ */
 @Serializable
 data class ChatHandover(val profile: String, val companionId: String, val name: String, val sessionId: String,
     val from: TeamMember?, val reason: HandoverReason, val requestId: String, val to: TeamMember) {
+    fun scope() = ChatScope(profile, companionId, name, sessionId)
+}
+
+/** Run the turn of the unanswered user entry [entryId] again, with [member]. [requestId] makes a repeated retry one turn. */
+@Serializable
+data class ChatRetry(val profile: String, val companionId: String, val name: String, val sessionId: String,
+    val entryId: String, val member: TeamMember, val requestId: String, val speak: Boolean) {
     fun scope() = ChatScope(profile, companionId, name, sessionId)
 }
 
@@ -57,6 +69,8 @@ object ChatLimits { // mirrors CHAT_LIMITS
 
 /** What one member hands the next: a summary, or the last [RECENT_MESSAGES] entries within [RECENT_CHARS]. */
 object HandoverLimits { // mirrors HANDOVER_LIMITS
+    /** An engine's id and version, as Hovel Brain bounds them. */
+    const val ENGINE_IDENTIFIER = 256
     const val RECENT_CHARS = 8000
     const val RECENT_MESSAGES = 10
     const val SUMMARY = 2000
@@ -76,20 +90,54 @@ enum class ChatState {
 
 /**
  * How the incoming member learned the conversation: its runtime's own conversation continues
- * (`same-conversation`), a summary by the outgoing member, the recent messages when no summary was
- * possible, or nothing to hand over (`fresh`).
+ * (`same-conversation`), it has its own conversation and missed nothing (`up-to-date`), a summary by
+ * the outgoing member, the recent messages when no summary was possible, or nothing to hand over (`fresh`).
  */
 @Serializable
 enum class HandoverMethod {
     @SerialName("same-conversation") SAME_CONVERSATION,
+    @SerialName("up-to-date") UP_TO_DATE,
     @SerialName("summary") SUMMARY,
     @SerialName("recent-messages") RECENT_MESSAGES,
     @SerialName("fresh") FRESH,
 }
 
-/** Why a handover happened. `manual` is the person's switch; a rule system adds its own reason. */
+/**
+ * Who decided on a handover: the person (`manual`); the host, for a note it records itself (a
+ * runtime's first turn, a model change made by a send, catching a runtime up, recovering a lost
+ * conversation); or a routing engine, named in [ChatEntry.Handover.engine].
+ */
 @Serializable
-enum class HandoverReason { @SerialName("manual") MANUAL }
+enum class HandoverReason {
+    @SerialName("manual") MANUAL,
+    @SerialName("host") HOST,
+    @SerialName("engine") ENGINE,
+}
+
+/** A routing engine, by Hovel Brain's names. */
+@Serializable
+data class HandoverEngine(val engineId: String, val engineVersion: String)
+
+/** `unanswered`: the message's turn failed before a reply, so `chat.retry` can run it again. */
+@Serializable
+enum class UserStatus { @SerialName("unanswered") UNANSWERED }
+
+/** Why the last turn failed, so the page offers the next step without reading the notice. */
+@Serializable
+enum class ChatFailureKind {
+    @SerialName("usage-limit") USAGE_LIMIT,
+    @SerialName("signed-out") SIGNED_OUT,
+    @SerialName("model-unavailable") MODEL_UNAVAILABLE,
+    @SerialName("temporary") TEMPORARY,
+    @SerialName("lockdown") LOCKDOWN,
+    /** The runtime is not installed, not offered or not ready. */
+    @SerialName("unavailable") UNAVAILABLE,
+    @SerialName("unexpected") UNEXPECTED,
+}
+
+/** The last turn's failure on [member]; [resetsAt] is an ISO-8601 instant when the runtime reports one. */
+@Serializable
+data class ChatFailureReport(val kind: ChatFailureKind, val member: TeamMember, val resetsAt: String? = null)
 
 @Serializable
 enum class VoiceState {
@@ -107,8 +155,9 @@ enum class VoiceState {
 sealed interface ChatEntry {
     val id: String
 
+    /** [status] is `unanswered` when its turn failed before a reply; absent for a normal message. */
     @Serializable @SerialName("user")
-    data class User(override val id: String, val text: String) : ChatEntry
+    data class User(override val id: String, val text: String, val status: UserStatus? = null) : ChatEntry
 
     @Serializable @SerialName("assistant")
     data class Assistant(override val id: String, val author: TeamMember, val text: String) : ChatEntry
@@ -126,15 +175,18 @@ sealed interface ChatEntry {
         val method: HandoverMethod,
         val reason: HandoverReason,
         val summary: String? = null,
+        /** The engine that decided; only with reason `engine`. */
+        val engine: HandoverEngine? = null,
     ) : ChatEntry
 }
 
 @Serializable
 data class ChatVoice(val state: VoiceState = VoiceState.IDLE, val notice: String? = null)
 
+/** [failure] is why the last turn failed, absent once a turn succeeds. */
 @Serializable
 data class ChatSnapshot(val state: ChatState = ChatState.READY, val messages: List<ChatEntry> = emptyList(),
-    val notice: String? = null, val voice: ChatVoice = ChatVoice())
+    val notice: String? = null, val voice: ChatVoice = ChatVoice(), val failure: ChatFailureReport? = null)
 
 /**
  * The contract's handover `from` is `nullable`, not `optional`: the key is always there. The bridge
@@ -144,7 +196,7 @@ data class ChatSnapshot(val state: ChatState = ChatState.READY, val messages: Li
 internal object HandoverSerializer : KSerializer<ChatEntry.Handover> {
     @Serializable @SerialName("handover")
     private class Wire(val id: String, val at: String, val from: Previous, val to: TeamMember, val method: HandoverMethod,
-        val reason: HandoverReason, val summary: String? = null)
+        val reason: HandoverReason, val summary: String? = null, val engine: HandoverEngine? = null)
 
     @Serializable(with = PreviousSerializer::class)
     private class Previous(val member: TeamMember?)
@@ -160,9 +212,9 @@ internal object HandoverSerializer : KSerializer<ChatEntry.Handover> {
 
     override val descriptor: SerialDescriptor = Wire.serializer().descriptor
     override fun serialize(encoder: Encoder, value: ChatEntry.Handover) = encoder.encodeSerializableValue(Wire.serializer(),
-        Wire(value.id, value.at, Previous(value.from), value.to, value.method, value.reason, value.summary))
+        Wire(value.id, value.at, Previous(value.from), value.to, value.method, value.reason, value.summary, value.engine))
     override fun deserialize(decoder: Decoder) = decoder.decodeSerializableValue(Wire.serializer())
-        .let { ChatEntry.Handover(it.id, it.at, it.from.member, it.to, it.method, it.reason, it.summary) }
+        .let { ChatEntry.Handover(it.id, it.at, it.from.member, it.to, it.method, it.reason, it.summary, it.engine) }
 }
 
 /** Mirrors event-contracts/host-bridge/chat.ts. */
@@ -181,7 +233,11 @@ object ChatMethods {
         valid(it.scope()) && valid(it.member) && BridgeProtocol.UUID_PATTERN.matches(it.requestId) && it.text.trimEcma().length in 1..ChatLimits.MESSAGE
     }
     val HANDOVER = BridgeMethod("chat.handover", ChatHandover.serializer(), ChatSnapshot.serializer()) {
-        valid(it.scope()) && it.from?.let(::valid) != false && valid(it.to) && BridgeProtocol.UUID_PATTERN.matches(it.requestId)
+        valid(it.scope()) && it.from?.let(::valid) != false && valid(it.to) && it.reason == HandoverReason.MANUAL &&
+            BridgeProtocol.UUID_PATTERN.matches(it.requestId)
+    }
+    val RETRY = BridgeMethod("chat.retry", ChatRetry.serializer(), ChatSnapshot.serializer()) {
+        valid(it.scope()) && valid(it.member) && BridgeProtocol.UUID_PATTERN.matches(it.entryId) && BridgeProtocol.UUID_PATTERN.matches(it.requestId)
     }
     fun pack(chat: Capability<ChatCapability>): CapabilityPack = binder.pack(chat)
     internal val binder = CapabilityBinder("chat", listOf<CapabilityHandler<ChatCapability>>(
@@ -189,6 +245,7 @@ object ChatMethods {
         SNAPSHOT.handle { chat, args -> chat.snapshot(args) },
         SEND.handle { chat, args -> chat.send(args) },
         HANDOVER.handle { chat, args -> chat.handover(args) },
+        RETRY.handle { chat, args -> chat.retry(args) },
         STOP.handle { chat, args -> chat.stop(args) },
         STOP_SPEAKING.handle { chat, args -> chat.stopSpeaking(args) },
         CLOSE.handle { chat, args -> chat.closeSession(args); NoResult },

@@ -24,12 +24,15 @@ object SharedRules {
     const val COMPANION_NAME_LIMIT = 40
     /** Hovel Brain's sentinel model: the runtime's own default, or for Claude Code the profile's default Claude model. */
     const val RUNTIME_DEFAULT_MODEL = "runtime-default"
-    private val MODEL_ID = Regex("^[a-z0-9][a-z0-9._-]{0,63}$")
-
     /**
-     * A model as its runtime names it, or [RUNTIME_DEFAULT_MODEL]. Native code hands it to Claude
-     * Code as a command-line argument, so it starts with a letter or digit and is never read as an option.
+     * A model as its runtime names it, or [RUNTIME_DEFAULT_MODEL]: one lower-case token of at most
+     * 128 characters. Native code hands it to Claude Code as a command-line argument, so it starts
+     * with a letter or digit and is never read as an option. Mirrors `MODEL_ID_PATTERN`.
      */
+    const val MODEL_ID_PATTERN = "^[a-z0-9][a-z0-9._:/-]{0,127}$"
+    private val MODEL_ID = Regex(MODEL_ID_PATTERN)
+
+    /** Whether [value] is a model name by [MODEL_ID_PATTERN]. */
     fun isModelId(value: String): Boolean = MODEL_ID.matches(value)
 
     /**
