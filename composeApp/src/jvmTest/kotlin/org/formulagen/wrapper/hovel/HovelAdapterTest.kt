@@ -125,6 +125,13 @@ class HovelAdapterTest {
         assertFails { hovelMemoryJobRequest(job(queued, 0, effort = "extreme"), host) }
         assertFalse(isRunnableMemoryJob(job(queued, 0, providerId = "claude")))
         assertFails { hovelMemoryJobRequest(job(queued, 0, providerId = "claude"), host) }
+        // Refused here as the journal would refuse it, before the job is offered.
+        fun jobWith(key: String, value: String) = buildJsonObject { job(queued, 0).forEach { (k, v) -> put(k, v) }; put(key, value) }
+        assertFails { hovelMemoryJobRequest(jobWith("input", "x".repeat(ExecutionRequest.MAX_PROMPT_CHARS + 1)), host) }
+        assertFails { hovelMemoryJobRequest(jobWith("input", "  "), host) }
+        assertFails { hovelMemoryJobRequest(jobWith("id", jobId.uppercase()), host) }
+        assertEquals(ExecutionRequest.MAX_PROMPT_CHARS,
+            hovelMemoryJobRequest(jobWith("input", "x".repeat(ExecutionRequest.MAX_PROMPT_CHARS)), host).prompt.length)
         assertTrue(isRunnableMemoryJob(job(queued, 0)))
     }
 

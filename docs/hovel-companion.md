@@ -21,7 +21,7 @@ All paths below are under
 | `HovelCompanion` | [hovel/HovelCompanion.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelCompanion.kt) | Handles the bridge methods, shows the approval dialog, owns the registration file, starts the host session. |
 | `MacHostCredentials` | [companion/MacHostCredentials.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/companion/MacHostCredentials.kt) | Stores and reads the host bearer token in the macOS Keychain. |
 | `HovelHttpTransport` | [hovel/HovelHostAdapter.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostAdapter.kt) | The only HTTP client that sends the host token to the server. |
-| `HovelHostSession` | [hovel/HovelHostSession.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostSession.kt) | Heartbeat loop and a single task worker. |
+| `HovelHostSession` | [hovel/HovelHostSession.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostSession.kt) | Heartbeat loop, a task worker and a memory-job worker (one item each at a time), and the consolidation timer. |
 
 `DesktopServices.create` builds the services; [main.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/main.kt) attaches them to the WebView.
 
@@ -190,7 +190,9 @@ tasks remain on this computer".
 
 The session runs two lanes, each with its own journal and a single worker
 thread: one user task and one memory job may run at the same time. A malformed
-task never holds up a memory job, nor the reverse.
+task never holds up a memory job, nor the reverse. A memory job is checked
+against the journal's rules before it is offered, so one this version cannot
+run is shown on the status line rather than retried quietly.
 
 ### Tasks
 
@@ -247,9 +249,10 @@ A failed or uncertain job needs nothing on this computer. The server closes it
 and plans the day again, up to 3 attempts, then waits for the player's retry in
 Hovel. A job the server replaced or took back answers 409 and is never offered
 again. Memory job failures leave the status line unchanged, except a job this
-version cannot read (a missing field, or a model or effort it does not know):
-the status line then says "Connected · Update Hovel on this computer to run its
-memory jobs", and the job stays queued until the companion is updated.
+version cannot read (a missing field, a model or effort it does not know, or an
+input longer than it can run). The status line then says "Connected · Update
+Hovel on this computer to run its memory jobs", and the job stays queued until
+the companion is updated.
 
 ### Consolidation
 

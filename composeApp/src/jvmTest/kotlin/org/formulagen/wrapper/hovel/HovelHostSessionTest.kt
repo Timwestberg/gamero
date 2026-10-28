@@ -42,6 +42,8 @@ class HovelHostSessionTest {
 
         private fun claimed(body: JsonObject) = buildJsonObject { put("state", "claimed"); put("claimId", body.getValue("claimId")) }
         private fun advance(item: JsonObject, body: JsonObject, next: (JsonObject, Int) -> JsonObject): JsonObject {
+            // Like the real server, an identical report replays.
+            if (body.getValue("progress") == item.getValue("progress")) return item
             assertEquals(item.getValue("revision"), body.getValue("expectedRevision"))
             return next(body.getValue("progress").jsonObject, item.getValue("revision").jsonPrimitive.int + 1)
         }
@@ -108,6 +110,8 @@ class HovelHostSessionTest {
             release.countDown()
             eventually { server.count("memory/consolidate") == 1 }
             assertEquals(1, memoryLaunches)
+            // running, then succeeded: a second offer would have queued a republish behind the first.
+            assertEquals(2, server.count("memory/progress"))
         }
     }
 
@@ -116,6 +120,11 @@ class HovelHostSessionTest {
         val unreadable = listOf(
             buildJsonObject { job(queued, 0).forEach { (key, value) -> if (key != "input") put(key, value) } },
             HovelTestFixtures.memoryJob(host, owner, jobId, effort = "maximal"),
+            // An input longer than this version's provider limit.
+            buildJsonObject {
+                HovelTestFixtures.memoryJob(host, owner, jobId).forEach { (key, value) -> put(key, value) }
+                put("input", "x".repeat(ExecutionRequest.MAX_PROMPT_CHARS + 1))
+            },
         )
         for (item in unreadable) {
             statuses.clear()

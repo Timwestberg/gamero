@@ -148,12 +148,19 @@ fun hovelExecutionRequest(task: JsonObject, hostId: String): ExecutionRequest {
 fun isRunnableMemoryJob(job: JsonObject) =
     job["kind"] == JsonPrimitive("extract") && job["providerId"] == JsonPrimitive("codex")
 
-/** A memory job runs its server-built `input` alone, with no character section, on the job's own model and effort. */
+/**
+ * A memory job runs its server-built `input` alone, with no character section, on the job's own model and
+ * effort. It is checked here as the journal would check it, so a job this version cannot run is refused
+ * before it is offered, never left failing quietly on the worker.
+ */
 fun hovelMemoryJobRequest(job: JsonObject, hostId: String): ExecutionRequest {
     require(job.getValue("hostId").jsonPrimitive.content == hostId) { "Memory job belongs to another computer" }
     require(isRunnableMemoryJob(job)) { "This companion runs only Codex extraction jobs" }
-    return ExecutionRequest(job.text("id"), hostId, job.text("input"), rawPrompt = true,
-        choice = ProviderChoice(job.text("model"), job.text("effort")))
+    val id = job.text("id").also { require(UUID.fromString(it).toString() == it) { "Memory job ID must be a canonical UUID" } }
+    val input = job.text("input").also {
+        require(it.isNotBlank() && it.length <= ExecutionRequest.MAX_PROMPT_CHARS) { "Memory job input is empty or too long" }
+    }
+    return ExecutionRequest(id, hostId, input, rawPrompt = true, choice = ProviderChoice(job.text("model"), job.text("effort")))
 }
 
 private fun JsonObject.text(key: String): String = optionalText(key) ?: error("$key is missing")

@@ -210,7 +210,7 @@ rules in the first column; a capability or a transport must obey the rest.
    pack from the product's start code on every platform.
 4. **Platforms.** Write the implementation in each platform source set that
    supports it. Pass `Capability.Unsupported` in the others.
-5. **Fixtures.** Run `tools/sync-host-bridge-fixtures.py` and the router tests.
+5. **Fixtures.** Run `tools/sync-server-fixtures.py` and the router tests.
 6. **Web.** Callers use `call("area.verb", args)` from `@formulagen/host-bridge`
    after they check `host.capabilities`.
 
