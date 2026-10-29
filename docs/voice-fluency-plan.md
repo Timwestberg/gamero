@@ -161,7 +161,7 @@ Plus one repeat of sentence `Hello, this is Ember.` at seed 1.
 | Cross-sentence similarity | Same spectrum, pairwise across the three spoken turns | Report the minimum. Target ≥ 0.75. If 5 steps miss it, record the number and stop. Do not silently return to 1 step. |
 | F0 spread | Autocorrelation pitch on a 1 s window from the middle of each sentence | Report min, max, and range in Hz. Target range ≤ 15 Hz. The 1-step baseline on this VM was 122–145 Hz (range 23). |
 | Time to first audio | Clock from `speak` to the first line write | Less than or equal to sentence-1 synthesis plus 200 ms. Not the sum of the reply. |
-| RTF | Audio seconds / synthesis seconds for the three turns together | Report it. On a Mac-class machine, if RTF < 1.0 at 5 steps, set the shipped default to 2, remeasure F0 and cosine, and put both numbers in the PR. |
+| RTF | Audio seconds / synthesis seconds for the three turns together | Report it. On a Mac-class machine, if RTF < 1.0 at 5 steps, ship the fallback of 3, remeasure F0 and cosine, and put both numbers in the PR. |
 | Retry seed | Log the seed of every `synthesize` | Every call is seed 1. |
 
 - [ ] Run `./run.sh --fluency` on Linux after Task 3. Commit the summary numbers into the PR description, not a new baseline JSON.
