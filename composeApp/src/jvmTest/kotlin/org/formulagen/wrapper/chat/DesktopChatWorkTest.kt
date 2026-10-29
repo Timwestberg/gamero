@@ -42,6 +42,7 @@ class DesktopChatWorkTest {
         override fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle { requests += turn; this.events += events; return TurnHandle { stops++ } }
         override fun summarize(request: SummaryRequest) = "They worked on the game."
         override fun release() { releases++ }
+        override fun release(lease: String) { releases++ }
         override fun close() = Unit
     }
 

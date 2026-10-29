@@ -45,6 +45,12 @@ internal class GrokWorkRuntime(
     private val trust: GrokWorkTrust = GrokWorkTrust { _, _, _ -> false },
     /** The player's login-shell `PATH` for the working child ([grokWorkEnvironment]); null keeps [environment]'s. */
     private val loginPath: () -> String? = { loginShellPath.value },
+    /**
+     * Handles of a profile's work bindings that live outside team chat's history, such as a conversation
+     * thread's ([org.formulagen.wrapper.conversations.ConversationStore.bindingHandles]); null when they
+     * could not be read, and then nothing is pruned.
+     */
+    private val retained: (profile: String) -> Set<String>? = { emptySet() },
 ) : WorkRuntime {
     override val id = RuntimeId.GROK_BUILD
     private val bindings = GrokSessions(root.resolve("grok-work-bindings"))
@@ -86,6 +92,11 @@ internal class GrokWorkRuntime(
         return TurnHandle(started::stop)
     }
 
+    /** Stop [lease]'s turns; other leases keep running. */
+    override fun release(lease: String) {
+        running.filter { it.lease == lease }.forEach(Turn::stop)
+    }
+
     /** Stop every current lease immediately, including workers that are still authenticating. */
     override fun release() {
         val turns = synchronized(lifecycle) { generation.incrementAndGet(); running.toList() }
@@ -103,6 +114,7 @@ internal class GrokWorkRuntime(
         private val ended = AtomicBoolean()
         private val finished = CompletableFuture<Unit>()
         private val work = checkNotNull(request.work)
+        val lease: String get() = work.lease
         private val startupCancel = CancelSignal()
         @Volatile private var worker: Thread? = null
         @Volatile private var session: GrokWorkSession? = null
@@ -144,7 +156,7 @@ internal class GrokWorkRuntime(
             val saved = request.conversation
             // Retain the saved handle while pruning; it is looked up next.
             val start = when (val resolved = resolveGrokWorkTurn(request, connection, bindings, beforeLookup = {
-                companionConversationIds(root, request.profile, RuntimeId.GROK_BUILD)
+                retainedGrokHandles(root, request.profile, retained)
                     ?.let { bindings.prune(request.profile, it + listOfNotNull(saved?.id)) }
             })) {
                 is GrokTurnStart.Failed -> { fail(resolved.failure); return }
@@ -248,3 +260,14 @@ internal fun grokWorkAuthNotice(config: Path): String = ("Grok work needs Grok B
 
 internal const val GROK_WORK_CONFIG_UNSUPPORTED = "Grok work can't use your Grok config: it has settings Hovel has not " +
     "accepted for project work, such as custom models, endpoints, relays or command prefixes."
+
+/**
+ * Every Grok handle [profile] still uses: team chat's saved conversations and the [retained] ones kept
+ * elsewhere, such as conversation threads. Null when either could not be read, so nothing is pruned
+ * on a partial view.
+ */
+internal fun retainedGrokHandles(root: Path, profile: String, retained: (String) -> Set<String>?): Set<String>? {
+    val chat = companionConversationIds(root, profile, RuntimeId.GROK_BUILD) ?: return null
+    val elsewhere = runCatching { retained(profile) }.getOrNull() ?: return null
+    return chat + elsewhere
+}
