@@ -45,8 +45,11 @@ import javax.swing.JFrame
 private class DesktopResources : AutoCloseable {
     val browser = AtomicReference<org.cef.browser.CefBrowser?>(null)
     val windowActive = AtomicBoolean(false)
+    var services: DesktopServices? = null
     private var keyboardClient: CefClient? = null
-    private val keyboard = BrowserEditKeyboard(browser::get, windowActive::get)
+    private val keyboard = BrowserEditKeyboard(browser::get, windowActive::get, onEscape = {
+        services?.chat?.endConversation() == true
+    })
 
     fun attachBrowser(target: org.cef.browser.CefBrowser) {
         browser.set(null)
@@ -60,7 +63,6 @@ private class DesktopResources : AutoCloseable {
         browser.set(target)
     }
 
-    var services: DesktopServices? = null
     var bridge: NativeBridge? = null
     override fun close() {
         windowActive.set(false)

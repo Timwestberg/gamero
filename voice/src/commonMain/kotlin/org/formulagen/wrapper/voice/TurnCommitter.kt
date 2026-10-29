@@ -3,7 +3,11 @@ package org.formulagen.wrapper.voice
 import kotlin.math.sqrt
 
 /** Why a hands-free turn was committed. */
-enum class EndpointReason { VAD_SILENCE, TEXT_STABLE, CAP }
+enum class EndpointReason(val wire: String) {
+    VAD_SILENCE("vad_silence"),
+    TEXT_STABLE("text_stable"),
+    CAP("cap"),
+}
 
 data class EndpointEvent(
     val decision: EndpointDecision,
@@ -125,26 +129,27 @@ fun screenHeardTurn(
     emberText: String,
 ): String? {
     val words = speechTokens(text)
+    val barge = BargeInPolicy()
     if (emberHot) {
-        val strong = vadSpeechMs >= HEARING_BARGE_SUSTAIN_MS && maxProb >= 0.5f
-        if (words.size in 1..2 && !strong) return "too_short"
-        if (!strong) return "no_vad_speech"
-        if (mostlyEcho(words, emberText)) return "self_echo"
+        val strong = vadSpeechMs >= barge.sustainMs && maxProb >= barge.minProbability
+        if (words.size in 1..barge.shortWordLimit && !strong) return DiscardReason.TOO_SHORT.wire
+        if (!strong) return DiscardReason.NO_VAD_SPEECH.wire
+        if (mostlyEcho(words, emberText, barge.echoOverlapPercent)) return DiscardReason.SELF_ECHO.wire
         return null
     }
-    if (vadSpeechMs < HEARING_MIN_SPEECH_MS) return "no_vad_speech"
+    if (vadSpeechMs < HEARING_MIN_SPEECH_MS) return DiscardReason.NO_VAD_SPEECH.wire
     return null
 }
 
 internal fun speechTokens(text: String): List<String> =
     text.lowercase().split(Regex("[^a-z0-9']+")).filter { it.isNotEmpty() }
 
-private fun mostlyEcho(words: List<String>, emberText: String): Boolean {
+private fun mostlyEcho(words: List<String>, emberText: String, overlapPercent: Int): Boolean {
     if (words.isEmpty()) return false
     val ember = speechTokens(emberText).toSet()
     if (ember.isEmpty()) return false
     val overlap = words.count { it in ember }
-    return overlap * 100 / words.size >= 60
+    return overlap * 100 / words.size >= overlapPercent
 }
 
 fun chunkRms(samples: FloatArray): Float {
