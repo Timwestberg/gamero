@@ -89,7 +89,7 @@ private fun projectSmoke(presenter: DialogPresenter, progress: (String) -> Unit)
         store.save(scope.profile, scope.companionId, 0, brainId(), config)
         val workspaces = WorkspaceStore(root, FolderPicker { _, _ -> project })
         workspaces.choose(scope.profile, scope.companionId)
-        DesktopBrain(root, store, listOf(runtime), ChatWork(workspaces, StartOfWork(dialogs), listOf(observedWorker)), providers, dialogs, speech, {}).use { brain ->
+        DesktopBrain(root, store, listOf(runtime), ChatWork(workspaces, StartOfWork(dialogs), listOf(observedWorker)), providers, dialogs, FilePicker { null }, speech, {}).use { brain ->
             fun call(method: String, fields: JsonObject = buildJsonObject {}) = runBlocking { brain.call(method, JsonObject(brainWire(scope).jsonObject + fields)) }
             call("open")
             call("send", buildJsonObject { put("requestId", brainId()); put("expectedRevision", 1); put("text", "Run the entire five-stage workflow to create and review the greeting document in this disposable project. Use each configured stage in order. There is no git merge in this test."); put("inputIds", JsonArray(emptyList())); put("speak", false) })
@@ -126,9 +126,10 @@ private fun reopenSmoke(root: Path, presenter: DialogPresenter) {
     val dialogs = NativeDialogs(presenter)
     val speech = object : ChatSpeech { override fun status() = ChatVoice(); override fun speak(text: String) {}; override fun stop() {}; override fun close() {} }
     DesktopProviders(emptyList()).use { providers ->
-        DesktopBrain(root, store, emptyList(), ChatWork(WorkspaceStore(root, FolderPicker { _, _ -> error("No folder picker during recovery") }), StartOfWork(dialogs), emptyList()), providers, dialogs, speech, {}).use { brain ->
+        DesktopBrain(root, store, emptyList(), ChatWork(WorkspaceStore(root, FolderPicker { _, _ -> error("No folder picker during recovery") }), StartOfWork(dialogs), emptyList()), providers, dialogs, FilePicker { null }, speech, {}).use { brain ->
             val scope = brainWire(ChatScope("local", companion, "Workflow smoke", brainId())).jsonObject
-            val expected = if (original.summary.state in setOf("completed", "cancelled", "failed")) original.summary.state else "paused"
+            // Reopening pauses unfinished work, except a run that was already waiting for the user's message.
+            val expected = if (original.summary.state in setOf("completed", "cancelled", "failed", "awaiting-input")) original.summary.state else "paused"
             runBlocking { brain.call("open", scope) }
             repeat(10) {
                 Thread.sleep(200)

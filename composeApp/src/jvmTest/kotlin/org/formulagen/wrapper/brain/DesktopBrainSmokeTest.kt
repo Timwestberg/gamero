@@ -39,7 +39,7 @@ class DesktopBrainSmokeTest {
                 val config = base.copy(coordinator = base.coordinator.copy(binding = binding), specialists = listOf(role))
                 val store = BrainStore(root); val companion = brainId()
                 store.save("local", companion, 0, brainId(), config)
-                DesktopBrain(root, store, listOf(runtime), ChatWork(WorkspaceStore(root, FolderPicker { _, _ -> null }), StartOfWork(dialogs), emptyList()), providers, dialogs, speech, {}).use { brain ->
+                DesktopBrain(root, store, listOf(runtime), ChatWork(WorkspaceStore(root, FolderPicker { _, _ -> null }), StartOfWork(dialogs), emptyList()), providers, dialogs, FilePicker { null }, speech, {}).use { brain ->
                     val lease = brainWire(ChatScope("local", companion, "Smoke companion", brainId())).jsonObject
                     fun call(method: String, fields: JsonObject = buildJsonObject {}) = runBlocking { brain.call(method, JsonObject(lease + fields)) }
                     call("open")

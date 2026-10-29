@@ -1,13 +1,14 @@
 package org.formulagen.wrapper.brain
 
-import java.awt.EventQueue
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import javax.swing.JFileChooser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -15,6 +16,8 @@ import kotlinx.serialization.json.*
 import org.formulagen.wrapper.approvals.*
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.chat.*
+import org.formulagen.wrapper.providers.copy
+import org.formulagen.wrapper.workspace.FilePicker
 
 /** A single leased, durable controller. Provider work and dialogs run outside the state lock. */
 internal class DesktopBrain(
@@ -24,6 +27,8 @@ internal class DesktopBrain(
     private val work: ChatWork,
     private val providers: ProviderCapability,
     private val dialogs: NativeDialogs,
+    /** Chooses a file to attach as an input; the page never names a path. */
+    private val files: FilePicker,
     private val speech: ChatSpeech,
     private val closeLegacy: () -> Unit,
     private val saveWhileLegacyIdle: (String, String, () -> JsonElement) -> JsonElement = { _, _, save -> save() },
@@ -65,12 +70,45 @@ internal class DesktopBrain(
         persist(session, value.copy(run = value.run?.let { it.copy(summary = it.summary.copy(revision = it.summary.revision + 1)) }))
     }
     private fun run(session: Session) = synchronized(gate) { check(live(session)); checkNotNull(session.record.run) }
+    /**
+     * Nothing is in flight. A worker that has just paused or finished only winds down: it checks the run's state and
+     * generation before doing anything more, so a new request may start beside it.
+     */
+    private fun idle(session: Session) = !session.busy || session.record.run?.summary?.state !in ACTIVE
     private fun addMessage(session: Session, author: String, text: String, role: BrainRoleSnapshot? = null, activity: Activity? = null) = change(session) {
-        it.copy(messages = (it.messages + BrainEntry(uuid(), author, text.take(BrainLimits.OUTPUT), role, activity)).takeLast(ChatLimits.HISTORY))
+        it.copy(messages = (it.messages + BrainEntry(uuid(), author, text.take(BrainLimits.OUTPUT), role, activity)).takeLast(BrainLimits.HISTORY))
     }
     private fun setRun(session: Session, transform: (RunRecord) -> RunRecord) = change(session) { it.copy(run = transform(checkNotNull(it.run))) }
+    /**
+     * Launch nothing more until the user acts. Kind `input` waits for their next message (`awaiting-input`), which the
+     * coordinator re-plans with; every other kind pauses until an explicit resume. A running attempt is interrupted.
+     */
     private fun pause(session: Session, message: String, kind: String = "recovery") = change(session) {
-        it.copy(run = it.run?.let { run -> run.copy(summary = run.summary.copy(state = "paused"), attempts = run.attempts.map { attempt -> if (attempt.state == "running") attempt.copy(state = "interrupted") else attempt }) }, waiting = BrainWaiting(kind, message.take(512)), notice = message.take(512))
+        it.copy(run = it.run?.let { run -> run.copy(summary = run.summary.copy(state = if (kind == "input") "awaiting-input" else "paused"), attempts = run.attempts.map { attempt -> if (attempt.state == "running") attempt.copy(state = "interrupted") else attempt }) },
+            waiting = BrainWaiting(kind, message.take(BrainLimits.DESCRIPTION)), notice = message.take(BrainLimits.DESCRIPTION))
+    }
+    /** [attempt] will not go on as it is: record it blocked, and let the coordinator re-plan its step or task with the user's next message. */
+    private fun decline(session: Session, attempt: BrainAttempt, message: String) = change(session) {
+        it.copy(run = it.run?.let { run -> run.copy(summary = run.summary.copy(state = "awaiting-input"), phase = if (attempt.stepId == null) "plan" else "advance",
+            attempts = run.attempts.map { item -> if (item.id == attempt.id) item.copy(state = "blocked") else item }) }, waiting = BrainWaiting("input", message.take(BrainLimits.DESCRIPTION)))
+    }
+    /** Pause after [error] with what is known: the provider's own reason when it gave one, and whether the attempt could have done work. */
+    private fun failed(session: Session, error: Throwable) {
+        val failure = error as? ProviderFailure
+        val attempt = session.record.run?.attempts?.lastOrNull()?.takeIf { it.state == "running" }
+        if (failure != null && failure.failure == ChatFailure.ConversationLost) change(session) {
+            // The runtime lost that conversation: the next turn for this role starts a fresh one.
+            if (failure.coordinator) it.copy(coordinatorContexts = it.coordinatorContexts - failure.context) else it.copy(run = it.run?.let { run -> run.copy(contexts = run.contexts - failure.context) })
+        }
+        // Only a project role can have changed something mid-turn; a refused turn, or a talk-only one, did nothing to repeat.
+        val uncertain = attempt?.role?.mode == MemberMode.WORK && (failure == null || failure.failure == ChatFailure.Temporary || failure.failure == ChatFailure.Unexpected)
+        if (attempt != null && !uncertain) setRun(session) { it.copy(attempts = it.attempts.map { item -> if (item.id == attempt.id) item.copy(state = "failed") else item }) }
+        val who = attempt?.role?.name ?: "the coordinator"
+        pause(session, when {
+            failure == null -> "Work paused. The provider or saved state could not complete this turn. Review the result before resuming."
+            failure.failure == ChatFailure.ConversationLost -> "Work paused. ${failure.runtime.copy.product} could not continue $who's conversation. Resume to start it fresh."
+            else -> "Work paused for $who. ${failureNotice(failure.runtime, failure.failure)}"
+        })
     }
 
     override suspend fun call(method: String, args: JsonObject): JsonElement = withContext(Dispatchers.IO) {
@@ -99,9 +137,11 @@ internal class DesktopBrain(
             "addInput" -> addInput(args, args.string("text").toByteArray(), args.string("title"), "text/plain")
             "chooseInput" -> {
                 synchronized(gate) { requireSession(args) }
-                var file: Path? = null
-                EventQueue.invokeAndWait { val chooser = JFileChooser(); chooser.dialogTitle = "Attach input to companion"; if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) file = chooser.selectedFile.toPath() }
-                file?.let { path -> require(Files.isRegularFile(path) && Files.size(path) <= 8 * 1024 * 1024); val bytes = Files.readAllBytes(path); addInput(args, bytes, path.fileName.toString().take(80), if (path.toString().endsWith(".md") || path.toString().endsWith(".txt")) "text/plain" else "application/octet-stream") } ?: JsonNull
+                files.choose("Attach input to companion")?.let { path ->
+                    require(Files.isRegularFile(path) && Files.size(path) <= BrainStore.ARTIFACT_BYTES)
+                    val bytes = Files.readAllBytes(path)
+                    addInput(args, bytes, path.fileName.toString(), inputMediaType(path.fileName.toString(), bytes))
+                } ?: JsonNull
             }
             "readOutput" -> {
                 val artifact = synchronized(gate) {
@@ -110,7 +150,7 @@ internal class DesktopBrain(
                     val record = session.record.run?.takeIf { it.summary.id == runId } ?: store.archived(profile, companionId, runId) ?: error("Unknown run")
                     record.artifacts.find { it.id == args.string("artifactId") } ?: error("Unknown artifact")
                 }
-                val text = if (artifact.mediaType == "application/octet-stream") "Attached file: ${artifact.title}" else store.bytes(profile, companionId, artifact).toString(Charsets.UTF_8)
+                val text = if (artifact.mediaType == BrainStore.BINARY) "Attached file: ${artifact.title}" else store.bytes(profile, companionId, artifact).toString(Charsets.UTF_8)
                 val cursor = args.getValue("cursor").jsonPrimitive.int; require(cursor <= text.length)
                 val end = minOf(text.length, cursor + BrainLimits.OUTPUT)
                 buildJsonObject { put("text", text.substring(cursor, end)); put("nextCursor", if (end < text.length) JsonPrimitive(end) else JsonNull) }
@@ -123,14 +163,16 @@ internal class DesktopBrain(
         active?.let { end(it, false) }; closeLegacy()
         var record = store.readRecord(scope.profile, scope.companionId)
         if (record.messages.isEmpty()) {
-            val legacy = ChatHistory(root.resolve(scope.profile).resolve("companion-chats").resolve("${scope.companionId}.json")).read()
-            record = record.copy(messages = legacy.entries.mapNotNull { entry -> when (entry) {
+            // The team conversation, from either of its locations. An unreadable record never blocks the coordinator; it stays on disk.
+            val legacy = runCatching { companionChatHistory(root, scope.profile, scope.companionId).read() }.getOrNull()
+            record = record.copy(messages = legacy?.entries.orEmpty().mapNotNull { entry -> when (entry) {
                 is ChatEntry.User -> BrainEntry(entry.id, "user", entry.text)
                 is ChatEntry.Assistant -> BrainEntry(entry.id, "system", "Previous conversation (${entry.author.modelId}): ${entry.text}".take(BrainLimits.OUTPUT))
                 else -> null
-            } }.takeLast(ChatLimits.HISTORY))
+            } }.takeLast(BrainLimits.HISTORY))
         }
-        val unfinished = record.run?.takeIf { it.summary.state !in setOf("completed", "cancelled", "failed") }
+        // A run waiting for the user's message has nothing in flight, so it keeps waiting; anything else unfinished pauses.
+        val unfinished = record.run?.takeIf { it.summary.state !in TERMINAL && it.summary.state != "awaiting-input" }
         if (unfinished != null) record = record.copy(run = unfinished.copy(summary = unfinished.summary.copy(state = "paused"), attempts = unfinished.attempts.map { if (it.state == "running") it.copy(state = "interrupted") else it }), waiting = BrainWaiting("recovery", "Work is paused. Review completed outputs before resuming."))
         val session = Session(scope, record); active = session; persist(session, record)
         snapshot(session)
@@ -146,7 +188,7 @@ internal class DesktopBrain(
         val receipt = args.string("requestId")
         val digest = BrainStore.digest(args.toString().toByteArray())
         session.record.receipts[receipt]?.let { require(it == digest); return@synchronized snapshot(session) }
-        require(!session.busy)
+        require(idle(session))
         val document = store.read(session.scope.profile, session.scope.companionId) ?: error("Configure a coordinator first")
         if (document.revision != args.getValue("expectedRevision").jsonPrimitive.long) {
             persist(session, session.record.copy(notice = "The brain changed. Review the current coordinator and send again.")); return@synchronized snapshot(session)
@@ -154,28 +196,28 @@ internal class DesktopBrain(
         val inputIds = args.getValue("inputIds").jsonArray.map { it.jsonPrimitive.content }
         val available = session.record.staged + (session.record.run?.artifacts ?: emptyList())
         require(inputIds.all { id -> available.any { it.id == id } })
-        val text = args.string("text")
+        val text = args.string("text").trimEcma()
         val existing = session.record.run
         val next = if (existing?.summary?.state == "awaiting-input") {
             existing.copy(request = "${existing.request}\nUser clarification: $text".takeLast(BrainLimits.INPUT), inputs = (existing.inputs + inputIds).distinct(), artifacts = (existing.artifacts + available.filter { it.id in inputIds }).distinctBy { it.id }, summary = existing.summary.copy(state = "planning"))
         } else {
-            require(existing == null || existing.summary.state in setOf("completed", "cancelled", "failed")) { "Resume or stop the current run first" }
+            require(existing == null || existing.summary.state in TERMINAL) { "Resume or stop the current run first" }
             existing?.let { store.archive(session.scope.profile, session.scope.companionId, it) }
             RunRecord(BrainRun(uuid(), 1, document.revision, null, "planning", null), document.configuration, work.workspaces.folder(session.scope.profile, session.scope.companionId)?.path?.toString(), text, inputIds, artifacts = available.filter { it.id in inputIds })
         }
         session.cancel = CancelSignal(); session.speak = args.getValue("speak").jsonPrimitive.boolean
-        persist(session, session.record.copy(run = next, messages = (session.record.messages + BrainEntry(receipt, "user", text)).takeLast(ChatLimits.HISTORY), waiting = null, notice = null,
+        persist(session, session.record.copy(run = next, messages = (session.record.messages + BrainEntry(receipt, "user", text)).takeLast(BrainLimits.HISTORY), waiting = null, notice = null,
             receipts = (session.record.receipts + (receipt to digest)).entries.toList().takeLast(128).associate { it.toPair() }, staged = session.record.staged.filter { it.id !in inputIds }))
         launch(session); snapshot(session)
     }
     private fun addInput(args: JsonObject, bytes: ByteArray, title: String, type: String): JsonElement {
         val session = synchronized(gate) { requireSession(args) }
         val artifact = store.artifact(session.scope.profile, session.scope.companionId, title, BrainSource("user", messageId = args.string("messageId")), bytes, type)
-        synchronized(gate) { require(active === session); persist(session, session.record.copy(staged = (session.record.staged + artifact).takeLast(30))) }
+        synchronized(gate) { require(active === session); persist(session, session.record.copy(staged = (session.record.staged + artifact).takeLast(BrainLimits.INPUTS))) }
         return brainWire(artifact)
     }
     private fun launch(session: Session) {
-        require(!session.busy); session.busy = true
+        session.busy = true
         val generation = ++session.generation
         executor.execute {
             try {
@@ -183,7 +225,7 @@ internal class DesktopBrain(
                     if (run(session).phase == "execute") execute(session) else decide(session)
                 }
             } catch (_: InterruptedException) { }
-            catch (error: Throwable) { synchronized(gate) { if (live(session) && session.generation == generation) pause(session, "Work paused. The provider or saved state could not complete this turn. Review the result before retrying.") } }
+            catch (error: Throwable) { synchronized(gate) { if (live(session) && session.generation == generation) failed(session, error) } }
             finally { synchronized(gate) { if (active === session && session.generation == generation) { session.busy = false; session.handle = null } } }
         }
     }
@@ -191,7 +233,7 @@ internal class DesktopBrain(
         session.generation++; session.cancel.cancel(); session.handle?.stop(); session.handle = null; session.busy = false
         runtimes.values.forEach { it.release() }; work.runtimes.values.forEach { it.release() }; speech.stop()
         val run = session.record.run
-        if (run != null && run.summary.state !in setOf("completed", "cancelled", "failed")) persist(session, session.record.copy(run = run.copy(summary = run.summary.copy(state = if (cancelled) "cancelled" else "paused", revision = run.summary.revision + 1), attempts = run.attempts.map { if (it.state == "running") it.copy(state = "interrupted") else it }), waiting = if (cancelled) null else BrainWaiting("recovery", "Work paused when chat closed. Review before resuming.")))
+        if (run != null && run.summary.state !in TERMINAL && (cancelled || run.summary.state != "awaiting-input")) persist(session, session.record.copy(run = run.copy(summary = run.summary.copy(state = if (cancelled) "cancelled" else "paused", revision = run.summary.revision + 1), attempts = run.attempts.map { if (it.state == "running") it.copy(state = "interrupted") else it }), waiting = if (cancelled) null else BrainWaiting("recovery", "Work paused when chat closed. Review before resuming.")))
     }
     fun invalidate() = synchronized(gate) { active?.let { end(it, false) }; active = null }
     override fun close() { invalidate(); executor.shutdownNow(); speech.close() }
@@ -242,7 +284,7 @@ internal class DesktopBrain(
         val request = buildJsonObject {
             put("decisionId", uuid()); put("runRevision", current.summary.revision); put("allowed", JsonArray(allowed.map(::JsonPrimitive)))
             put("request", current.request); put("configuration", brainWire(current.configuration)); put("run", brainWire(current.summary)); put("attempts", brainWire(current.attempts)); put("artifacts", brainWire(current.artifacts)); put("nextStepId", current.configuration.workflow?.steps?.getOrNull(current.nextStep)?.id?.let(::JsonPrimitive) ?: JsonNull)
-            put("input", handoff(session, current.artifacts.filter { it.id in current.inputs }.map { it.id })); put("latestOutput", current.attempts.lastOrNull()?.outputIds?.let { handoff(session, it) } ?: "")
+            put("input", handoff(session, current.artifacts.filter { it.id in current.inputs }.map { it.id }, files = false)); put("latestOutput", current.attempts.lastOrNull()?.outputIds?.let { handoff(session, it, files = false) } ?: "")
             put("conversation", brainWire(synchronized(gate) { session.record.messages.takeLast(10) }))
         }.toString()
         var decision: JsonObject? = null
@@ -252,7 +294,7 @@ internal class DesktopBrain(
                 decision = runCatching { parseDecision(text, allowed) }.getOrNull()
             }
         }
-        val value = decision ?: run { pause(session, "The coordinator returned an invalid decision. No specialist was started.", "input"); return }
+        val value = decision ?: run { pause(session, "The coordinator returned an invalid decision, so no specialist was started. Reply to try again.", "input"); return }
         when (value.string("kind")) {
             "answer" -> {
                 require(current.summary.workflowId == null || current.phase == "finish")
@@ -261,7 +303,7 @@ internal class DesktopBrain(
             }
             "ask" -> {
                 addMessage(session, "coordinator", value.string("question"), coordinator)
-                change(session) { it.copy(run = it.run?.let { run -> run.copy(summary = run.summary.copy(state = "awaiting-input")) }, waiting = BrainWaiting("input", value.string("question").take(512))) }
+                change(session) { it.copy(run = it.run?.let { run -> run.copy(summary = run.summary.copy(state = "awaiting-input")) }, waiting = BrainWaiting("input", value.string("question").take(BrainLimits.DESCRIPTION))) }
             }
             "delegate" -> {
                 require(current.summary.workflowId == null)
@@ -303,7 +345,7 @@ internal class DesktopBrain(
         require(attempt.id == decision.string("attemptId") && attempt.state == "completed")
         val outcome = decision.string("outcome")
         addMessage(session, "coordinator", decision.string("explanation"), session.coordinator)
-        if (outcome == "blocked") { pause(session, decision.string("explanation"), "input"); return }
+        if (outcome == "blocked") { decline(session, attempt, decision.string("explanation")); return }
         setRun(session) { it.copy(attempts = it.attempts.map { item -> if (item.id == attempt.id) item.copy(outcome = outcome) else item }) }
         if (attempt.stepId == null) { setRun(session) { it.copy(phase = "plan", summary = it.summary.copy(state = "planning")) }; return }
         val workflow = checkNotNull(current.configuration.workflow)
@@ -322,19 +364,32 @@ internal class DesktopBrain(
         var attempt = current.attempts.last()
         if (current.summary.returnsUsed > current.returnsAllowance || current.summary.dispatchesUsed >= current.dispatchesAllowance) { pause(session, "The run reached its revision or dispatch allowance. Continue adds another bounded allowance.", "limit"); return }
         val issues = runBlocking { readiness(session.scope.profile, session.scope.companionId, current.configuration) }.filter { it.roleId == attempt.role.roleId }
-        if (issues.isNotEmpty()) { pause(session, "${attempt.role.name} is not ready: ${issues.joinToString { it.reason }}. Update the brain or provider and resume.", "input"); return }
+        if (issues.isNotEmpty()) { pause(session, "${attempt.role.name} is not ready: ${issues.joinToString { it.reason }}. Update the brain or provider and resume."); return }
         val role = resolved(session, attempt.role)
         attempt = attempt.copy(role = role)
         setRun(session) { it.copy(attempts = it.attempts.dropLast(1) + attempt) }
         val step = current.configuration.workflow?.steps?.find { it.id == attempt.stepId }
-        val approvalId = uuid()
-        if (step?.askBeforeStarting == true) {
-            change(session) { it.copy(run = it.run?.let { run -> run.copy(summary = run.summary.copy(state = "awaiting-approval"), attempts = run.attempts.dropLast(1) + attempt.copy(state = "awaiting-approval")) }, waiting = BrainWaiting("stage", "Approve ${step.name} with ${role.name} (${role.binding.modelId}).", approvalId, attempt.id)) }
-            val choice = dialogs.ask(NativeDialog("Approve ${step.name}", listOf("Specialist: ${role.name} · ${role.binding.modelId}", "Task: ${current.task}", "Expected result: ${step.outputDescription}", "Workspace: ${current.workspace?.let { Path.of(it).fileName } ?: "Conversation only"}", "Inputs: ${handoff(session, attempt.inputIds).take(2000)}"), listOf("Continue" to "continue", "Request changes" to "changes", "Stop" to "stop"), "stop"), session.cancel)
+        // Ad hoc work for a role the enabled workflow uses honors the strictest of that role's stage approvals.
+        val stages = step?.let(::listOf) ?: current.configuration.workflow?.takeIf { it.enabled }?.steps?.filter { it.specialistId == role.roleId }.orEmpty()
+        if (stages.any { it.askBeforeStarting }) {
+            val approvalId = uuid()
+            val subject = step?.name ?: "${role.name}'s task"
+            val title = "Approve $subject"
+            change(session) { it.copy(run = it.run?.let { run -> run.copy(summary = run.summary.copy(state = "awaiting-approval"), attempts = run.attempts.dropLast(1) + attempt.copy(state = "awaiting-approval")) }, waiting = BrainWaiting("stage", "$title with ${memberLabel(role.binding.member())}.".take(BrainLimits.DESCRIPTION), approvalId, attempt.id)) }
+            val lines = listOfNotNull("Specialist: ${role.name} · ${memberLabel(role.binding.member())}", "Task: ${current.task}",
+                if (step == null) "Requested outside the workflow; ${role.name}'s workflow stages ask before starting." else "Expected result: ${step.outputDescription}",
+                "Workspace: ${current.workspace?.let { Path.of(it).fileName } ?: "Conversation only"}", "Inputs: ${handoff(session, attempt.inputIds, files = false).take(2000)}")
+            // Escape, a timeout or closing chat pauses; only the Stop button ends the run.
+            val choice = dialogs.ask(NativeDialog(title, lines, listOf("Continue" to "continue", "Request changes" to "changes", "Not now" to "pause", "Stop" to "stop"), "pause"), session.cancel)
             if (choice != "continue") {
-                if (choice == "changes") change(session) { it.copy(run = it.run?.let { run -> run.copy(summary = run.summary.copy(state = "awaiting-input"), phase = if (attempt.stepId == null) "plan" else "advance", attempts = run.attempts.dropLast(1) + attempt.copy(state = "blocked")) }, waiting = BrainWaiting("input", "Describe the changes before this step starts.")) }
-                else if (choice == "stop") synchronized(gate) { if (live(session)) end(session, true) }
-                else pause(session, "The step was not approved. No specialist was started.", "input")
+                when (choice) {
+                    "changes" -> decline(session, attempt, "Describe the changes before this step starts.")
+                    "stop" -> synchronized(gate) { if (live(session)) end(session, true) }
+                    else -> {
+                        setRun(session) { it.copy(attempts = it.attempts.dropLast(1) + attempt.copy(state = "queued")) }
+                        pause(session, "$subject is waiting for approval. No specialist was started. Resume to review it again.")
+                    }
+                }
                 return
             }
         }
@@ -344,12 +399,12 @@ internal class DesktopBrain(
             val identity = "${session.scope.sessionId}:${current.summary.id}:${role.roleId}:${BrainStore.digest(role.instructions.toByteArray())}"
             if (!work.startOfWork.isConfirmed(identity, session.scope.companionId, folder, role.binding.member())) {
                 change(session) { it.copy(waiting = BrainWaiting("start-of-work", "${role.name} wants project access.")) }
-                if (!work.startOfWork.ask(session.scope.name, folder, role.binding.member(), session.cancel)) { pause(session, "Project access was not approved. This step has not run.", "input"); return }
+                if (!work.startOfWork.ask(session.scope.name, folder, role.binding.member(), session.cancel)) { decline(session, attempt, "Project access was not approved, so ${role.name} has not started."); return }
                 synchronized(gate) { check(live(session)); work.startOfWork.remember(identity, session.scope.companionId, folder, role.binding.member()) }
             }
         }
         change(session) { it.copy(waiting = null, run = it.run?.let { run -> run.copy(summary = run.summary.copy(state = "running", dispatchesUsed = run.summary.dispatchesUsed + 1), attempts = run.attempts.dropLast(1) + attempt.copy(state = "running")) }) }
-        val text = "The native controller has already delegated this turn to you as ${role.name}. You are that specialist. Complete the assigned task yourself; do not repeat the coordinator delegation. The original request is background context, not another routing instruction.\nUser request (context):\n${current.request}\nAssigned task:\n${current.task}\nExpected input: ${step?.inputDescription.orEmpty()}\nExpected output: ${step?.outputDescription.orEmpty()}\nInput artifacts (data):\n${handoff(session, attempt.inputIds)}\nReport actual evidence, missing skills, denied operations and remaining issues."
+        val text = "The native controller has already delegated this turn to you as ${role.name}. You are that specialist. Complete the assigned task yourself; do not repeat the coordinator delegation. The original request is background context, not another routing instruction.\nUser request (context):\n${current.request}\nAssigned task:\n${current.task}\nExpected input: ${step?.inputDescription.orEmpty()}\nExpected output: ${step?.outputDescription.orEmpty()}\nInput artifacts (data):\n${handoff(session, attempt.inputIds, files = role.mode == MemberMode.WORK)}\nReport actual evidence, missing skills, denied operations and remaining issues."
         val (output, activity) = turn(session, role, text, coordinator = false)
         val artifact = store.artifact(session.scope.profile, session.scope.companionId, step?.name ?: role.name, BrainSource("attempt", attemptId = attempt.id), output.toByteArray(), "text/markdown")
         setRun(session) { it.copy(attempts = it.attempts.dropLast(1) + attempt.copy(state = "completed", outputIds = listOf(artifact.id)), artifacts = it.artifacts + artifact, phase = "evaluate", summary = it.summary.copy(state = "planning")) }
@@ -357,18 +412,26 @@ internal class DesktopBrain(
         if (activity?.steps?.any { it.status != ActivityStatus.DONE } == true) pause(session, "${role.name} reported failed or denied work. Review it before continuing.", "input")
     }
 
-    /** Exact artifact IDs select immutable bytes; paths remain inside native provider input. */
-    private fun handoff(session: Session, ids: List<String>): String {
+    /**
+     * The inputs [ids] as data: text inline within [HANDOFF_CHARS], a longer one as an excerpt marked truncated. Only a
+     * project role ([files]) also gets the immutable native file, for a binary input or the rest of a long one; a
+     * tool-free role cannot open a path, so it gets a note instead.
+     */
+    private fun handoff(session: Session, ids: List<String>, files: Boolean): String {
         val current = run(session)
-        var remaining = 96_000
+        var remaining = HANDOFF_CHARS
         return ids.distinct().joinToString("\n\n") { id ->
             val artifact = current.artifacts.find { it.id == id } ?: error("Unknown input artifact")
             val bytes = store.bytes(session.scope.profile, session.scope.companionId, artifact)
-            if (artifact.mediaType != "application/octet-stream" && bytes.size <= minOf(BrainLimits.INPUT, remaining)) {
-                remaining -= bytes.size
-                "Artifact $id (${artifact.title}, digest ${artifact.digest}):\n${bytes.toString(Charsets.UTF_8)}"
+            val header = "Artifact $id (${artifact.title}, digest ${artifact.digest})"
+            val file = if (files) " The complete immutable file is ${store.artifactPath(session.scope.profile, session.scope.companionId, artifact)}." else ""
+            if (artifact.mediaType == BrainStore.BINARY) "$header: a binary file of ${bytes.size} bytes, which cannot be shown as text.$file"
+            else {
+                val text = bytes.toString(Charsets.UTF_8)
+                val shown = text.take(minOf(BrainLimits.INPUT, remaining)).also { remaining -= it.length }
+                if (shown.length == text.length) "$header:\n$text"
+                else "$header, truncated to its first ${shown.length} of ${text.length} characters.$file\n$shown\n[Truncated]"
             }
-            else "Artifact $id (${artifact.title}, digest ${artifact.digest}), immutable native file: ${store.artifactPath(session.scope.profile, session.scope.companionId, artifact)}"
         }
     }
 
@@ -394,7 +457,7 @@ internal class DesktopBrain(
             override fun accepted() {}
             override fun partial(text: String) { /* Control responses remain private until validated. */ }
             override fun completed(text: String, conversation: String) { synchronized(gate) { if (valid()) { opened(conversation); future.complete(text to latestActivity) } } }
-            override fun failed(failure: ChatFailure) { synchronized(gate) { if (valid()) future.completeExceptionally(IllegalStateException("Provider turn failed: ${failure::class.simpleName}")) } }
+            override fun failed(failure: ChatFailure) { synchronized(gate) { if (valid()) future.completeExceptionally(ProviderFailure(failure, role.binding.runtimeId, key, coordinator)) } }
             override fun activity(activity: Activity) { synchronized(gate) { if (valid()) latestActivity = activity } }
             override fun waiting(waiting: ChatWaiting?) { synchronized(gate) { if (valid()) change(session) { it.copy(waiting = waiting?.let { value -> BrainWaiting("provider", value.summary) }) } } }
         }
@@ -415,7 +478,7 @@ internal class DesktopBrain(
                 runtime.startTurn(request, events)
             }
             synchronized(gate) { if (live(session) && session.generation == generation) session.handle = handle else handle.stop() }
-            return future.get(2, TimeUnit.HOURS)
+            return try { future.get(2, TimeUnit.HOURS) } catch (wrapped: ExecutionException) { throw wrapped.cause ?: wrapped }
         } finally {
             cancellation.close()
             synchronized(gate) { if (active === session && session.generation == generation) session.handle?.stop() }
@@ -430,7 +493,7 @@ internal class DesktopBrain(
         val record = checkNotNull(session.record.run)
         val requestId = args.string("requestId"); val digest = BrainStore.digest(args.toString().toByteArray())
         session.record.receipts[requestId]?.let { require(it == digest); return@synchronized snapshot(session) }
-        require(!session.busy)
+        require(idle(session))
         require(record.summary.id == args.string("runId") && record.summary.revision == args.getValue("expectedRunRevision").jsonPrimitive.long)
         require(record.summary.state in setOf("paused", "awaiting-input", "awaiting-approval", "failed"))
         if (retry) require(record.attempts.lastOrNull()?.id == args.string("attemptId"))
@@ -446,9 +509,13 @@ internal class DesktopBrain(
         val generation = ++session.generation
         executor.execute {
             try {
-                val uncertain = record.attempts.lastOrNull()?.state in setOf("running", "interrupted", "failed")
+                val last = record.attempts.lastOrNull()
+                // A dispatched attempt without a result runs again; only a project role's can have left effects behind.
+                val rerun = last != null && (retry || last.state in DISPATCHED)
+                val uncertain = last != null && last.state in setOf("running", "interrupted") && last.role.mode == MemberMode.WORK
                 val lines = mutableListOf("Finished outputs are preserved.")
-                if (uncertain || retry) lines += "The last attempt may have changed files or external state. Continuing retries that work and may repeat effects. Verify its result first."
+                if (uncertain) lines += "The last attempt may have changed files or external state. Continuing retries that work and may repeat effects. Verify its result first."
+                else if (rerun) lines += "${last.role.name}'s attempt runs again with the same input."
                 if (target != null) {
                     lines += "Adopt configuration revision ${target.revision}. Pending approvals will be requested again."
                     target.configuration.specialists.forEach { next -> val old = record.configuration.specialists.find { it.id == next.id }; if (next != old) lines += "${next.name}: ${old?.binding?.modelId} → ${next.binding?.modelId}; instructions: ${next.instructions}" }
@@ -461,21 +528,49 @@ internal class DesktopBrain(
                         session.busy = false
                         if (approved) {
                             val config = target?.configuration ?: record.configuration
-                            val last = record.attempts.lastOrNull()
-                            val retryAttempt = (uncertain || retry) && last != null
-                            val phase = if (retryAttempt) "execute" else record.phase
+                            val phase = if (rerun) "execute" else record.phase
                             val attempts = if (phase == "execute" && last != null) {
                                 val specialist = config.specialists.first { it.id == last.role.roleId }
-                                record.attempts + last.copy(id = uuid(), state = "queued", outputIds = emptyList(), outcome = null, role = last.role.copy(binding = checkNotNull(specialist.binding), instructions = specialist.instructions), configurationRevision = target?.revision ?: record.summary.configurationRevision)
+                                val next = last.copy(state = "queued", outputIds = emptyList(), outcome = null, role = last.role.copy(binding = checkNotNull(specialist.binding), instructions = specialist.instructions), configurationRevision = target?.revision ?: record.summary.configurationRevision)
+                                // One that never started is replaced in place; one that started stays in the history.
+                                if (last.state in NOT_STARTED) record.attempts.dropLast(1) + next else record.attempts + next.copy(id = uuid())
                             } else record.attempts
                             change(session) { it.copy(waiting = null, notice = null, run = record.copy(configuration = config, phase = phase, attempts = attempts, task = if (phase == "execute" && last?.stepId != null) config.workflow?.steps?.find { it.id == last.stepId }?.instructions ?: record.task else record.task, summary = record.summary.copy(revision = session.record.run!!.summary.revision,configurationRevision = target?.revision ?: record.summary.configurationRevision, state = "planning", currentAttemptId = attempts.lastOrNull()?.id), returnsAllowance = record.summary.returnsUsed + BrainLimits.RETURNS, dispatchesAllowance = record.summary.dispatchesUsed + BrainLimits.DISPATCHES)) }
                             launch(session)
-                        } else change(session) { it.copy(waiting = previousWaiting, run = it.run?.let { run -> run.copy(summary = run.summary.copy(state = "paused")) }) }
+                        } else change(session) { it.copy(waiting = previousWaiting, run = it.run?.let { run -> run.copy(summary = run.summary.copy(state = record.summary.state)) }) }
                     }
                 }
             } catch (_: Throwable) { synchronized(gate) { if (active === session && session.generation == generation) { session.busy = false; if (live(session)) pause(session, "Resume could not complete. The run remains paused.") } } }
         }
         snapshot(session)
+    }
+}
+
+/** A run doing work, or waiting on a native dialog. */
+private val ACTIVE = setOf("planning", "running", "awaiting-approval")
+/** Runs that ended, and need a new request to continue. */
+private val TERMINAL = setOf("completed", "cancelled", "failed")
+/** Attempts that were dispatched to a provider but have no result. */
+private val DISPATCHED = setOf("running", "interrupted", "failed")
+/** Attempts that never reached a provider. */
+private val NOT_STARTED = setOf("queued", "awaiting-approval")
+/** The most text one handoff inlines across all its inputs. */
+private const val HANDOFF_CHARS = 96_000
+
+/** A provider ended a turn with [failure]; [context] names the native conversation it ran in. */
+private class ProviderFailure(val failure: ChatFailure, val runtime: RuntimeId, val context: String, val coordinator: Boolean) :
+    Exception("Provider turn failed: ${failure::class.simpleName}")
+
+/** UTF-8 text of any file name is text, Markdown by its extension in any case; anything else is a binary file. */
+internal fun inputMediaType(fileName: String, bytes: ByteArray): String {
+    val text = runCatching {
+        Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes))
+    }.getOrNull()
+    return when {
+        // A NUL is valid UTF-8 but marks binary data, such as UTF-16 text or an image.
+        text == null || text.contains('\u0000') -> BrainStore.BINARY
+        fileName.substringAfterLast('.', "").lowercase() in setOf("md", "markdown") -> "text/markdown"
+        else -> "text/plain"
     }
 }
 

@@ -30,6 +30,7 @@ import org.formulagen.wrapper.chat.ChatWork
 import org.formulagen.wrapper.chat.claude.ClaudeWorkRuntime
 import org.formulagen.wrapper.chat.codex.CodexWorkRuntime
 import org.formulagen.wrapper.workspace.DesktopWorkspace
+import org.formulagen.wrapper.workspace.NativeFilePicker
 import org.formulagen.wrapper.workspace.NativeFolderPicker
 import org.formulagen.wrapper.workspace.WorkspaceStore
 import org.formulagen.wrapper.chat.ClaudeChatRuntime
@@ -142,7 +143,7 @@ internal class DesktopServices private constructor(
                 // Both runtimes sign in outside Hovel, on the player's own install, so a status check never signs a chat out.
                 val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),
                     claudeSignIn?.let(::ClaudeProvider)), working))
-                brain = own(DesktopBrain(providerRoot, brainStore, runtimes, work, providers, nativeDialogs,
+                brain = own(DesktopBrain(providerRoot, brainStore, runtimes, work, providers, nativeDialogs, NativeFilePicker { window },
                     DesktopSpeech(desktopVoiceConfig(environment)), chat::invalidate, chat::whileIdle, conversationOwnership))
                 val pet = own(DesktopPetLauncher(environment, support.resolve("ember-pet.log")))
                 val workspace = environment["GAMERO_WORKSPACE"]?.let(Path::of)

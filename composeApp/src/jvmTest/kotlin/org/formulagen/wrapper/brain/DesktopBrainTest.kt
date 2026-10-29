@@ -1,6 +1,7 @@
 package org.formulagen.wrapper.brain
 
 import java.nio.file.Files
+import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -22,6 +23,10 @@ class DesktopBrainTest {
         var enterAtSecond = false
         var longOutput = false
         var hold = false
+        /** Answers a coordinator turn with its own decision; null falls back to the default script. */
+        @Volatile var decide: ((JsonObject) -> String?)? = null
+        /** The next specialist turn fails with this instead of answering. */
+        @Volatile var failWorker: ChatFailure? = null
         @Volatile var held: TurnEvents? = null
         var checking: CountDownLatch? = null
         var releaseCheck: CountDownLatch? = null
@@ -35,18 +40,22 @@ class DesktopBrainTest {
             if (hold) { held = events; return TurnHandle {} }
             val thread = turn.conversation?.id ?: brainId()
             events.opened(thread); events.accepted()
-            val response = if (turn.persona.instructions.contains("Decision shapes:")) {
+            val coordinator = turn.persona.instructions.contains("Decision shapes:")
+            if (!coordinator) failWorker?.let { failWorker = null; events.failed(it); return TurnHandle {} }
+            val response = if (coordinator) {
                 if (malformed) "not JSON" else {
                     val input = brainJson.parseToJsonElement(turn.text).jsonObject
-                    val allowed = input.getValue("allowed").jsonArray.map { it.jsonPrimitive.content }
-                    val configuration = brainJson.decodeFromJsonElement<BrainConfiguration>(input.getValue("configuration"))
-                    val attempts = input.getValue("attempts").jsonArray
-                    when {
-                        "step-result" in allowed -> """{"kind":"step-result","attemptId":"${attempts.last().jsonObject.getValue("id").jsonPrimitive.content}","outcome":"${if (returnForChanges && attempts.last().jsonObject["stepId"]?.jsonPrimitive?.content == configuration.workflow?.steps?.last()?.id) "changes-needed" else "ready"}","explanation":"Output is ready."}"""
-                        "start-step" in allowed -> """{"kind":"start-step","stepId":${input.getValue("nextStepId")},"inputIds":[]}"""
-                        "enter-workflow" in allowed -> """{"kind":"enter-workflow","entryStepId":"${configuration.workflow!!.steps[if (enterAtSecond) 1 else 0].id}","inputIds":[],"skipped":${if (enterAtSecond) """[{"stepId":"${configuration.workflow.steps.first().id}","reason":"The supplied plan is ready."}]""" else "[]"},"reason":"Start writing."}"""
-                        "delegate" in allowed && attempts.isEmpty() -> """{"kind":"delegate","specialistId":"${configuration.specialists.first().id}","task":"Write a paragraph","inputIds":[]}"""
-                        else -> """{"kind":"answer","text":"Finished the requested work."}"""
+                    decide?.invoke(input) ?: run {
+                        val allowed = input.getValue("allowed").jsonArray.map { it.jsonPrimitive.content }
+                        val configuration = brainJson.decodeFromJsonElement<BrainConfiguration>(input.getValue("configuration"))
+                        val attempts = input.getValue("attempts").jsonArray
+                        when {
+                            "step-result" in allowed -> """{"kind":"step-result","attemptId":"${attempts.last().jsonObject.getValue("id").jsonPrimitive.content}","outcome":"${if (returnForChanges && attempts.last().jsonObject["stepId"]?.jsonPrimitive?.content == configuration.workflow?.steps?.last()?.id) "changes-needed" else "ready"}","explanation":"Output is ready."}"""
+                            "start-step" in allowed -> """{"kind":"start-step","stepId":${input.getValue("nextStepId")},"inputIds":[]}"""
+                            "enter-workflow" in allowed -> """{"kind":"enter-workflow","entryStepId":"${configuration.workflow!!.steps[if (enterAtSecond) 1 else 0].id}","inputIds":[],"skipped":${if (enterAtSecond) """[{"stepId":"${configuration.workflow.steps.first().id}","reason":"The supplied plan is ready."}]""" else "[]"},"reason":"Start writing."}"""
+                            "delegate" in allowed && attempts.isEmpty() -> delegate(configuration)
+                            else -> """{"kind":"answer","text":"Finished the requested work."}"""
+                        }
                     }
                 }
             } else if (longOutput) "Output ".repeat(4000) else "Completed ${turn.persona.instructions.substringAfter("acting as ").substringBefore('.')}."
@@ -65,34 +74,49 @@ class DesktopBrainTest {
         override fun close() {}
     }
     private class Providers : ProviderCapability {
-        override suspend fun perform(action: ProviderAction, scope: ProviderScope) = ProviderStatus(scope.runtimeId, ProviderState.CONNECTED)
+        @Volatile var connected = true
+        override suspend fun perform(action: ProviderAction, scope: ProviderScope) = ProviderStatus(scope.runtimeId, if (connected) ProviderState.CONNECTED else ProviderState.DISCONNECTED)
         override suspend fun list(profile: String) = ProviderList(listOf(RuntimeId.CODEX), emptyList())
         override suspend fun models(scope: ProviderScope) = ProviderModels(listOf(ProviderModel("Test model", true, "test-model", listOf(ModelEffort.HIGH))), scope.runtimeId)
         override suspend fun usage(scope: ProviderScope) = ProviderUsage(scope.runtimeId, 0)
     }
-    private class Fixture(workflow: Boolean = false, transform: (BrainConfiguration) -> BrainConfiguration = { it }, answer: Int = 0) : AutoCloseable {
-        val root = Files.createTempDirectory("brain-controller")
+    private class Fixture(workflow: Boolean = false, transform: (BrainConfiguration) -> BrainConfiguration = { it }, answer: Int = 0, open: Boolean = true) : AutoCloseable {
+        val root: Path = Files.createTempDirectory("brain-controller")
         val store = BrainStore(root)
         val configuration = transform(testConfiguration(workflow))
         val runtime = Runtime()
         val speech = Speech()
+        val providers = Providers()
         val scope = ChatScope("local", brainId(), "Ember", brainId())
-        val dialogs = NativeDialogs(DialogPresenter { _, reply -> reply(answer); {} })
-        val controller = DesktopBrain(root, store, listOf(runtime), ChatWork(WorkspaceStore(root, FolderPicker { _, _ -> null }), StartOfWork(dialogs), emptyList()), Providers(), dialogs, speech, {})
-        init { store.save(scope.profile, scope.companionId, 0, brainId(), configuration); call("open") }
+        /** Every native dialog shown, in order; [answer] picks each one's button. */
+        val shown = CopyOnWriteArrayList<NativeDialog<*>>()
+        @Volatile var answer: (NativeDialog<*>) -> Int = { answer }
+        @Volatile var chosen: Path? = null
+        val dialogs = NativeDialogs(DialogPresenter { dialog, reply -> shown += dialog; reply(answer(dialog)); {} })
+        val controller = DesktopBrain(root, store, listOf(runtime), ChatWork(WorkspaceStore(root, FolderPicker { _, _ -> null }), StartOfWork(dialogs), emptyList()), providers, dialogs,
+            FilePicker { chosen }, speech, {})
+        init { store.save(scope.profile, scope.companionId, 0, brainId(), configuration); if (open) call("open") }
         fun call(method: String, more: JsonObject = buildJsonObject {}) = runBlocking { controller.call(method, JsonObject(brainWire(scope).jsonObject + more)) }
-        fun send(requestId: String = brainId()) = call("send", buildJsonObject { put("requestId", requestId); put("expectedRevision", 1); put("text", "Please write this"); put("inputIds", JsonArray(emptyList())); put("speak", true) })
+        fun send(requestId: String = brainId(), text: String = "Please write this", inputIds: List<String> = emptyList()) = call("send", buildJsonObject {
+            put("requestId", requestId); put("expectedRevision", 1); put("text", text); put("inputIds", JsonArray(inputIds.map(::JsonPrimitive))); put("speak", true)
+        })
+        fun snapshot() = brainJson.decodeFromJsonElement<BrainSnapshot>(call("snapshot"))
         fun await(state: String): BrainSnapshot {
-            repeat(500) { val value = brainJson.decodeFromJsonElement<BrainSnapshot>(call("snapshot")); if (value.run?.state == state) return value; Thread.sleep(10) }
+            repeat(500) { val value = snapshot(); if (value.run?.state == state) return value; Thread.sleep(10) }
             error("State not reached: $state, ${call("snapshot")}")
         }
+        fun resume(run: BrainRun, more: JsonObject = buildJsonObject {}, method: String = "resume") =
+            call(method, JsonObject(buildJsonObject { put("runId", run.id); put("expectedRunRevision", run.revision); put("requestId", brainId()) } + more))
+        fun workers() = runtime.turns.filterNot { it.persona.instructions.contains("Decision shapes:") }
         override fun close() { controller.close() }
     }
+    private fun withAllStagesApproved(config: BrainConfiguration) = config.copy(workflow = config.workflow!!.let { it.copy(steps = it.steps.map { step -> step.copy(askBeforeStarting = true) }) })
+
     @Test fun workflowKeepsRolesSeparateAndOnlySpeaksValidatedCoordinatorText() = Fixture(true).use { fixture ->
         fixture.send(); val value = fixture.await("completed")
         assertEquals(2, value.attempts.size); assertEquals(2, value.artifacts.size)
         assertEquals(fixture.configuration.specialists.map { it.id }, value.attempts.map { it.role.roleId })
-        val workers = fixture.runtime.turns.filterNot { it.persona.instructions.contains("Decision shapes:") }
+        val workers = fixture.workers()
         assertEquals(2, workers.size); assertTrue(workers.all { it.conversation == null })
         assertEquals(listOf("Finished the requested work."), fixture.speech.spoken)
         assertTrue(value.messages.none { it.text.contains("\"kind\"") })
@@ -103,9 +127,10 @@ class DesktopBrainTest {
         val requestId = brainId(); fixture.send(requestId); fixture.await("completed")
         val count = fixture.runtime.turns.size; fixture.send(requestId); assertEquals(count, fixture.runtime.turns.size)
     }
-    @Test fun malformedDecisionPausesWithoutAnySpecialist() = Fixture().use { fixture ->
-        fixture.runtime.malformed = true; fixture.send(); val value = fixture.await("paused")
+    @Test fun malformedDecisionWaitsForTheUserWithoutAnySpecialist() = Fixture().use { fixture ->
+        fixture.runtime.malformed = true; fixture.send(); val value = fixture.await("awaiting-input")
         assertEquals(2, fixture.runtime.turns.size); assertTrue(value.attempts.isEmpty())
+        assertEquals("input", value.waiting?.kind)
     }
     @Test fun closeStopsTheLeaseAndLateCallbacksCannotChangeHistory() = Fixture().use { fixture ->
         fixture.runtime.hold = true; fixture.send()
@@ -134,10 +159,36 @@ class DesktopBrainTest {
         assertEquals(fixture.configuration.workflow!!.steps.first().id, value.run!!.skipped.single().stepId)
         assertEquals(fixture.configuration.workflow.steps.last().id, value.attempts.single().stepId)
     }
-    @Test fun nativeStageStopCannotDispatchAWorker() = Fixture(true, { config -> config.copy(workflow = config.workflow!!.let { it.copy(steps = it.steps.map { step -> step.copy(askBeforeStarting = true) }) }) }, answer = 2).use { fixture ->
+    @Test fun nativeStageStopCannotDispatchAWorker() = Fixture(true, ::withAllStagesApproved, answer = 3).use { fixture ->
         fixture.send(); val value = fixture.await("cancelled")
         assertEquals(1, fixture.runtime.turns.size)
         assertEquals(0, value.run!!.dispatchesUsed)
+    }
+    @Test fun escapeOnAStageDialogPausesTheRunInsteadOfStoppingIt() = Fixture(true, ::withAllStagesApproved).use { fixture ->
+        fixture.answer = { it.dismissIndex }
+        fixture.send(); val value = fixture.await("paused")
+        assertEquals("pause", fixture.shown.single().dismiss)
+        assertEquals("recovery", value.waiting?.kind)
+        assertEquals("queued", value.attempts.single().state)
+        assertTrue(fixture.workers().isEmpty())
+    }
+    @Test fun adHocDelegationToAWorkflowSpecialistAsksLikeItsStage() = Fixture(true, { config ->
+        config.copy(workflow = config.workflow!!.let { it.copy(steps = listOf(it.steps[0], it.steps[1].copy(specialistId = it.steps[0].specialistId, askBeforeStarting = true))) })
+    }, answer = 3).use { fixture ->
+        fixture.runtime.decide = { input -> if ("delegate" in input.getValue("allowed").toString()) delegate(fixture.configuration) else null }
+        fixture.send(); val value = fixture.await("cancelled")
+        assertEquals("Approve Writer's task", fixture.shown.single().title)
+        assertNull(value.attempts.single().stepId)
+        assertTrue(fixture.workers().isEmpty())
+    }
+    @Test fun requestingChangesAtAStageWaitsForThemAndStartsNothing() = Fixture(true, ::withAllStagesApproved, answer = 1).use { fixture ->
+        fixture.send(); val waiting = fixture.await("awaiting-input")
+        assertEquals("input", waiting.waiting?.kind); assertEquals("blocked", waiting.attempts.single().state)
+        assertEquals(0, waiting.run!!.dispatchesUsed); assertTrue(fixture.workers().isEmpty())
+        fixture.answer = { 0 }
+        fixture.send(text = "Use a friendlier tone"); val value = fixture.await("completed")
+        assertEquals(listOf("blocked", "completed", "completed"), value.attempts.map { it.state })
+        assertTrue(fixture.workers().first().text.contains("User clarification: Use a friendlier tone"))
     }
     @Test fun revisionLoopStopsBeforeTheFourthAutomaticReturn() = Fixture(true, { config ->
         config.copy(workflow = config.workflow!!.let { it.copy(steps = listOf(it.steps[0], it.steps[1].copy(returnTo = BrainReturn(it.steps[0].id, "Changes needed")))) })
@@ -172,7 +223,7 @@ class DesktopBrainTest {
         val changed = fixture.configuration.copy(coordinator = fixture.configuration.coordinator.copy(instructions = "New coordinator instruction"), specialists = fixture.configuration.specialists.map { it.copy(instructions = "New specialist instruction") })
         fixture.store.save("local", fixture.scope.companionId, 1, brainId(), changed)
         fixture.runtime.hold = false
-        fixture.runtime.held!!.completed("""{"kind":"delegate","specialistId":"${fixture.configuration.specialists.first().id}","task":"Write a paragraph","inputIds":[]}""", brainId())
+        fixture.runtime.held!!.completed(delegate(fixture.configuration), brainId())
         val result = fixture.await("completed")
         assertEquals(1L, result.run!!.configurationRevision)
         assertEquals(2L, result.configurationRevision)
@@ -189,6 +240,116 @@ class DesktopBrainTest {
         assertTrue(fixture.store.readRecord("local", fixture.scope.companionId).receipts.containsKey(request.getValue("requestId").jsonPrimitive.content))
     }
 
+    @Test fun aMessageAnswersAnInputPauseEvenAfterReopening() = Fixture().use { fixture ->
+        fixture.runtime.decide = { input -> if ("Clarified" in input.getValue("request").jsonPrimitive.content) null else """{"kind":"ask","question":"Which paragraph?"}""" }
+        fixture.send(); assertEquals("Which paragraph?", fixture.await("awaiting-input").waiting?.summary)
+        fixture.call("close"); fixture.call("open")
+        assertEquals("awaiting-input", fixture.snapshot().run?.state)
+        fixture.send(text = "  Clarified: the first one.  "); val value = fixture.await("completed")
+        assertEquals("Clarified: the first one.", value.messages.last { it.author == "user" }.text)
+        assertEquals(1, value.attempts.size)
+        assertTrue(fixture.workers().single().text.contains("User clarification: Clarified: the first one."))
+    }
+    @Test fun skippedStagesRecordTheirReasonAndTheRestStillRun() = Fixture(true).use { fixture ->
+        val (first, second) = fixture.configuration.workflow!!.steps
+        fixture.runtime.decide = { input ->
+            val next = input.getValue("nextStepId")
+            if ("skip-step" in input.getValue("allowed").toString() && next == JsonPrimitive(second.id)) """{"kind":"skip-step","stepId":"${second.id}","reason":"Nothing to edit."}""" else null
+        }
+        fixture.send(); val value = fixture.await("completed")
+        assertEquals(listOf(first.id), value.attempts.map { it.stepId })
+        assertEquals(listOf(BrainSkip(second.id, "Nothing to edit.")), value.run!!.skipped)
+        assertTrue(value.messages.any { it.author == "system" && it.text == "Skipped Editor: Nothing to edit." })
+    }
+    @Test fun aBlockedStageReturnsToTheCoordinatorAndRunsAgainOnlyWhenAsked() = Fixture(true).use { fixture ->
+        var blocked = false
+        fixture.runtime.decide = { input ->
+            if (!blocked && "step-result" in input.getValue("allowed").toString()) {
+                blocked = true
+                """{"kind":"step-result","attemptId":"${input.getValue("attempts").jsonArray.last().jsonObject.getValue("id").jsonPrimitive.content}","outcome":"blocked","explanation":"The feature-planner skill is missing."}"""
+            } else null
+        }
+        fixture.send(); val waiting = fixture.await("awaiting-input")
+        assertEquals(listOf("blocked"), waiting.attempts.map { it.state }); assertEquals(1, fixture.workers().size)
+        assertEquals("The feature-planner skill is missing.", waiting.waiting?.summary)
+        fixture.send(text = "I installed it; try again."); val value = fixture.await("completed")
+        val steps = fixture.configuration.workflow!!.steps.map { it.id }
+        assertEquals(listOf(steps[0], steps[0], steps[1]), value.attempts.map { it.stepId })
+    }
+    @Test fun retryRunsTheLastAttemptAgainAfterReview() = Fixture().use { fixture ->
+        var blocked = false
+        fixture.runtime.decide = { input ->
+            if (!blocked && "step-result" in input.getValue("allowed").toString()) {
+                blocked = true
+                """{"kind":"step-result","attemptId":"${input.getValue("attempts").jsonArray.last().jsonObject.getValue("id").jsonPrimitive.content}","outcome":"blocked","explanation":"The provider timed out mid-answer."}"""
+            } else null
+        }
+        fixture.send(); val waiting = fixture.await("awaiting-input")
+        fixture.resume(waiting.run!!, buildJsonObject { put("attemptId", waiting.attempts.single().id) }, method = "retry")
+        val value = fixture.await("completed")
+        assertEquals(listOf("blocked", "completed"), value.attempts.map { it.state })
+        assertNotEquals(value.attempts[0].id, value.attempts[1].id)
+        assertTrue(fixture.shown.single().lines.any { it.contains("runs again with the same input") })
+        assertEquals(2, fixture.workers().size)
+    }
+    @Test fun resumingBeforeDispatchReplacesTheQueuedAttemptAndAdoptsTheTargetRevision() = Fixture().use { fixture ->
+        fixture.providers.connected = false
+        fixture.send(); val paused = fixture.await("paused")
+        val queued = paused.attempts.single(); assertEquals("queued", queued.state)
+        val changed = fixture.configuration.copy(specialists = fixture.configuration.specialists.map { it.copy(instructions = "Adopted instruction") })
+        fixture.store.save("local", fixture.scope.companionId, 1, brainId(), changed)
+        fixture.providers.connected = true
+        fixture.resume(paused.run!!, buildJsonObject { put("targetRevision", 2) })
+        val value = fixture.await("completed")
+        assertEquals(listOf(queued.id), value.attempts.map { it.id })
+        assertEquals(2L, value.run!!.configurationRevision); assertEquals(2L, value.attempts.single().configurationRevision)
+        assertEquals("Adopted instruction", value.attempts.single().role.instructions)
+        assertTrue(fixture.workers().single().persona.instructions.contains("Adopted instruction"))
+        assertTrue(fixture.shown.single().lines.none { it.contains("may have changed files") })
+    }
+    @Test fun aProviderRefusalExplainsItselfAndLeavesNothingUncertain() = Fixture().use { fixture ->
+        fixture.runtime.failWorker = ChatFailure.UsageLimit(null)
+        fixture.send(); val paused = fixture.await("paused")
+        assertTrue(paused.notice!!.contains("usage limit"), paused.notice)
+        assertEquals("failed", paused.attempts.single().state)
+        fixture.resume(paused.run!!)
+        val value = fixture.await("completed")
+        assertEquals(listOf("failed", "completed"), value.attempts.map { it.state })
+        assertTrue(fixture.shown.single().lines.none { it.contains("may have changed files") })
+    }
+    @Test fun theTeamConversationCarriesOverFromItsLegacyLocation() = Fixture(open = false).use { fixture ->
+        val legacy = fixture.root.resolve("local/codex/companion-chats/${fixture.scope.companionId}.json")
+        Files.createDirectories(legacy.parent)
+        Files.writeString(legacy, """{"version":1,"threadId":"${brainId()}","messages":[{"id":"${brainId()}","role":"user","text":"Remember the lantern."},{"id":"${brainId()}","role":"assistant","text":"I will."}]}""")
+        fixture.call("open")
+        assertEquals(listOf("Remember the lantern.", "Previous conversation (runtime-default): I will."), fixture.snapshot().messages.map { it.text })
+    }
+    @Test fun anUnreadableTeamConversationNeverBlocksOpening() = Fixture(open = false).use { fixture ->
+        val history = fixture.root.resolve("local/companion-chats/${fixture.scope.companionId}.json")
+        Files.createDirectories(history.parent); Files.writeString(history, "broken")
+        fixture.call("open")
+        assertTrue(fixture.snapshot().messages.isEmpty()); assertEquals("broken", Files.readString(history))
+    }
+    @Test fun attachedInputsReachTalkRolesAsBoundedTextAndNeverAsPaths() = Fixture().use { fixture ->
+        val folder = Files.createTempDirectory("brain-inputs")
+        fun choose(name: String, bytes: ByteArray) = brainJson.decodeFromJsonElement<BrainArtifact>(fixture.run {
+            chosen = folder.resolve(name).also { Files.write(it, bytes) }
+            call("chooseInput", buildJsonObject { put("messageId", brainId()) })
+        })
+        val plan = choose("PLAN.MD", "# Plan\n".toByteArray() + "é".repeat(BrainLimits.INPUT).toByteArray())
+        val data = choose("data.JSON", """{"ready":true}""".toByteArray())
+        val image = choose("kite.png", byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0, 0, 0))
+        assertEquals(listOf("text/markdown", "text/plain", BrainStore.BINARY), listOf(plan, data, image).map { it.mediaType })
+        fixture.chosen = null
+        assertEquals(JsonNull, fixture.call("chooseInput", buildJsonObject { put("messageId", brainId()) }))
+        fixture.send(inputIds = listOf(plan.id, data.id, image.id)); fixture.await("completed")
+        for (turn in fixture.runtime.turns) assertFalse(turn.text.contains(fixture.root.toString()), "A tool-free role received a native path")
+        val worker = fixture.workers().single().text
+        assertTrue(worker.contains("truncated to its first") && worker.contains("[Truncated]"))
+        assertTrue(worker.contains("""{"ready":true}"""))
+        assertTrue(worker.contains("a binary file of 7 bytes"))
+    }
+
     @Test fun openingLegacyAndBrainConcurrentlyLeavesOnlyOneOwner() {
         val root = Files.createTempDirectory("brain-ownership")
         val ownership = Any(); val entered = CountDownLatch(1); val finish = CountDownLatch(1)
@@ -198,7 +359,7 @@ class DesktopBrainTest {
             brain.invalidate(); entered.countDown(); check(finish.await(5, TimeUnit.SECONDS))
         }, ownershipGate = ownership)
         brain = DesktopBrain(root, BrainStore(root), listOf(Runtime()), ChatWork(WorkspaceStore(root, FolderPicker { _, _ -> null }), StartOfWork(dialogs), emptyList()),
-            Providers(), dialogs, Speech(), legacy::invalidate, ownershipGate = ownership)
+            Providers(), dialogs, FilePicker { null }, Speech(), legacy::invalidate, ownershipGate = ownership)
         val old = ChatScope("local", brainId(), "Legacy", brainId())
         val next = ChatScope("local", brainId(), "Coordinator", brainId())
         val pool = Executors.newFixedThreadPool(2)
@@ -213,4 +374,8 @@ class DesktopBrainTest {
         } finally { finish.countDown(); pool.shutdownNow(); brain.close(); legacy.close() }
     }
 
+    private companion object {
+        fun delegate(configuration: BrainConfiguration) =
+            """{"kind":"delegate","specialistId":"${configuration.specialists.first().id}","task":"Write a paragraph","inputIds":[]}"""
+    }
 }
