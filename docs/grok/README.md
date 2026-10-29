@@ -40,17 +40,17 @@ HOVEL_GROK_ACP_SMOKE=/absolute/path/to/grok \
   ./gradlew :composeApp:jvmTest --tests '*Grok*' --tests '*Provider*' --tests '*bridge*'
 ```
 
-The live selection passed 168 tests with no skips. The broader final regression selection passed 214 tests and skipped 10 explicit runtime/audio checks. The older initialization-only probe remains available as `python3 tools/probe-grok-initialize.py /absolute/path/to/grok`; it uses an empty home and does not authenticate or prompt. Its results are historical transport evidence, not the current readiness implementation.
+The live selection passed with no skips; the broader regression selection skips only explicit runtime/audio checks. The older initialization-only probe remains available as `python3 tools/probe-grok-initialize.py /absolute/path/to/grok`; it uses an empty home and does not authenticate or prompt. Its results are historical transport evidence, not the current readiness implementation.
 
-The work continuation passed a focused 124-test regression (17 opt-in skips) and two separate real adapter smoke tests. Native Mac acceptance passed working-role setup, project trust, exact edit approval/denial, activity, Stop, Close chat, quit with a pending approval, and a fresh work reply after restart. See the work evidence below.
+The work continuation passed its focused regression and two separate real adapter smoke tests. Native Mac acceptance passed working-role setup, project trust, exact edit approval/denial, activity, Stop, Close chat, quit with a pending approval, and a fresh work reply after restart. See the work evidence below.
 
 ## Project work
 
 Enable both development flags, select Grok in a companion's team, choose its project folder, and select Work. Hovel uses its existing native start confirmation, activity feed, Stop, history and handover flow.
 
-Work preserves the selected HOME/GROK_HOME and uses the runtime-owned credential reference. It requires the user's explicit `[auth] preferred_method = "oidc"` setting. A bounded TOML parser checks the actual setting; Hovel never writes it. Runtime inspection accepts ordinary user preferences, skills and project instructions, and refuses extra configuration layers, hooks/plugins/MCP/LSP, managed policy, custom models/endpoints/auth providers, config overrides and command prefixes. Unsupported configurations remain unavailable rather than being silently ignored.
+Work runs in the player's own environment with their login-shell `PATH` (Grok's folder first), minus inherited `XAI_*` and `GROK_*` variables. It preserves the selected HOME/GROK_HOME and uses the runtime-owned credential reference. It requires the [player's OIDC setting](#player-requirement-for-work); a bounded TOML parser checks the actual setting, and Hovel never writes it. Runtime inspection accepts ordinary user preferences, skills and project instructions, and refuses extra configuration layers, hooks/plugins/MCP/LSP, managed policy, custom models/endpoints/auth providers, config overrides and command prefixes. Unsupported configurations remain unavailable rather than being silently ignored.
 
-An untrusted project gets a separate native **Trust project in Grok** question. It names the project/repository scope and explains that Grok remembers trust for future runs outside Hovel. Not now, dismissal and Stop do not grant trust. Only confirmation invokes Grok's own `--trust inspect --json`, followed by a fresh inspection before starting the agent. Test trust grants use a disposable provider home; credentials are referenced, never copied.
+An untrusted project gets a separate native **Trust project in Grok** question. It names the project folder chosen in Hovel and the folder Grok will trust, says plainly when Grok trusts an enclosing folder, and explains that Grok remembers trust for future runs outside Hovel. When Grok's trust root is the home folder, a folder above it, or `/`, work does not start and no question is asked. After trusting, Grok must report exactly the confirmed folder. Not now, dismissal and Stop do not grant trust. Only confirmation invokes Grok's own `--trust inspect --json`, followed by a fresh inspection before starting the agent. Test trust grants use a disposable provider home; credentials are referenced, never copied.
 
 The per-run work profile appends the working persona and retains project rules. Its exact allowlist is read_file, list_dir, grep, search_replace and run_terminal_cmd. In the pinned runtime, a nonempty allowlist without Agent directives also forces shell backgrounding off after user/remote parameter merges. MCP, subagents, goals and workflows are not offered. Commands/edits go through Grok's tools and the existing native approval broker. **Allow once** returns the exact verified option; **Deny** never becomes a persistent grant. A denied operation can make Grok return `cancelled`; Hovel shows that work stopped because approval was not given.
 
@@ -69,13 +69,24 @@ HOVEL_GROK_WORK_CLEANUP_SMOKE=/absolute/path/to/grok \
   --tests '*DesktopChat*' --tests '*DesktopServicesTest*'
 ```
 
-The older direct protocol probes remain available through `HOVEL_GROK_WORK_AUTH_SMOKE`, plus `HOVEL_GROK_WORK_PERMISSION_SMOKE=1` and `HOVEL_GROK_WORK_LIFECYCLE_SMOKE=1`. See the [local OIDC decision](work-auth-proposal.md) and [source audit](source-audit.md). Mixed-provider Work handover now passes through the production coordinator and native UI. Release activation, unsupported integrations, arbitrary detached/remote work, actual authenticated profile switching, modal-approval Stop and explicit Retry remain separate acceptance work.
+The older direct protocol probes remain available through `HOVEL_GROK_WORK_AUTH_SMOKE`, plus `HOVEL_GROK_WORK_PERMISSION_SMOKE=1` and `HOVEL_GROK_WORK_LIFECYCLE_SMOKE=1`. See the [source audit](source-audit.md). Mixed-provider Work handover passes through the production coordinator and native UI, and explicit Retry passes (see [Profile and Retry lifecycle](#profile-and-retry-lifecycle)). Release activation, unsupported integrations, arbitrary detached/remote work, actual authenticated profile switching and modal-approval Stop remain separate acceptance work.
+
+### Player requirement for work
+
+Grok work signs in only with the player's Grok account, never an API key. Grok has no per-process way to pin that, so the player adds this to their own Grok config (`$GROK_HOME/config.toml`, by default `~/.grok/config.toml`):
+
+```toml
+[auth]
+preferred_method = "oidc"
+```
+
+This setting is global: it also changes how Grok Build signs in outside Hovel, for every project, until the player removes it. Hovel never writes or edits this file; when the setting is missing, work readiness names the exact setting, the file and this effect. Companion chat does not need it, because each chat process pins its own disposable config.
 
 ## Integrated main acceptance
 
-The `codex/grok-integration` checkout combines the feature with main's usage/model-effort interfaces; matching contract and web checkouts include the current Brain editor. Grok usage has no reported windows, so the existing UI shows Unavailable. The native Codex adapter now ignores threadless account notifications after handling transport/security events; a failing-before/passing-after regression and native context handover verify the fix.
+The feature is combined with main's usage/model-effort interfaces, and the matching contract and web changes include the current Brain editor. Grok usage has no reported windows, so the existing UI shows Unavailable. The native Codex adapter now ignores threadless account notifications after handling transport/security events; a failing-before/passing-after regression and native context handover verify the fix.
 
-Current checks: **444 native passes, 23 opt-in skips, zero failures**; 520 contract tests; 94 focused web tests; 27 Storybook tests; typecheck and contract/Kotlin fixture parity pass. Six broad-web failures also reproduce on the main baseline and remain outside this feature fix. The macOS package was rebuilt and launched with the matching integration sources.
+The native suite passes with only opt-in checks skipped; contract tests, focused web and Storybook tests, typecheck and contract/Kotlin fixture parity pass. Six broad-web failures also reproduce on the main baseline and remain outside this feature. The macOS package was rebuilt and launched with the matching sources.
 
 ```sh
 # Live Work handovers; requires signed-in providers and the supported OIDC Grok config.
@@ -89,7 +100,7 @@ HOVEL_CHAT_CODEX_SMOKE=/absolute/path/to/codex \
   ./gradlew :composeApp:jvmTest --tests '*DesktopChatSmokeTest'
 ```
 
-The real coordinator test verifies Grok Work → Claude Work → Grok Work, edited-file work logs, read activity and retained conversation context. Native Mac checks also completed Grok/Claude Work handovers, Grok → Codex talk with a context-based reply, and a return to Grok. Codex Work stays disabled. A separate fake-process test verifies profile-switch cancellation, late-approval rejection and history/workspace isolation; it does not claim an authenticated profile-switch UI pass. See [sanitized evidence](work-1.0.70.json). The local integration branches are unmerged and release gates remain closed.
+The real coordinator test verifies Grok Work → Claude Work → Grok Work, edited-file work logs, read activity and retained conversation context. Native Mac checks also completed Grok/Claude Work handovers, Grok → Codex talk with a context-based reply, and a return to Grok. Codex Work stays disabled. A separate fake-process test verifies profile-switch cancellation, late-approval rejection and history/workspace isolation; it does not claim an authenticated profile-switch UI pass. See [sanitized evidence](work-1.0.70.json). Release gates remain closed.
 
 ## Profile and Retry lifecycle
 
@@ -104,7 +115,7 @@ HOVEL_GROK_PROFILE_SMOKE=/absolute/path/to/grok \
 
 The real profile check passes cancellation and process cleanup, rejects a late Allow, keeps histories/workspaces separate, and restores the first profile's context. It references the existing credential store and grants trust only in a disposable configuration home. It does not authenticate Hovel accounts. Native Retry after a forced work-process failure also passes: reconnect does not resend, explicit Retry obtains a real reply, and the saved user message is not duplicated.
 
-The latest full native run is **445 passed, 24 opt-in skipped, zero failures**. Native dialogs now use modeless presentation so the main chat can receive Stop/Close. The desktop Stop-with-approval-open run is still unverified: its edit was applied and the action taken needs clarification. Authenticated Hovel account-switch UI acceptance requires the currently unavailable local identity service and test accounts. Release gates remain closed.
+Native dialogs now use modeless presentation so the main chat can receive Stop/Close. The desktop Stop-with-approval-open run is still unverified: its edit was applied and the action taken needs clarification. Authenticated Hovel account-switch UI acceptance requires the currently unavailable local identity service and test accounts. Release gates remain closed.
 
 ## Bumping the supported Grok version
 
