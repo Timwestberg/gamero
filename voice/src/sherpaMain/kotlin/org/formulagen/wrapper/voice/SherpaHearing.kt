@@ -27,6 +27,7 @@ class SherpaHearingEngine(modelDir: String) : HearingEngine {
     private var voiced = false
     private var heardMs = 0
     private var lastVoicedMs = 0
+    private var lastProb = 0f
     private val vadWindow = FloatArray(VAD_WINDOW)
     private var vadFill = 0
 
@@ -80,6 +81,7 @@ class SherpaHearingEngine(modelDir: String) : HearingEngine {
         val current = stream ?: return
         if (samples.isEmpty()) return
         lastVoicedMs = 0
+        lastProb = 0f
         heardMs += samples.size * 1000 / HEARING_SAMPLE_RATE
         current.acceptWaveform(samples, HEARING_SAMPLE_RATE)
         while (recognizer.isReady(current)) recognizer.decode(current)
@@ -87,6 +89,8 @@ class SherpaHearingEngine(modelDir: String) : HearingEngine {
     }
 
     override fun voicedMillisOfLastAccept(): Int = lastVoicedMs
+
+    override fun lastVadProbability(): Float = lastProb
 
     override fun partial(): String = stream?.let { recognizer.getResult(it).text }.orEmpty()
 
@@ -99,7 +103,11 @@ class SherpaHearingEngine(modelDir: String) : HearingEngine {
         val text = recognizer.getResult(current).text.trim()
         val decodeMs = (System.nanoTime() - started) / 1_000_000.0
         recognizer.reset(current)
-        val speechMs = if (voiced) heardMs else 0
+        val speechMs = when {
+            text.isEmpty() -> 0
+            voiced -> heardMs
+            else -> heardMs.coerceAtLeast(HEARING_MIN_SPEECH_MS)
+        }
         return HearingResult(text, speechMs, decodeMs)
     }
 
@@ -123,8 +131,10 @@ class SherpaHearingEngine(modelDir: String) : HearingEngine {
             vadFill += n
             offset += n
             if (vadFill == VAD_WINDOW) {
+                val prob = detector.compute(vadWindow)
+                lastProb = prob
                 detector.acceptWaveform(vadWindow)
-                if (detector.isSpeechDetected()) {
+                if (prob >= VAD_THRESHOLD) {
                     voiced = true
                     lastVoicedMs += VAD_WINDOW * 1000 / HEARING_SAMPLE_RATE
                 }
@@ -153,6 +163,8 @@ private class LazyHearingEngine(private val modelDir: String) : HearingEngine {
 
     override fun startUtterance() = live().startUtterance()
     override fun accept(samples: FloatArray) = live().accept(samples)
+    override fun voicedMillisOfLastAccept(): Int = opened?.voicedMillisOfLastAccept() ?: 0
+    override fun lastVadProbability(): Float = opened?.lastVadProbability() ?: 0f
     override fun partial(): String = opened?.partial().orEmpty()
     override fun finish(): HearingResult = opened?.finish() ?: HearingResult("", 0, 0.0)
     override fun close() {
@@ -186,6 +198,9 @@ private val HEARING_MODEL_FILES = listOf(HEARING_VAD, HEARING_ENCODER, HEARING_D
 
 private const val VAD_WINDOW = 512
 
+/** Room noise often sits near 0.5. A short hangover then never lets a second of quiet accumulate. */
+private const val VAD_THRESHOLD = 0.6f
+
 private fun rule(mustSpeak: Boolean, trailing: Float, length: Float): EndpointRule =
     EndpointRule.builder()
         .setMustContainNonSilence(mustSpeak)
@@ -197,9 +212,9 @@ private fun openVad(model: File): Vad? {
     if (!model.isFile) return null
     val silero = SileroVadModelConfig.builder()
         .setModel(model.path)
-        .setThreshold(0.5f)
-        .setMinSilenceDuration(0.032f)
-        .setMinSpeechDuration(0.032f)
+        .setThreshold(VAD_THRESHOLD)
+        .setMinSilenceDuration(0.2f)
+        .setMinSpeechDuration(0.1f)
         .setWindowSize(VAD_WINDOW)
         .setMaxSpeechDuration(30f)
         .build()

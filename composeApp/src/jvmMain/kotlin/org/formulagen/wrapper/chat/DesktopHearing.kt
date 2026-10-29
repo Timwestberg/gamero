@@ -4,12 +4,15 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.TargetDataLine
+import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.voice.EndpointDecision
 import org.formulagen.wrapper.voice.HEARING_MIN_SPEECH_MS
 import org.formulagen.wrapper.voice.HEARING_SAMPLE_RATE
 import org.formulagen.wrapper.voice.HearingEngine
 import org.formulagen.wrapper.voice.HearingResult
-import org.formulagen.wrapper.voice.SilenceEndpoint
+import org.formulagen.wrapper.voice.TurnCommitter
+import org.formulagen.wrapper.voice.chunkRms
 
 internal interface MicCapture : AutoCloseable {
     /** Samples written into [into]. `0` means wait and try again. Negative means the microphone closed. */
@@ -89,7 +92,7 @@ internal class DesktopHearing(
 
     private val paused = AtomicBoolean(false)
     private val restart = AtomicBoolean(false)
-    private var endpoint = SilenceEndpoint()
+    private var committer = TurnCommitter()
 
     /**
      * Hands-free session. The microphone stays open until [endSession].
@@ -108,12 +111,19 @@ internal class DesktopHearing(
             delivered.set(false)
             paused.set(false)
             restart.set(true)
-            endpoint = SilenceEndpoint(silenceMs = silenceMs)
+            committer = TurnCommitter(silenceMs = silenceMs)
+            val debugLevels = System.getenv("HOVEL_HEARING_DEBUG")?.trim()?.lowercase() in setOf("1", "true", "yes")
             val worker = Thread({
                 var capture: MicCapture? = null
+                var wasSpeech = false
+                var lastPartial = ""
+                var pendingPartial: String? = null
+                var lastPartialLogNs = 0L
+                var debugMs = 0
                 try {
                     capture = openMic()
                     synchronized(gate) { mic = capture }
+                    log(LogLevel.Info, "hearing", "state=listening")
                     val buf = FloatArray(1600)
                     while (!stop.get()) {
                         val n = capture.read(buf)
@@ -122,26 +132,51 @@ internal class DesktopHearing(
                         if (paused.get()) continue
                         if (restart.compareAndSet(true, false)) {
                             runCatching { engine.startUtterance() }
-                            endpoint.reset()
+                            committer.resetUtterance()
                         }
                         val chunk = if (n == buf.size) buf.copyOf() else buf.copyOf(n)
                         engine.accept(chunk)
                         val voicedMs = engine.voicedMillisOfLastAccept()
                         val chunkMs = n * 1000 / HEARING_SAMPLE_RATE
-                        val decision = when {
-                            voicedMs <= 0 -> endpoint.frame(false, chunkMs)
-                            voicedMs >= chunkMs -> endpoint.frame(true, chunkMs)
-                            else -> {
-                                val spoke = endpoint.frame(true, voicedMs)
-                                if (spoke != EndpointDecision.LISTEN) spoke else endpoint.frame(false, chunkMs - voicedMs)
+                        val rms = chunkRms(chunk)
+                        val prob = engine.lastVadProbability()
+                        val text = engine.partial()
+                        val event = committer.observe(voicedMs > 0, chunkMs, rms, text)
+                        if (event.speech != wasSpeech) {
+                            if (event.speech) log(LogLevel.Info, "hearing", "vad start prob=$prob rms=$rms")
+                            else log(LogLevel.Info, "hearing", "vad end prob=$prob rms=$rms")
+                            wasSpeech = event.speech
+                        }
+                        if (text != lastPartial) pendingPartial = text
+                        val now = System.nanoTime()
+                        if (pendingPartial != null && (lastPartialLogNs == 0L || now - lastPartialLogNs >= 200_000_000L)) {
+                            log(LogLevel.Info, "hearing", "partial chars=${pendingPartial!!.length} text=\"${pendingPartial!!.take(80)}\"")
+                            lastPartial = pendingPartial!!
+                            pendingPartial = null
+                            lastPartialLogNs = now
+                        }
+                        if (debugLevels) {
+                            debugMs += chunkMs
+                            if (debugMs >= 1000) {
+                                log(LogLevel.Info, "hearing", "debug rms=$rms vad=$prob")
+                                debugMs = 0
                             }
                         }
-                        onPartial(engine.partial())
-                        if (decision == EndpointDecision.LISTEN) continue
+                        if (event.decision == EndpointDecision.LISTEN) {
+                            onPartial(text)
+                            continue
+                        }
                         val result = runCatching { engine.finish() }.getOrElse { HearingResult("", 0, 0.0) }
-                        val send = decision == EndpointDecision.SEND &&
-                            result.text.isNotBlank() && result.speechMs >= HEARING_MIN_SPEECH_MS
-                        if (send) onUtterance(result)
+                        val send = event.decision == EndpointDecision.SEND && result.text.isNotBlank()
+                        if (send) {
+                            log(LogLevel.Info, "hearing", "endpoint reason=${event.reason?.name?.lowercase()} text=\"${result.text.take(80)}\"")
+                            log(LogLevel.Info, "hearing", "send chars=${result.text.length}")
+                            log(LogLevel.Info, "hearing", "state=listening")
+                            onUtterance(result)
+                        } else {
+                            log(LogLevel.Info, "hearing", "endpoint drop reason=${event.reason?.name?.lowercase()} chars=${result.text.length}")
+                        }
+                        onPartial("")
                         restart.set(true)
                     }
                 } catch (error: Throwable) {

@@ -29,6 +29,8 @@ interface HearingEngine {
     fun accept(samples: FloatArray)
     /** Voiced milliseconds inside the last [accept], from the VAD windows in that buffer. */
     fun voicedMillisOfLastAccept(): Int = 0
+    /** Silero probability of the last full VAD window, or 0 when this engine has no VAD. */
+    fun lastVadProbability(): Float = 0f
     fun partial(): String
     fun finish(): HearingResult
     fun close()
