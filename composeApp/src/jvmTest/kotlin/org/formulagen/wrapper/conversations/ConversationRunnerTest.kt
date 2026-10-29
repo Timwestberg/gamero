@@ -557,6 +557,44 @@ class ConversationRunnerTest {
         assertEquals(emptyList(), server.stopAnswers)
     }
 
+    @Test fun aServiceOlderThanThisMacLosesNoJournaledWorkAndRecoversOnceItAnswersContract2() {
+        val clock = java.util.concurrent.atomic.AtomicLong()
+        runner(now = clock::get).use { lane ->
+            // A claim and an outcome journaled when the service went back to contract 1.
+            val talk = TestConversation(); val other = TestConversation()
+            val queued = queue(talk); val answered = queue(other)
+            val claim = store.journal(ClaimEntry(id(), talk.id, ClaimPhase.CLAIMING))
+            val outcome = id()
+            server.claim(ClaimRequest(outcome, other.id))
+            store.journal(ClaimEntry(outcome, other.id, ClaimPhase.SETTLING, answered, 2, MessageState.ANSWERED))
+            val journaled = store.pendingClaims().toSet()
+            server.olderService = true
+            fun quiet(refusals: Int) { Thread.sleep(100); assertEquals(refusals, server.olderRefusals.get()) }
+            fun later(millis: Long) = clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(millis))
+            lane.beat()
+            eventually { ConversationRunner.SERVICE_OLDER in statuses && server.olderRefusals.get() >= 1 }
+            Thread.sleep(100)
+            val refused = server.olderRefusals.get()
+            assertEquals(journaled, store.pendingClaims().toSet(), "nothing journaled is dropped as final")
+            assertFalse(ConversationRunner.UPDATE_REQUIRED in statuses, "the service is older, not this Mac")
+            // Nothing asks again before the wait ends: neither the heartbeat nor the server's events.
+            lane.beat()
+            lane.dispatch(HostStreamEvent.WorkAvailable(talk.id)); lane.dispatch(HostStreamEvent.StopRequested(other.id))
+            quiet(refused)
+            assertEquals(ConversationRunner.SERVICE_OLDER, statuses.last(), "the heartbeat keeps saying why")
+            // Once the service answers contract 2, the claim is asked again with its journaled id and the outcome lands.
+            server.olderService = false
+            later(TimeUnit.MINUTES.toMillis(10))
+            lane.beat()
+            eventually { server.settled(answered) == MessageState.ANSWERED && server.settled(queued) == MessageState.ANSWERED }
+            assertEquals(listOf(claim.claimId), engine.runs.map { it.claimId }, "no new claim id while one was journaled")
+            assertEquals(claim.claimId, server.claimRequests.first { it.conversationId == talk.id }.claimId)
+            eventually { store.pendingClaims().isEmpty() }
+            lane.beat()
+            assertNotEquals(ConversationRunner.SERVICE_OLDER, statuses.last())
+        }
+    }
+
     @Test fun aClaimAnswerThisBuildCannotReadBacksOffAndKeepsItsClaimId() {
         val clock = java.util.concurrent.atomic.AtomicLong()
         runner(now = clock::get).use { lane ->
@@ -578,6 +616,8 @@ class ConversationRunnerTest {
             quiet(2)
             later(50); lane.beat()
             eventually { server.claimRequests.size == 3 }
+            // The lane is idle again (a Stop while the claim is on its way would apply to that claim instead).
+            quiet(3)
             assertEquals(listOf(claimId), server.claimRequests.map { it.claimId }.distinct(), "one claim id throughout")
             assertFalse(ConversationRunner.UPDATE_REQUIRED in statuses, "an unreadable answer is not a contract answer")
             assertEquals(emptyList(), engine.runs)

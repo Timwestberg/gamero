@@ -138,7 +138,7 @@ class ConversationWireTest {
             assertEquals(HovelContract.CURRENT.toString(), exchange.requestHeaders.getFirst(HovelContract.HEADER))
             val path = exchange.requestURI.path.removePrefix("/native/$owner/$host/") + (exchange.requestURI.query?.let { "?$it" } ?: "")
             seen += Triple(exchange.requestMethod, path, exchange.requestBody.bufferedReader().readText())
-            if (path == "stream") {
+            if (path == "stream" && status.get() == 200) {
                 exchange.responseHeaders.add("Content-Type", "text/event-stream")
                 exchange.sendResponseHeaders(200, 0)
                 exchange.responseBody.use { it.write("data: {\"type\":\"work.available\",\"conversationId\":\"${talk.id}\"}\n\n".toByteArray()) }
@@ -154,7 +154,7 @@ class ConversationWireTest {
                 path.startsWith("artifacts/") -> wire(ArtifactTextPage.serializer(), ArtifactTextPage(null, "Sign-in added."))
                 else -> buildJsonObject {}
             }
-            val body = if (status.get() == 409) refusal.get().toByteArray() else buildJsonObject { put("data", data) }.toString().toByteArray()
+            val body = if (status.get() != 200) refusal.get().toByteArray() else buildJsonObject { put("data", data) }.toString().toByteArray()
             exchange.sendResponseHeaders(status.get(), body.size.toLong())
             exchange.responseBody.use { it.write(body) }
         }
@@ -191,6 +191,19 @@ class ConversationWireTest {
             assertNull(assertFailsWith<HovelRejectedException> { api.claim(ClaimRequest(claim.claimId, talk.id)) }.code)
             refusal.set("""{"code":"update-required","minimumContract":3}""")
             assertEquals("update-required", assertFailsWith<HovelRejectedException> { api.claim(ClaimRequest(claim.claimId, talk.id)) }.code)
+            // A service older than this Mac names it in a `hovelContractError`: on every route, and never final.
+            status.set(400)
+            refusal.set("""{"code":"unsupported-contract","serverContract":1}""")
+            for (older in listOf(assertFailsWith<HovelStatusException> { api.claim(ClaimRequest(claim.claimId, talk.id)) },
+                assertFailsWith<HovelStatusException> { api.openStream() })) {
+                assertEquals(HovelStatusException.UNSUPPORTED_CONTRACT, older.code)
+                assertTrue(older.serverOlder)
+                assertFalse(older.final, "the work waits for the service")
+            }
+            refusal.set("""{"code":"contract-required"}""")
+            val other = assertFailsWith<HovelStatusException> { api.claim(ClaimRequest(claim.claimId, talk.id)) }
+            assertFalse(other.serverOlder)
+            assertTrue(other.final, "any other 400 stays final")
             status.set(404)
             val missing = assertFailsWith<HovelStatusException> { api.approval(approval) }
             assertEquals(404, missing.status)

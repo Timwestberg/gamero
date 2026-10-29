@@ -118,6 +118,12 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     @Volatile var refuseRunning = false
     /** Refuses every `stopped` settle with 409, as a server whose claim moved on in between. */
     @Volatile var refuseStops = false
+    /**
+     * A service older than this Mac's contract: every companion route answers 400 `unsupported-contract`, counted in
+     * [olderRefusals]; hovel-service's own heartbeat still answers.
+     */
+    @Volatile var olderService = false
+    val olderRefusals = java.util.concurrent.atomic.AtomicInteger()
     @Volatile var foldersStatus: Int? = null
     @Volatile var streamFailures = 0
     private val stream = LinkedBlockingQueue<String>()
@@ -150,8 +156,16 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
         return buildJsonObject { put("ok", true) }
     }
 
+    /** As an older service answers a companion route. */
+    private fun refuseIfOlder() {
+        if (!olderService) return
+        olderRefusals.incrementAndGet()
+        throw HovelStatusException(400, HovelStatusException.UNSUPPORTED_CONTRACT)
+    }
+
     override fun openStream(): HovelEventLines {
         if (offline) throw java.io.IOException("offline")
+        refuseIfOlder()
         synchronized(this) { if (streamFailures > 0) { streamFailures--; throw java.io.IOException("refused") } }
         streamsOpened.incrementAndGet()
         return object : HovelEventLines {
@@ -167,6 +181,7 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     override fun claim(request: ClaimRequest): ClaimResponse {
         if (offline) throw java.io.IOException("offline")
         claimRequests += request
+        refuseIfOlder()
         onClaim()
         return answer(request)
     }
@@ -218,6 +233,7 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
 
     @Synchronized override fun checkpoint(messageId: String, request: MessageCheckpointRequest) {
         if (offline) throw java.io.IOException("offline")
+        refuseIfOlder()
         check(claims[request.claimId]?.message?.id == messageId && request.claimedMessageId == messageId) { "Not this claim" }
         if (refuseCheckpoints) throw HovelRejectedException()
         if (messageId in stopRequested && request.checkpoint !is MessageCheckpoint.ApprovalClosed) {
@@ -244,12 +260,14 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     }
 
     override fun delta(messageId: String, request: ReplyDeltaRequest) {
+        refuseIfOlder()
         if (messageId in stopRequested) throw HovelRejectedException(ClaimOutput.STOP_REQUESTED)
         deltas += request.delta
     }
 
     @Synchronized override fun progress(messageId: String, progress: MessageProgress): Long? {
         if (offline) throw java.io.IOException("offline")
+        refuseIfOlder()
         if (progress.state == MessageState.RUNNING && refuseRunning) throw HovelRejectedException()
         if (progress.state == MessageState.STOPPED && refuseStops) throw HovelRejectedException()
         if (progress.state == MessageState.RUNNING && messageId in stopRequested) throw HovelRejectedException(ClaimOutput.STOP_REQUESTED)
@@ -262,6 +280,7 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     }
 
     @Synchronized override fun saveFolders(projectId: String, save: ProjectFoldersSave): CompanionProject? {
+        refuseIfOlder()
         foldersStatus?.let { if (it == 409) throw HovelRejectedException() else throw HovelStatusException(it) }
         projects[projectId]?.let { if (it.revision != save.expectedRevision) throw HovelRejectedException() }
         folderSaves += projectId to save
@@ -269,13 +288,18 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     }
 
     override fun approval(approvalId: String): AgentApproval {
+        refuseIfOlder()
         if (!approvalsReadable) throw java.io.IOException("unreadable")
         return approvals[approvalId] ?: throw HovelStatusException(404)
     }
 
-    override fun project(projectId: String): CompanionProject = projects[projectId] ?: throw HovelStatusException(404)
+    override fun project(projectId: String): CompanionProject {
+        refuseIfOlder()
+        return projects[projectId] ?: throw HovelStatusException(404)
+    }
 
     override fun artifactText(artifactId: String, cursor: Int): ArtifactTextPage {
+        refuseIfOlder()
         if (!textsReadable) throw java.io.IOException("unreadable")
         val text = texts[artifactId] ?: throw HovelStatusException(404)
         val end = minOf(text.length, cursor + TEXT_PAGE)

@@ -53,6 +53,10 @@ internal fun interface MessageEngine {
  *   claim moved on, and a 400, 403 or 404 that it is gone for good: either drops the journal entry, and a dropped
  *   claim or stop is never claimed again in a loop. A claim answer this build cannot read keeps its claim id
  *   journaled and waits longer before each try.
+ * - **A service older than this Mac:** a 400 `unsupported-contract` from any companion route is never final. Every
+ *   claim and outcome stays journaled, [status] says the service is older, and every call (claims, settles, the
+ *   stream, the heartbeat's retries) waits from the heartbeat interval, doubling to 10 minutes, until one gets
+ *   through; claims are then asked again with their journaled ids.
  * - **Control:** `stop.requested` and `message.cancelled` stop the running message, and a Stop that arrives
  *   while a claim is on its way applies once it lands; `approval.answered` closes the Mac's dialog when the phone
  *   answered first; `project.changed` publishes that project's folders. `mac-update-required` leaves the
@@ -90,6 +94,8 @@ internal class ConversationRunner(
     private val closed = AtomicBoolean()
     private val control: ExecutorService = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-conversation-control"))
     private val lastLine = AtomicLong()
+    /** While a companion route says the service is older than this Mac's contract: every call waits for it first. */
+    private val older = Backoff(heartbeatEvery, MAX_RETRY_WAIT, now)
     @Volatile private var stream: HovelEventLines? = null
     @Volatile private var streamThread: Thread? = null
 
@@ -120,12 +126,16 @@ internal class ConversationRunner(
         try {
             val answer = runCatching { api.heartbeat(heartbeat()) }
             answer.onSuccess { response ->
-                status(if (connected) CONNECTED else CONNECTING)
+                // hovel-service's own heartbeat answers a newer Mac; its companion routes do not.
+                status(when { older.failing -> SERVICE_OLDER; connected -> CONNECTED; else -> CONNECTING })
                 runCatching { onHeartbeat(response) }
                     .onFailure { log(LogLevel.Warn, "conversations", "A heartbeat's tasks could not run", it) }
             }.onFailure { status(OFFLINE) }
-            pendingInOrder().forEach { session(it.conversationId).retry(it) }
-            publisher.publishPending()
+            // A service older than this Mac answers none of it: everything waits, journaled, until the wait ends.
+            if (!older.blocked) {
+                pendingInOrder().forEach { session(it.conversationId).retry(it) }
+                publisher.publishPending()
+            }
         } catch (error: Exception) {
             log(LogLevel.Warn, "conversations", "A heartbeat round failed", error)
         }
@@ -143,19 +153,31 @@ internal class ConversationRunner(
                 stream = lines
                 if (closed.get()) { lines.close(); return }
                 connected = true
+                older.passed()
                 lastLine.set(now())
                 wait = firstBackoff.inWholeMilliseconds
                 status(CONNECTED)
                 lines.use { open -> HostEvents.read(open.lines().onEach { lastLine.set(now()) }, ::dispatch) }
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                if (error is HovelStatusException && error.serverOlder) serviceOlder(error)
             } finally {
                 connected = false
                 stream = null
             }
             if (closed.get()) return
-            try { sleep(wait) } catch (_: InterruptedException) { return }
+            // A service older than this Mac is asked again only once its wait ends.
+            try { sleep(maxOf(wait, TimeUnit.NANOSECONDS.toMillis(older.remaining))) } catch (_: InterruptedException) { return }
             wait = minOf(wait * 2, maxBackoff.inWholeMilliseconds)
         }
+    }
+
+    /**
+     * A companion route answered 400 `unsupported-contract`: the service is older than this Mac. Nothing is dropped
+     * for it; every call waits longer before the next (the first of a run is logged), and [status] says why.
+     */
+    private fun serviceOlder(refusal: HovelStatusException) {
+        if (older.failed()) log(LogLevel.Warn, "conversations", "Hovel's service is older than this Mac; its work waits here", refusal)
+        status(SERVICE_OLDER)
     }
 
     /** A stream that has said nothing for [idle] is dropped, so it reconnects. */
@@ -204,6 +226,37 @@ internal class ConversationRunner(
     /** How a settle ended: the server took it, it was dropped (moved on, or gone for good), or it waits for the server. */
     private enum class Delivery { TAKEN, DROPPED, WAITING }
 
+    /**
+     * A wait that starts at [first] when a call fails in a way asking again soon cannot fix, doubles with each round
+     * that fails after, up to [max], and ends with the first call that gets through. Calls that fail together, while
+     * the wait one of them started still runs, count once. [now] is in nanoseconds.
+     */
+    private class Backoff(private val first: Duration, private val max: Duration, private val now: () -> Long) {
+        private var wait = 0L
+        private var until = 0L
+
+        /** Whether a run of failures is on, its wait over or not. */
+        val failing: Boolean @Synchronized get() = wait > 0
+
+        /** Whether to hold off now. */
+        val blocked: Boolean @Synchronized get() = wait > 0 && now() - until < 0
+
+        /** Nanoseconds left of the wait. */
+        val remaining: Long @Synchronized get() = if (blocked) until - now() else 0L
+
+        /** One more failure: wait longer, unless a wait is already running. True for the first of a run. */
+        @Synchronized fun failed(): Boolean {
+            if (blocked) return false
+            val starts = wait == 0L
+            wait = if (starts) first.inWholeNanoseconds else minOf(wait * 2, max.inWholeNanoseconds)
+            until = now() + wait
+            return starts
+        }
+
+        /** A call got through: the run is over. */
+        @Synchronized fun passed() { wait = 0L }
+    }
+
     /** One conversation's serial lane: its claims, its running message, and its journal. */
     private inner class Session(val conversationId: String) {
         /** One thread at most, which ends after a minute idle. */
@@ -214,9 +267,8 @@ internal class ConversationRunner(
         @Volatile private var claiming = false
         /** A Stop that came while a claim was on its way: it applies to that claim once it lands. */
         @Volatile private var stopPending = false
-        /** After claim answers this build could not read: the wait before the next claim (0: none), and when it ends. */
-        private var unreadableWait = 0L
-        private var unreadableUntil = 0L
+        /** After claim answers this build could not read: the wait before the next claim. */
+        private val unreadable = Backoff(heartbeatEvery, MAX_RETRY_WAIT, now)
 
         /**
          * Claim and run messages until none is queued. A poke while it works makes it look again after. Pokes and
@@ -294,7 +346,7 @@ internal class ConversationRunner(
          * no claim takes over this Mac's own message.
          */
         private fun claimOnce(): Boolean {
-            if (unreadableWait > 0 && now() - unreadableUntil < 0) return false
+            if (older.blocked || unreadable.blocked) return false
             val journaled = store.claims(conversationId)
             val replayed = journaled.firstOrNull { it.phase.unrun }
             if (replayed == null && journaled.isNotEmpty()) return false
@@ -303,6 +355,7 @@ internal class ConversationRunner(
             val response = try {
                 api.claim(ClaimRequest(entry.claimId, conversationId))
             } catch (refused: HovelRejectedException) {
+                older.passed()
                 // A server before contract 2 refuses the replay of a claim whose message was stopped; settled below.
                 if (refused.code == ClaimOutput.STOP_REQUESTED) null else {
                     // Moved on (another claim holds its message, or it settled), or too old: forget it, and look no further.
@@ -311,20 +364,21 @@ internal class ConversationRunner(
                     if (refused.code == UPDATE_REQUIRED_CODE) status(UPDATE_REQUIRED)
                     return false
                 }
-            } catch (final: HovelStatusException) {
-                if (!final.final) return false
-                log(LogLevel.Warn, "conversations", "The server refused a claim for good (HTTP ${final.status}); it is dropped")
+            } catch (refusal: HovelStatusException) {
+                // A service older than this Mac: the claim id stays journaled, asked again once the wait ends.
+                if (refusal.serverOlder) { serviceOlder(refusal); return false }
+                if (!refusal.final) return false
+                older.passed()
+                log(LogLevel.Warn, "conversations", "The server refused a claim for good (HTTP ${refusal.status}); it is dropped")
                 store.forget(entry)
                 stopPending = false
                 return false
-            } catch (unreadable: SerializationException) {
+            } catch (error: SerializationException) {
+                older.passed()
                 // Not a contract answer, so not "update Hovel": only `mac-update-required` or an `update-required`
                 // refusal says that. The claim id stays journaled, so the server's claim is never orphaned, and the
                 // lane waits longer each time before it asks again; the first in a row is logged.
-                if (unreadableWait == 0L) log(LogLevel.Warn, "conversations", "A claim answer could not be read; claiming waits", unreadable)
-                unreadableWait = if (unreadableWait == 0L) heartbeatEvery.inWholeNanoseconds
-                    else minOf(unreadableWait * 2, MAX_UNREADABLE_WAIT.inWholeNanoseconds)
-                unreadableUntil = now() + unreadableWait
+                if (unreadable.failed()) log(LogLevel.Warn, "conversations", "A claim answer could not be read; claiming waits", error)
                 return false
             } catch (error: Exception) {
                 // Unreachable: the journaled claim id is tried again after the next heartbeat.
@@ -333,7 +387,8 @@ internal class ConversationRunner(
             } finally {
                 claiming = false
             }
-            unreadableWait = 0L
+            older.passed()
+            unreadable.passed()
             return when (response) {
                 null -> stopReplayed(entry, replay = replayed != null)
                 ClaimResponse.Empty -> { store.forget(entry); stopPending = false; false }
@@ -426,10 +481,12 @@ internal class ConversationRunner(
                 // person's Stop (or the server's `stop-requested`) that is `stopped`, which the server still takes.
                 val stopped = refused.code == ClaimOutput.STOP_REQUESTED || (cancel.isCancelled && !closed.get())
                 settle(entry, if (stopped) MessageState.STOPPED else MessageState.RECONCILIATION_REQUIRED)
-            } catch (final: HovelStatusException) {
-                if (!final.final) settle(entry, MessageState.RECONCILIATION_REQUIRED)
+            } catch (refusal: HovelStatusException) {
+                // A service older than this Mac: the outcome waits, journaled, until it answers.
+                if (refusal.serverOlder) serviceOlder(refusal)
+                if (!refusal.final) settle(entry, MessageState.RECONCILIATION_REQUIRED)
                 else {
-                    log(LogLevel.Warn, "conversations", "The server refused a message for good (HTTP ${final.status}); it is dropped")
+                    log(LogLevel.Warn, "conversations", "The server refused a message for good (HTTP ${refusal.status}); it is dropped")
                     store.forget(entry)
                 }
             } catch (error: Exception) {
@@ -445,12 +502,13 @@ internal class ConversationRunner(
         /**
          * Settle the message on the server under the entry's claim. A refusal means the server has moved on (another
          * claim holds the message, or it settled, stopped or expired), and a 400, 403 or 404 that the message is gone:
-         * the outcome is dropped. An unreachable server keeps it for the next heartbeat.
+         * the outcome is dropped. An unreachable server, or one older than this Mac, keeps it for a later try.
          */
         private fun deliver(journaled: ClaimEntry): Delivery {
             // A heartbeat may have queued this delivery twice; the second finds it delivered.
             val entry = store.claims(conversationId).find { it.claimId == journaled.claimId && it.phase == ClaimPhase.SETTLING }
                 ?: return Delivery.TAKEN
+            if (older.blocked) return Delivery.WAITING
             val messageId = entry.messageId ?: run { store.forget(entry); return Delivery.DROPPED }
             val outcome = checkNotNull(entry.outcome)
             val revision = checkNotNull(entry.revision)
@@ -463,14 +521,16 @@ internal class ConversationRunner(
                 Delivery.TAKEN
             } catch (_: HovelRejectedException) {
                 Delivery.DROPPED
-            } catch (final: HovelStatusException) {
-                if (!final.final) return Delivery.WAITING
-                log(LogLevel.Warn, "conversations", "The server refused an outcome for good (HTTP ${final.status}); it is dropped")
+            } catch (refusal: HovelStatusException) {
+                if (refusal.serverOlder) { serviceOlder(refusal); return Delivery.WAITING }
+                if (!refusal.final) return Delivery.WAITING
+                log(LogLevel.Warn, "conversations", "The server refused an outcome for good (HTTP ${refusal.status}); it is dropped")
                 Delivery.DROPPED
             } catch (error: Exception) {
                 log(LogLevel.Warn, "conversations", "A message outcome waits for the server", error)
                 return Delivery.WAITING
             }
+            older.passed()
             store.forget(entry)
             return delivery
         }
@@ -483,8 +543,9 @@ internal class ConversationRunner(
         const val CONNECTING = "Connected · Reconnecting to live updates"
         const val OFFLINE = "Server unavailable; messages wait on the server"
         const val UPDATE_REQUIRED = "Update Hovel on this Mac to run every message in its conversations"
-        /** The longest a lane waits between claims whose answers it cannot read. */
-        val MAX_UNREADABLE_WAIT = 10.minutes
+        const val SERVICE_OLDER = "Hovel's service is older than this Mac; messages wait until it updates"
+        /** The longest wait before asking again: after claim answers this build cannot read, or a service older than it. */
+        val MAX_RETRY_WAIT = 10.minutes
         /** The contract's refusal code for a client too old for what it asked for. */
         const val UPDATE_REQUIRED_CODE = "update-required"
     }

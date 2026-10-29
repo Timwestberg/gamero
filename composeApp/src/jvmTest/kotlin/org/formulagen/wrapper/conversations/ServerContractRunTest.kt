@@ -12,6 +12,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.*
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.StartOfWork
@@ -67,13 +70,20 @@ class ServerContractRunTest {
      * hovel-service on a local port, serving only the routes in its native table. Its stream sends [event] (a
      * `hostStreamEvent` fixture, or nothing) in the server's SSE envelope on each connect; [claim] answers the n-th
      * claim (from 0) given its body; every other route answers a payload its schemas accepted. Every request must carry
-     * the host token and this build's contract, and every body the Mac sends the shape of an accepted payload.
+     * the host token and this build's contract, and every body the Mac sends the shape of an accepted payload. While
+     * [contract] is older than this build's, every companion route answers as `requireClientContract` does (400
+     * `unsupported-contract`, kept in [refused]); hovel-service's own heartbeat still answers.
      */
-    private inner class Served(private val event: String?, private val claim: (body: JsonObject, n: Int) -> Answer) : AutoCloseable {
+    private inner class Served(
+        private val event: String?,
+        private val contract: () -> Int = { HovelContract.CURRENT },
+        private val claim: (body: JsonObject, n: Int) -> Answer,
+    ) : AutoCloseable {
         val owner = id()
         val token = "c".repeat(64)
         val seen = CopyOnWriteArrayList<Pair<String, JsonObject?>>()
         val violations = CopyOnWriteArrayList<String>()
+        val refused = CopyOnWriteArrayList<Pair<String, JsonObject?>>()
         val claims = AtomicInteger()
         private val done = CountDownLatch(1)
         /** The served routes, from the server's own table: method, then the path as a pattern. */
@@ -103,6 +113,14 @@ class ServerContractRunTest {
             if (route == null) {
                 violations += "${exchange.requestMethod} $path is not a served route"
                 exchange.sendResponseHeaders(404, -1); exchange.close(); return
+            }
+            val serving = contract()
+            if (route != "heartbeat" && serving < HovelContract.CURRENT) {
+                refused += route to body
+                val error = buildJsonObject { put("code", "unsupported-contract"); put("serverContract", serving) }.toString().toByteArray()
+                exchange.sendResponseHeaders(400, error.size.toLong())
+                exchange.responseBody.use { it.write(error) }
+                return
             }
             seen += route to body
             if (route == "stream") {
@@ -164,7 +182,7 @@ class ServerContractRunTest {
     }
 
     /** This Mac's whole stack on [served]: runner, coordinator engine, approvals, folders, transport, and its own store. */
-    private inner class Mac(served: Served, now: () -> Long = System::nanoTime) : AutoCloseable {
+    private inner class Mac(served: Served, now: () -> Long = System::nanoTime, heartbeatEvery: Duration = 10.seconds) : AutoCloseable {
         val root = folder("server-contract")
         val account = id()
         val store = ConversationStore(root, account).open()
@@ -182,7 +200,7 @@ class ServerContractRunTest {
             val directory = HostDirectory(ConnectedProviders(), account, host, setOf(RuntimeId.CODEX), emptySet(),
                 hovelHostFeatures(tasks = true, memory = true), taskProviderState = { "ready" })
             runner = ConversationRunner(api, store, engine, approvals, folders, ProjectFolderPublisher(folders, api, account, host) { emptyList() },
-                directory::heartbeat, status = { statuses += it }, now = now)
+                directory::heartbeat, status = { statuses += it }, heartbeatEvery = heartbeatEvery, now = now)
         }
 
         override fun close() {
@@ -269,6 +287,37 @@ class ServerContractRunTest {
                 assertEquals(emptyList(), served.violations)
                 assertEquals(listOf(stopped(journaled.claimId, 2)), served.bodies("messageProgress"))
                 assertEquals(emptyList(), mac.chat.requests)
+                assertEquals(emptyList(), mac.store.pendingClaims())
+            }
+        }
+    }
+
+    @Test fun aServiceOlderThanThisMacLosesNoJournaledWorkAndRecoversOnceItAnswersContract2() {
+        val serving = AtomicInteger(1)
+        Served("hostEvent.work.available", serving::get) { body, n ->
+            if (n > 0) Answer.Data(value("claim.empty"))
+            else Answer.Data(buildJsonObject { put("status", "claimed"); put("claim", JsonObject(claimed + ("claimId" to body.getValue("claimId")))) })
+        }.use { served ->
+            Mac(served, heartbeatEvery = 100.milliseconds).use { mac ->
+                val journaled = mac.store.journal(ClaimEntry(id(), conversationId, ClaimPhase.CLAIMING))
+                mac.runner.start()
+                eventually {
+                    ConversationRunner.SERVICE_OLDER in mac.statuses && "heartbeat" in served.called &&
+                        served.refused.map { it.first }.containsAll(listOf("stream", "conversationClaim"))
+                }
+                assertEquals(listOf(journaled), mac.store.pendingClaims(), "nothing journaled is dropped as final")
+                assertEquals(setOf("heartbeat"), served.called, "an older service answers only its own heartbeat")
+                assertFalse(ConversationRunner.UPDATE_REQUIRED in mac.statuses)
+                // The service updates: the journaled claim is asked again with its id and runs, and the stream connects.
+                serving.set(2)
+                eventually("it recovered") { served.bodies("messageProgress").any { it["state"]?.jsonPrimitive?.content == "answered" } }
+                eventually { mac.runner.connected && mac.statuses.last() == ConversationRunner.CONNECTED }
+                mac.runner.close()
+                assertEquals(emptyList(), served.violations)
+                // Every claim the older service refused, and the one that ran, used the journaled id; only looks after it are fresh.
+                fun ids(calls: List<Pair<String, JsonObject?>>) = calls.filter { it.first == "conversationClaim" }.map { it.second!!.getValue("claimId").jsonPrimitive.content }
+                assertEquals(listOf(journaled.claimId), ids(served.refused).distinct(), "no new claim id while the service was older")
+                assertEquals(journaled.claimId, ids(served.seen).first(), "the claim that ran")
                 assertEquals(emptyList(), mac.store.pendingClaims())
             }
         }
