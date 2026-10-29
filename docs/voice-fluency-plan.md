@@ -1,6 +1,8 @@
 # Fluid, consistent Ember voice
 
-> **For agentic workers:** Do not implement this plan until Tim approves it. After approval, use superpowers:subagent-driven-development or superpowers:executing-plans, one task at a time. Steps use checkbox (`- [ ]`) syntax. This document is the plan only. It contains no implementation code.
+> **Status:** Tim approved this plan. The decisions in the next section are what the implementation follows. This file is still only the plan. It contains no implementation code.
+>
+> Drafts: #53 synthesis (base `main`), #54 streaming (base #53), #56 Kokoro chat (base #54; Mac chat no longer uses Pocket), #55 iOS FluidAudio (base #53, merges after #56). Merge #52, then #53, #54, #56, then #55.
 
 **Goal:** Make Ember's spoken replies one continuous voice across a conversation, with sentence audio that flows instead of restarting every few dozen characters.
 
@@ -29,7 +31,7 @@ Update the shared voice config in `event-contracts` in a draft PR before the gam
 
 | Field | Today | Planned | Why |
 |---|---|---|---|
-| `numSteps` | 1 | 5, fallback 2 | One Euler step lets noise move pitch between sentences. 5 is the stability target. 2 is the fallback if a Mac-class machine cannot speak a reply in real time. |
+| `numSteps` | 1 | 5, fallback 3 | One Euler step lets noise move pitch between sentences. 5 is the stability target. Tim chose 3 as the fallback if a Mac cannot stay in real time. The module does not switch steps by itself. |
 | `temperature` | 0.3 | 0.3 | Unchanged. Seed 1 already makes the same text repeat. |
 | `seed` | 1 | 1, including retries | A seed change is a different draw. Seed 2 of one sentence moved 122 Hz to 144 Hz. |
 | `firstPieceTargetChars` | 40 | unused for cutting | The 40-character window cuts inside a sentence (`SpeechText.kt`). The splitter keeps whole sentences. |
@@ -103,7 +105,7 @@ A is the only PR required for the voice-identity and gap metrics. B is required 
 
 **Interfaces:**
 - Consumes: `GenerationConfig.numSteps`, already taken from `VoiceConfig.numSteps`.
-- Produces: default `numSteps = 5`. Document fallback `2` in the bench README. Do not change the constant to 2 unless the Mac RTF check in Task 6 fails.
+- Produces: default `numSteps = 5`. The recorded fallback is 3. Do not change the shipped default unless Tim's Mac RTF check says to.
 
 - [ ] Update the default and the bench config comment. Add a self-check that `VoiceConfig().numSteps == 5` and `silenceMs == 0`.
 - [ ] Run the logic self-check. Expect pass.
@@ -187,15 +189,15 @@ Plus one repeat of sentence `Hello, this is Ember.` at seed 1.
 - **iOS is unverified.** Draft C can merge only as code inspection plus the script self-check.
 - **No input audio path.** Shipping a "barge-in" that listens would be a new permission and a new subsystem. Task 5 only makes the existing stop button actually cut a stream.
 
-## Open questions for Tim
+## Decisions (Tim)
 
-1. Confirm Task 2: retry only when the frame ceiling truncates the take, same seed, higher cap. Do not regenerate a merely overlong take, because the same seed repeats it.
-2. A single sentence longer than a few hundred characters has no split once 140-character packing is gone. Prefer no split, or a word-boundary safety split at 400 characters?
-3. Fallback step count if 5 is slower than real time on your Mac: 2, or 3? Who runs that listen-and-RTF check?
-4. Are the pass bars acceptable: cross-sentence spectral cosine ≥ 0.75, F0 range ≤ 15 Hz, no zero run over 5 ms, time-to-first-audio ≤ first-sentence synth + 200 ms? Five steps may still miss the cosine and F0 bars. The PR should report the numbers either way.
-5. Is barge-in for this round limited to `chat.stopSpeaking` cutting the stream, with mic / VAD / STT deferred?
-6. Crossfade only when an edge is louder than 0.02. The probed joins were already near zero, so many sentence boundaries will not fade. Is that the right gate?
-7. Should draft #180 be updated in place, or should the contract change be a new draft if #180 has merged?
+1. Retry only when the frame ceiling truncates the take. Same seed. Raised cap is `min(firstCap * 2, 500)`. An overlong take that stopped on its own is kept.
+2. A sentence longer than 400 characters is split at a word boundary. Shorter sentences stay whole.
+3. Fallback step count is 3, not 2. Tim runs the Mac RTF check. The code does not switch steps by itself.
+4. Pass bars stand: cross-sentence spectral cosine ≥ 0.75, F0 range ≤ 15 Hz, no zero run over 5 ms, time-to-first-audio ≤ first-sentence synthesis + 200 ms. Report the numbers either way.
+5. Barge-in for this plan is `chat.stopSpeaking` cutting the stream. Microphone, VAD, and speech-to-text stay out.
+6. Crossfade only when an edge is at least 0.02. Quiet edges are abutted.
+7. #180 merged. The follow-on contract draft is server-platform #192 (`ember-voice.v2`). Gamero's field names follow that draft. Kokoro chat (#56) adds engine id, blend id, per-voice speed, and the lexicon hash, which #192 still needs.
 
 ## Sizing
 
