@@ -22,6 +22,7 @@ class GrokHandoverSmokeTest {
         val grokExecutable = GrokSmoke.turnsExecutable()
         val claudeExecutable = System.getenv("HOVEL_CLAUDE_HANDOVER_SMOKE")
         assumeTrue("Set HOVEL_CLAUDE_HANDOVER_SMOKE=/absolute/path/to/claude as well for live handovers", claudeExecutable != null)
+        GrokSmoke.requireWorkAuthPin()
         val root = Files.createTempDirectory("hovel-grok-handover-")
         val project = Files.createDirectory(root.resolve("project")).toRealPath()
         val marker = project.resolve("test.txt")

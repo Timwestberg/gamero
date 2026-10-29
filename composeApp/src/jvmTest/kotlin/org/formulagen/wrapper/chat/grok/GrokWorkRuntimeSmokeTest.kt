@@ -17,6 +17,7 @@ class GrokWorkRuntimeSmokeTest {
     @Test fun stopReleaseAndCloseReapForegroundWorkPastTheNormalBackgroundThreshold() {
         // Ordinary work in the player's own provider home; this test never grants folder trust.
         val env = GrokSmoke.environment(GrokSmoke.turnsExecutable())
+        GrokSmoke.requireWorkAuthPin()
         for (action in listOf("stop", "release", "close")) {
             val root = Files.createTempDirectory("hovel-grok-cleanup-")
             val project = Files.createDirectory(root.resolve("project")).toRealPath()
@@ -66,6 +67,7 @@ class GrokWorkRuntimeSmokeTest {
 
     @Test fun workAdapterEditsWithNativeBrokerAndResumesAfterRestart() {
         val executable = GrokSmoke.turnsExecutable()
+        GrokSmoke.requireWorkAuthPin()
         val root = Files.createTempDirectory("hovel-grok-work-adapter-")
         val project = Files.createDirectory(root.resolve("project")).toRealPath()
         val marker = project.resolve("test.txt")

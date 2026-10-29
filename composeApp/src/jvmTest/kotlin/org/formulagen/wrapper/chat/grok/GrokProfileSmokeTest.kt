@@ -18,6 +18,7 @@ import org.formulagen.wrapper.workspace.WorkspaceStore
 class GrokProfileSmokeTest {
     @Test fun profileReplacementCancelsRealApprovalAndKeepsWorkspacesAndContextSeparate() = runBlocking {
         val executable = GrokSmoke.turnsExecutable()
+        GrokSmoke.requireWorkAuthPin()
         val root = Files.createTempDirectory("hovel-grok-profiles-")
         val projectA = Files.createDirectory(root.resolve("project-a")).toRealPath()
         val projectB = Files.createDirectory(root.resolve("project-b")).toRealPath()
