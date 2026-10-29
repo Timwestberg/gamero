@@ -19,3 +19,5 @@ captures
 
 # tools/build-release.sh step durations
 .build-timings.csv
+
+node_modules/
