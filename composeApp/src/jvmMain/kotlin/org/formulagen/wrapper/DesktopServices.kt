@@ -24,6 +24,7 @@ import org.formulagen.wrapper.bridge.WorkspaceCapability
 import org.formulagen.wrapper.bridge.WorkspaceMethods
 import org.formulagen.wrapper.bridge.ApprovalMethods
 import org.formulagen.wrapper.bridge.ConversationVoiceMethods
+import org.formulagen.wrapper.bridge.HostContractMethods
 import org.formulagen.wrapper.bridge.ProjectMethods
 import org.formulagen.wrapper.approvals.ComposeDialogPresenter
 import org.formulagen.wrapper.approvals.DialogApprovalBroker
@@ -220,8 +221,8 @@ internal class DesktopServices private constructor(
 /**
  * The product packs a desktop host registers. Every desktop product has chat, providers, pet,
  * games and project folders; Hovel adds its companion and the companion projects capabilities:
- * `project` and `conversationVoice` (`Unsupported` until the conversation runner implements them)
- * and phone `approvals`, which desktop never supports. A missing implementation registers as
+ * `project`, `conversationVoice` and the `host.contract` handshake (`Unsupported` until the
+ * conversation runner implements them) and phone `approvals`, which desktop never supports. A missing implementation registers as
  * `Unsupported`, so its methods answer `unsupported` instead of `unknown-method`.
  */
 internal fun desktopProductPacks(
@@ -239,6 +240,7 @@ internal fun desktopProductPacks(
         add(ProjectMethods.pack(Capability.Unsupported))
         add(ConversationVoiceMethods.pack(Capability.Unsupported))
         add(ApprovalMethods.pack(Capability.Unsupported))
+        add(HostContractMethods.pack(Capability.Unsupported))
     }
     add(BrainMethods.pack(supportedIfPresent(brain)))
     add(ChatMethods.pack(supportedIfPresent(chat)))
