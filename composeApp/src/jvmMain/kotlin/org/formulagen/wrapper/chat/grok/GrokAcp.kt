@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.*
+import org.formulagen.wrapper.companion.PROCESS_TREE_GRACE
 import org.formulagen.wrapper.companion.terminateProcessTree
 import org.formulagen.wrapper.process.MAX_PROTOCOL_LINE
 import org.formulagen.wrapper.process.ProtocolLine
@@ -175,7 +176,7 @@ internal class GrokAcp(
         Thread.ofPlatform().daemon().name("hovel-grok-close").start {
             try {
                 terminateProcessTree(process, descendants.toSet())
-                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+                val deadline = System.nanoTime() + GROK_CLEANUP_CONFIRMATION.inWholeNanoseconds
                 while ((process.isAlive || descendants.any { it.isAlive }) && System.nanoTime() < deadline) Thread.sleep(20)
                 check(!process.isAlive && descendants.none { it.isAlive }) { "Grok process cleanup was not confirmed" }
                 finished.complete(Unit)
@@ -187,6 +188,19 @@ internal class GrokAcp(
     /** A probe or teardown can await local cleanup; this does not certify cancellation of remote work. */
     fun awaitClosed(timeout: Duration = 10.seconds) { finished.get(timeout.inWholeMilliseconds, TimeUnit.MILLISECONDS) }
 }
+
+/** How long Stop leaves ACP cancellation to end a prompt before the turn ends the process itself. */
+internal val GROK_STOP_GRACE: Duration = 5.seconds
+
+/** After the process tree's own grace, how long [GrokAcp.close] waits to confirm every process exited. */
+private val GROK_CLEANUP_CONFIRMATION: Duration = 2.seconds
+
+/**
+ * How long a new turn waits for the previous one on the same owner to release it: a stopped turn's
+ * cancellation grace, then its forced teardown (the process tree's grace and this transport's
+ * confirmation), with a second of scheduling slack.
+ */
+internal val GROK_TURN_HANDOFF: Duration = GROK_STOP_GRACE + PROCESS_TREE_GRACE + GROK_CLEANUP_CONFIRMATION + 1.seconds
 
 /** Raw provider error messages/data never escape the transport; callers classify only verified codes. */
 internal class GrokRequestRejected(val code: Int) : IllegalStateException("Grok rejected the request")

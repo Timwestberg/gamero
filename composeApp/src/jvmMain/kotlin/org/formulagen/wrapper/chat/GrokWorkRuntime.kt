@@ -97,7 +97,8 @@ internal class GrokWorkRuntime(
             worker = Thread.ofPlatform().daemon().name("hovel-grok-work").start {
                 var acquired = false
                 try {
-                    acquired = owner.tryAcquire(15, TimeUnit.SECONDS)
+                    // A just-stopped turn may still be in its cancellation grace or teardown.
+                    acquired = owner.tryAcquire(GROK_TURN_HANDOFF.inWholeMilliseconds, TimeUnit.MILLISECONDS)
                     check(acquired)
                     check(!cleanupFailed.get())
                     if (active()) run()
@@ -208,14 +209,15 @@ internal class GrokWorkRuntime(
             if (steps != null) deliver { events.activity(steps) }
         }
 
-        /** Invalidate approvals first; allow five seconds for ACP cancellation before forcing local cleanup. */
+        /** Invalidate approvals first; allow [GROK_STOP_GRACE] for ACP cancellation before forcing local cleanup. */
         fun stop() {
             if (!ended.compareAndSet(false, true)) return
             startupCancel.cancel()
             approvals?.close()
             val current = session
             if (current == null) worker?.interrupt() else runCatching { current.cancel() }
-            runCatching { stopper.schedule({ if (!finished.isDone) { session?.abort(); worker?.interrupt() } }, 5, TimeUnit.SECONDS) }
+            runCatching { stopper.schedule({ if (!finished.isDone) { session?.abort(); worker?.interrupt() } },
+                GROK_STOP_GRACE.inWholeMilliseconds, TimeUnit.MILLISECONDS) }
         }
 
         /** A lease invalidation is final even if a worker was between registration and startup. */

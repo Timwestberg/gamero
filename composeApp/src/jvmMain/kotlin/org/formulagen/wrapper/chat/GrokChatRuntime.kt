@@ -103,7 +103,8 @@ internal class GrokChatRuntime(
                 val owner = owners.computeIfAbsent("${request.profile}/${request.companionId}") { Semaphore(1) }
                 var acquired = false
                 try {
-                    acquired = owner.tryAcquire(5, TimeUnit.SECONDS)
+                    // A just-stopped turn may still be in its cancellation grace or teardown.
+                    acquired = owner.tryAcquire(GROK_TURN_HANDOFF.inWholeMilliseconds, TimeUnit.MILLISECONDS)
                     check(acquired)
                     if (!ended.get() && !closed.get()) run()
                 } catch (error: Exception) {
@@ -196,12 +197,12 @@ internal class GrokChatRuntime(
             if (before.text != after.text) deliver { events.partial(after.text) }
         }
 
-        /** Stop stays nonblocking; startup is interrupted and a live prompt gets a five-second cancellation grace. */
+        /** Stop stays nonblocking; startup is interrupted and a live prompt gets [GROK_STOP_GRACE] to cancel. */
         fun stop() {
             if (!ended.compareAndSet(false, true)) return
             val current = session
             if (current == null) worker?.interrupt() else runCatching { current.cancel() }
-            stopper.schedule({ if (!finished.isDone) { session?.abort(); worker?.interrupt() } }, 5, TimeUnit.SECONDS)
+            stopper.schedule({ if (!finished.isDone) { session?.abort(); worker?.interrupt() } }, GROK_STOP_GRACE.inWholeMilliseconds, TimeUnit.MILLISECONDS)
         }
 
         private fun fail(failure: ChatFailure) { if (ended.compareAndSet(false, true)) events.failed(failure) }

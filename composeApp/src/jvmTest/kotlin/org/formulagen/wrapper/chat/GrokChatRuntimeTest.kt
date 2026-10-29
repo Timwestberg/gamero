@@ -18,6 +18,7 @@ import org.formulagen.wrapper.bridge.ProviderAction
 import org.formulagen.wrapper.bridge.ProviderState
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.TeamMember
+import org.formulagen.wrapper.chat.grok.GROK_TURN_HANDOFF
 import org.formulagen.wrapper.chat.grok.GROK_VERIFIED_VERSION
 import org.formulagen.wrapper.providers.GrokConnection
 import org.formulagen.wrapper.providers.GrokProvider
@@ -165,6 +166,26 @@ class GrokChatRuntimeTest {
         } finally { root.toFile().deleteRecursively() }
     }
 
+    @Test fun aMessageSentRightAfterStoppingAnUnresponsiveTurnWaitsForItsTeardown() {
+        FakeGrokRuntime().use { fake ->
+            fake.mode("stuck")
+            GrokChatRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env)).use { runtime ->
+                val stuck = Events()
+                val handle = runtime.startTurn(request(), stuck)
+                val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+                while ("session/prompt" !in fake.requests()) { check(System.nanoTime() < until); Thread.sleep(10) }
+                fake.mode("normal")
+                handle.stop()
+                // Grok ignores the cancellation, so the old turn holds the companion for its whole grace and teardown.
+                val next = Events()
+                runtime.startTurn(request(), next); next.await(GROK_TURN_HANDOFF.inWholeSeconds + 5)
+                assertNull(next.failure)
+                assertEquals("Hello", next.reply)
+                assertFalse("completed" in stuck.seen || "failed" in stuck.seen)
+            }
+        }
+    }
+
     @Test fun stopWaitsForCancellationAndDoesNotDeliverLateEvents() {
         FakeGrokRuntime().use { fake ->
             fake.mode("wait")
@@ -280,6 +301,7 @@ internal class FakeGrokRuntime : AutoCloseable {
                 elif method=='session/prompt':
                     if mode=='drop': sys.exit(0)
                     if mode=='wait': waiting=rid; continue
+                    if mode=='stuck': continue
                     if mode=='approval':
                         waiting=rid
                         tool=dict(toolCallId='operation',rawInput=dict(variant='Bash',command='printf TEST',description='Test command'),
