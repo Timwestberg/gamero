@@ -54,6 +54,16 @@ class ConversationWireTest {
         assertFails("a runtime this build does not know is never read as another") {
             fromWire(ClaimResponse.serializer(), json.parseToJsonElement(encoded.toString().replace("\"codex\"", "\"future-runtime\"")))
         }
+        val stopping = ClaimResponse.StopRequested(talk.message("Hi").copy(revision = 3, state = MessageState.RUNNING))
+        val stop = wire(ClaimResponse.serializer(), stopping)
+        assertEquals(setOf("message", "status"), stop.keys)
+        assertEquals("stop-requested", stop.getValue("status").jsonPrimitive.content)
+        assertEquals(stopping, fromWire(ClaimResponse.serializer(), stop))
+        assertFails("a stop names its message") { fromWire(ClaimResponse.serializer(), json.parseToJsonElement("""{"status":"stop-requested"}""")) }
+        // The runner backs off on exactly this error, and never reads an unknown answer as another.
+        assertFailsWith<kotlinx.serialization.SerializationException> {
+            fromWire(ClaimResponse.serializer(), json.parseToJsonElement("""{"status":"stop-later","message":${stop.getValue("message")}}"""))
+        }
     }
 
     @Test fun progressOnlyRunsOrSettlesAMessage() {

@@ -207,6 +207,14 @@ internal sealed interface ClaimResponse {
     /** The message needs a newer contract than this Mac sent; it stays queued until the Mac updates or it expires. */
     @Serializable @SerialName("mac-update-required")
     data class MacUpdateRequired(val minimumContract: Int) : ClaimResponse
+
+    /**
+     * The conversation's claimed or running user message, which the person asked to stop, now under this claim:
+     * the replay of a claim that never learned its message, or a claim that took over one the Mac lost. The Mac
+     * settles it `stopped` at its revision; nothing runs on.
+     */
+    @Serializable @SerialName("stop-requested")
+    data class StopRequested(val message: ConversationMessage) : ClaimResponse
 }
 
 /** `APPROVAL_KINDS`. */

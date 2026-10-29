@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.*
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.serialization.json.put
 import org.formulagen.wrapper.approvals.CancelSignal
 import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.workspace.FolderPicker
@@ -412,24 +413,182 @@ class ConversationRunnerTest {
         assertEquals(1, engine.runs.size)
     }
 
-    @Test fun aJournaledClaimWhoseMessageWasStoppedSettlesStoppedOnReplay() {
+    /**
+     * Two conversations whose message the person stopped while this Mac was away: one claim journaled `claimed`,
+     * and one only `claiming` (the Mac crashed before it learned its message). Each conversation queues "Next" after.
+     */
+    private inner class StoppedReplays {
+        val named = TestConversation(); val unnamed = TestConversation()
+        val namedMessage = queue(named); val unnamedMessage = queue(unnamed)
+        val namedClaim = id(); val unnamedClaim = id()
+        init {
+            server.claim(ClaimRequest(namedClaim, named.id)); server.claim(ClaimRequest(unnamedClaim, unnamed.id))
+            store.journal(ClaimEntry(namedClaim, named.id, ClaimPhase.CLAIMED, namedMessage, 2))
+            store.journal(ClaimEntry(unnamedClaim, unnamed.id, ClaimPhase.CLAIMING))
+            server.stopRequested += namedMessage; server.stopRequested += unnamedMessage
+        }
+        val namedNext = queue(named, "Next"); val unnamedNext = queue(unnamed, "Next")
+        fun claimIds(talk: TestConversation) = server.claimRequests.filter { it.conversationId == talk.id }.map { it.claimId }
+    }
+
+    @Test fun aReplayedClaimWhoseMessageWasStoppedSettlesStoppedUnderItsOwnClaim() {
+        val stopped = StoppedReplays()
+        runner.start()
+        eventually { server.settled(stopped.namedNext) == MessageState.ANSWERED && server.settled(stopped.unnamedNext) == MessageState.ANSWERED }
+        assertEquals(listOf(MessageProgress(stopped.namedClaim, stopped.namedMessage, 2, MessageState.STOPPED)),
+            server.progress.filter { it.claimedMessageId == stopped.namedMessage })
+        assertEquals(listOf(MessageProgress(stopped.unnamedClaim, stopped.unnamedMessage, 2, MessageState.STOPPED)),
+            server.progress.filter { it.claimedMessageId == stopped.unnamedMessage }, "the answer names the message the journal never had")
+        assertEquals(setOf(stopped.namedClaim, stopped.unnamedClaim), server.stopAnswers.toSet())
+        assertEquals(listOf("Next", "Next"), engine.runs.map { it.message.text }, "a stopped message never launches a turn")
+        eventually { store.pendingClaims().isEmpty() }
+    }
+
+    @Test fun aServerBeforeContract2RefusesAStoppedReplayAndTheMacStillSettlesWhatItCan() {
+        server.contract = 1
+        val stopped = StoppedReplays()
+        runner.start()
+        // The `claimed` one knows its message: it settles stopped, and the lane claims again once the server took it.
+        eventually { server.settled(stopped.namedNext) == MessageState.ANSWERED }
+        assertEquals(listOf(MessageProgress(stopped.namedClaim, stopped.namedMessage, 2, MessageState.STOPPED)),
+            server.progress.filter { it.claimedMessageId == stopped.namedMessage })
+        // The `claiming` one is dropped and claims afresh, which that server answers `empty`: it never takes the
+        // stopped message over, so the conversation waits behind it as before contract 2.
+        eventually { stopped.claimIds(stopped.unnamed).size >= 3 && store.claims(stopped.unnamed.id).isEmpty() }
+        Thread.sleep(150)
+        val unnamed = stopped.claimIds(stopped.unnamed)
+        assertEquals(listOf(stopped.unnamedClaim, stopped.unnamedClaim), unnamed.take(2), "set up, then replayed")
+        val fresh = unnamed.drop(2)
+        assertTrue(fresh.size in 1..2 && stopped.unnamedClaim !in fresh, "then afresh, and no loop: $unnamed")
+        assertNull(server.settled(stopped.unnamedMessage))
+        assertNull(server.settled(stopped.unnamedNext))
+        assertEquals(emptyList(), server.stopAnswers)
+        assertEquals(listOf("Next"), engine.runs.map { it.message.text })
+        assertEquals(emptyList(), store.pendingClaims())
+    }
+
+    @Test fun aStopForAClaimThisMacLostClaimsOnceAndTakesTheMessageOverToSettleIt() {
+        runner.start(); waitConnected()
+        val talk = TestConversation()
+        val message = queue(talk)
+        // Another launch claimed it and ran it, then lost the claim; the person stopped it after.
+        val lost = id()
+        server.claim(ClaimRequest(lost, talk.id))
+        server.progress(message, MessageProgress(lost, message, 2, MessageState.RUNNING))
+        server.stopRequested += message
+        val asked = CountDownLatch(1)
+        val landing = CountDownLatch(1)
+        server.onClaim = { asked.countDown(); landing.await(5, TimeUnit.SECONDS) }
+        server.emit(HostStreamEvent.StopRequested(talk.id))
+        assertTrue(asked.await(5, TimeUnit.SECONDS))
+        // The server repeats the event on every connect: one while the claim is on its way makes no second claim.
+        runner.dispatch(HostStreamEvent.StopRequested(talk.id))
+        server.onClaim = {}
+        landing.countDown()
+        eventually { server.settled(message) == MessageState.STOPPED }
+        val taken = server.stopAnswers.single()
+        assertNotEquals(lost, taken)
+        assertEquals(MessageProgress(taken, message, 3, MessageState.STOPPED), server.progress.last { it.claimedMessageId == message },
+            "settled under the claim that took it over, at its revision")
+        assertEquals(emptyList(), engine.runs)
+        eventually("the lane looked again, found nothing and let go") { talk.id !in runner.lanes }
+        // A late repeat finds the message settled: it claims once, and its Stop never reaches the next message.
+        val next = queue(talk, "Next")
+        runner.dispatch(HostStreamEvent.StopRequested(talk.id))
+        eventually { server.settled(next) == MessageState.ANSWERED }
+        assertEquals(listOf(taken), server.stopAnswers)
+        // The lost claim was replaced: asked again, it has moved on.
+        assertFailsWith<org.formulagen.wrapper.hovel.HovelRejectedException> { server.claim(ClaimRequest(lost, talk.id)) }
+    }
+
+    @Test fun aStopSettleRefusedAsMovedOnIsNotClaimedAgainInALoop() {
+        server.refuseStops = true
+        runner.start(); waitConnected()
+        val talk = TestConversation()
+        val message = queue(talk)
+        server.claim(ClaimRequest(id(), talk.id))
+        server.stopRequested += message
+        server.emit(HostStreamEvent.StopRequested(talk.id))
+        eventually { server.stopAnswers.isNotEmpty() && talk.id !in runner.lanes }
+        Thread.sleep(200)
+        assertEquals(1, server.stopAnswers.size, "one takeover, dropped as moved on, and no claim after it")
+        assertEquals(2, server.claimRequests.size)
+        assertEquals(emptyList(), store.pendingClaims())
+        assertNull(server.settled(message))
+        assertEquals(emptyList(), engine.runs)
+    }
+
+    @Test fun aStopAnswerNamingAMessageThisClaimCannotSettleIsDropped() {
+        val talk = TestConversation()
+        queue(talk)
+        server.claimBody = wire(ClaimResponse.serializer(), ClaimResponse.StopRequested(TestConversation().message("Elsewhere")))
+        runner.dispatch(HostStreamEvent.WorkAvailable(talk.id))
+        eventually { server.claimRequests.isNotEmpty() && store.pendingClaims().isEmpty() }
+        Thread.sleep(100)
+        assertEquals(1, server.claimRequests.size, "dropped, and no claim after it")
+        assertEquals(emptyList(), server.progress, "another conversation's message is never settled from here")
+        assertEquals(emptyList(), engine.runs)
+    }
+
+    @Test fun aStopRefusalOfAClaimIdMadeJustNowIsDroppedNotLooped() {
+        server.claimStatus = 409
+        server.claimCode = ClaimOutput.STOP_REQUESTED
+        val talk = TestConversation()
+        queue(talk)
+        runner.dispatch(HostStreamEvent.WorkAvailable(talk.id))
+        eventually { server.claimRequests.isNotEmpty() && store.pendingClaims().isEmpty() }
+        Thread.sleep(100)
+        assertEquals(1, server.claimRequests.size, "not a replay, so no fresh claim after it")
+        assertEquals(emptyList(), server.progress)
+    }
+
+    @Test fun aStopWhileAnOutcomeWaitsMakesNoClaimUntilTheOutcomeIsDelivered() {
         val talk = TestConversation()
         val message = queue(talk)
         val claimId = id()
         server.claim(ClaimRequest(claimId, talk.id))
-        store.journal(ClaimEntry(claimId, talk.id, ClaimPhase.CLAIMED, message, 2))
+        store.journal(ClaimEntry(claimId, talk.id, ClaimPhase.SETTLING, message, 2, MessageState.ANSWERED))
         server.stopRequested += message
-        // One journaled only as `claiming`, in another conversation, never learned its message.
-        val other = TestConversation()
-        val unnamed = queue(other)
-        val lost = id()
-        server.claim(ClaimRequest(lost, other.id))
-        store.journal(ClaimEntry(lost, other.id, ClaimPhase.CLAIMING))
-        server.stopRequested += unnamed
-        runner.start()
-        eventually { server.settled(message) == MessageState.STOPPED }
-        eventually { store.pendingClaims().isEmpty() }
-        assertNull(server.settled(unnamed), "a claim this Mac cannot name is dropped, not settled")
-        assertEquals(emptyList(), engine.runs)
+        runner.dispatch(HostStreamEvent.StopRequested(talk.id))
+        Thread.sleep(100)
+        assertEquals(1, server.claimRequests.size, "no new claim takes over this Mac's own message")
+        runner.beat()
+        eventually { server.settled(message) == MessageState.ANSWERED }
+        assertEquals(emptyList(), server.stopAnswers)
+    }
+
+    @Test fun aClaimAnswerThisBuildCannotReadBacksOffAndKeepsItsClaimId() {
+        val clock = java.util.concurrent.atomic.AtomicLong()
+        runner(now = clock::get).use { lane ->
+            val talk = TestConversation()
+            val message = queue(talk)
+            server.claimBody = kotlinx.serialization.json.buildJsonObject { put("status", "stop-later") }
+            lane.dispatch(HostStreamEvent.WorkAvailable(talk.id))
+            eventually { server.claimRequests.size == 1 && store.pendingClaims().size == 1 }
+            val claimId = store.pendingClaims().single().claimId
+            fun quiet(claims: Int) { Thread.sleep(100); assertEquals(claims, server.claimRequests.size) }
+            fun later(millis: Long) = clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(millis))
+            // Nothing claims before its wait ends: neither the heartbeat nor a Stop.
+            lane.beat(); lane.dispatch(HostStreamEvent.StopRequested(talk.id))
+            quiet(1)
+            later(50); lane.beat()
+            eventually { server.claimRequests.size == 2 }
+            // The wait doubles.
+            later(50); lane.beat()
+            quiet(2)
+            later(50); lane.beat()
+            eventually { server.claimRequests.size == 3 }
+            assertEquals(listOf(claimId), server.claimRequests.map { it.claimId }.distinct(), "one claim id throughout")
+            assertFalse(ConversationRunner.UPDATE_REQUIRED in statuses, "an unreadable answer is not a contract answer")
+            assertEquals(emptyList(), engine.runs)
+            // The person stopped it meanwhile. Once the answer reads, a Stop claims with the journaled id and settles it.
+            server.stopRequested += message
+            server.claimBody = null
+            later(1_000)
+            lane.dispatch(HostStreamEvent.StopRequested(talk.id))
+            eventually { server.settled(message) == MessageState.STOPPED }
+            assertEquals(listOf(claimId), server.stopAnswers)
+            assertEquals(listOf(MessageProgress(claimId, message, 2, MessageState.STOPPED)), server.progress.toList())
+        }
     }
 }

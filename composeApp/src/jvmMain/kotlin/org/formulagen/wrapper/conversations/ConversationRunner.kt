@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonObject
@@ -45,14 +46,22 @@ internal fun interface MessageEngine {
  *   claim id journaled first ([ConversationStore.journal]), runs it through the [engine], and settles it. One
  *   message runs at a time per conversation; at most [maxRunning] conversations run at once, and the others
  *   wait for a slot before they claim.
- * - **Crash safety:** a claim journaled but not launched is claimed again with the same id; one that may have
- *   launched settles `reconciliation-required` and never runs again; a decided outcome is delivered until the
- *   server takes it. A refusal mid-run settles the message rather than leaving it claimed; a 400, 403 or 404 on
- *   a claim or its progress is final, and drops the journal entry.
+ * - **Crash safety:** a claim journaled but not launched is claimed again with the same id, and no new claim id
+ *   is made while anything is journaled in that conversation; one that may have launched settles
+ *   `reconciliation-required` and never runs again; a decided outcome is delivered until the server takes it. A
+ *   refusal mid-run settles the message rather than leaving it claimed; a 409 on a claim or a settle means the
+ *   claim moved on, and a 400, 403 or 404 that it is gone for good: either drops the journal entry, and a dropped
+ *   claim or stop is never claimed again in a loop. A claim answer this build cannot read keeps its claim id
+ *   journaled and waits longer before each try.
  * - **Control:** `stop.requested` and `message.cancelled` stop the running message, and a Stop that arrives
  *   while a claim is on its way applies once it lands; `approval.answered` closes the Mac's dialog when the phone
  *   answered first; `project.changed` publishes that project's folders. `mac-update-required` leaves the
  *   message queued on the server and says so in [status].
+ * - **Stops the Mac lost:** under contract 2 a claim answers `stop-requested` with a message the person stopped,
+ *   now under that claim (a replay that never learned its message, or a takeover of a claim this Mac lost); a
+ *   server before it refuses the replay with 409 `stop-requested` instead. Either way the message settles
+ *   `stopped` with no provider turn, and the lane claims again once the server takes it. A `stop.requested` for a
+ *   conversation where this Mac runs and claims nothing claims it once, so a lost claim settles too.
  */
 internal class ConversationRunner(
     private val api: ConversationApi,
@@ -192,6 +201,9 @@ internal class ConversationRunner(
     /** One message running in a conversation: its id and its Stop. */
     private class Running(val messageId: String, val cancel: CancelSignal)
 
+    /** How a settle ended: the server took it, it was dropped (moved on, or gone for good), or it waits for the server. */
+    private enum class Delivery { TAKEN, DROPPED, WAITING }
+
     /** One conversation's serial lane: its claims, its running message, and its journal. */
     private inner class Session(val conversationId: String) {
         /** One thread at most, which ends after a minute idle. */
@@ -200,8 +212,11 @@ internal class ConversationRunner(
         private val woken = AtomicBoolean()
         @Volatile private var current: Running? = null
         @Volatile private var claiming = false
-        /** A Stop that came while a claim was on its way, or journaled and not yet run: it applies to that claim. */
+        /** A Stop that came while a claim was on its way: it applies to that claim once it lands. */
         @Volatile private var stopPending = false
+        /** After claim answers this build could not read: the wait before the next claim (0: none), and when it ends. */
+        private var unreadableWait = 0L
+        private var unreadableUntil = 0L
 
         /**
          * Claim and run messages until none is queued. A poke while it works makes it look again after. Pokes and
@@ -215,9 +230,17 @@ internal class ConversationRunner(
             }
         }
 
+        /**
+         * The person's Stop for this conversation. It ends the running message, and applies to a claim on its way once
+         * it lands. An idle lane claims once instead, through its executor and with the claim id it has journaled if
+         * any: the server answers `stop-requested` with the message to settle, so a claim this Mac lost, or never
+         * learned the message of, still settles. An outcome journaled and on its way claims nothing ([claimOnce]): it
+         * settles the message itself. The server repeats the event on every connect until the message settles; a
+         * repeat finds the claim on its way, or a settled message and nothing to stop.
+         */
         fun stop() {
             current?.let { it.cancel.cancel(); return }
-            if (claiming || store.claims(conversationId).any { it.phase.unrun }) stopPending = true
+            if (claiming) stopPending = true else if (!closed.get()) poke()
         }
 
         fun cancel(messageId: String) { current?.takeIf { it.messageId == messageId }?.cancel?.cancel() }
@@ -225,8 +248,8 @@ internal class ConversationRunner(
         /** A claim journaled before a restart: run on, settle as uncertain, or deliver its outcome; then look for more. */
         fun recover(entry: ClaimEntry) = when (entry.phase) {
             ClaimPhase.CLAIMING, ClaimPhase.CLAIMED -> poke()
-            ClaimPhase.LAUNCHING -> submit { if (settle(entry, MessageState.RECONCILIATION_REQUIRED)) poke() }
-            ClaimPhase.SETTLING -> submit { if (deliver(entry)) poke() }
+            ClaimPhase.LAUNCHING -> submit { if (settle(entry, MessageState.RECONCILIATION_REQUIRED) != Delivery.WAITING) poke() }
+            ClaimPhase.SETTLING -> submit { if (deliver(entry) != Delivery.WAITING) poke() }
         }
 
         /** After a heartbeat: a claim that could not reach the server, or an undelivered outcome, is tried again. */
@@ -235,7 +258,7 @@ internal class ConversationRunner(
             when (entry.phase) {
                 ClaimPhase.CLAIMING, ClaimPhase.CLAIMED -> poke()
                 // The server holds the conversation's next message until this one settles.
-                ClaimPhase.SETTLING -> submit { if (deliver(entry)) poke() }
+                ClaimPhase.SETTLING -> submit { if (deliver(entry) != Delivery.WAITING) poke() }
                 ClaimPhase.LAUNCHING -> Unit
             }
         }
@@ -264,28 +287,44 @@ internal class ConversationRunner(
             }
         }
 
-        /** Claim this conversation's next message and run it. False when there was nothing to run. */
+        /**
+         * Claim this conversation's next message and run it. False when there was nothing to run, or nothing more
+         * until the server or the heartbeat says so. A claim id journaled and not yet run is asked again; a new one
+         * is made only while nothing is journaled here, so an outcome on its way settles before the next claim and
+         * no claim takes over this Mac's own message.
+         */
         private fun claimOnce(): Boolean {
-            val entry = store.claims(conversationId).firstOrNull { it.phase.unrun }
-                ?: store.journal(ClaimEntry(UUID.randomUUID().toString(), conversationId, ClaimPhase.CLAIMING))
+            if (unreadableWait > 0 && now() - unreadableUntil < 0) return false
+            val journaled = store.claims(conversationId)
+            val replayed = journaled.firstOrNull { it.phase.unrun }
+            if (replayed == null && journaled.isNotEmpty()) return false
+            val entry = replayed ?: store.journal(ClaimEntry(UUID.randomUUID().toString(), conversationId, ClaimPhase.CLAIMING))
             claiming = true
             val response = try {
                 api.claim(ClaimRequest(entry.claimId, conversationId))
             } catch (refused: HovelRejectedException) {
-                stopPending = false
-                if (refused.code == ClaimOutput.STOP_REQUESTED) return stopReplayed(entry)
-                store.forget(entry)
-                if (refused.code == UPDATE_REQUIRED_CODE) status(UPDATE_REQUIRED)
-                return false
+                // A server before contract 2 refuses the replay of a claim whose message was stopped; settled below.
+                if (refused.code == ClaimOutput.STOP_REQUESTED) null else {
+                    // Moved on (another claim holds its message, or it settled), or too old: forget it, and look no further.
+                    store.forget(entry)
+                    stopPending = false
+                    if (refused.code == UPDATE_REQUIRED_CODE) status(UPDATE_REQUIRED)
+                    return false
+                }
             } catch (final: HovelStatusException) {
                 if (!final.final) return false
                 log(LogLevel.Warn, "conversations", "The server refused a claim for good (HTTP ${final.status}); it is dropped")
                 store.forget(entry)
                 stopPending = false
                 return false
-            } catch (_: SerializationException) {
-                // A claim this build cannot read names something newer than it: the same claim id is asked again after an update.
-                status(UPDATE_REQUIRED)
+            } catch (unreadable: SerializationException) {
+                // Not a contract answer, so not "update Hovel": only `mac-update-required` or an `update-required`
+                // refusal says that. The claim id stays journaled, so the server's claim is never orphaned, and the
+                // lane waits longer each time before it asks again; the first in a row is logged.
+                if (unreadableWait == 0L) log(LogLevel.Warn, "conversations", "A claim answer could not be read; claiming waits", unreadable)
+                unreadableWait = if (unreadableWait == 0L) heartbeatEvery.inWholeNanoseconds
+                    else minOf(unreadableWait * 2, MAX_UNREADABLE_WAIT.inWholeNanoseconds)
+                unreadableUntil = now() + unreadableWait
                 return false
             } catch (error: Exception) {
                 // Unreachable: the journaled claim id is tried again after the next heartbeat.
@@ -294,25 +333,50 @@ internal class ConversationRunner(
             } finally {
                 claiming = false
             }
+            unreadableWait = 0L
             return when (response) {
+                null -> stopReplayed(entry, replay = replayed != null)
                 ClaimResponse.Empty -> { store.forget(entry); stopPending = false; false }
                 is ClaimResponse.MacUpdateRequired -> { store.forget(entry); stopPending = false; status(UPDATE_REQUIRED); false }
+                is ClaimResponse.StopRequested -> settleStopped(entry, response.message)
                 is ClaimResponse.Claimed -> { run(entry, response.claim); true }
             }
         }
 
         /**
-         * The replay of a journaled claim was refused because the person asked to stop its message: a claim that
-         * landed before (journaled `claimed`) settles `stopped`, and the lane looks for more once it is delivered.
-         * A claim journaled only as `claiming` never learned its message, so it cannot be settled from here.
+         * The claim answered `stop-requested`: [message] is the conversation's in-flight message, which the person
+         * asked to stop, now under [entry]'s claim. Its id and revision are journaled with the outcome, and it settles
+         * `stopped` at that revision under this claim; no provider turn starts. Once the server takes it the lane
+         * claims again, for what is queued; a settle refused as moved on ends the look, so a stop never loops. The
+         * pending Stop is cleared once the outcome is journaled, so a repeat of the event meanwhile never reaches the
+         * conversation's next message.
          */
-        private fun stopReplayed(entry: ClaimEntry): Boolean {
-            if (entry.phase == ClaimPhase.CLAIMED && entry.messageId != null && entry.revision != null) {
-                return settle(entry, MessageState.STOPPED)
+        private fun settleStopped(entry: ClaimEntry, message: ConversationMessage): Boolean {
+            val settleable = message.conversationId == conversationId && message.author == MessageAuthor.USER &&
+                (message.state == MessageState.CLAIMED || message.state == MessageState.RUNNING)
+            val again = if (settleable) {
+                settle(entry.copy(messageId = message.id, revision = message.revision), MessageState.STOPPED) == Delivery.TAKEN
+            } else {
+                log(LogLevel.Warn, "conversations", "A stop answer named a message this claim cannot settle; it is dropped")
+                store.forget(entry)
+                false
             }
-            log(LogLevel.Warn, "conversations", "A stopped message's claim never reached this Mac's journal; it is dropped")
-            store.forget(entry)
-            return false
+            stopPending = false
+            return again
+        }
+
+        /**
+         * A server before contract 2 refused the replay of a claim whose message the person asked to stop. A claim
+         * journaled `claimed` knows its message and settles it `stopped`, claiming again once the server takes it. One
+         * journaled only as `claiming` never learned its message: it is dropped and the lane claims once afresh, which
+         * a contract 2 server answers with the message to settle. The same refusal of a claim id made just now is not
+         * a replay, so it is dropped and ends the look.
+         */
+        private fun stopReplayed(entry: ClaimEntry, replay: Boolean): Boolean {
+            val named = entry.phase == ClaimPhase.CLAIMED && entry.messageId != null && entry.revision != null
+            val again = if (named) settle(entry, MessageState.STOPPED) == Delivery.TAKEN else { store.forget(entry); replay }
+            stopPending = false
+            return again
         }
 
         /** Journal the claim, cross the launch boundary, run it, and settle it. */
@@ -374,38 +438,41 @@ internal class ConversationRunner(
             }
         }
 
-        /** Journal [state] as the outcome, then deliver it. True once the server has it. */
-        private fun settle(entry: ClaimEntry, state: MessageState) =
+        /** Journal [state] as the outcome, then deliver it. */
+        private fun settle(entry: ClaimEntry, state: MessageState): Delivery =
             deliver(store.journal(entry.copy(phase = ClaimPhase.SETTLING, outcome = state)))
 
         /**
-         * Settle the message on the server. A refusal means the server has moved on (settled, stopped or expired),
-         * and a 400, 403 or 404 that the message is gone: the outcome is dropped. An unreachable server keeps it for
-         * the next heartbeat.
+         * Settle the message on the server under the entry's claim. A refusal means the server has moved on (another
+         * claim holds the message, or it settled, stopped or expired), and a 400, 403 or 404 that the message is gone:
+         * the outcome is dropped. An unreachable server keeps it for the next heartbeat.
          */
-        private fun deliver(journaled: ClaimEntry): Boolean {
+        private fun deliver(journaled: ClaimEntry): Delivery {
             // A heartbeat may have queued this delivery twice; the second finds it delivered.
             val entry = store.claims(conversationId).find { it.claimId == journaled.claimId && it.phase == ClaimPhase.SETTLING }
-                ?: return true
-            val messageId = entry.messageId ?: run { store.forget(entry); return true }
+                ?: return Delivery.TAKEN
+            val messageId = entry.messageId ?: run { store.forget(entry); return Delivery.DROPPED }
             val outcome = checkNotNull(entry.outcome)
             val revision = checkNotNull(entry.revision)
             fun send(at: Long) = api.progress(messageId, MessageProgress(entry.claimId, messageId, at, outcome))
-            try {
+            val delivery = try {
                 try { send(revision) } catch (refused: HovelRejectedException) {
                     // A crash between `running` and journaling its revision leaves the journal one behind.
                     if (outcome == MessageState.RECONCILIATION_REQUIRED) send(revision + 1) else throw refused
                 }
+                Delivery.TAKEN
             } catch (_: HovelRejectedException) {
+                Delivery.DROPPED
             } catch (final: HovelStatusException) {
-                if (!final.final) return false
+                if (!final.final) return Delivery.WAITING
                 log(LogLevel.Warn, "conversations", "The server refused an outcome for good (HTTP ${final.status}); it is dropped")
+                Delivery.DROPPED
             } catch (error: Exception) {
                 log(LogLevel.Warn, "conversations", "A message outcome waits for the server", error)
-                return false
+                return Delivery.WAITING
             }
             store.forget(entry)
-            return true
+            return delivery
         }
     }
 
@@ -416,6 +483,8 @@ internal class ConversationRunner(
         const val CONNECTING = "Connected · Reconnecting to live updates"
         const val OFFLINE = "Server unavailable; messages wait on the server"
         const val UPDATE_REQUIRED = "Update Hovel on this Mac to run every message in its conversations"
+        /** The longest a lane waits between claims whose answers it cannot read. */
+        val MAX_UNREADABLE_WAIT = 10.minutes
         /** The contract's refusal code for a client too old for what it asked for. */
         const val UPDATE_REQUIRED_CODE = "update-required"
     }
