@@ -78,10 +78,45 @@ export function chromeExecutable() {
 }
 
 /** Headless Chromium that may play audio without a click and exposes WebGPU. */
-export function launch() {
+export function launch({ args = [] } = {}) {
   return chromium.launch({
     executablePath: chromeExecutable(),
     headless: true,
-    args: ["--autoplay-policy=no-user-gesture-required", "--enable-unsafe-webgpu"],
+    args: ["--autoplay-policy=no-user-gesture-required", "--enable-unsafe-webgpu", ...args],
   });
+}
+
+/**
+ * Init script: getUserMedia returns a real MediaStream that stays silent until
+ * the test calls window.__fakeMic.play(url), which plays that 16 kHz WAV into
+ * it and resolves when it ends. Headless Chromium on macOS never delivers its
+ * own fake capture device, so the page's whole path from MediaStream on is
+ * exercised with this instead; the browser's echo canceller is not. The track
+ * reports echo cancellation, as Chrome's does.
+ */
+export function fakeMicrophoneScript() {
+  return `(() => {
+    let context = null;
+    let destination = null;
+    window.__fakeMic = {
+      async play(url) {
+        await context.resume();
+        const audio = await context.decodeAudioData(await (await fetch(url)).arrayBuffer());
+        const source = context.createBufferSource();
+        source.buffer = audio;
+        source.connect(destination);
+        source.start();
+        return new Promise((resolve) => { source.onended = resolve; });
+      },
+    };
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      window.__constraints = constraints;
+      context = new AudioContext({ sampleRate: 16000 });
+      destination = context.createMediaStreamDestination();
+      const track = destination.stream.getAudioTracks()[0];
+      const settings = track.getSettings.bind(track);
+      track.getSettings = () => ({ ...settings(), echoCancellation: true, noiseSuppression: true, channelCount: 1, sampleRate: 16000 });
+      return destination.stream;
+    };
+  })();`;
 }

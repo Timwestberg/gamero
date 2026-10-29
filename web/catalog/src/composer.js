@@ -4,6 +4,7 @@
  * Ember's replies go through the session's speech slot (hearing/src/speaker.js).
  */
 
+import { createListener, createMicCapture } from "../../hearing/src/listener.js";
 import { createSession } from "../../hearing/src/session.js";
 import { WEB_MIC_CONSTRAINTS } from "../../hearing/src/media.js";
 
@@ -26,8 +27,11 @@ export const POLICY = {
 /**
  * speaker: { speak(text, { onStart }) -> Promise<"ended" | "cancelled">, stop(), prepare?() }.
  * prepare() runs on the talk click, so the audio output starts inside a user gesture.
+ * hearing (hearing-client.js) and micStream: the real microphone. The talk click opens a 16 kHz
+ * capture and starts the hearing models; chunks are ignored until they are ready.
  */
-export function createComposer({ host, speaker, aecAvailable, selfCheck, now, onChange }) {
+export function createComposer({ host, speaker, hearing = null, micStream = null, capture = createMicCapture, aecAvailable, selfCheck, now = () => globalThis.performance?.now() ?? 0, onChange }) {
+  let listener = null;
   const session = createSession({
     policy: POLICY,
     now,
@@ -37,9 +41,18 @@ export function createComposer({ host, speaker, aecAvailable, selfCheck, now, on
     chatState: host?.chatState,
     speech: speaker,
     onChange,
+    onBargeIn: () => listener?.restartWithPreRoll(),
+    onEnd: () => listener?.stop(),
     sink: {
       arm() {
         speaker?.prepare?.();
+        if (listener && micStream) {
+          hearing.load().catch(() => onChange?.());
+          listener.start(capture(micStream)).catch((error) => {
+            session.notice = `The microphone did not start: ${error?.message || error}`;
+            onChange?.();
+          });
+        }
         if (host) host.hearing("press");
       },
       stop() {
@@ -55,8 +68,12 @@ export function createComposer({ host, speaker, aecAvailable, selfCheck, now, on
       },
     },
   });
+  if (hearing && micStream) {
+    listener = createListener({ session, hearing, ready: () => hearing.status === "ready", onFrame: () => onChange?.() });
+  }
   return {
     session,
+    listener,
     /** Ember's reply from the host (or the test page): spoken through the slot. */
     reply(text) {
       return session.say(text);
