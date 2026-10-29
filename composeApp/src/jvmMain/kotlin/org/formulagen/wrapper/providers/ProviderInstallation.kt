@@ -19,11 +19,7 @@ import org.formulagen.wrapper.providers.grok.grokVersionSupported
 internal class ProviderInstallation(
     private val root: Path,
     private val environment: Map<String, String>,
-    private val discover: (RuntimeId) -> Path? = { id -> when (id) {
-        RuntimeId.CODEX -> findCodexExecutable(environment)
-        RuntimeId.CLAUDE_CODE -> findClaudeExecutable(environment)
-        RuntimeId.GROK_BUILD -> findGrokExecutable(environment)
-    } },
+    private val discover: (RuntimeId) -> Path? = { id -> id.setup.find(environment) },
     private val openTerminal: (Path) -> Boolean = { script ->
         runBounded(ProcessBuilder("/usr/bin/open", "-a", "Terminal", script.toString()), 5.seconds)?.exitCode == 0
     },
@@ -40,7 +36,7 @@ internal class ProviderInstallation(
             val script = Files.createTempFile(folder, "sign-in-", ".command",
                 PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")))
             try {
-                Files.writeString(script, loginScript(executable, loginArgs(id), loginEnvironment(id, executable), folder))
+                Files.writeString(script, loginScript(executable, id.setup.login, loginEnvironment(id, executable), folder))
                 if (openTerminal(script)) true else { Files.deleteIfExists(script); false }
             } catch (error: Exception) {
                 Files.deleteIfExists(script)
@@ -53,31 +49,21 @@ internal class ProviderInstallation(
         if (!mac) return@guarded ProviderSetup(id, ProviderSetupState.UNAVAILABLE) to null
         val executable = discover(id)?.takeIf { it.isAbsolute && Files.isRegularFile(it) && Files.isExecutable(it) }
             ?: return@guarded ProviderSetup(id, ProviderSetupState.NOT_INSTALLED) to null
+        val setup = id.setup
         val folder = folder()
         fun probe(args: List<String>) = runBounded(ProcessBuilder(listOf(executable.toString()) + args).apply {
             directory(folder.toFile())
             environment().clear()
             environment().putAll(loginEnvironment(id, executable))
         }, 5.seconds)
-        if (id == RuntimeId.CLAUDE_CODE) {
-            val version = probe(listOf("--version"))?.takeIf { it.exitCode == 0 }?.let { ClaudeVersion.parse(it.output) }
+        setup.accepts?.let { accepts ->
+            val accepted = probe(listOf("--version"))?.takeIf { it.exitCode == 0 }?.let { accepts(it.output) }
                 ?: return@guarded ProviderSetup(id, ProviderSetupState.UNAVAILABLE) to null
-            if (version < MIN_CLAUDE_VERSION) return@guarded ProviderSetup(id, ProviderSetupState.OUTDATED) to null
+            if (!accepted) return@guarded ProviderSetup(id, ProviderSetupState.OUTDATED) to null
         }
-        // Every Grok talk and work launch requires the exact accepted release, so another one cannot sign in here.
-        if (id == RuntimeId.GROK_BUILD) {
-            val version = probe(listOf("--version"))?.takeIf { it.exitCode == 0 }
-                ?: return@guarded ProviderSetup(id, ProviderSetupState.UNAVAILABLE) to null
-            if (!grokVersionSupported(version.output)) return@guarded ProviderSetup(id, ProviderSetupState.OUTDATED) to null
-        }
-        // Grok's global flag goes before the subcommand, so the help still reads "Usage: grok login".
-        val help = probe((if (id == RuntimeId.GROK_BUILD) listOf("--no-auto-update") else emptyList()) + loginArgs(id) + "--help")
+        val help = probe(setup.helpFlags + setup.login + "--help")
             ?: return@guarded ProviderSetup(id, ProviderSetupState.UNAVAILABLE) to null
-        val command = when (id) {
-            RuntimeId.CODEX -> "codex login"
-            RuntimeId.CLAUDE_CODE -> "claude auth login"
-            RuntimeId.GROK_BUILD -> "grok login"
-        }
+        val command = (listOf(setup.program) + setup.login).joinToString(" ")
         val supported = help.exitCode == 0 && Regex("(?im)^Usage: " + Regex.escape(command) + "(?: |$)").containsMatchIn(help.output)
         ProviderSetup(id, if (supported) ProviderSetupState.READY else ProviderSetupState.OUTDATED) to executable
     }
@@ -88,25 +74,48 @@ internal class ProviderInstallation(
         Files.setPosixFilePermissions(it, PosixFilePermissions.fromString("rwx------"))
     }
 
-    /**
-     * Match each account reader's credential home. No API keys, tokens or endpoint overrides are inherited.
-     * Grok's probes and login never update Grok itself: Hovel accepts only one release.
-     */
+    /** Match each account reader's credential home. No API keys, tokens or endpoint overrides are inherited. */
     private fun loginEnvironment(id: RuntimeId, executable: Path): Map<String, String> {
-        val keys = CHILD_ENV + when (id) {
-            RuntimeId.CODEX -> listOf("CODEX_HOME", "CODEX_CA_CERTIFICATE")
-            RuntimeId.CLAUDE_CODE -> emptyList()
-            RuntimeId.GROK_BUILD -> listOf("GROK_HOME")
-        }
+        val setup = id.setup
+        val keys = CHILD_ENV + setup.keep
         return environment.filterKeys { it in keys } + mapOf(
             "PATH" to (listOf(executable.parent.toString()) + environment["PATH"].orEmpty().split(":") +
                 listOf("/usr/bin", "/bin", "/usr/sbin", "/sbin")).filter { it.isNotBlank() }.distinct().joinToString(":"),
             "TERM" to "xterm-256color",
-        ) + (if (id == RuntimeId.GROK_BUILD) mapOf("GROK_DISABLE_AUTOUPDATER" to "1") else emptyMap())
+        ) + setup.fixed
     }
 }
 
-private fun loginArgs(id: RuntimeId) = if (id == RuntimeId.CLAUDE_CODE) listOf("auth", "login") else listOf("login")
+/** Everything setup knows about one runtime; supporting another runtime is one entry in [setup]. */
+private class RuntimeSetup(
+    /** The installed executable: explicit configuration, then `PATH`, then the installers' locations. */
+    val find: (Map<String, String>) -> Path?,
+    /** The program name as the login's usage line prints it. */
+    val program: String,
+    /** The provider-owned login subcommand. */
+    val login: List<String>,
+    /** Variables kept from Hovel's environment besides [CHILD_ENV]: where the provider keeps its login. */
+    val keep: List<String> = emptyList(),
+    /** Variables set for every probe and for the login itself. */
+    val fixed: Map<String, String> = emptyMap(),
+    /** Global flags placed before the subcommand in the login help probe. */
+    val helpFlags: List<String> = emptyList(),
+    /** Whether `--version` printed an accepted release, or null when it cannot be read. Null accepts any release. */
+    val accepts: ((String) -> Boolean?)? = null,
+)
+
+private val RuntimeId.setup: RuntimeSetup get() = when (this) {
+    RuntimeId.CODEX -> RuntimeSetup({ findCodexExecutable(it) }, "codex", listOf("login"),
+        keep = listOf("CODEX_HOME", "CODEX_CA_CERTIFICATE"))
+    RuntimeId.CLAUDE_CODE -> RuntimeSetup({ findClaudeExecutable(it) }, "claude", listOf("auth", "login"),
+        accepts = { output -> ClaudeVersion.parse(output)?.let { it >= MIN_CLAUDE_VERSION } })
+    // Every Grok talk and work launch requires the exact accepted release, so another one cannot sign in here,
+    // and neither the probes nor the login may update Grok away from it. The global flag goes before the
+    // subcommand, so the help still reads "Usage: grok login".
+    RuntimeId.GROK_BUILD -> RuntimeSetup({ findGrokExecutable(it) }, "grok", listOf("login"),
+        keep = listOf("GROK_HOME"), fixed = mapOf("GROK_DISABLE_AUTOUPDATER" to "1"),
+        helpFlags = listOf("--no-auto-update"), accepts = ::grokVersionSupported)
+}
 
 /** One shell-quoted argument; metacharacters and apostrophes in local paths cannot become shell code. */
 private fun quoteArgument(value: String) = "'" + value.replace("'", "'\"'\"'") + "'"
