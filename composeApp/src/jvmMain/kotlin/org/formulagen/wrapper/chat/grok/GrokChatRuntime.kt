@@ -25,8 +25,6 @@ import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.providers.GrokConnection
-import org.formulagen.wrapper.providers.grok.GROK_STOP_GRACE
-import org.formulagen.wrapper.providers.grok.GROK_TURN_HANDOFF
 import org.formulagen.wrapper.providers.grok.GrokAuthAvailability
 import org.formulagen.wrapper.providers.grok.GrokBudget
 import org.formulagen.wrapper.providers.grok.GrokTransportFailure
@@ -145,35 +143,30 @@ internal class GrokChatRuntime(
         /** Only missing pre-submission mappings can request DesktopChat's one context-restoration retry. */
         private fun run() {
             val saved = request.conversation
-            val start = resolveGrokTurn(request, GrokMode.TALK, connection, bindings, prune = {
-                // Read the histories outside the lock: a handle active at any time during the read is kept,
-                // since its history may have been written after the read passed it.
+            val start = when (val resolved = resolveGrokTalkTurn(request, connection, bindings, beforeLookup = {
+                // Activate the saved handle, then read the histories outside the lock: a handle active at any time
+                // during the read is kept, since its history may have been written after the read passed it.
                 synchronized(bindingLock) { saved?.id?.let { activate(it); activeHandle = it }; scans++; touched += activeHandles }
                 try {
                     val retained = companionConversationIds(root, request.profile, RuntimeId.GROK_BUILD)
                     synchronized(bindingLock) { retained?.let { bindings.prune(request.profile, it + activeHandles + touched) } }
                 } finally { synchronized(bindingLock) { if (--scans == 0) touched.clear() } }
-            })
-            val (account, executable, model, _, scope, previous) = when (start) {
-                is GrokTurnStart.Failed -> { fail(start.failure); return }
-                is GrokTurnStart.Ready -> start
+            })) {
+                is GrokTurnStart.Failed -> { fail(resolved.failure); return }
+                is GrokTurnStart.Ready -> resolved
             }
             val location = root.resolve(request.profile).resolve("grok-talk").resolve(request.companionId)
-                .resolve(HovelCompanion.sha256("${account.fingerprint}/${request.persona.hash}/$model"))
+                .resolve(HovelCompanion.sha256("${start.account.fingerprint}/${request.persona.hash}/${start.model}"))
             if (ended.get()) return
-            val opened = try {
-                GrokTalkSession.open(executable, environment, request.persona.instructions, model,
-                    persistentFolder = location, resume = previous?.providerSessionId, expectedAccount = account.fingerprint,
+            val opened = bindings.openForgettingLost(start.previous) {
+                GrokTalkSession.open(start.executable, environment, request.persona.instructions, start.model,
+                    persistentFolder = location, resume = start.previous?.providerSessionId, expectedAccount = start.account.fingerprint,
                     onUpdate = ::update)
-            } catch (_: GrokSessionLost) {
-                // Grok refused the saved session before any prompt: start fresh rather than repeat the failing load.
-                previous?.let { bindings.forget(it.handle) }
-                fail(ChatFailure.ConversationLost); return
-            }
+            } ?: run { fail(ChatFailure.ConversationLost); return }
             session = opened
             if (ended.get() || closed.get()) { opened.abort(); return }
             val binding = synchronized(bindingLock) {
-                (previous ?: bindings.create(opened.sessionId, scope)).also { activate(it.handle); activeHandle = it.handle }
+                (start.previous ?: bindings.create(opened.sessionId, start.scope)).also { activate(it.handle); activeHandle = it.handle }
             }
             synchronized(this) { state = GrokTurnState(opened.sessionId) }
             if (saved == null) deliver { events.opened(binding.handle) }

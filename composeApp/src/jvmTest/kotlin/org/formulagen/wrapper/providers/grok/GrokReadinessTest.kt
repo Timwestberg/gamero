@@ -144,7 +144,7 @@ class GrokReadinessTest {
                 assertFalse(Files.exists(Path.of(builder.environment().getValue("GROK_HOME")).resolve("auth.json")))
                 assertEquals("DO NOT READ OR COPY", Files.readString(credential))
                 Files.writeString(provider.resolve("requirements.toml"), "")
-                assertFails { it.checkPolicies() }
+                assertFails { it.recheck() }
             }
             assertFalse(Files.exists(folder))
             assertFails { GrokLaunch.create(Path.of("/bin/false"), parent, "Persona", root.resolve("system")) }

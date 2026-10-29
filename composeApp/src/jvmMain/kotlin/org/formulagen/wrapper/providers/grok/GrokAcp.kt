@@ -189,18 +189,11 @@ internal class GrokAcp(
     fun awaitClosed(timeout: Duration = 10.seconds) { finished.get(timeout.inWholeMilliseconds, TimeUnit.MILLISECONDS) }
 }
 
-/** How long Stop leaves ACP cancellation to end a prompt before the turn ends the process itself. */
-internal val GROK_STOP_GRACE: Duration = 5.seconds
-
 /** After the process tree's own grace, how long [GrokAcp.close] waits to confirm every process exited. */
 private val GROK_CLEANUP_CONFIRMATION: Duration = 2.seconds
 
-/**
- * How long a new turn waits for the previous one on the same owner to release it: a stopped turn's
- * cancellation grace, then its forced teardown (the process tree's grace and this transport's
- * confirmation), with a second of scheduling slack.
- */
-internal val GROK_TURN_HANDOFF: Duration = GROK_STOP_GRACE + PROCESS_TREE_GRACE + GROK_CLEANUP_CONFIRMATION + 1.seconds
+/** The longest a forced [GrokAcp.close] takes: the process tree's grace, then this transport's confirmation. */
+internal val GROK_TEARDOWN: Duration = PROCESS_TREE_GRACE + GROK_CLEANUP_CONFIRMATION
 
 /** Raw provider error messages/data never escape the transport; callers classify only verified codes. */
 internal class GrokRequestRejected(val code: Int) : IllegalStateException("Grok rejected the request")

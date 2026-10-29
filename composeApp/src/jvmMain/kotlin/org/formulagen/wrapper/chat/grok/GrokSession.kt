@@ -9,6 +9,7 @@ import org.formulagen.wrapper.providers.grok.GROK_ACCOUNT_METHODS
 import org.formulagen.wrapper.providers.grok.GrokAccount
 import org.formulagen.wrapper.providers.grok.GrokAcp
 import org.formulagen.wrapper.providers.grok.GrokBudget
+import org.formulagen.wrapper.providers.grok.GrokCleanupUnconfirmed
 import org.formulagen.wrapper.providers.grok.GrokLaunchPolicy
 import org.formulagen.wrapper.providers.grok.GrokRequestRejected
 import org.formulagen.wrapper.providers.grok.GrokTransportFailure
@@ -20,11 +21,11 @@ import org.formulagen.wrapper.providers.grok.grokModels
 import org.formulagen.wrapper.providers.grok.validGrokSessionId
 
 /**
- * One authenticated ACP session over one launch, for talk or work. Opening never sends a prompt; every
+ * One authenticated ACP session over one launch [L], for talk or work. Opening never sends a prompt; every
  * prompt first revalidates the launch, then the account and the session's tool evidence.
  */
-internal sealed class GrokSession(
-    protected val launch: GrokLaunchPolicy,
+internal sealed class GrokSession<L : GrokLaunchPolicy>(
+    protected val launch: L,
     opened: GrokOpenedSession,
     private val promptTimeout: Duration,
 ) : AutoCloseable {
@@ -79,34 +80,32 @@ internal class GrokOpenedSession(
 /**
  * Start [launch]'s agent and open one ACP session on it; no prompt or permission can run here. [prepare] runs
  * first, under the same cleanup: it verifies the launch (work also settles folder trust there) and returns the
- * deadline for the rest of startup. Any failure reaps the process and removes the launch before rethrowing.
+ * deadline for the rest of startup. Any failure reaps the process and removes the launch before rethrowing; if
+ * that cleanup fails, the [GrokCleanupUnconfirmed] carries the startup failure as suppressed.
  *
  * A null [model] selects the account's default; a null [expectedAccount] accepts the verified account. Grok
  * answering [resume] with a coded rejection is [GrokSessionLost]. [onPermission] null refuses every client request.
  */
-internal fun <L : GrokLaunchPolicy> openGrokSession(
-    launch: L,
+internal fun openGrokSession(
+    launch: GrokLaunchPolicy,
     tools: GrokToolEvidence,
     model: String?,
     expectedAccount: String?,
     resume: String?,
     onUpdate: (JsonObject) -> Unit,
     onPermission: ((JsonObject, (JsonObject?) -> Unit) -> Unit)? = null,
-    prepare: (L) -> GrokBudget,
+    prepare: () -> GrokBudget,
 ): GrokOpenedSession {
     var rpc: GrokAcp? = null
     try {
-        val budget = prepare(launch)
-        val transport = GrokAcp(launch.agentBuilder(), GROK_ACCOUNT_METHODS + setOf("session/new", "session/load", "session/prompt"),
+        val budget = prepare()
+        val transport = launch.startAgent(GROK_ACCOUNT_METHODS + setOf("session/new", "session/load", "session/prompt"),
             onNotification = { method, params -> if (method == "session/update") { tools.observe(params); onUpdate(params) } },
-            onRequest = onPermission?.let { answer -> { _: String, params: JsonObject, respond: (JsonObject?) -> Unit -> answer(params, respond) } },
-            allowReloadResponses = true)
+            onRequest = onPermission?.let { answer -> { _: String, params: JsonObject, respond: (JsonObject?) -> Unit -> answer(params, respond) } })
         rpc = transport
         val initialized = transport.call("initialize", grokInitialize(), budget.remaining())
         launch.recheck()
-        val account = grokAccount(transport, initialized, budget)
-        check(expectedAccount == null || account.fingerprint == expectedAccount) { "Grok account changed" }
-        launch.recheck()
+        val account = launch.authenticate(transport, initialized, budget, expectedAccount)
         val selected = model ?: account.defaultModel
         check(account.models.any { it.modelId == selected }) { "Grok model unavailable" }
         if (resume != null) check(validGrokSessionId(resume) && grokHandshake(initialized).loadSession)
@@ -125,7 +124,7 @@ internal fun <L : GrokLaunchPolicy> openGrokSession(
         launch.recheck()
         return GrokOpenedSession(transport, initialized, tools, account, id, selected)
     } catch (error: Exception) {
-        launch.closeAfter(rpc)
+        try { launch.closeAfter(rpc) } catch (cleanup: Exception) { cleanup.addSuppressed(error); throw cleanup }
         throw error
     }
 }

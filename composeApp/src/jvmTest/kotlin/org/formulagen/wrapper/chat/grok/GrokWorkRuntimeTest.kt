@@ -322,6 +322,50 @@ class GrokWorkRuntimeTest {
             }
         }
     }
+
+    @Test fun aConfigChangedWhileWorkStartsIsRefusedBeforeAuthentication() {
+        FakeGrokRuntime().use { fake ->
+            // The work agent's initialize rewrites the player's config away from the OIDC pin.
+            fake.mode("repin")
+            val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
+            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker).use { runtime ->
+                val events = WorkFixtureEvents()
+                runtime.startTurn(workRequest(fake), events); events.done.get(10, TimeUnit.SECONDS)
+                assertEquals(ChatFailure.Temporary, events.failure)
+                val requests = fake.workRequests()
+                assertTrue("initialize" in requests)
+                assertTrue(requests.none { it in setOf("_x.ai/auth/info", "_x.ai/auth/check_subscription", "authenticate") }, requests.toString())
+                assertFalse("session/new" in requests)
+                assertFalse(Files.exists(fake.workProfile()), "The failed launch kept its profile")
+            }
+        }
+    }
+
+    @Test fun anUnconfirmedCleanupAfterALostSessionForgetsTheBindingAndStopsFurtherWork() {
+        FakeGrokRuntime().use { fake ->
+            val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
+            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker).use { runtime ->
+                val request = workRequest(fake)
+                val first = WorkFixtureEvents()
+                runtime.startTurn(request, first); first.done.get(10, TimeUnit.SECONDS)
+                assertNull(first.failure)
+                val binding = fake.root.resolve("providers/grok-work-bindings/${first.handle}.json")
+                assertTrue(Files.exists(binding))
+                // Grok refuses the saved session, and the launch then cannot remove its profile.
+                fake.mode("reject-load-held")
+                val lost = WorkFixtureEvents()
+                try {
+                    runtime.startTurn(request.copy(conversation = NativeConversation(checkNotNull(first.handle), request.persona.hash)), lost)
+                    lost.done.get(10, TimeUnit.SECONDS)
+                    assertEquals(ChatFailure.Temporary, lost.failure)
+                    assertFalse(Files.exists(binding), "The lost session's binding survived its unconfirmed cleanup")
+                    assertEquals(Readiness.Unavailable("Grok work cleanup could not be confirmed. Restart Hovel before continuing."),
+                        runtime.readiness("local"))
+                    assertFailsWith<IllegalStateException> { runtime.startTurn(request, WorkFixtureEvents()) }
+                } finally { fake.workProfile().toFile().deleteRecursively() }
+            }
+        }
+    }
 }
 
 private fun workRequest(fake: FakeGrokRuntime, folder: java.nio.file.Path = fake.root) = TurnRequest("local", "20000000-0000-4000-8000-000000000002",

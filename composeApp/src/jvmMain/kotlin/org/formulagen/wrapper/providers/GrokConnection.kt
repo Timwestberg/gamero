@@ -9,7 +9,6 @@ import org.formulagen.wrapper.providers.grok.GrokAuthAvailability
 import org.formulagen.wrapper.providers.grok.GrokBudget
 import org.formulagen.wrapper.providers.grok.GrokLaunch
 import org.formulagen.wrapper.providers.grok.findGrokExecutable
-import org.formulagen.wrapper.providers.grok.grokAccount
 import org.formulagen.wrapper.providers.grok.grokHandshake
 import org.formulagen.wrapper.providers.grok.grokInitialize
 
@@ -44,13 +43,13 @@ private fun readGrokAccess(executable: Path, environment: Map<String, String>): 
         var rpc: GrokAcp? = null
         try {
             launch.verify(budget.remaining())
-            val transport = GrokAcp(launch.agentBuilder(), GROK_ACCOUNT_METHODS, allowReloadResponses = true)
+            val transport = launch.startAgent(GROK_ACCOUNT_METHODS)
             rpc = transport
             val initialized = transport.call("initialize", grokInitialize(), budget.remaining())
             auth = grokHandshake(initialized).auth
-            launch.checkPolicies()
+            launch.recheck()
             if (auth != GrokAuthAvailability.CACHED_CREDENTIAL) GrokAccess(executable, auth)
-            else GrokAccess(executable, auth, grokAccount(transport, initialized, budget)).also { launch.checkPolicies() }
+            else GrokAccess(executable, auth, launch.authenticate(transport, initialized, budget))
         } finally { launch.closeAfter(rpc) }
     } catch (error: Exception) {
         if (error is InterruptedException || Thread.currentThread().isInterrupted) throw InterruptedException()

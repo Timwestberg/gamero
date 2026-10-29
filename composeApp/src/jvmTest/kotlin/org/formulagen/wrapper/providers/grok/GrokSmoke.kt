@@ -3,12 +3,15 @@ package org.formulagen.wrapper.providers.grok
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
+import kotlin.test.fail
 import org.junit.Assume.assumeTrue
 
 /**
  * The opt-ins for live checks against an installed Grok Build; without them every live test skips.
  * `HOVEL_GROK_SMOKE=/absolute/path/to/grok` runs the checks that send no model turn, and
  * `HOVEL_GROK_SMOKE_TURNS=1` also runs the checks that send controlled model turns on the subscription.
+ * `HOVEL_GROK_SMOKE` checks still sign in with the player's Grok account, and the work checks need the OIDC
+ * setting ([requireWorkAuthPin]); narrow the run with `--tests` when that is not wanted.
  */
 internal object GrokSmoke {
     /** The runtime under test. Skips the calling test unless `HOVEL_GROK_SMOKE` names it. */
@@ -41,11 +44,29 @@ internal object GrokSmoke {
      * [environment] with a disposable provider home in [root], holding a private copy of the player's
      * `config.toml`: a test's folder-trust grant stays out of their store, and their login is still only referenced.
      */
-    fun disposableHomeEnvironment(root: Path, executable: Path): Map<String, String> {
+    fun disposableHomeEnvironment(root: Path, executable: Path): Map<String, String> =
+        environment(executable) + ("GROK_HOME" to disposableHome(root).toString())
+
+    /**
+     * A private provider home in [root] holding a copy of the player's `config.toml`, so Grok's session store, trust
+     * grants and other state stay out of theirs. The login stays where [authPath] references it.
+     */
+    fun disposableHome(root: Path): Path {
         val home = Files.createDirectory(root.resolve("grok-home"),
             PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")))
         Files.copy(providerHome.resolve("config.toml"), home.resolve("config.toml"))
         Files.setPosixFilePermissions(home.resolve("config.toml"), PosixFilePermissions.fromString("rw-------"))
-        return environment(executable) + ("GROK_HOME" to home.toString())
+        return home
+    }
+
+    /**
+     * Fail loudly, never skip, unless the player's config pins account sign-in and holds only settings work accepts:
+     * every live work check needs that, and a version bump runs them all.
+     */
+    fun requireWorkAuthPin() {
+        val config = providerHome.resolve("config.toml")
+        try { verifyGrokWorkConfig(Files.readString(config)) }
+        catch (_: GrokWorkAuthUnpinned) { fail("Pin [auth] preferred_method = \"oidc\" in $config before running the Grok work checks") }
+        catch (error: Exception) { fail("Grok work checks cannot use $config (${error::class.simpleName}: ${error.message})") }
     }
 }

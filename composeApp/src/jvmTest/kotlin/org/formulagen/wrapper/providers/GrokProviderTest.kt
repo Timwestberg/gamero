@@ -81,4 +81,12 @@ class GrokProviderTest {
         assertFalse(grokProviderEnabled(mapOf("HOVEL_GROK_PROVIDER" to "1"), release = false, development = false))
         assertFalse(grokProviderEnabled(emptyMap(), release = false, development = true))
     }
+
+    @Test fun workRequiresBothOptInsAndNeverRunsInRelease() {
+        val enabled = mapOf("HOVEL_GROK_PROVIDER" to "1", "HOVEL_GROK_WORK" to "1")
+        assertTrue(grokWorkEnabled(enabled, false, true))
+        assertFalse(grokWorkEnabled(enabled, true, true))
+        assertFalse(grokWorkEnabled(enabled, false, false))
+        for (key in enabled.keys) assertFalse(grokWorkEnabled(enabled - key, false, true))
+    }
 }

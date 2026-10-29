@@ -8,11 +8,11 @@ import org.formulagen.wrapper.providers.grok.GrokWorkLaunch
 
 /** One project turn and its process, including persisted-session restoration before live routing begins. */
 internal class GrokWorkSession private constructor(launch: GrokWorkLaunch, opened: GrokOpenedSession) :
-    GrokSession(launch, opened, promptTimeout = 600.seconds) {
+    GrokSession<GrokWorkLaunch>(launch, opened, promptTimeout = 600.seconds) {
 
     /** Recheck the original configuration and Grok's folder trust before accepting any project request. */
     override fun revalidate(budget: GrokBudget) {
-        if (!launch.verify(budget.remaining())) throw GrokWorkTrustDeclined()
+        if (!launch.verifyTrusted(budget.remaining())) throw GrokWorkTrustDeclined()
     }
 
     companion object {
@@ -24,7 +24,7 @@ internal class GrokWorkSession private constructor(launch: GrokWorkLaunch, opene
             val launch = GrokWorkLaunch.create(executable, environment, workspace, instructions, loginPath)
             val opened = openGrokSession(launch, GrokToolEvidence(GROK_WORK_TOOLS), model, expectedAccount, resume,
                 onUpdate, onPermission) {
-                if (!it.verify(20.seconds)) trust(it, confirmTrust)
+                if (!launch.verifyTrusted(20.seconds)) trust(launch, confirmTrust)
                 GrokBudget(30.seconds)
             }
             return GrokWorkSession(launch, opened)

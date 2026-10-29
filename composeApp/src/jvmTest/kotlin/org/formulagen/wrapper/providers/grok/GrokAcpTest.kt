@@ -9,8 +9,6 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.*
 import kotlin.test.*
-import org.formulagen.wrapper.chat.grok.GrokTurnEnd
-import org.formulagen.wrapper.chat.grok.GrokTurnState
 
 /** Local subprocess integration tests; these are not live Grok inference tests. */
 class GrokAcpTest {
@@ -27,17 +25,19 @@ class GrokAcpTest {
     }
 
     @Test fun textUpdatesArriveBeforeThePromptTerminalResponse(): Unit = FakeGrokAcp().use { fake ->
-        var state = GrokTurnState("opaque/session")
+        val updates = CopyOnWriteArrayList<JsonObject>()
         val rpc = GrokAcp(fake.builder(), methods, onNotification = { method, params ->
-            if (method == "session/update") state = state.update(params)
+            if (method == "session/update") updates += params
         })
         try {
             rpc.call("initialize", grokInitialize())
             val result = rpc.call("session/prompt")
-            assertEquals("Hello", state.text)
-            assertTrue(state.accepted)
-            assertNull(state.end)
-            assertEquals(GrokTurnEnd.COMPLETE, state.finish(result).end)
+            // The peer wrote the update before the response, so it was dispatched before the call returned.
+            val update = updates.single()
+            assertEquals(JsonPrimitive("opaque/session"), update["sessionId"])
+            assertEquals(JsonPrimitive("agent_message_chunk"), update["update"]!!.jsonObject["sessionUpdate"])
+            assertEquals(JsonPrimitive("Hello"), update["update"]!!.jsonObject["content"]!!.jsonObject["text"])
+            assertEquals(JsonPrimitive("end_turn"), result["stopReason"])
         } finally { rpc.close(); rpc.awaitClosed() }
     }
 

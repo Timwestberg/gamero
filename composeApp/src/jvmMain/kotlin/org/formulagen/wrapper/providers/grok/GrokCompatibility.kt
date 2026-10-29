@@ -19,6 +19,15 @@ internal val GROK_VERSION_MESSAGE = "This Hovel build supports Grok Build $GROK_
 /** Whether `grok --version` printed exactly the accepted release. */
 internal fun grokVersionSupported(output: String): Boolean = output.trim() == GROK_VERIFIED_VERSION
 
+/**
+ * Grok must stay on the accepted release. Every Grok process Hovel starts sets [GROK_DISABLE_AUTOUPDATER] to "1",
+ * and every agent, inspection and login-help run passes [GROK_NO_AUTO_UPDATE] before its subcommand.
+ */
+internal const val GROK_NO_AUTO_UPDATE = "--no-auto-update"
+
+/** The environment half of [GROK_NO_AUTO_UPDATE]: Grok's own updater stays off, including in the provider-owned login. */
+internal const val GROK_DISABLE_AUTOUPDATER = "GROK_DISABLE_AUTOUPDATER"
+
 /** Explicit override, PATH, official user install and common package-manager locations. Never installs Grok. */
 internal fun findGrokExecutable(environment: Map<String, String>,
     fixed: List<String> = listOf("/opt/homebrew/bin/grok", "/usr/local/bin/grok")): Path? {

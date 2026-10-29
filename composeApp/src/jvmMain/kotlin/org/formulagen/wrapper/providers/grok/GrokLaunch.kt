@@ -23,19 +23,18 @@ internal class GrokLaunch private constructor(
      * Only the tested runtime can use this auth pin and profile; future versions need a fresh acceptance run.
      * Talk loads no project configuration, so it never needs folder trust.
      */
-    override fun verify(timeout: Duration): Boolean {
+    override fun verify(timeout: Duration) {
         val budget = GrokBudget(timeout)
-        checkPolicies()
-        verifyGrokInspection(inspect(budget), grokHome.resolve("config.toml"))
-        checkPolicies()
-        return true
+        recheck()
+        verifyGrokInspection(inspectAcceptedRelease(budget), grokHome.resolve("config.toml"))
+        recheck()
     }
 
-    /** Hovel wrote this launch's configuration itself, so only a managed policy can appear. */
-    override fun recheck() = checkPolicies()
-
-    /** Refuse managed installations rather than silently dropping their configuration from the isolated home. */
-    fun checkPolicies() {
+    /**
+     * Hovel wrote this launch's configuration itself, so only a managed policy can appear: refuse managed
+     * installations rather than silently dropping their configuration from the isolated home.
+     */
+    override fun recheck() {
         check((policyHomes + grokHome).all { base -> POLICY_FILES.all { Files.notExists(base.resolve(it), NOFOLLOW_LINKS) } }) {
             "Grok managed configuration needs an isolation policy"
         }
@@ -65,12 +64,12 @@ internal class GrokLaunch private constructor(
                 val env = buildMap {
                     put("HOME", home.toString()); put("GROK_HOME", grokHome.toString()); put("GROK_AUTH_PATH", auth.toString())
                     put("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"); put("BROWSER", "/usr/bin/false")
-                    put("GROK_DISABLE_AUTOUPDATER", "1"); put("GROK_MEMORY", "0"); put("GROK_GOAL", "0"); put("GROK_WORKFLOWS", "0")
+                    put(GROK_DISABLE_AUTOUPDATER, "1"); put("GROK_MEMORY", "0"); put("GROK_GOAL", "0"); put("GROK_WORKFLOWS", "0")
                     for (brand in listOf("CURSOR", "CLAUDE")) for (feature in listOf("SKILLS", "RULES", "AGENTS", "MCPS", "HOOKS", "SESSIONS"))
                         put("GROK_${brand}_${feature}_ENABLED", "0")
                     put("GROK_CODEX_SESSIONS_ENABLED", "0")
                 }
-                return GrokLaunch(folder, executable, env, listOf(providerHome, systemPolicyHome), workspace).also { it.checkPolicies() }
+                return GrokLaunch(folder, executable, env, listOf(providerHome, systemPolicyHome), workspace).also { it.recheck() }
             } catch (error: Exception) { removeGrokLaunchFolder(folder); throw error }
         }
 

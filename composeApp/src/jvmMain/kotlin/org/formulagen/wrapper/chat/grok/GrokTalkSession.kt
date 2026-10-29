@@ -9,7 +9,7 @@ import org.formulagen.wrapper.providers.grok.GrokLaunch
 
 /** One authenticated isolated session. Creation never sends a prompt; every prompt rechecks the account. */
 internal class GrokTalkSession private constructor(launch: GrokLaunch, opened: GrokOpenedSession) :
-    GrokSession(launch, opened, promptTimeout = 90.seconds) {
+    GrokSession<GrokLaunch>(launch, opened, promptTimeout = 90.seconds) {
 
     /** Hovel wrote this session's configuration itself; only the managed-policy check repeats. */
     override fun revalidate(budget: GrokBudget) = launch.recheck()
@@ -23,7 +23,7 @@ internal class GrokTalkSession private constructor(launch: GrokLaunch, opened: G
             val launch = GrokLaunch.create(executable, environment, instructions, persistentFolder = persistentFolder)
             // An isolated talk launch is never untrusted; one deadline covers its inspection and the ACP startup.
             val opened = openGrokSession(launch, GrokToolEvidence(), model, expectedAccount, resume, onUpdate) {
-                it.verify(budget.remaining()); budget
+                launch.verify(budget.remaining()); budget
             }
             return GrokTalkSession(launch, opened)
         }

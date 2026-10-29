@@ -8,6 +8,8 @@ import org.formulagen.wrapper.bridge.ProviderSetup
 import org.formulagen.wrapper.bridge.ProviderSetupState
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.process.runBounded
+import org.formulagen.wrapper.providers.grok.GROK_DISABLE_AUTOUPDATER
+import org.formulagen.wrapper.providers.grok.GROK_NO_AUTO_UPDATE
 import org.formulagen.wrapper.providers.grok.findGrokExecutable
 import org.formulagen.wrapper.providers.grok.grokVersionSupported
 
@@ -56,8 +58,8 @@ internal class ProviderInstallation(
             environment().clear()
             environment().putAll(loginEnvironment(id, executable))
         }, 5.seconds)
-        setup.accepts?.let { accepts ->
-            val accepted = probe(listOf("--version"))?.takeIf { it.exitCode == 0 }?.let { accepts(it.output) }
+        setup.versionGate?.let { gate ->
+            val accepted = probe(listOf("--version"))?.takeIf { it.exitCode == 0 }?.let { gate(it.output) }
                 ?: return@guarded ProviderSetup(id, ProviderSetupState.UNAVAILABLE) to null
             if (!accepted) return@guarded ProviderSetup(id, ProviderSetupState.OUTDATED) to null
         }
@@ -95,26 +97,28 @@ private class RuntimeSetup(
     /** The provider-owned login subcommand. */
     val login: List<String>,
     /** Variables kept from Hovel's environment besides [CHILD_ENV]: where the provider keeps its login. */
-    val keep: List<String> = emptyList(),
+    val keep: Set<String> = emptySet(),
     /** Variables set for every probe and for the login itself. */
     val fixed: Map<String, String> = emptyMap(),
     /** Global flags placed before the subcommand in the login help probe. */
     val helpFlags: List<String> = emptyList(),
-    /** Whether `--version` printed an accepted release, or null when it cannot be read. Null accepts any release. */
-    val accepts: ((String) -> Boolean?)? = null,
+    /**
+     * The installed release's verdict from its `--version` output. Absent: no `--version` probe runs. A null verdict
+     * (unreadable output) is UNAVAILABLE, false is OUTDATED, true continues to the login check.
+     */
+    val versionGate: ((String) -> Boolean?)? = null,
 )
 
 private val RuntimeId.setup: RuntimeSetup get() = when (this) {
-    RuntimeId.CODEX -> RuntimeSetup({ findCodexExecutable(it) }, "codex", listOf("login"),
-        keep = listOf("CODEX_HOME", "CODEX_CA_CERTIFICATE"))
+    RuntimeId.CODEX -> RuntimeSetup({ findCodexExecutable(it) }, "codex", listOf("login"), keep = KEPT_CODEX_VARIABLES)
     RuntimeId.CLAUDE_CODE -> RuntimeSetup({ findClaudeExecutable(it) }, "claude", listOf("auth", "login"),
-        accepts = { output -> ClaudeVersion.parse(output)?.let { it >= MIN_CLAUDE_VERSION } })
+        versionGate = { output -> ClaudeVersion.parse(output)?.let { it >= MIN_CLAUDE_VERSION } })
     // Every Grok talk and work launch requires the exact accepted release, so another one cannot sign in here,
     // and neither the probes nor the login may update Grok away from it. The global flag goes before the
     // subcommand, so the help still reads "Usage: grok login".
     RuntimeId.GROK_BUILD -> RuntimeSetup({ findGrokExecutable(it) }, "grok", listOf("login"),
-        keep = listOf("GROK_HOME"), fixed = mapOf("GROK_DISABLE_AUTOUPDATER" to "1"),
-        helpFlags = listOf("--no-auto-update"), accepts = ::grokVersionSupported)
+        keep = setOf("GROK_HOME"), fixed = mapOf(GROK_DISABLE_AUTOUPDATER to "1"),
+        helpFlags = listOf(GROK_NO_AUTO_UPDATE), versionGate = ::grokVersionSupported)
 }
 
 /** One shell-quoted argument; metacharacters and apostrophes in local paths cannot become shell code. */

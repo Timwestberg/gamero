@@ -33,21 +33,33 @@ internal class FakeGrokRuntime : AutoCloseable {
             models=dict(currentModelId='grok-test',availableModels=[dict(modelId='grok-test',name='Grok Test')])
             sid='provider/opaque-id'
             waiting=None
+            # Work runs in the player's provider home; the account check and talk use isolated ones.
+            work=os.environ['GROK_HOME']==str(root/'.grok')
+            profile=sys.argv[sys.argv.index('--agent-profile')+1]
             with (root/'pids').open('a') as f: f.write(str(os.getpid())+'\n')
             (root/'agent-environment.json').write_text(json.dumps(dict(os.environ)))
+            if work: (root/'work-profile').write_text(profile)
             for line in sys.stdin:
                 req=json.loads(line); method=req.get('method'); rid=req.get('id')
                 if method is None:
                     with (root/'requests').open('a') as f: f.write('permission/replied\n')
                     continue
                 with (root/'requests').open('a') as f: f.write(method+'\n')
+                if work:
+                    with (root/'work-requests').open('a') as f: f.write(method+'\n')
                 mode=(root/'mode').read_text()
                 result={}
+                if method=='initialize' and work and mode=='repin':
+                    pathlib.Path(os.environ['GROK_HOME'],'config.toml').write_text("[auth]\npreferred_method='api_key'\n")
                 if method=='initialize': result=dict(protocolVersion=1,authMethods=[{'id':'cached_token'}],agentCapabilities={'loadSession':True},_meta={'modelState':models})
                 elif method=='_x.ai/auth/info': result=dict(methodId='cached_token',principalType='user',principalId='fixture-user')
                 elif method=='_x.ai/auth/check_subscription': result=dict(authenticated=True,meta=meta)
                 elif method=='authenticate': result={'_meta':meta}
-                elif method=='session/load' and mode=='reject-load': out({'id':rid,'error':{'code':-32002,'message':'Session not found'}}); continue
+                elif method=='session/load' and mode in ['reject-load','reject-load-held']:
+                    if mode=='reject-load-held':
+                        # Something holds the profile path open as a folder, so the launch cannot remove it.
+                        pathlib.Path(profile).unlink(); pathlib.Path(profile).mkdir(); pathlib.Path(profile,'held').write_text('held')
+                    out({'id':rid,'error':{'code':-32002,'message':'Session not found'}}); continue
                 elif method in ['session/new','session/load']:
                     out({'method':'session/update','params':{'sessionId':sid,'update':{'sessionUpdate':'available_commands_update','_meta':{'tools':['shell'] if mode=='tools' else []}}}})
                     result={'sessionId':sid,'models':models}
@@ -79,5 +91,9 @@ internal class FakeGrokRuntime : AutoCloseable {
     fun untrusted(projectRoot: java.nio.file.Path, rootAfterTrust: java.nio.file.Path = projectRoot) = Files.writeString(root.resolve("trust.json"),
         buildJsonObject { put("trusted", false); put("root", projectRoot.toString()); put("rootAfterTrust", rootAfterTrust.toString()) }.toString())
     fun requests(): List<String> = root.resolve("requests").let { if (Files.exists(it)) Files.readAllLines(it) else emptyList() }
+    /** Requests a work agent received, without the isolated account checks' own. */
+    fun workRequests(): List<String> = root.resolve("work-requests").let { if (Files.exists(it)) Files.readAllLines(it) else emptyList() }
+    /** The agent profile of the last work agent. */
+    fun workProfile(): Path = Path.of(Files.readString(root.resolve("work-profile")))
     override fun close() { root.toFile().deleteRecursively() }
 }

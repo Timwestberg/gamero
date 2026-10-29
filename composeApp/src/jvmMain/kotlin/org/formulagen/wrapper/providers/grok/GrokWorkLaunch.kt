@@ -6,7 +6,6 @@ import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import kotlin.time.Duration
 import kotlinx.serialization.json.*
-import org.formulagen.wrapper.process.runBounded
 import org.tomlj.Toml
 
 /** A per-turn tool profile over the player's original home, login, preferences and project rules. */
@@ -25,15 +24,21 @@ internal class GrokWorkLaunch private constructor(
     /** Grok's trust root is the player's home folder, a folder above it, or the disk: Hovel never asks to trust that. */
     val trustTooBroad: Boolean get() = trustFolder.parent == null || home.startsWith(trustFolder)
 
-    /** Inspect using the runtime's resolver; unsupported configuration is refused, never rewritten. */
-    override fun verify(timeout: Duration): Boolean {
+    /** As [verifyTrusted]; whether Grok trusts the project is a separate decision for the caller. */
+    override fun verify(timeout: Duration) { verifyTrusted(timeout) }
+
+    /**
+     * Inspect using the runtime's resolver; unsupported configuration is refused, never rewritten. Sets [trustFolder]
+     * to the root Grok reports, and is true when Grok already trusts it.
+     */
+    fun verifyTrusted(timeout: Duration): Boolean {
         val budget = GrokBudget(timeout)
-        checkConfig()
-        val report = inspect(budget)
+        recheck()
+        val report = inspectAcceptedRelease(budget)
         verifyGrokWorkInspection(report, config)
         trustFolder = projectRoot(report)
         check(workspace.startsWith(trustFolder)) { "Grok project trust scope could not be verified" }
-        checkConfig()
+        recheck()
         return report["projectTrusted"] == JsonPrimitive(true)
     }
 
@@ -42,10 +47,8 @@ internal class GrokWorkLaunch private constructor(
      * Grok must report that same root afterwards; trust that landed on another folder is a failure.
      */
     fun trust(confirmed: Path, timeout: Duration) {
-        checkConfig()
-        val result = runBounded(builder(listOf("--no-auto-update", "--trust", "inspect", "--json")), timeout)
-        check(result?.exitCode == 0) { "Grok folder trust could not be saved" }
-        val report = Json.parseToJsonElement(result.output).jsonObject
+        recheck()
+        val report = inspect(GrokBudget(timeout), listOf("--trust"), failure = "Grok folder trust could not be saved")
         verifyGrokWorkInspection(report, config)
         check(projectRoot(report) == confirmed) { "Grok trusted a different folder than the one confirmed" }
         check(report["projectTrusted"] == JsonPrimitive(true)) { "Grok folder trust was not established" }
@@ -55,11 +58,11 @@ internal class GrokWorkLaunch private constructor(
     private fun projectRoot(report: JsonObject): Path =
         (report["projectRoot"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.let(Path::of)?.toRealPath() ?: workspace
 
-    /** The parsed auth pin is checked before startup and again immediately before submitting a turn. */
-    fun checkConfig() = verifyGrokWorkConfig(readGrokWorkConfig(config))
-
-    /** The player can edit their configuration at any time, so its accepted settings are read again. */
-    override fun recheck() = checkConfig()
+    /**
+     * The player can edit their configuration at any time, so its accepted settings, including the parsed auth pin,
+     * are read again between startup steps and inside every [verifyTrusted] before a turn.
+     */
+    override fun recheck() = verifyGrokWorkConfig(readGrokWorkConfig(config))
 
     /** The owning session must reap its process before removing the disposable profile ([closeAfter]). */
     override fun close() { Files.deleteIfExists(profile) }
@@ -105,7 +108,7 @@ internal fun grokWorkEnvironment(parent: Map<String, String>, loginPath: String?
     val path = (listOfNotNull(executable.parent?.toString()) + (loginPath ?: parent["PATH"]).orEmpty().split(File.pathSeparator) +
         listOf("/usr/bin", "/bin", "/usr/sbin", "/sbin")).filter { it.isNotBlank() }.distinct()
     return kept + mapOf("HOME" to home, "PATH" to path.joinToString(File.pathSeparator), "GROK_HOME" to provider, "GROK_AUTH_PATH" to auth,
-        "BROWSER" to "/usr/bin/false", "GROK_DISABLE_AUTOUPDATER" to "1", "GROK_SUBAGENTS" to "0", "GROK_GOAL" to "0", "GROK_WORKFLOWS" to "0")
+        "BROWSER" to "/usr/bin/false", GROK_DISABLE_AUTOUPDATER to "1", "GROK_SUBAGENTS" to "0", "GROK_GOAL" to "0", "GROK_WORKFLOWS" to "0")
 }
 
 /** The player's own Grok configuration, which only they edit: `$GROK_HOME/config.toml`, by default `~/.grok/config.toml`. */

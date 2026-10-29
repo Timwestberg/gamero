@@ -4,17 +4,8 @@ import java.nio.file.Path
 import kotlin.test.*
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.providers.grokWorkEnabled
 
-class GrokWorkPolicyTest {
-    @Test fun workRequiresBothOptInsAndNeverRunsInRelease() {
-        val enabled = mapOf("HOVEL_GROK_PROVIDER" to "1", "HOVEL_GROK_WORK" to "1")
-        assertTrue(grokWorkEnabled(enabled, false, true))
-        assertFalse(grokWorkEnabled(enabled, true, true))
-        assertFalse(grokWorkEnabled(enabled, false, false))
-        for (key in enabled.keys) assertFalse(grokWorkEnabled(enabled - key, false, true))
-    }
-
+class GrokWorkActivityTest {
     @Test fun aLongWorkTurnCanRunAnyNumberOfToolsWithBoundedMemoryAndActivity() {
         val activity = GrokWorkActivity("current", Path.of("/project"))
         fun update(id: String, vararg fields: Pair<String, JsonElement>) = buildJsonObject {

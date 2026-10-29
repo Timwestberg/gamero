@@ -1,8 +1,6 @@
 package org.formulagen.wrapper.chat.grok
 
 import java.nio.file.Files
-import java.util.concurrent.CompletableFuture
-import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import kotlin.test.*
 import java.util.UUID
@@ -20,7 +18,6 @@ import org.formulagen.wrapper.bridge.TeamMember
 import org.formulagen.wrapper.chat.*
 import org.formulagen.wrapper.providers.GrokConnection
 import org.formulagen.wrapper.providers.GrokProvider
-import org.formulagen.wrapper.providers.grok.GROK_TURN_HANDOFF
 
 class GrokChatRuntimeTest {
     @Test fun providerAndChatShareReadinessAndResumeOnlyTheirPrivateBinding() {
@@ -29,24 +26,24 @@ class GrokChatRuntimeTest {
             val provider = GrokProvider(connection)
             assertEquals(ProviderState.CONNECTED, provider.status("local", ProviderAction.STATUS).state)
             assertEquals("grok-test", provider.models("local").single().modelId)
-            val first = Events()
+            val first = TalkEvents()
             GrokChatRuntime(fake.root.resolve("providers"), fake.env, connection).use { runtime ->
-                runtime.startTurn(request(), first)
+                runtime.startTurn(talkRequest(), first)
                 first.await()
                 assertEquals(listOf("opened", "accepted", "partial", "completed"), first.seen)
                 assertEquals("Hello", first.reply)
                 assertNotEquals("provider/opaque-id", first.handle)
-                val next = Events()
-                runtime.startTurn(request(NativeConversation(checkNotNull(first.handle), persona.hash)), next)
+                val next = TalkEvents()
+                runtime.startTurn(talkRequest(NativeConversation(checkNotNull(first.handle), talkPersona.hash)), next)
                 next.await()
                 assertEquals(listOf("accepted", "partial", "completed"), next.seen)
                 assertEquals(first.handle, next.handle)
                 assertEquals(2, fake.requests().count { it == "session/prompt" })
                 assertEquals(1, fake.requests().count { it == "session/load" })
             }
-            val restarted = Events()
+            val restarted = TalkEvents()
             GrokChatRuntime(fake.root.resolve("providers"), fake.env, connection).use { runtime ->
-                runtime.startTurn(request(NativeConversation(checkNotNull(first.handle), persona.hash)), restarted)
+                runtime.startTurn(talkRequest(NativeConversation(checkNotNull(first.handle), talkPersona.hash)), restarted)
                 restarted.await()
                 assertEquals("completed", restarted.seen.last())
                 assertEquals(first.handle, restarted.handle)
@@ -57,19 +54,19 @@ class GrokChatRuntimeTest {
     @Test fun missingBindingAndPersonaChangeFailBeforeSubmissionWhileModelAndTransportErrorsNeverReplay() {
         FakeGrokRuntime().use { fake ->
             GrokChatRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env)).use { runtime ->
-                for (saved in listOf(NativeConversation("11111111-1111-4111-8111-111111111111", persona.hash),
+                for (saved in listOf(NativeConversation("11111111-1111-4111-8111-111111111111", talkPersona.hash),
                     NativeConversation("11111111-1111-4111-8111-111111111111", Persona.companion("Other").hash))) {
-                    val events = Events()
-                    runtime.startTurn(request(saved), events); events.await()
+                    val events = TalkEvents()
+                    runtime.startTurn(talkRequest(saved), events); events.await()
                     assertEquals(ChatFailure.ConversationLost, events.failure)
                 }
-                val model = Events()
-                runtime.startTurn(request().copy(model = "missing"), model); model.await()
+                val model = TalkEvents()
+                runtime.startTurn(talkRequest().copy(model = "missing"), model); model.await()
                 assertEquals(ChatFailure.ModelUnavailable, model.failure)
                 assertFalse("session/prompt" in fake.requests())
                 fake.mode("drop")
-                val dropped = Events()
-                runtime.startTurn(request(), dropped); dropped.await()
+                val dropped = TalkEvents()
+                runtime.startTurn(talkRequest(), dropped); dropped.await()
                 assertEquals(ChatFailure.Temporary, dropped.failure)
                 assertEquals(1, fake.requests().count { it == "session/prompt" })
                 assertFalse("accepted" in dropped.seen)
@@ -81,18 +78,18 @@ class GrokChatRuntimeTest {
         FakeGrokRuntime().use { fake ->
             val providers = fake.root.resolve("providers")
             GrokChatRuntime(providers, fake.env, GrokConnection(fake.env)).use { runtime ->
-                val first = Events()
-                runtime.startTurn(request(), first); first.await()
-                val saved = NativeConversation(checkNotNull(first.handle), persona.hash)
+                val first = TalkEvents()
+                runtime.startTurn(talkRequest(), first); first.await()
+                val saved = NativeConversation(checkNotNull(first.handle), talkPersona.hash)
                 assertTrue(Files.exists(providers.resolve("grok-bindings/${saved.id}.json")))
                 fake.mode("reject-load")
-                val rejected = Events()
-                runtime.startTurn(request(saved), rejected); rejected.await()
+                val rejected = TalkEvents()
+                runtime.startTurn(talkRequest(saved), rejected); rejected.await()
                 assertEquals(ChatFailure.ConversationLost, rejected.failure)
                 assertFalse(Files.exists(providers.resolve("grok-bindings/${saved.id}.json")))
                 // The handle no longer names a session, so a repeat cannot repeat the failing load.
-                val again = Events()
-                runtime.startTurn(request(saved), again); again.await()
+                val again = TalkEvents()
+                runtime.startTurn(talkRequest(saved), again); again.await()
                 assertEquals(ChatFailure.ConversationLost, again.failure)
                 assertEquals(1, fake.requests().count { it == "session/load" })
                 assertEquals(1, fake.requests().count { it == "session/prompt" })
@@ -133,12 +130,12 @@ class GrokChatRuntimeTest {
         FakeGrokRuntime().use { fake ->
             GrokChatRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env)).use { runtime ->
                 fake.mode("tools")
-                val unsafe = Events()
-                runtime.startTurn(request(), unsafe); unsafe.await()
+                val unsafe = TalkEvents()
+                runtime.startTurn(talkRequest(), unsafe); unsafe.await()
                 assertEquals(ChatFailure.Lockdown, unsafe.failure)
                 assertFalse("session/prompt" in fake.requests())
                 fake.mode("normal")
-                assertEquals("Hello", runtime.summarize(SummaryRequest("local", persona, null, "A conversation")))
+                assertEquals("Hello", runtime.summarize(SummaryRequest("local", talkPersona, null, "A conversation")))
                 assertFalse(Files.exists(fake.root.resolve("providers/grok-bindings")))
             }
         }
@@ -148,15 +145,15 @@ class GrokChatRuntimeTest {
         FakeGrokRuntime().use { fake ->
             val providers = fake.root.resolve("providers")
             GrokChatRuntime(providers, fake.env, GrokConnection(fake.env)).use { runtime ->
-                val kept = Events(); runtime.startTurn(request(), kept); kept.await()
+                val kept = TalkEvents(); runtime.startTurn(talkRequest(), kept); kept.await()
                 companionChatHistory(providers, "local", "20000000-0000-4000-8000-000000000002").write(ChatRecord(conversations = mapOf(
-                    RuntimeId.GROK_BUILD to NativeConversation(checkNotNull(kept.handle), persona.hash))))
-                val orphan = Events(); runtime.startTurn(request(), orphan); orphan.await()
+                    RuntimeId.GROK_BUILD to NativeConversation(checkNotNull(kept.handle), talkPersona.hash))))
+                val orphan = TalkEvents(); runtime.startTurn(talkRequest(), orphan); orphan.await()
                 // Another companion's version 1 history, never opened since teams, so still in the legacy folder.
                 val legacy = Files.createDirectories(providers.resolve("local/codex/companion-chats"))
                     .resolve("20000000-0000-4000-8000-000000000009.json")
                 Files.writeString(legacy, """{"threadId":"10000000-0000-4000-8000-000000000001","messages":[]}""")
-                val next = Events(); runtime.startTurn(request(), next); next.await()
+                val next = TalkEvents(); runtime.startTurn(talkRequest(), next); next.await()
                 assertTrue(Files.exists(providers.resolve("grok-bindings/${kept.handle}.json")))
                 assertFalse(Files.exists(providers.resolve("grok-bindings/${orphan.handle}.json")))
                 assertTrue(Files.exists(providers.resolve("grok-bindings/${next.handle}.json")))
@@ -169,15 +166,15 @@ class GrokChatRuntimeTest {
         FakeGrokRuntime().use { fake ->
             fake.mode("stuck")
             GrokChatRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env)).use { runtime ->
-                val stuck = Events()
-                val handle = runtime.startTurn(request(), stuck)
+                val stuck = TalkEvents()
+                val handle = runtime.startTurn(talkRequest(), stuck)
                 val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
                 while ("session/prompt" !in fake.requests()) { check(System.nanoTime() < until); Thread.sleep(10) }
                 fake.mode("normal")
                 handle.stop()
                 // Grok ignores the cancellation, so the old turn holds the companion for its whole grace and teardown.
-                val next = Events()
-                runtime.startTurn(request(), next); next.await(GROK_TURN_HANDOFF.inWholeSeconds + 5)
+                val next = TalkEvents()
+                runtime.startTurn(talkRequest(), next); next.await(GROK_TURN_HANDOFF.inWholeSeconds + 5)
                 assertNull(next.failure)
                 assertEquals("Hello", next.reply)
                 assertFalse("completed" in stuck.seen || "failed" in stuck.seen)
@@ -189,8 +186,8 @@ class GrokChatRuntimeTest {
         FakeGrokRuntime().use { fake ->
             fake.mode("wait")
             GrokChatRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env)).use { runtime ->
-                val events = Events()
-                val handle = runtime.startTurn(request(), events)
+                val events = TalkEvents()
+                val handle = runtime.startTurn(talkRequest(), events)
                 val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
                 while ("session/prompt" !in fake.requests()) { check(System.nanoTime() < until); Thread.sleep(10) }
                 handle.stop()
@@ -200,22 +197,4 @@ class GrokChatRuntimeTest {
             }
         }
     }
-}
-
-private val persona = Persona.companion("Ember")
-private fun request(conversation: NativeConversation? = null) = TurnRequest("local", "20000000-0000-4000-8000-000000000002",
-    persona, null, conversation, null, "Hello")
-
-private class Events : TurnEvents {
-    val seen = CopyOnWriteArrayList<String>()
-    val done = CompletableFuture<Unit>()
-    var handle: String? = null
-    var reply: String? = null
-    var failure: ChatFailure? = null
-    override fun opened(conversation: String) { handle = conversation; seen += "opened" }
-    override fun accepted() { seen += "accepted" }
-    override fun partial(text: String) { reply = text; seen += "partial" }
-    override fun completed(text: String, conversation: String) { reply = text; handle = conversation; seen += "completed"; done.complete(Unit) }
-    override fun failed(failure: ChatFailure) { this.failure = failure; seen += "failed"; done.complete(Unit) }
-    fun await(seconds: Long = 10) { done.get(seconds, TimeUnit.SECONDS) }
 }

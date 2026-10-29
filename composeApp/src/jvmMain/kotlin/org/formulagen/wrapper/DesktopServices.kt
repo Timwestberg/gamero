@@ -43,7 +43,6 @@ import org.formulagen.wrapper.chat.DesktopSpeech
 import org.formulagen.wrapper.chat.DesktopHearing
 import org.formulagen.wrapper.chat.HearingRoute
 import org.formulagen.wrapper.chat.VoicePickerModel
-import org.formulagen.wrapper.chat.openTargetMic
 import java.nio.file.Files
 import org.formulagen.wrapper.voice.EmberAudio
 import org.formulagen.wrapper.voice.chooseDuplex
