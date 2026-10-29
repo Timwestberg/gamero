@@ -6,8 +6,8 @@ package org.formulagen.wrapper.bridge
  * in `host.contract`, so neither side shows what the other cannot render.
  */
 object HovelContract {
-    /** `HOVEL_CONTRACT`. */
-    const val CURRENT = 1
+    /** `HOVEL_CONTRACT`. Contract 2: a claim may answer `stop-requested` with the message to settle. */
+    const val CURRENT = 2
 
     /** `HOVEL_FIRST_CONTRACT`: what a document naming nothing newer needs. */
     const val FIRST = 1

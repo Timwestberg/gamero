@@ -60,13 +60,28 @@ internal class Queued(val message: ConversationMessage, val build: (claimId: Str
 
 /**
  * hovel-service as the Mac sees it, in memory: queued messages per conversation, claims fenced by claim
- * id (a repeated claim id answers the same claim), revisions that refuse a stale progress, checkpoints,
- * deltas, approvals whose first answer wins (the Mac's through `approval.closed`), projects and their
- * folder saves, input texts, and a host stream fed by the test.
+ * id (a repeated claim id answers the same claim, and progress needs the message's current claim),
+ * revisions that refuse a stale progress, checkpoints, deltas, approvals whose first answer wins (the
+ * Mac's through `approval.closed`), projects and their folder saves, input texts, and a host stream fed
+ * by the test.
  */
 internal class FakeServer(val hostId: String = id()) : ConversationApi {
     private val queues = ConcurrentHashMap<String, ArrayDeque<Queued>>()
     private val claims = HashMap<String, ClaimResult>()
+    /** Each claimed message's current claim id. */
+    private val holders = HashMap<String, String>()
+    /** Claim ids a takeover replaced: asked again, they answer 409, moved on. */
+    private val superseded = HashSet<String>()
+    /**
+     * The contract the server answers this Mac's claims at. From 2, a claim answers `stop-requested` with an in-flight
+     * message the person stopped, and a fresh claim takes over one whose claim was lost; before it, the replay of a
+     * stopped message's claim answers 409 `stop-requested`, and a fresh claim never takes one over.
+     */
+    @Volatile var contract = HovelContract.CURRENT
+    /** A body the server answers claims with, once it has answered them, as the contract's JSON: one this build may not read. */
+    @Volatile var claimBody: JsonObject? = null
+    /** Claim ids answered `stop-requested`, in order. */
+    val stopAnswers = CopyOnWriteArrayList<String>()
     val claimRequests = CopyOnWriteArrayList<ClaimRequest>()
     val checkpoints = CopyOnWriteArrayList<MessageCheckpoint>()
     val deltas = CopyOnWriteArrayList<ReplyDelta>()
@@ -89,8 +104,9 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     /** Streams opened so far. */
     val streamsOpened = java.util.concurrent.atomic.AtomicInteger()
     /**
-     * Messages the person asked to stop. As in hovel-service, a claim replay, a new checkpoint, a delta and `running`
-     * progress answer `stop-requested`; `approval.closed` and the settling progress still land.
+     * Messages the person asked to stop. As in hovel-service, a claim answers `stop-requested` (by [contract]), and a
+     * new checkpoint, a delta and `running` progress answer 409 `stop-requested`; `approval.closed` and the settling
+     * progress still land.
      */
     val stopRequested: MutableSet<String> = ConcurrentHashMap.newKeySet()
     @Volatile var progressStatus: Int? = null
@@ -100,6 +116,14 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     @Volatile var macUpdateRequired = emptySet<String>()
     @Volatile var offline = false
     @Volatile var refuseRunning = false
+    /** Refuses every `stopped` settle with 409, as a server whose claim moved on in between. */
+    @Volatile var refuseStops = false
+    /**
+     * A service older than this Mac's contract: every companion route answers 400 `unsupported-contract`, counted in
+     * [olderRefusals]; hovel-service's own heartbeat still answers.
+     */
+    @Volatile var olderService = false
+    val olderRefusals = java.util.concurrent.atomic.AtomicInteger()
     @Volatile var foldersStatus: Int? = null
     @Volatile var streamFailures = 0
     private val stream = LinkedBlockingQueue<String>()
@@ -132,8 +156,16 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
         return buildJsonObject { put("ok", true) }
     }
 
+    /** As an older service answers a companion route. */
+    private fun refuseIfOlder() {
+        if (!olderService) return
+        olderRefusals.incrementAndGet()
+        throw HovelStatusException(400, HovelStatusException.UNSUPPORTED_CONTRACT)
+    }
+
     override fun openStream(): HovelEventLines {
         if (offline) throw java.io.IOException("offline")
+        refuseIfOlder()
         synchronized(this) { if (streamFailures > 0) { streamFailures--; throw java.io.IOException("refused") } }
         streamsOpened.incrementAndGet()
         return object : HovelEventLines {
@@ -149,26 +181,59 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     override fun claim(request: ClaimRequest): ClaimResponse {
         if (offline) throw java.io.IOException("offline")
         claimRequests += request
+        refuseIfOlder()
         onClaim()
         return answer(request)
     }
 
     @Synchronized private fun answer(request: ClaimRequest): ClaimResponse {
         claimStatus?.let { if (it == 409) throw HovelRejectedException(claimCode) else throw HovelStatusException(it) }
-        claims[request.claimId]?.let {
-            if (it.message.id in stopRequested) throw HovelRejectedException(ClaimOutput.STOP_REQUESTED)
-            return ClaimResponse.Claimed(it)
+        val response = respond(request)
+        claimBody?.let { return fromWire(ClaimResponse.serializer(), it) }
+        if (response is ClaimResponse.StopRequested) stopAnswers += request.claimId
+        return response
+    }
+
+    private fun respond(request: ClaimRequest): ClaimResponse {
+        if (request.claimId in superseded) throw HovelRejectedException()
+        claims[request.claimId]?.let { claim ->
+            if (!stopping(claim.message.id)) return ClaimResponse.Claimed(claim)
+            if (contract < 2) throw HovelRejectedException(ClaimOutput.STOP_REQUESTED)
+            return stopAnswer(claim)
+        }
+        // A stopped message still in flight holds its conversation. From contract 2 a fresh claim takes it over, whose
+        // claim was lost; before it, the fresh claim finds nothing.
+        val lost = claims.entries.firstOrNull { (_, claim) -> claim.conversation.id == request.conversationId && stopping(claim.message.id) }
+        if (lost != null) {
+            if (contract < 2) return ClaimResponse.Empty
+            val (lostId, claim) = lost.toPair()
+            claims.remove(lostId)
+            superseded += lostId
+            return stopAnswer(claim.copy(claimId = request.claimId).also { claims[request.claimId] = it; holders[it.message.id] = request.claimId })
         }
         if (request.conversationId in macUpdateRequired) return ClaimResponse.MacUpdateRequired(HovelContract.CURRENT + 1)
         val next = queues[request.conversationId]?.removeFirstOrNull() ?: return ClaimResponse.Empty
         val claim = next.build(request.claimId, next.message)
         claims[request.claimId] = claim
+        holders[claim.message.id] = request.claimId
         revisions[claim.message.id] = claim.message.revision
         return ClaimResponse.Claimed(claim)
     }
 
+    /** The person asked to stop [messageId], and it has not settled. */
+    private fun stopping(messageId: String) = messageId in stopRequested && settled(messageId) == null
+
+    /** `stop-requested` with [claim]'s message as it stands now: claimed, or running once `running` landed. */
+    private fun stopAnswer(claim: ClaimResult): ClaimResponse.StopRequested {
+        val id = claim.message.id
+        val running = progress.any { it.claimedMessageId == id && it.state == MessageState.RUNNING }
+        return ClaimResponse.StopRequested(claim.message.copy(revision = revisions.getValue(id),
+            state = if (running) MessageState.RUNNING else MessageState.CLAIMED))
+    }
+
     @Synchronized override fun checkpoint(messageId: String, request: MessageCheckpointRequest) {
         if (offline) throw java.io.IOException("offline")
+        refuseIfOlder()
         check(claims[request.claimId]?.message?.id == messageId && request.claimedMessageId == messageId) { "Not this claim" }
         if (refuseCheckpoints) throw HovelRejectedException()
         if (messageId in stopRequested && request.checkpoint !is MessageCheckpoint.ApprovalClosed) {
@@ -195,21 +260,27 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     }
 
     override fun delta(messageId: String, request: ReplyDeltaRequest) {
+        refuseIfOlder()
         if (messageId in stopRequested) throw HovelRejectedException(ClaimOutput.STOP_REQUESTED)
         deltas += request.delta
     }
 
     @Synchronized override fun progress(messageId: String, progress: MessageProgress): Long? {
         if (offline) throw java.io.IOException("offline")
+        refuseIfOlder()
         if (progress.state == MessageState.RUNNING && refuseRunning) throw HovelRejectedException()
+        if (progress.state == MessageState.STOPPED && refuseStops) throw HovelRejectedException()
         if (progress.state == MessageState.RUNNING && messageId in stopRequested) throw HovelRejectedException(ClaimOutput.STOP_REQUESTED)
         progressStatus?.let { throw HovelStatusException(it) }
+        // Not the message's current claim: 409, as a claim a takeover replaced gets.
+        if (holders[messageId] != progress.claimId) throw HovelRejectedException()
         if (revisions[messageId] != progress.expectedRevision) throw HovelRejectedException()
         this.progress += progress
         return (progress.expectedRevision + 1).also { revisions[messageId] = it }
     }
 
     @Synchronized override fun saveFolders(projectId: String, save: ProjectFoldersSave): CompanionProject? {
+        refuseIfOlder()
         foldersStatus?.let { if (it == 409) throw HovelRejectedException() else throw HovelStatusException(it) }
         projects[projectId]?.let { if (it.revision != save.expectedRevision) throw HovelRejectedException() }
         folderSaves += projectId to save
@@ -217,13 +288,18 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     }
 
     override fun approval(approvalId: String): AgentApproval {
+        refuseIfOlder()
         if (!approvalsReadable) throw java.io.IOException("unreadable")
         return approvals[approvalId] ?: throw HovelStatusException(404)
     }
 
-    override fun project(projectId: String): CompanionProject = projects[projectId] ?: throw HovelStatusException(404)
+    override fun project(projectId: String): CompanionProject {
+        refuseIfOlder()
+        return projects[projectId] ?: throw HovelStatusException(404)
+    }
 
     override fun artifactText(artifactId: String, cursor: Int): ArtifactTextPage {
+        refuseIfOlder()
         if (!textsReadable) throw java.io.IOException("unreadable")
         val text = texts[artifactId] ?: throw HovelStatusException(404)
         val end = minOf(text.length, cursor + TEXT_PAGE)

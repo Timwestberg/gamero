@@ -66,6 +66,12 @@ class CompanionContractFixtureTest {
         assertEquals("Prefers short answers.", claim.claim.recalledMemory)
         assertEquals(MessageState.CLAIMED, claim.claim.message.state)
         assertEquals(ClaimResponse.MacUpdateRequired(2), fromWire(ClaimResponse.serializer(), fixtures.getValue("claim.macUpdateRequired").getValue("value")))
+        for ((name, state) in listOf("claim.stopRequested" to MessageState.CLAIMED, "claim.stopRequestedRunning" to MessageState.RUNNING)) {
+            val stop = fromWire(ClaimResponse.serializer(), fixtures.getValue(name).getValue("value")) as ClaimResponse.StopRequested
+            assertEquals(state, stop.message.state, name)
+            assertEquals(MessageAuthor.USER, stop.message.author, name)
+        }
+        assertEquals(MessageState.STOPPED, fromWire(MessageProgress.serializer(), fixtures.getValue("progress.stopped").getValue("value")).state)
         val answered = fromWire(AgentApproval.serializer(), fixtures.getValue("approval.answeredByPhone").getValue("value"))
         assertEquals(ApprovalSurface.PHONE, answered.answer?.by)
         val events = fixtures.filterKeys { it.startsWith("hostEvent.") }.values.map { HostEvents.decode(it.getValue("value").toString()) }
