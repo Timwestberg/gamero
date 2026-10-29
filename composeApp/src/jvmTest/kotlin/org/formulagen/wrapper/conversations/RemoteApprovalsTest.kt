@@ -147,6 +147,19 @@ class RemoteApprovalsTest {
         }
     }
 
+    @Test fun anApprovalTheServerNeverGotIsTheMacsAlone() {
+        approvals.register(thread, scope).use {
+            server.offline = true
+            val decision = asking()
+            eventually { screen.shown.isNotEmpty() }
+            server.offline = false
+            screen.open.single()(0)
+            assertEquals(ApprovalDecision.ALLOW_ONCE, decision.get(5, TimeUnit.SECONDS))
+            assertEquals(emptyList(), server.answers, "nothing to answer on a server that never had it")
+            assertEquals(emptyList(), server.checkpoints)
+        }
+    }
+
     @Test fun aGrantForTheConversationIsRecordedAsAnAllow() {
         approvals.register(thread, scope).use {
             val decision = asking(request(label = "Allow these edits for this conversation"))

@@ -68,6 +68,10 @@ class ConversationWireTest {
         assertFails { MessageAppend(MessageAuthor.SPECIALIST, id(), null, "Done", null) }
         assertFails { MessageAppend(MessageAuthor.SYSTEM, id(), CoordinatorNote(NoteKind.ANSWERED, id()), "x", id()) }
         assertFails { MessageAppend(MessageAuthor.COORDINATOR, id(), CoordinatorNote(NoteKind.ANSWERED, id()), "x", null) }
+        val thread = id()
+        assertFails { MessageAppend(MessageAuthor.COORDINATOR, id(), CoordinatorNote(NoteKind.ANSWERED, id()), "x", thread) }
+        assertFails { MessageAppend(MessageAuthor.COORDINATOR, id(), CoordinatorNote(NoteKind.STARTED, thread), "x", thread) }
+        MessageAppend(MessageAuthor.COORDINATOR, id(), CoordinatorNote(NoteKind.FORWARDED, thread), "x", thread)
     }
 
     @Test fun hostEventsAreReadFromFramesAndEnvelopes() {

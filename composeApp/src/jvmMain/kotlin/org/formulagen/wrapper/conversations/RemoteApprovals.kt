@@ -124,12 +124,13 @@ internal class RemoteApprovals(
         open[id] = pending
         val approval = AgentApproval(null, hostId, scope.conversationId, expiry(), id, kind, options.map { it.first }.distinct(), presentation,
             OPENED_REVISION, ApprovalState.OPEN, scope.threadId)
-        scope.output.bestEffort(MessageCheckpoint.ApprovalOpened(approval))
+        // Not relayed (the server was unreachable): the Mac's dialog is the only place to answer it.
+        val relayed = scope.output.bestEffort(MessageCheckpoint.ApprovalOpened(approval))
         try {
             return when (val outcome = dialogs.answer(dialog, cancel, pending.elsewhere, shown)) {
                 is DialogOutcome.Chosen -> {
                     val mine = optionOf(outcome.value)
-                    val won = settleHere(scope, id, mine) ?: options.first { it.second == dialog.dismiss }.first
+                    val won = if (!relayed) mine else settleHere(scope, id, mine) ?: options.first { it.second == dialog.dismiss }.first
                     receipt(ApprovalReceipt(id, kind, won, if (won == mine) ApprovalSurface.MAC else ApprovalSurface.PHONE))
                     if (won == mine) outcome.value else options.first { it.first == won }.second
                 }
@@ -139,7 +140,7 @@ internal class RemoteApprovals(
                     options.firstOrNull { it.first == option }?.second ?: dialog.dismiss
                 }
                 DialogOutcome.Unanswered -> {
-                    scope.output.bestEffort(MessageCheckpoint.ApprovalClosed(id, ApprovalOutcome.Withdrawn))
+                    if (relayed) scope.output.bestEffort(MessageCheckpoint.ApprovalClosed(id, ApprovalOutcome.Withdrawn))
                     receipt(ApprovalReceipt(id, kind, null, null))
                     null
                 }

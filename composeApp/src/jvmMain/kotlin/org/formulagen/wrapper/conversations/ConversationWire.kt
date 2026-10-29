@@ -108,6 +108,7 @@ internal data class MessageAppend(
         require(author != MessageAuthor.USER) { "The Mac never writes the person's messages" }
         require(author != MessageAuthor.SPECIALIST || threadId != null) { "A specialist writes only in its thread" }
         require(note == null || (author == MessageAuthor.COORDINATOR && threadId != null)) { "Only the coordinator notes, in a thread" }
+        require(note == null || (note.kind == NoteKind.STARTED) == (note.threadId != threadId)) { "A started thread is a new one; the others stay in this one" }
     }
 }
 

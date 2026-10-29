@@ -125,9 +125,6 @@ internal class ConversationRunner(
 
     private fun session(conversationId: String) = sessions.computeIfAbsent(conversationId, ::Session)
 
-    /** The conversations running a message now. */
-    val running: Set<String> get() = sessions.filterValues { it.busy }.keys
-
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         sessions.values.forEach { it.stop() }

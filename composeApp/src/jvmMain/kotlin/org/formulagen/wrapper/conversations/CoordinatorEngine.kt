@@ -562,8 +562,7 @@ internal class CoordinatorEngine(
         fun resolved(role: BrainRoleSnapshot): BrainRoleSnapshot {
             val unavailable = ProviderFailure(ChatFailure.ModelUnavailable, role.binding.runtimeId, role.roleId, false)
             val models = runCatching { runBlocking { providers.models(ProviderScope(profile, role.binding.runtimeId)).models } }.getOrNull() ?: throw unavailable
-            val model = models.find { if (role.binding.modelId == SharedRules.RUNTIME_DEFAULT_MODEL) it.isDefault else it.modelId == role.binding.modelId }
-                ?: throw unavailable
+            val model = role.binding.model(models) ?: throw unavailable
             if (role.binding.effort != null && model.effortLevels?.contains(role.binding.effort) != true) throw unavailable
             return role.copy(binding = role.binding.copy(modelId = model.modelId))
         }
@@ -588,7 +587,7 @@ internal class CoordinatorEngine(
             val status = runCatching { runBlocking { providers.perform(ProviderAction.STATUS, ProviderScope(profile, binding.runtimeId)) }.state }.getOrNull()
             if (status != ProviderState.CONNECTED) return listOf(BrainIssue(BrainIssueReason.UNAVAILABLE_PROVIDER, role.roleId))
             val models = runCatching { runBlocking { providers.models(ProviderScope(profile, binding.runtimeId)).models } }.getOrNull().orEmpty()
-            val model = models.find { if (binding.modelId == SharedRules.RUNTIME_DEFAULT_MODEL) it.isDefault else it.modelId == binding.modelId }
+            val model = binding.model(models)
             val issues = mutableListOf<BrainIssue>()
             if (model == null) issues += BrainIssue(BrainIssueReason.UNAVAILABLE_MODEL, role.roleId)
             if (binding.effort != null && model?.effortLevels?.contains(binding.effort) != true) issues += BrainIssue(BrainIssueReason.UNSUPPORTED_EFFORT, role.roleId)
