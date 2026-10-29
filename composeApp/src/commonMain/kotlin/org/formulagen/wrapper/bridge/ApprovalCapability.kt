@@ -8,22 +8,23 @@ import kotlinx.serialization.Serializable
  * never forge an approval's content or answer one. Android and iOS only; phone approvals bring the
  * implementation. Desktop approvals are native dialogs with no bridge method.
  */
-interface ApprovalsCapability {
+interface ApprovalCapability {
     suspend fun present(approvalId: String)
 }
 
+/** An open approval to show, by its lower-case id. */
 @Serializable
-data class ApprovalsPresentArgs(val approvalId: String)
+data class ApprovalPresentArgs(val approvalId: String)
 
 /** Mirrors event-contracts/host-bridge/approvals.ts. */
 object ApprovalMethods {
-    val PRESENT = BridgeMethod("approvals.present", ApprovalsPresentArgs.serializer(), NoResult.serializer()) {
-        BridgeProtocol.UUID_PATTERN.matches(it.approvalId)
+    val PRESENT = BridgeMethod("approvals.present", ApprovalPresentArgs.serializer(), NoResult.serializer()) {
+        SharedRules.isRecordId(it.approvalId)
     }
 
-    fun pack(approvals: Capability<ApprovalsCapability>): CapabilityPack = binder.pack(approvals)
+    fun pack(approvals: Capability<ApprovalCapability>): CapabilityPack = binder.pack(approvals)
 
-    internal val binder = CapabilityBinder("approvals", listOf<CapabilityHandler<ApprovalsCapability>>(
+    internal val binder = CapabilityBinder("approvals", listOf<CapabilityHandler<ApprovalCapability>>(
         PRESENT.handle { approvals, args -> approvals.present(args.approvalId); NoResult },
     ))
 }

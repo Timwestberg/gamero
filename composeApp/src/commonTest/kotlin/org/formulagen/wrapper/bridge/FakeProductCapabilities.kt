@@ -48,13 +48,21 @@ class FakeProjectCapability : ProjectCapability {
 
 class FakeConversationVoiceCapability : ConversationVoiceCapability {
     override suspend fun dictation(args: ConversationDictationArgs) =
-        ConversationVoiceStatus(args.conversationId, dictation = ChatDictation(DictationState.LISTENING))
+        ConversationVoiceStatus(args.conversationId, dictation = ConversationDictation(DictationState.LISTENING))
     override suspend fun hearing(args: ConversationHearingArgs) =
-        ConversationVoiceStatus(args.conversationId, hearing = ChatHearing(HearingState.LISTENING))
+        ConversationVoiceStatus(args.conversationId, hearing = ConversationHearing(HearingState.LISTENING))
     override suspend fun voiceStatus() = ConversationVoiceStatus(null)
 }
 
-class FakeApprovalsCapability : ApprovalsCapability {
+class FakeApprovalCapability : ApprovalCapability {
     val presented = mutableListOf<String>()
     override suspend fun present(approvalId: String) { presented += approvalId }
+}
+
+class FakeHostContractCapability : HostContractCapability {
+    val pageContracts = mutableListOf<Int>()
+    override suspend fun contract(pageContract: Int): Int {
+        pageContracts += pageContract
+        return 1
+    }
 }
