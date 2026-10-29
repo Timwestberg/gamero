@@ -221,7 +221,7 @@ internal class DesktopChat(
             requireDecodable(understood, record.runtimeIds())
             val snapshot = view(Session(scope, Persona.companion(scope.name), history, record, understood).also { notePage(it, scope); active = it })
             publishPicker()
-            talk.warmLocked()
+            talk.warmFillersLocked()
             snapshot
         }
     }

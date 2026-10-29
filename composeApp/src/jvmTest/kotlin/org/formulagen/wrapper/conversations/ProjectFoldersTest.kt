@@ -239,7 +239,11 @@ class ProjectFoldersTest {
         assertTrue(store.isForeign(account, other))
         server.projects[other] = CompanionProject(false, id(), server.hostId, emptyList(), other, "Project", 1)
         assertEquals(true, ConversationHost.projectOnThisMac(server, store, account, server.hostId, other))
+        assertFalse(store.isForeign(account, other), "the account's word makes its folders choosable here again")
+        picked = dir("moved-back")
+        assertEquals(listOf("moved-back"), store.choose(account, other, FolderRole.WORKING).map { it.name })
         server.projects[other] = CompanionProject(false, id(), id(), emptyList(), other, "Project", 2)
         assertEquals(false, ConversationHost.projectOnThisMac(server, store, account, server.hostId, other), "it moved to another Mac")
+        assertTrue(store.isForeign(account, other))
     }
 }

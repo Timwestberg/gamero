@@ -1,6 +1,7 @@
 package org.formulagen.wrapper.conversations
 
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import org.formulagen.wrapper.approvals.ApprovalBroker
 import org.formulagen.wrapper.approvals.NativeDialogs
@@ -80,8 +81,15 @@ internal class ConversationHost(
             val runner = ConversationRunner(api, store, engine, approvals, folders, publisher, directory::heartbeat, connection.heartbeat,
                 connection.status, replies = voice ?: ReplyListeners.NONE)
             owned += runner
-            running = Running(registration.ownerId, publisher, engine::readableBy) { projectId ->
+            // A project the account confirmed answers at once and is checked again in the background, so a slow
+            // server never hides it.
+            val confirmed = ConcurrentHashMap.newKeySet<String>()
+            val verify = { projectId: String ->
                 projectOnThisMac(api, folders, registration.ownerId, registration.id, projectId)
+                    .also { if (it == true) confirmed += projectId else if (it == false) confirmed -= projectId }
+            }
+            running = Running(registration.ownerId, publisher, engine::readableBy) { projectId ->
+                if (projectId in confirmed) true.also { runCatching { publishing.execute { verify(projectId) } } } else verify(projectId)
             }
             runner.start()
             voice?.connected(heardTurns(api, runner))
@@ -102,11 +110,14 @@ internal class ConversationHost(
     companion object {
         /**
          * Whether [projectId] runs on computer [hostId], as the account says (`GET projects/:id`, which answers only this
-         * computer's projects). A refusal marks it another computer's here; null when the account cannot be reached.
+         * computer's projects), recorded in [folders] as `ProjectFolderPublisher.read` records it: this Mac's project
+         * (so its folders can be chosen again), or another computer's. Null when the account cannot be reached.
          */
         internal fun projectOnThisMac(api: ConversationApi, folders: ProjectFolderStore, accountId: String, hostId: String,
             projectId: String): Boolean? = try {
-            api.project(projectId).computerId == hostId
+            val project = api.project(projectId)
+            if (project.computerId == hostId) { folders.claimed(accountId, project); true }
+            else { folders.foreign(accountId, projectId); false }
         } catch (refusal: HovelStatusException) {
             if (!refusal.final) null else { folders.foreign(accountId, projectId); false }
         } catch (_: Exception) {

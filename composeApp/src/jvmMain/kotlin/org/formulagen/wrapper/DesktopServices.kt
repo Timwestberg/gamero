@@ -141,9 +141,6 @@ internal class DesktopServices private constructor(
         games?.let { EventQueue.invokeLater(it::close) }
     }
 
-    /** Escape: interrupts or ends a voice conversation, a project conversation's first. False when none is on. */
-    fun endVoiceConversation(): Boolean = conversationVoice?.escape() == true || chat.endConversation()
-
     /** Close an open adventure before its window goes away; the game's layer belongs to that window. */
     fun closeGame() {
         games?.let { onAwtThread(it::close) }

@@ -59,6 +59,7 @@ internal const val TALK_NOT_CONNECTED = "Connect this Mac to your Hovel account 
 internal const val TALK_NOT_THIS_MAC = "Talk works in conversations whose project runs on this Mac."
 internal const val TALK_NOT_SENT = "What you said could not be sent. Try again in a moment."
 internal const val TALK_QUEUED = "What you said is waiting in the conversation. It runs when this Mac is free."
+internal const val TALK_AGENTS_WORKING = "Agents are working on this. Talk listens again when they finish; Stop interrupts them."
 
 /** For the last heard turn, from its endpoint: to the server storing it (null when the claim came first), and to its claim here. */
 internal data class HeardLatency(val endpointToPostedMs: Long?, val endpointToClaimedMs: Long)
@@ -77,6 +78,11 @@ internal data class HeardLatency(val endpointToPostedMs: Long?, val endpointToCl
  *   arrival, durably.
  * - **Ending Talk**, a microphone failure included, flushes the speaker, abandons an unclaimed heard turn and
  *   silences the rest of the run. It never stops a claimed message.
+ * - **While agents work** on a run Talk is waiting for, Talk says so ([TALK_AGENTS_WORKING]): the microphone stays
+ *   closed (half duplex) or what is heard is not sent (full duplex) until the run ends.
+ * - **The page's actions**, in `ember-hearing.v1`'s words: `handsFree` arms Talk (or interrupts a reply when it is on);
+ *   `press` interrupts a reply and never arms (Escape); `release` quiets the speaker and nothing else (Speak replies
+ *   off), leaving Talk and dictation on; `off` ends Talk, and with Talk off only quiets; `mute` and `unmute` hold it.
  *
  * Threading: [gate] is the loop's lock. Posting runs on [worker]; a stop runs where it is decided.
  */
@@ -102,6 +108,8 @@ internal class VoiceConversation(
     internal val talk = TalkLoop(gate, this, speech, hearing, settings, timer, CompanionLimits.MESSAGE, rowEndsPageTalk = true, now = now)
     /** The heard turn on its way: posted or posting, and not claimed yet. */
     private var pending: Pending? = null
+    /** Heard turns stored but not claimed in time: still this session's own when their claim lands. */
+    private val overdue = LinkedHashMap<String, Pending>()
     /** The conversation's main message running on this Mac. */
     private var running: Running? = null
     /** Each Talk session's number; a heard turn belongs to the session it was heard in. */
@@ -187,18 +195,19 @@ internal class VoiceConversation(
 
     // ---- The page ------------------------------------------------------------------------------
 
-    /** The page's Talk action. Press and hands-free arm Talk (or interrupt a reply); release and off end it. */
+    /** The page's Talk action, with the meanings in the class doc: only `handsFree` ever arms Talk. */
     suspend fun hearing(action: HearingAction): ConversationVoiceStatus {
         val start = synchronized(gate) {
-            talk.pageOwnsLocked()
             when (action) {
-                HearingAction.PRESS, HearingAction.HANDS_FREE -> when {
+                HearingAction.HANDS_FREE -> when {
                     talk.isDictating -> { talk.sayLocked(TALK_WHILE_DICTATING); false }
-                    // A press while Talk is on interrupts the reply, connected or not.
+                    // Hands-free while Talk is on interrupts the reply, connected or not.
                     !talk.on && turns() == null -> { talk.sayLocked(TALK_NOT_CONNECTED); false }
-                    else -> talk.pressLocked().also { if (it) talk.warmLocked() }
+                    else -> { talk.pageOwnsLocked(); talk.pressLocked() }
                 }
-                HearingAction.RELEASE, HearingAction.OFF -> { talk.endLocked(); false }
+                HearingAction.PRESS -> { talk.interruptLocked(); false }
+                HearingAction.RELEASE -> { quietLocked(); false }
+                HearingAction.OFF -> { if (talk.on) talk.endLocked() else quietLocked(); false }
                 HearingAction.MUTE -> { talk.muteLocked(); false }
                 HearingAction.UNMUTE -> { talk.unmuteLocked(); false }
             }
@@ -258,9 +267,8 @@ internal class VoiceConversation(
     fun forClaim(claim: ClaimResult, stop: () -> Unit): ReplyListener? = synchronized(gate) {
         if (closed || claim.message.threadId != null) return null
         val messageId = claim.message.id
-        val heard = pending?.takeIf { it.messageId == messageId }
+        val heard = pending?.takeIf { it.messageId == messageId }?.also { pending = null } ?: overdue.remove(messageId)
         if (heard != null) {
-            pending = null
             heard.claimed = true
             val claimedMs = (now() - heard.endpointNs) / 1_000_000
             val postedMs = heard.postedNs.takeIf { it != 0L }?.let { (it - heard.endpointNs) / 1_000_000 }
@@ -288,12 +296,17 @@ internal class VoiceConversation(
             changedLocked()
         }
 
-        override fun threadStarted() = synchronized(gate) { run.delegated = true }
+        override fun threadStarted() = synchronized(gate) {
+            if (run.delegated) return@synchronized
+            run.delegated = true
+            if (running === run && talk.on) talk.sayLocked(TALK_AGENTS_WORKING)
+        }
 
         override fun ended() = synchronized(gate) {
             if (running !== run) return@synchronized
             running = null
             run.endedLocked()
+            talk.unsayLocked(TALK_AGENTS_WORKING)
             changedLocked()
         }
     }
@@ -316,32 +329,53 @@ internal class VoiceConversation(
     }
 
     /**
-     * Barge-in. The speaker is already flushed. Talk's own heard turn, before it delegates, stops as Stop stops it; any
-     * other run continues with this reply silent. A heard turn not claimed yet is abandoned.
+     * Barge-in. The speaker is already flushed. Talk's own heard turn, before it delegates, stops as Stop stops it; a
+     * delegated run continues with this reply silent, and Talk says the agents are working. With no run, a heard turn
+     * not claimed yet is abandoned; a newer one waiting behind a run is left alone.
      */
     override fun interruptLocked() {
-        running?.let { run ->
-            if (run.own && !run.delegated) {
+        val run = running
+        when {
+            run == null -> pending?.let(::abandonLocked)
+            run.own && !run.delegated -> {
                 running = null
                 run.endedLocked()
                 run.stop()
-            } else {
+            }
+            else -> {
                 run.silenceLocked()
+                if (run.delegated) talk.sayLocked(TALK_AGENTS_WORKING)
             }
         }
-        pending?.let(::abandonLocked)
     }
 
-    /** Talk ended: flush, abandon a heard turn not claimed yet, and say nothing more of the run, which goes on. */
+    /** Talk ended: flush, abandon heard turns not claimed yet, and say nothing more of the run, which goes on. */
     override fun endReplyLocked(): Boolean {
         session++
         val busy = pending != null || running != null
         speech.stop()
-        pending?.let(::abandonLocked)
+        releaseHeardTurnsLocked()
         running?.muteLocked()
         if (busy) changedLocked()
         return busy
     }
+
+    /** Speak replies off: the speaker stops now and nothing more of the run is said. Talk and dictation go on. */
+    private fun quietLocked() {
+        speech.stop()
+        running?.muteLocked()
+        changedLocked()
+    }
+
+    /** Give up on every heard turn not claimed yet: each stops on arrival, durably while this Mac's link is up. */
+    private fun releaseHeardTurnsLocked() {
+        pending?.let(::abandonLocked)
+        overdue.values.toList().forEach(::abandonLocked)
+        overdue.clear()
+    }
+
+    /** This Mac is leaving the account (or quitting): its heard turns are given up while the link can still journal them. */
+    fun releaseHeardTurns() = synchronized(gate) { releaseHeardTurnsLocked() }
 
     override fun lastReplyLocked(): String = lastReply
 
@@ -358,14 +392,14 @@ internal class VoiceConversation(
         if (closed) return@synchronized
         talk.resetLocked()
         closed = true
-        pending?.let(::abandonLocked)
+        releaseHeardTurnsLocked()
         running = null
         speech.stop()
         onChange(this)
     }
 
     private fun abandonLocked(turn: Pending) {
-        pending = null
+        if (pending === turn) pending = null
         turn.abandoned = true
         abandon(turn.messageId)
         log(LogLevel.Info, "hearing", "heard turn abandoned before its claim")
@@ -410,14 +444,20 @@ internal class VoiceConversation(
         talk.sayLocked(notice)
     }
 
-    /** [turn] was stored but not claimed in time (this Mac is busy): Talk listens again, and the turn runs when claimed. */
+    /**
+     * [turn] was stored but not claimed in time (this Mac is busy): Talk listens again, and the turn runs when claimed,
+     * still Talk's own. The few kept are the newest.
+     */
     private fun claimOverdue(turn: Pending) = synchronized(gate) {
         if (pending !== turn) return@synchronized
         pending = null
+        overdue[turn.messageId] = turn
+        while (overdue.size > OVERDUE_KEPT) overdue.remove(overdue.keys.first())
         talk.sayLocked(TALK_QUEUED)
     }
 
     private companion object {
         const val POST_ATTEMPTS = 3
+        const val OVERDUE_KEPT = 8
     }
 }

@@ -60,6 +60,7 @@ class TalkLoopTest {
     private class FillerSpeaker(private val speaker: FakeSpeaker = FakeSpeaker()) : ChatSpeech by speaker {
         val clips = java.util.concurrent.CopyOnWriteArrayList<String>()
         val pieces get() = speaker.pieces
+        val warms get() = speaker.warms.get()
         fun settle() = speaker.settle()
         override fun fillerPcm(voiceId: String, line: String) = FillerPcm(line.encodeToByteArray(), 24_000)
         override fun playClip(pcm: ByteArray, sampleRate: Int, onDone: () -> Unit) { clips += pcm.decodeToString() }
@@ -224,6 +225,26 @@ class TalkLoopTest {
         assertFalse(conversation.on, "a conversation's icon ends the page's session")
         conversation.click()
         assertFalse(conversation.on, "and never starts one the page owns")
+    }
+
+    @Test fun aSessionWarmsTheVoiceHoweverItStartsAndAnInterruptNeverStartsOne() {
+        val talk = loop()
+        assertFalse(synchronized(lock) { talk.interruptLocked() })
+        assertFalse(talk.on, "an interrupt never arms")
+        assertEquals(0, speaker.warms)
+        talk.click()
+        assertTrue(talk.on)
+        assertEquals(1, speaker.warms, "the row's icon warms the voice, fillers or not")
+    }
+
+    @Test fun endingWithNoSessionLeavesADictationHoldingTheMicrophone() {
+        val talk = loop()
+        synchronized(lock) { talk.dictateLocked(DictationAction.START) }
+        talk.startDictation()
+        ear.dictate("add")
+        synchronized(lock) { talk.endLocked() }
+        ear.held = "add a test"
+        assertEquals("add a test", talk.awaitDictation(), "the hold was never ended")
     }
 
     @Test fun aCaptureThatCannotStartSaysTheMicrophoneIsBusy() {

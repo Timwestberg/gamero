@@ -1,6 +1,5 @@
 package org.formulagen.wrapper.conversations
 
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import org.formulagen.wrapper.bridge.ConversationDictationArgs
@@ -15,6 +14,8 @@ import org.formulagen.wrapper.chat.TalkSettings
 import org.formulagen.wrapper.chat.VoicePickerModel
 import org.formulagen.wrapper.chat.VoicePickerState
 import org.formulagen.wrapper.chat.loggingDaemonThreads
+import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.logger.log
 
 /**
  * `conversationVoice.*` on the Mac, named like `DesktopProjects` and `DesktopChat`: the microphone and speaker serve
@@ -47,8 +48,8 @@ internal class DesktopConversationVoice(
     @Volatile private var current: VoiceConversation? = null
     @Volatile private var turns: HeardTurns? = null
     @Volatile private var closed = false
-    /** Heard turns given up on before their claim, by message id. */
-    private val abandoned: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    /** Heard turns given up on before their claim, by message id: the newest few; the journal holds every one. */
+    private val abandoned = LinkedHashSet<String>()
     private val worker = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-conversation-voice"))
 
     init {
@@ -58,16 +59,23 @@ internal class DesktopConversationVoice(
     /** The conversation the voice serves now. */
     internal val served: VoiceConversation? get() = current
 
+    /**
+     * The account's runner started ([turns]) or stopped (null, at sign-out or quit). Before the link goes, the served
+     * conversation's heard turns not claimed yet are given up through it, so their stop is journaled.
+     */
     override fun connected(turns: HeardTurns?) {
+        if (turns == null) current?.releaseHeardTurns()
         this.turns = turns
     }
 
     override fun forClaim(claim: ClaimResult, stop: () -> Unit): ReplyListener? {
         // An abandoned heard turn stops on arrival, whichever conversation the voice serves now.
-        if (abandoned.remove(claim.message.id)) {
+        if (synchronized(abandoned) { abandoned.remove(claim.message.id) }) {
             stop()
             return null
         }
+        // A thread reply is never a reply in progress here, so it never moves the voice.
+        if (claim.message.threadId != null) return null
         return synchronized(lock) {
             if (closed) return@synchronized null
             val id = claim.conversation.id
@@ -86,8 +94,8 @@ internal class DesktopConversationVoice(
     }
 
     override suspend fun hearing(args: ConversationHearingArgs): ConversationVoiceStatus {
-        val starts = args.action == HearingAction.PRESS || args.action == HearingAction.HANDS_FREE
-        val voice = forPage(args.conversationId, starts) ?: return voiceStatus()
+        // Only hands-free starts Talk, so only it may move the voice here.
+        val voice = forPage(args.conversationId, starts = args.action == HearingAction.HANDS_FREE) ?: return voiceStatus()
         return voice.hearing(args.action)
     }
 
@@ -145,8 +153,17 @@ internal class DesktopConversationVoice(
 
     /** Give up on heard turn [messageId] of [conversationId]: it stops on arrival, here and in the journal. */
     private fun abandon(conversationId: String, messageId: String) {
-        abandoned += messageId
-        turns?.let { link -> runCatching { link.abandon(conversationId, messageId) } }
+        synchronized(abandoned) {
+            abandoned += messageId
+            while (abandoned.size > ABANDONED_KEPT) abandoned.remove(abandoned.first())
+        }
+        val link = turns
+        if (link == null) {
+            log(LogLevel.Warn, "hearing", "A heard turn given up with no account link is stopped on this run only")
+            return
+        }
+        runCatching { link.abandon(conversationId, messageId) }
+            .onFailure { log(LogLevel.Warn, "hearing", "A heard turn's stop on claim was not journaled", it) }
     }
 
     /** The voice row shows the conversation the voice serves; any other is hidden. Called under [voice]'s lock. */
@@ -167,5 +184,10 @@ internal class DesktopConversationVoice(
         timer.shutdownNow()
         worker.shutdownNow()
         speech.close()
+    }
+
+    private companion object {
+        /** In-memory abandons kept; one older than these still stops from the journal. */
+        const val ABANDONED_KEPT = 64
     }
 }

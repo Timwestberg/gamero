@@ -350,7 +350,7 @@ private class PreRoll(private val capacity: Int) {
  * A failure rewrites [choice] to half duplex before the microphone opens.
  */
 internal class HearingRoute(
-    var choice: DuplexChoice,
+    @Volatile var choice: DuplexChoice,
     private val environment: Map<String, String>,
 ) {
     @Volatile private var graphUp = false

@@ -176,7 +176,7 @@ internal class TalkLoop(
     val phase: TalkPhase get() = talkPhase
 
     /** Warm the fillers, when they are on, so the first one plays from the cache. */
-    fun warmLocked() {
+    fun warmFillersLocked() {
         if (settings.fillers.enabled) speech.warmFillers(FILLER_LINES)
     }
 
@@ -279,16 +279,20 @@ internal class TalkLoop(
      * the caller must [startCapture] outside the lock.
      */
     fun pressLocked(): Boolean {
-        if (talkOn && replyLiveLocked()) {
-            bargeInLocked("press")
-            return false
-        }
+        if (interruptLocked()) return false
         if (talkOn) {
             host.changedLocked()
             return false
         }
         if (refusedBusyLocked()) return false
         armLocked()
+        return true
+    }
+
+    /** Interrupt the reply in progress, as a barge-in does, and never arm a session. True when there was one to interrupt. */
+    fun interruptLocked(): Boolean {
+        if (!talkOn || !replyLiveLocked()) return false
+        bargeInLocked("press")
         return true
     }
 
@@ -316,8 +320,12 @@ internal class TalkLoop(
         true
     }
 
-    /** End the session; the host decides what of a reply in progress ends with it. */
+    /**
+     * End the session; the host decides what of a reply in progress ends with it. With no session on, the microphone is
+     * left alone, so a dictation holding it goes on.
+     */
     fun endLocked() {
+        val wasOn = talkOn
         talkOn = false
         userMuted = false
         resumePending = false
@@ -325,7 +333,7 @@ internal class TalkLoop(
         hearingPartial = ""
         setPhaseLocked(TalkPhase.OFF)
         speech.stop()
-        hearing?.endSession()
+        if (wasOn) hearing?.endSession()
         if (!host.endReplyLocked()) {
             speech.stop()
             host.changedLocked()
@@ -393,6 +401,13 @@ internal class TalkLoop(
     fun sayLocked(notice: String) {
         hearingNotice = notice
         fillerTurn.cancel()
+        host.changedLocked()
+    }
+
+    /** Take [notice] off the hearing field, if it is still the one shown. */
+    fun unsayLocked(notice: String) {
+        if (hearingNotice != notice) return
+        hearingNotice = null
         host.changedLocked()
     }
 
@@ -518,8 +533,10 @@ internal class TalkLoop(
         return true
     }
 
-    /** Opens one session. */
+    /** Opens one session, however it was started, and warms the voice for its first sentence. */
     private fun armLocked() {
+        speech.warm()
+        warmFillersLocked()
         settings.route?.arm()
         talkOn = true
         explained = true

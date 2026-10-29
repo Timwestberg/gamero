@@ -48,7 +48,8 @@ private class DesktopResources : AutoCloseable {
     var services: DesktopServices? = null
     private var keyboardClient: CefClient? = null
     // Escape the page receives is the page's: team chat keeps its catalog barge-in here, and a project conversation's
-    // page sends its own barge-in only when it has no other use for the key. The window's own Escape reaches both.
+    // page sends its own interrupt only when it has no other use for the key. No page Escape reaches conversation voice
+    // natively: the window's handler is team chat's, and the conversation row's own handler needs the row focused.
     private val keyboard = BrowserEditKeyboard(browser::get, windowActive::get, onEscape = {
         services?.chat?.endConversation() == true
     })
@@ -117,11 +118,10 @@ fun main(args: Array<String>) {
                 Window(
                     onCloseRequest = { resources.services?.closeGame(); exitApplication() },
                     title = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME,
+                    // Team chat's Escape. A project conversation's voice hears Escape only from its own row, below.
                     onPreviewKeyEvent = { event ->
-                        if (event.key == Key.Escape && event.type == KeyEventType.KeyDown) {
-                            resources.services?.endVoiceConversation()
-                            true
-                        } else false
+                        event.key == Key.Escape && event.type == KeyEventType.KeyDown &&
+                            resources.services?.chat?.endConversation() == true
                     },
                 ) {
                     DisposableEffect(window) {
@@ -264,6 +264,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                     conversationVoice::chooseSpokenVoice,
                     conversationVoice::converseClick,
                     conversationVoice::toggleFillers,
+                    onEscape = conversationVoice::escape,
                 )
             } else {
                 KokoroVoicePicker(

@@ -18,6 +18,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.formulagen.wrapper.voice.HearingDuplex
@@ -110,9 +115,14 @@ internal fun KokoroVoicePicker(
     onSelect: (String) -> Unit,
     onTalk: () -> Unit = {},
     onToggleFillers: () -> Unit = {},
+    /** Escape while the row has focus: interrupts or ends its Talk. True when it took the key. */
+    onEscape: () -> Boolean = { false },
 ) {
     if (!state.visible) return
-    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp)) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp)
+            .onPreviewKeyEvent { event -> event.key == Key.Escape && event.type == KeyEventType.KeyDown && onEscape() },
+    ) {
         Row(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
