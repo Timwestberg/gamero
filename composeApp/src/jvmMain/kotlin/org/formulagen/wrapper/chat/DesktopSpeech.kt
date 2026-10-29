@@ -15,6 +15,8 @@ import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.voice.EmberVoice
 import org.formulagen.wrapper.voice.FILLER_LINES
 import org.formulagen.wrapper.voice.FillerPcm
+import org.formulagen.wrapper.voice.HEARING_ENDPOINT_SILENCE_MS
+import org.formulagen.wrapper.voice.HEARING_RESUME_GUARD_MS
 import org.formulagen.wrapper.voice.KokoroVoice
 import org.formulagen.wrapper.voice.PieceEngine
 import org.formulagen.wrapper.voice.SpeechCancelled
@@ -37,6 +39,7 @@ internal interface ChatSpeech : AutoCloseable {
     fun previewVoice(id: String) {}
     /** Called after the spoken state changes, and never while this speech object holds its own lock. */
     fun onVoice(listener: () -> Unit) {}
+    fun setFillersEnabled(enabled: Boolean) {}
     /** Synthesize [lines] for every Kokoro blend and keep the PCM. A later play does not call the model. */
     fun warmFillers(lines: List<String>) {}
     fun fillerPcm(voiceId: String, line: String): FillerPcm? = null
@@ -74,6 +77,12 @@ internal class DesktopSpeech(
 
     override fun onVoice(listener: () -> Unit) {
         synchronized(gate) { onVoice = listener }
+    }
+
+    override fun setFillersEnabled(enabled: Boolean) = synchronized(gate) {
+        val current = voiceConfig ?: return@synchronized
+        voiceConfig = current.copy(fillersEnabled = enabled)
+        if (enabled) warmFillers(FILLER_LINES)
     }
 
     /** Caller holds [gate]. The listener runs later, so it can take the chat lock safely. */
@@ -447,7 +456,7 @@ private fun kokoroDesktopConfig(environment: Map<String, String>): VoiceConfig? 
     }
     val choice = kokoroChoiceFile(environment)
     val fromEnv = environment["HOVEL_KOKORO_VOICE"]?.trim()?.takeIf { it.isNotEmpty() && kokoroVoice(it) != null }
-    val fillers = readFillerSettings(environment)
+    val fillers = readFillerSettings(environment, readSavedFillers(fillerChoiceFile(environment)))
     return VoiceConfig(
         backend = VoiceConfig.KOKORO,
         numThreads = VoiceConfig.KOKORO_THREADS,
@@ -490,6 +499,33 @@ internal fun writeKokoroVoiceChoice(file: Path, id: String) {
     if (parent != null) Files.createDirectories(parent)
     Files.writeString(file, id + "\n")
 }
+
+internal fun fillerChoiceFile(environment: Map<String, String>): Path {
+    environment["HOVEL_VOICE_FILLERS_FILE"]?.let { return Path.of(it) }
+    val home = environment["HOME"] ?: System.getProperty("user.home")
+    return Path.of(home, ".gamero", "voice-fillers")
+}
+
+/** Missing file means off. `on` or `1` is on. */
+internal fun readSavedFillers(file: Path): Boolean {
+    if (!Files.isRegularFile(file)) return false
+    val word = Files.readString(file).lineSequence().firstOrNull()?.trim()?.lowercase()
+    return word == "on" || word == "1" || word == "true"
+}
+
+internal fun writeSavedFillers(file: Path, enabled: Boolean) {
+    val parent = file.parent
+    if (parent != null) Files.createDirectories(parent)
+    Files.writeString(file, if (enabled) "on\n" else "off\n")
+}
+
+/** Trailing quiet that ends a hands-free turn. Clamped so a bad env value cannot stick the mic. */
+internal fun hearingSilenceMs(environment: Map<String, String>): Int =
+    environment["HOVEL_HEARING_SILENCE_MS"]?.toIntOrNull()?.coerceIn(200, 5_000) ?: HEARING_ENDPOINT_SILENCE_MS
+
+/** Quiet after Ember stops before the microphone opens again. */
+internal fun hearingGuardMs(environment: Map<String, String>): Int =
+    environment["HOVEL_HEARING_GUARD_MS"]?.toIntOrNull()?.coerceIn(0, 2_000) ?: HEARING_RESUME_GUARD_MS
 
 internal fun resolveKokoroVoiceId(environment: Map<String, String>, choiceFile: Path?): String {
     val fromEnv = environment["HOVEL_KOKORO_VOICE"]?.trim()?.takeIf { it.isNotEmpty() }

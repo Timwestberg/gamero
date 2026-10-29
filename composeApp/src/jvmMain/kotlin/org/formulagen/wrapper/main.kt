@@ -7,6 +7,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.MenuBar
@@ -105,7 +109,16 @@ fun main(args: Array<String>) {
             CompositionLocalProvider(LocalWindowExceptionHandlerFactory provides object : WindowExceptionHandlerFactory {
                 override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler = failure
             }) {
-                Window(onCloseRequest = { resources.services?.closeGame(); exitApplication() }, title = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME) {
+                Window(
+                    onCloseRequest = { resources.services?.closeGame(); exitApplication() },
+                    title = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME,
+                    onPreviewKeyEvent = { event ->
+                        if (event.key == Key.Escape && event.type == KeyEventType.KeyDown) {
+                            resources.services?.chat?.endConversation()
+                            true
+                        } else false
+                    },
+                ) {
                     DisposableEffect(window) {
                         // Read AWT state on its event thread, never from the CEF callback thread.
                         val listener = object : WindowAdapter() {
@@ -220,7 +233,12 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                 Text("Set GAMERO_CODEX_PATH and GAMERO_WORKSPACE to enable this Mac's optional Codex connection.", Modifier.padding(8.dp))
             }
             val picker by services.voicePicker.state
-            KokoroVoicePicker(picker, services.chat::chooseSpokenVoice, services.chat::hearingDown, services.chat::hearingUp)
+            KokoroVoicePicker(
+                picker,
+                services.chat::chooseSpokenVoice,
+                services.chat::converseClick,
+                services.chat::toggleFillers,
+            )
             App(url, enableLegacyBridge = false, webViewFactory = ::persistentDesktopBrowser, onWebViewCreated = { browser ->
                 resources.attachBrowser(browser)
                 resources.bridge?.close()

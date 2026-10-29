@@ -55,7 +55,7 @@ data class VoiceConfig(
     val kokoroVoiceId: String = "",
     val kokoroVoiceFile: String = "",
     val kokoroVoiceFromEnv: Boolean = false,
-    val fillersEnabled: Boolean = true,
+    val fillersEnabled: Boolean = false,
     val fillerThresholdMs: Int = FILLER_THRESHOLD_MS,
 ) {
     val version: String

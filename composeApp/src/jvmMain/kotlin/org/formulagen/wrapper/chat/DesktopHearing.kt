@@ -4,9 +4,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.TargetDataLine
+import org.formulagen.wrapper.voice.EndpointDecision
+import org.formulagen.wrapper.voice.HEARING_MIN_SPEECH_MS
 import org.formulagen.wrapper.voice.HEARING_SAMPLE_RATE
 import org.formulagen.wrapper.voice.HearingEngine
 import org.formulagen.wrapper.voice.HearingResult
+import org.formulagen.wrapper.voice.SilenceEndpoint
 
 internal interface MicCapture : AutoCloseable {
     /** Samples written into [into]. `0` means wait and try again. Negative means the microphone closed. */
@@ -82,6 +85,96 @@ internal class DesktopHearing(
         val result = runCatching { engine.finish() }.getOrElse { HearingResult("", 0, 0.0) }
         onResult(result)
         return true
+    }
+
+    private val paused = AtomicBoolean(false)
+    private val restart = AtomicBoolean(false)
+    private var endpoint = SilenceEndpoint()
+
+    /**
+     * Hands-free session. The microphone stays open until [endSession].
+     * While paused, captured audio is discarded so Ember is not transcribed.
+     */
+    fun startSession(
+        silenceMs: Int,
+        onPartial: (String) -> Unit,
+        onUtterance: (HearingResult) -> Unit,
+        onFailed: (String) -> Unit,
+    ): Boolean {
+        synchronized(gate) {
+            if (thread != null) return false
+            stop.set(false)
+            failed = null
+            delivered.set(false)
+            paused.set(false)
+            restart.set(true)
+            endpoint = SilenceEndpoint(silenceMs = silenceMs)
+            val worker = Thread({
+                var capture: MicCapture? = null
+                try {
+                    capture = openMic()
+                    synchronized(gate) { mic = capture }
+                    val buf = FloatArray(1600)
+                    while (!stop.get()) {
+                        val n = capture.read(buf)
+                        if (n < 0) break
+                        if (n == 0) continue
+                        if (paused.get()) continue
+                        if (restart.compareAndSet(true, false)) {
+                            runCatching { engine.startUtterance() }
+                            endpoint.reset()
+                        }
+                        val chunk = if (n == buf.size) buf.copyOf() else buf.copyOf(n)
+                        engine.accept(chunk)
+                        val voicedMs = engine.voicedMillisOfLastAccept()
+                        val chunkMs = n * 1000 / HEARING_SAMPLE_RATE
+                        val decision = when {
+                            voicedMs <= 0 -> endpoint.frame(false, chunkMs)
+                            voicedMs >= chunkMs -> endpoint.frame(true, chunkMs)
+                            else -> {
+                                val spoke = endpoint.frame(true, voicedMs)
+                                if (spoke != EndpointDecision.LISTEN) spoke else endpoint.frame(false, chunkMs - voicedMs)
+                            }
+                        }
+                        onPartial(engine.partial())
+                        if (decision == EndpointDecision.LISTEN) continue
+                        val result = runCatching { engine.finish() }.getOrElse { HearingResult("", 0, 0.0) }
+                        val send = decision == EndpointDecision.SEND &&
+                            result.text.isNotBlank() && result.speechMs >= HEARING_MIN_SPEECH_MS
+                        if (send) onUtterance(result)
+                        restart.set(true)
+                    }
+                } catch (error: Throwable) {
+                    if (error is VirtualMachineError) throw error
+                    failed = error.message ?: "The microphone did not open."
+                    onFailed(failed!!)
+                } finally {
+                    runCatching { capture?.close() }
+                    synchronized(gate) {
+                        if (mic === capture) mic = null
+                        if (thread === Thread.currentThread()) thread = null
+                    }
+                }
+            }, "hovel-hearing")
+            worker.isDaemon = true
+            thread = worker
+            worker.start()
+            return true
+        }
+    }
+
+    fun setPaused(value: Boolean) {
+        paused.set(value)
+        if (!value) restart.set(true)
+    }
+
+    fun isPaused(): Boolean = paused.get()
+
+    fun endSession() {
+        stop.set(true)
+        delivered.set(true)
+        paused.set(true)
+        synchronized(gate) { runCatching { mic?.close() } }
     }
 
     /** Stop the microphone without a transcript. Safe to call while holding another lock: it does not join. */

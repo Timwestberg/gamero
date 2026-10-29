@@ -26,6 +26,7 @@ class SherpaHearingEngine(modelDir: String) : HearingEngine {
     private var stream: OnlineStream? = null
     private var voiced = false
     private var heardMs = 0
+    private var lastVoicedMs = 0
     private val vadWindow = FloatArray(VAD_WINDOW)
     private var vadFill = 0
 
@@ -70,6 +71,7 @@ class SherpaHearingEngine(modelDir: String) : HearingEngine {
         stream = recognizer.createStream()
         voiced = false
         heardMs = 0
+        lastVoicedMs = 0
         vadFill = 0
         vad?.reset()
     }
@@ -77,11 +79,14 @@ class SherpaHearingEngine(modelDir: String) : HearingEngine {
     override fun accept(samples: FloatArray) {
         val current = stream ?: return
         if (samples.isEmpty()) return
+        lastVoicedMs = 0
         heardMs += samples.size * 1000 / HEARING_SAMPLE_RATE
         current.acceptWaveform(samples, HEARING_SAMPLE_RATE)
         while (recognizer.isReady(current)) recognizer.decode(current)
         noteSpeech(samples)
     }
+
+    override fun voicedMillisOfLastAccept(): Int = lastVoicedMs
 
     override fun partial(): String = stream?.let { recognizer.getResult(it).text }.orEmpty()
 
@@ -108,6 +113,7 @@ class SherpaHearingEngine(modelDir: String) : HearingEngine {
     private fun noteSpeech(samples: FloatArray) {
         val detector = vad ?: run {
             voiced = true
+            lastVoicedMs = samples.size * 1000 / HEARING_SAMPLE_RATE
             return
         }
         var offset = 0
@@ -118,7 +124,10 @@ class SherpaHearingEngine(modelDir: String) : HearingEngine {
             offset += n
             if (vadFill == VAD_WINDOW) {
                 detector.acceptWaveform(vadWindow)
-                if (detector.isSpeechDetected()) voiced = true
+                if (detector.isSpeechDetected()) {
+                    voiced = true
+                    lastVoicedMs += VAD_WINDOW * 1000 / HEARING_SAMPLE_RATE
+                }
                 vadFill = 0
             }
         }

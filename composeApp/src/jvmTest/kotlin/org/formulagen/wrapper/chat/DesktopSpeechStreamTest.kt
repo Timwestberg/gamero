@@ -162,7 +162,6 @@ class DesktopSpeechStreamTest {
                 assertEquals(1, opens.get())
                 speech.chooseVoice("heart60-adam40")
                 assertEquals("heart60-adam40", speech.currentVoiceId())
-                assertTrue(waitFor { seen.any { it == "heart60-adam40" } })
                 val beforeHarper = seen.size
                 speech.speak("Third sentence here.")
                 assertTrue(waitFor { seen.size > beforeHarper })

@@ -19,6 +19,7 @@ import org.formulagen.wrapper.voice.FillerPcm
 import org.formulagen.wrapper.voice.FillerSettings
 import org.formulagen.wrapper.voice.HearingEngine
 import org.formulagen.wrapper.voice.HearingResult
+import org.formulagen.wrapper.voice.readFillerSettings
 import org.formulagen.wrapper.voice.PieceAudio
 import org.formulagen.wrapper.voice.PieceEngine
 import org.formulagen.wrapper.voice.SpeechCancelled
@@ -163,11 +164,11 @@ class FillerPlaybackTest {
     }
 }
 
-class HoldRecoveryTest {
+class ConverseSessionTest {
     private val scope = ChatScope("local", UUID.randomUUID().toString(), "Ember", UUID.randomUUID().toString())
     private val member = TeamMember(RuntimeId.CODEX, SharedRules.RUNTIME_DEFAULT_MODEL)
 
-    @Test fun tenEmptyHoldsLeaveTheButtonEnabled() = runBlocking {
+    @Test fun twelveTurnsStayInOneSessionAndReturnToListening() = runBlocking {
         val speech = RowSpeech()
         val runtime = ScriptedRuntime(completeOnStart = true)
         val row = VoicePickerModel()
@@ -176,15 +177,47 @@ class HoldRecoveryTest {
             desk.send(send("Hello"))
             await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
             speech.settle()
-            repeat(10) {
-                desk.commitHeard(HearingResult("", speechMs = 0, decodeMs = 0.0))
-                assertTrue(row.state.value.holdEnabled, "hold $it")
-                assertFalse(row.state.value.holding)
+            desk.testingSession()
+            assertEquals(TalkPhase.LISTENING, row.state.value.phase)
+            assertFalse(row.state.value.fillersOn)
+            repeat(12) { turn ->
+                runtime.completeOnStart = false
+                val turns = runtime.turns
+                desk.testingUtterance(HearingResult("turn $turn", speechMs = 500, decodeMs = 1.0))
+                assertEquals(TalkPhase.THINKING, row.state.value.phase, "turn $turn")
+                await { runtime.turns > turns }
+                runtime.finish("ok $turn")
+                await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+                assertEquals(TalkPhase.SPEAKING, row.state.value.phase, "still speaking after turn $turn")
+                speech.settle()
+                assertEquals(TalkPhase.LISTENING, row.state.value.phase, "turn $turn did not resume")
             }
+            assertEquals(13, runtime.turns)
         }
     }
 
-    @Test fun tenSendsDisableTheButtonUntilTheReplyAndTheVoiceFinish() = runBlocking {
+    @Test fun silenceAndAnEmptyTranscriptSendNothing() = runBlocking {
+        val speech = RowSpeech()
+        val runtime = ScriptedRuntime(completeOnStart = true)
+        val row = VoicePickerModel()
+        chatRow(speech, runtime, row).use { desk ->
+            desk.open(scope)
+            desk.send(send("Hello"))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            speech.settle()
+            desk.testingSession()
+            val turns = runtime.turns
+            repeat(10) { desk.testingUtterance(HearingResult("", speechMs = 0, decodeMs = 0.0)) }
+            desk.testingUtterance(HearingResult("   ", speechMs = 800, decodeMs = 1.0))
+            desk.testingUtterance(HearingResult("hi", speechMs = 80, decodeMs = 1.0))
+            Thread.sleep(40)
+            assertEquals(turns, runtime.turns)
+            assertEquals(TalkPhase.LISTENING, row.state.value.phase)
+            assertNull(runBlocking { desk.snapshot(scope) }.notice)
+        }
+    }
+
+    @Test fun stopOrASecondClickEndsTheSessionMidReply() = runBlocking {
         val speech = RowSpeech()
         val runtime = ScriptedRuntime()
         val row = VoicePickerModel()
@@ -194,22 +227,118 @@ class HoldRecoveryTest {
             desk.send(send("Hello"))
             await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
             speech.settle()
-            repeat(10) { hold ->
-                runtime.completeOnStart = false
-                val turns = runtime.turns
-                desk.commitHeard(HearingResult("turn $hold", speechMs = 500, decodeMs = 1.0))
-                assertFalse(row.state.value.holdEnabled, "expected disabled while responding, hold $hold")
-                await { runtime.turns > turns }
-                runtime.finish("ok $hold")
-                await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
-                assertFalse(row.state.value.holdEnabled, "still speaking after hold $hold")
-                speech.settle()
-                assertTrue(row.state.value.holdEnabled, "hold $hold did not recover")
-            }
+            desk.testingSession()
+            runtime.completeOnStart = false
+            desk.testingUtterance(HearingResult("keep going", speechMs = 500, decodeMs = 1.0))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.RESPONDING }
+            desk.stop(scope)
+            assertEquals(ChatState.CANCELLED, runBlocking { desk.snapshot(scope) }.state)
+            assertEquals(TalkPhase.OFF, row.state.value.phase)
+            desk.testingSession()
+            val turns = runtime.turns
+            desk.testingUtterance(HearingResult("again", speechMs = 500, decodeMs = 1.0))
+            await { runtime.turns > turns }
+            desk.converseClick()
+            assertEquals(TalkPhase.OFF, row.state.value.phase)
+            assertEquals(ChatState.CANCELLED, runBlocking { desk.snapshot(scope) }.state)
+            desk.endConversation()
+            assertEquals(TalkPhase.OFF, row.state.value.phase)
         }
     }
 
-    @Test fun cancelledSpeechAndAFailedWorkerReenableTheButton() = runBlocking {
+    @Test fun aVoiceSwitchMidSessionStillHearsTheNextTurn() = runBlocking {
+        val speech = RowSpeech()
+        val runtime = ScriptedRuntime()
+        val row = VoicePickerModel()
+        chatRow(speech, runtime, row).use { desk ->
+            desk.open(scope)
+            runtime.completeOnStart = true
+            desk.send(send("Hello"))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            speech.settle()
+            desk.testingSession()
+            runtime.completeOnStart = false
+            desk.testingUtterance(HearingResult("switch", speechMs = 500, decodeMs = 1.0))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.RESPONDING }
+            desk.chooseSpokenVoice("heart60-adam40")
+            assertEquals(TalkPhase.SPEAKING, row.state.value.phase)
+            speech.settle()
+            assertEquals(TalkPhase.THINKING, row.state.value.phase)
+            runtime.finish("ok")
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            speech.settle()
+            assertEquals(TalkPhase.LISTENING, row.state.value.phase)
+            assertEquals("heart60-adam40", row.state.value.selectedId)
+            val turns = runtime.turns
+            desk.testingUtterance(HearingResult("after the switch", speechMs = 500, decodeMs = 1.0))
+            await { runtime.turns > turns }
+            assertEquals("after the switch", runtime.lastText)
+            runtime.finish("done")
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            speech.settle()
+            assertEquals(TalkPhase.LISTENING, row.state.value.phase)
+        }
+    }
+
+    @Test fun playbackStaysQuietForTheGuardThenListensAgain() = runBlocking {
+        val speech = RowSpeech()
+        val runtime = ScriptedRuntime()
+        val row = VoicePickerModel()
+        chatRow(speech, runtime, row, guardMs = 150).use { desk ->
+            desk.open(scope)
+            runtime.completeOnStart = true
+            desk.send(send("Hello"))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            speech.settle()
+            desk.testingSession()
+            runtime.completeOnStart = false
+            val turns = runtime.turns
+            desk.testingUtterance(HearingResult("wait", speechMs = 400, decodeMs = 1.0))
+            await { runtime.turns > turns }
+            runtime.finish("ok")
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            speech.settle()
+            assertEquals(TalkPhase.SPEAKING, row.state.value.phase)
+            await { row.state.value.phase == TalkPhase.LISTENING }
+        }
+    }
+
+    @Test fun aMicrophoneSessionHearsTenTurnsAndIgnoresSilence() = runBlocking {
+        val speech = RowSpeech()
+        val runtime = ScriptedRuntime(completeOnStart = true)
+        val row = VoicePickerModel()
+        val mic = QueueMic()
+        val hearing = DesktopHearing(LevelEngine(), { mic })
+        chatRow(speech, runtime, row, hearing = hearing, silenceMs = 200).use { desk ->
+            desk.open(scope)
+            desk.send(send("Hello"))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            speech.settle()
+            runtime.completeOnStart = false
+            desk.converseClick()
+            await { row.state.value.phase == TalkPhase.LISTENING }
+            repeat(10) { turn ->
+                val turns = runtime.turns
+                pushUtterance(mic)
+                await { runtime.turns > turns }
+                assertEquals(TalkPhase.THINKING, row.state.value.phase, "turn $turn")
+                assertTrue(hearing.isPaused(), "mic open while Ember thinks, turn $turn")
+                runtime.finish("ok $turn")
+                await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+                speech.settle()
+                await { row.state.value.phase == TalkPhase.LISTENING && !hearing.isPaused() }
+            }
+            val turns = runtime.turns
+            repeat(12) { mic.push(FloatArray(1600)) }
+            Thread.sleep(200)
+            assertEquals(turns, runtime.turns)
+            assertEquals(TalkPhase.LISTENING, row.state.value.phase)
+            desk.converseClick()
+            assertEquals(TalkPhase.OFF, row.state.value.phase)
+        }
+    }
+
+    @Test fun aFailedVoiceReturnsToListening() = runBlocking {
         val speech = RowSpeech()
         val runtime = ScriptedRuntime(completeOnStart = true)
         val row = VoicePickerModel()
@@ -218,46 +347,69 @@ class HoldRecoveryTest {
             desk.send(send("Hello"))
             await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
             speech.settle()
+            desk.testingSession()
             repeat(10) {
                 speech.become(VoiceState.SPEAKING)
-                assertFalse(row.state.value.holdEnabled)
+                assertEquals(TalkPhase.SPEAKING, row.state.value.phase)
                 speech.become(VoiceState.IDLE)
-                assertTrue(row.state.value.holdEnabled, "cancel $it")
+                assertEquals(TalkPhase.LISTENING, row.state.value.phase, "cancel $it")
                 speech.become(VoiceState.PREPARING)
-                assertFalse(row.state.value.holdEnabled)
+                assertEquals(TalkPhase.SPEAKING, row.state.value.phase)
                 speech.become(VoiceState.ERROR)
-                assertTrue(row.state.value.holdEnabled, "worker failure $it")
-                desk.commitHeard(HearingResult("", 0, 0.0))
-                assertTrue(row.state.value.holdEnabled)
+                assertEquals(TalkPhase.LISTENING, row.state.value.phase, "worker failure $it")
+                desk.testingUtterance(HearingResult("", 0, 0.0))
+                assertEquals(TalkPhase.LISTENING, row.state.value.phase)
             }
         }
     }
 
-    @Test fun switchingVoicesBetweenHoldsDoesNotStickTheButton() = runBlocking {
+    @Test fun theFillerToggleDefaultsOffAndIsRemembered() = runBlocking {
+        val file = Files.createTempDirectory("fillers").resolve("voice-fillers")
         val speech = RowSpeech()
-        val runtime = ScriptedRuntime(completeOnStart = true)
         val row = VoicePickerModel()
-        chatRow(speech, runtime, row).use { desk ->
+        chatRow(speech, ScriptedRuntime(completeOnStart = true), row, fillerFile = file).use { desk ->
             desk.open(scope)
-            desk.send(send("Hello"))
-            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
-            speech.settle()
-            val ids = listOf("adam70-michael30", "adam60-george40", "adam55-bella45", "heart60-adam40")
-            repeat(10) { hold ->
-                desk.chooseSpokenVoice(ids[hold % ids.size])
-                speech.settle()
-                desk.commitHeard(HearingResult("", 0, 0.0))
-                assertTrue(row.state.value.holdEnabled, "voice ${ids[hold % ids.size]}")
-                assertEquals(ids[hold % ids.size], row.state.value.selectedId)
-            }
+            assertFalse(row.state.value.fillersOn)
+            desk.toggleFillers()
+            assertTrue(row.state.value.fillersOn)
+            assertTrue(readSavedFillers(file))
+            desk.toggleFillers()
+            assertFalse(row.state.value.fillersOn)
+            assertFalse(readSavedFillers(file))
+            assertTrue(readFillerSettings(mapOf("HOVEL_VOICE_FILLERS" to "1"), savedEnabled = false).enabled)
+            assertFalse(readFillerSettings(emptyMap(), savedEnabled = readSavedFillers(file)).enabled)
         }
+    }
+
+    @Test fun silenceAndGuardDefaultsAreConfigurable() {
+        assertEquals(1000, hearingSilenceMs(emptyMap()))
+        assertEquals(200, hearingSilenceMs(mapOf("HOVEL_HEARING_SILENCE_MS" to "50")))
+        assertEquals(300, hearingGuardMs(emptyMap()))
+        assertEquals(0, hearingGuardMs(mapOf("HOVEL_HEARING_GUARD_MS" to "0")))
     }
 
     private fun send(text: String) =
         ChatSend(scope.profile, scope.companionId, scope.name, scope.sessionId, member, UUID.randomUUID().toString(), text, true)
 
-    private fun chatRow(speech: ChatSpeech, runtime: ChatRuntime, row: VoicePickerModel) =
-        DesktopChat(Files.createTempDirectory("hold-row"), listOf(runtime), speech, voices = row, fillers = FillerSettings(thresholdMs = 60_000))
+    private fun chatRow(
+        speech: ChatSpeech,
+        runtime: ChatRuntime,
+        row: VoicePickerModel,
+        guardMs: Int = 0,
+        silenceMs: Int = 1000,
+        hearing: DesktopHearing? = null,
+        fillerFile: java.nio.file.Path? = null,
+    ) = DesktopChat(
+        Files.createTempDirectory("talk-row"),
+        listOf(runtime),
+        speech,
+        voices = row,
+        fillers = FillerSettings(thresholdMs = 60_000),
+        fillerFile = fillerFile,
+        silenceMs = silenceMs,
+        guardMs = guardMs,
+        hearing = hearing,
+    )
 }
 
 class FillerWarmTest {
@@ -388,6 +540,53 @@ private class ScriptedRuntime(var completeOnStart: Boolean = false) : ChatRuntim
     override fun summarize(request: SummaryRequest) = "summary"
     override fun release() {}
     override fun close() {}
+}
+
+private class LevelEngine : HearingEngine {
+    private var voiced = 0
+    private var speech = 0
+    private var text = ""
+    override fun startUtterance() { speech = 0; text = "" }
+    override fun accept(samples: FloatArray) {
+        val ms = samples.size * 1000 / 16_000
+        voiced = if (samples.any { kotlin.math.abs(it) > 0.05f }) ms else 0
+        if (voiced > 0) {
+            speech += voiced
+            text = "turn please"
+        }
+    }
+    override fun voicedMillisOfLastAccept() = voiced
+    override fun partial() = text
+    override fun finish(): HearingResult {
+        val result = HearingResult(text, speech, 1.0)
+        text = ""
+        speech = 0
+        return result
+    }
+    override fun close() {}
+}
+
+private class QueueMic : MicCapture {
+    private val chunks = java.util.ArrayDeque<FloatArray>()
+    @Volatile private var closed = false
+    fun push(samples: FloatArray) { synchronized(chunks) { chunks.addLast(samples) } }
+    override fun read(into: FloatArray): Int {
+        val next = synchronized(chunks) { if (chunks.isEmpty()) null else chunks.removeFirst() }
+        if (next == null) {
+            if (closed) return -1
+            Thread.sleep(5)
+            return 0
+        }
+        val n = minOf(into.size, next.size)
+        next.copyInto(into, destinationOffset = 0, startIndex = 0, endIndex = n)
+        return n
+    }
+    override fun close() { closed = true }
+}
+
+private fun pushUtterance(mic: QueueMic) {
+    repeat(3) { mic.push(FloatArray(1600) { 0.2f }) }
+    repeat(3) { mic.push(FloatArray(1600)) }
 }
 
 private class ScriptedMic(private val data: FloatArray) : MicCapture {

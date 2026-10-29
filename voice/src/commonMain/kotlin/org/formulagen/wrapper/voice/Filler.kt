@@ -5,19 +5,24 @@ val FILLER_LINES: List<String> = listOf("Hmm,", "Let me think,", "Okay, so")
 
 const val FILLER_THRESHOLD_MS = 450
 
-data class FillerSettings(val enabled: Boolean = true, val thresholdMs: Int = FILLER_THRESHOLD_MS)
+data class FillerSettings(val enabled: Boolean = false, val thresholdMs: Int = FILLER_THRESHOLD_MS)
 
 data class FillerPcm(val pcm: ByteArray, val sampleRate: Int)
 
 data class FillerCue(val line: String, val waitedMs: Long)
 
 /**
- * [HOVEL_VOICE_FILLERS] unset means on. `0`, `off`, and `false` turn them off.
+ * [HOVEL_VOICE_FILLERS] overrides [savedEnabled]. Unset means the saved choice,
+ * and a missing save means off. `1`, `on`, and `true` turn fillers on.
  * [HOVEL_VOICE_FILLER_MS] is the wait after the endpoint, clamped to 0..10000.
  */
-fun readFillerSettings(environment: Map<String, String>): FillerSettings {
-    val raw = environment["HOVEL_VOICE_FILLERS"]?.trim()?.lowercase()
-    val enabled = raw != "0" && raw != "off" && raw != "false"
+fun readFillerSettings(environment: Map<String, String>, savedEnabled: Boolean? = null): FillerSettings {
+    val raw = environment["HOVEL_VOICE_FILLERS"]?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+    val enabled = when (raw) {
+        null -> savedEnabled == true
+        "0", "off", "false" -> false
+        else -> true
+    }
     val ms = environment["HOVEL_VOICE_FILLER_MS"]?.trim()?.toIntOrNull()?.coerceIn(0, 10_000) ?: FILLER_THRESHOLD_MS
     return FillerSettings(enabled, ms)
 }

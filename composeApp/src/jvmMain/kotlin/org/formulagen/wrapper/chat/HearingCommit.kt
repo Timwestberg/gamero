@@ -15,7 +15,16 @@ internal sealed interface HearingCommit {
 
 internal const val HEARING_NEEDS_MEMBER = "Send one message so Ember knows who should answer."
 
-/** What a push-to-talk release should do. A short or silent hold sends nothing. */
+internal enum class TalkPhase { OFF, LISTENING, THINKING, SPEAKING }
+
+internal fun talkLabel(phase: TalkPhase) = when (phase) {
+    TalkPhase.OFF -> "Off"
+    TalkPhase.LISTENING -> "Listening"
+    TalkPhase.THINKING -> "Thinking"
+    TalkPhase.SPEAKING -> "Speaking"
+}
+
+/** What a finished utterance should do. Empty text and a short noise burst send nothing. */
 internal fun decideHearing(
     result: HearingResult,
     member: TeamMember?,

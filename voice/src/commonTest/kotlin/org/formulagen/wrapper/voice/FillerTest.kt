@@ -6,12 +6,13 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FillerTest {
-    @Test fun settingsDefaultOnAndTurnOffForZeroOffOrFalse() {
-        assertEquals(FillerSettings(true, 450), readFillerSettings(emptyMap()))
-        assertEquals(false, readFillerSettings(mapOf("HOVEL_VOICE_FILLERS" to "0")).enabled)
+    @Test fun settingsDefaultOffUnlessSavedOrTheEnvironmentSaysOn() {
+        assertEquals(FillerSettings(false, 450), readFillerSettings(emptyMap()))
+        assertEquals(false, readFillerSettings(mapOf("HOVEL_VOICE_FILLERS" to "0"), savedEnabled = true).enabled)
         assertEquals(false, readFillerSettings(mapOf("HOVEL_VOICE_FILLERS" to "off")).enabled)
         assertEquals(false, readFillerSettings(mapOf("HOVEL_VOICE_FILLERS" to "false")).enabled)
-        assertEquals(true, readFillerSettings(mapOf("HOVEL_VOICE_FILLERS" to "1")).enabled)
+        assertEquals(true, readFillerSettings(mapOf("HOVEL_VOICE_FILLERS" to "1"), savedEnabled = false).enabled)
+        assertEquals(true, readFillerSettings(emptyMap(), savedEnabled = true).enabled)
         assertEquals(700, readFillerSettings(mapOf("HOVEL_VOICE_FILLER_MS" to "700")).thresholdMs)
         assertEquals(0, readFillerSettings(mapOf("HOVEL_VOICE_FILLER_MS" to "-5")).thresholdMs)
         assertEquals(10_000, readFillerSettings(mapOf("HOVEL_VOICE_FILLER_MS" to "99999")).thresholdMs)
@@ -38,7 +39,7 @@ class FillerTest {
     }
 
     @Test fun aReplyThatArrivesFirstIsNotCoveredByAFiller() {
-        val turn = FillerTurn(FillerSettings(thresholdMs = 0))
+        val turn = FillerTurn(FillerSettings(enabled = true, thresholdMs = 0))
         turn.begin()
         turn.replyArrived()
         turn.arm(0L)
@@ -49,14 +50,14 @@ class FillerTest {
         val off = FillerTurn(FillerSettings(enabled = false, thresholdMs = 0))
         off.begin(); off.arm(0L)
         assertNull(off.poll(1_000_000_000L))
-        val cancelled = FillerTurn(FillerSettings(thresholdMs = 0))
+        val cancelled = FillerTurn(FillerSettings(enabled = true, thresholdMs = 0))
         cancelled.begin(); cancelled.arm(0L); cancelled.cancel()
         assertNull(cancelled.poll(1_000_000_000L))
     }
 
     @Test fun theNextTurnUsesTheNextLine() {
         val rotation = FillerRotation()
-        val settings = FillerSettings(thresholdMs = 0)
+        val settings = FillerSettings(enabled = true, thresholdMs = 0)
         val first = FillerTurn(settings, rotation)
         first.begin(); first.arm(0L)
         assertEquals("Hmm,", first.poll(0L)?.line)
