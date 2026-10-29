@@ -17,6 +17,11 @@ contract fixture changes:
 - bridge/EmberHearingFixture.kt from
   event-contracts/src/voice/fixtures/hearing/ember-hearing.v1.json, so HearingContractTest
   checks the hearing states and actions against the contract.
+- conversations/CompanionContractFixtures.kt from event-contracts/src/hovel/companions: the
+  routing, stream, approval and folder payloads the Mac reads and sends, built by
+  tools/companion-fixtures.mts from the server's own samples and checked against its zod
+  schemas. It runs with the server's tsx, so the server checkout needs its event-contracts
+  dependencies installed.
 """
 import json
 import subprocess
@@ -92,10 +97,41 @@ internal object EmberHearingFixture {{
 """
 
 
+INSTALL_HINT = """Building the companion fixtures needs Node and server-platform's dependencies:
+    (cd {server} && pnpm install)"""
+
+
+def companion_payloads(server: Path) -> str:
+    source = "event-contracts/src/hovel/companions"
+    try:
+        run = subprocess.run(["node", "--import", "tsx", str(ROOT / "tools/companion-fixtures.mts"), str(server)],
+                             cwd=server / "event-contracts", capture_output=True, text=True)
+    except FileNotFoundError:
+        sys.exit(INSTALL_HINT.format(server=server))
+    if run.returncode != 0:
+        sys.exit(run.stderr.strip() + "\n\n" + INSTALL_HINT.format(server=server))
+    if run.stderr:
+        print(run.stderr.strip(), file=sys.stderr)
+    printed = run.stdout
+    payloads = json.loads(printed)
+    entries = "\n".join(f"        {kotlin_string(name)} to {kotlin_string(json.dumps(payload, separators=(',', ':')))},"
+                        for name, payload in payloads.items())
+    return HEADER.format(source, source_commit(server, source)) + f"""package org.formulagen.wrapper.conversations
+
+/** Each payload as {{"schema": the zod schema that accepted it, "value": the payload}}. */
+internal object CompanionContractFixtures {{
+    val PAYLOADS: Map<String, String> = mapOf(
+{entries}
+    )
+}}
+"""
+
+
 OUTPUTS = {
     ROOT / TEST.format("commonTest") / "bridge/HostBridgeFixtures.kt": host_bridge,
     ROOT / TEST.format("jvmTest") / "hovel/HovelProviderPromptFixture.kt": provider_prompt,
     ROOT / TEST.format("commonTest") / "bridge/EmberHearingFixture.kt": ember_hearing,
+    ROOT / TEST.format("jvmTest") / "conversations/CompanionContractFixtures.kt": companion_payloads,
 }
 
 
