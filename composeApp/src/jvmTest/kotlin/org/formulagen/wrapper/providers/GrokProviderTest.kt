@@ -18,6 +18,13 @@ class GrokProviderTest {
         assertFailsWith<IllegalArgumentException> { provider.usage("../profile") }
     }
 
+    @Test fun theContractFixtureShowsTheSignInDetectedCopyThisHostSends() {
+        val fixture = kotlinx.serialization.json.Json.parseToJsonElement(HostBridgeFixtures.ENVELOPES.getValue("success-providers-status-grok-detected.json"))
+        val result = (fixture as kotlinx.serialization.json.JsonObject).getValue("value").let { it as kotlinx.serialization.json.JsonObject }
+            .getValue("result") as kotlinx.serialization.json.JsonObject
+        assertEquals(kotlinx.serialization.json.JsonPrimitive(GROK_SIGN_IN_DETECTED), result["message"])
+    }
+
     @Test fun discoveryAndFreshSignInDetectionNeverClaimExecutionReadiness() {
         val root = Files.createTempDirectory("grok-discovery")
         try {

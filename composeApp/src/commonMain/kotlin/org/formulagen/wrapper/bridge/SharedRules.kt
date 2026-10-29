@@ -36,10 +36,14 @@ enum class ModelEffort(val value: String) {
 object SharedRules {
     /** The runtime vocabulary understood by legacy bridge calls. */
     val LEGACY_RUNTIMES = setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE)
-    private val CLIENT_RUNTIME = Regex("^[a-z][a-z0-9-]{0,63}$")
+    /** Most runtime names a page declares it can decode. Mirrors `CLIENT_RUNTIME_LIMIT`. */
+    const val CLIENT_RUNTIME_LIMIT = 8
+    /** One declared runtime name, known or a future one. Mirrors `CLIENT_RUNTIME_PATTERN`. */
+    const val CLIENT_RUNTIME_PATTERN = "^[a-z][a-z0-9-]{0,63}$"
+    private val CLIENT_RUNTIME = Regex(CLIENT_RUNTIME_PATTERN)
     /** Client declarations allow bounded future names, never duplicate names. */
     fun validClientRuntimes(names: List<String>): Boolean =
-        names.size <= 8 && names.distinct().size == names.size && names.all(CLIENT_RUNTIME::matches)
+        names.size <= CLIENT_RUNTIME_LIMIT && names.distinct().size == names.size && names.all(CLIENT_RUNTIME::matches)
     /** Recognized names only; advertising a name does not offer its runtime. */
     fun clientRuntimes(names: List<String>): Set<RuntimeId> = RuntimeId.entries.filter { it.wireName in names }.toSet()
 
