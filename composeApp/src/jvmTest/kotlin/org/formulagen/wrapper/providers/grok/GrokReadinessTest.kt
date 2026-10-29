@@ -1,14 +1,34 @@
-package org.formulagen.wrapper.chat.grok
+package org.formulagen.wrapper.providers.grok
 
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.*
-import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.*
-import org.junit.Assume.assumeTrue
 
 class GrokReadinessTest {
+    private fun handshake(vararg ids: String) = buildJsonObject {
+        put("protocolVersion", 1)
+        putJsonArray("authMethods") { ids.forEach { add(buildJsonObject { put("id", it) }) } }
+        putJsonObject("agentCapabilities") { put("loadSession", true) }
+    }
+
+    @Test fun anEmptyHomeAdvertisesInteractiveLoginWithoutImplyingAnUnsupportedProtocol() {
+        assertEquals(GrokHandshake(GrokAuthAvailability.SIGNED_OUT, true), grokHandshake(handshake("grok.com")))
+        assertEquals(GrokAuthAvailability.CACHED_CREDENTIAL, grokHandshake(handshake("cached_token", "grok.com")).auth)
+        assertEquals(GrokAuthAvailability.API_KEY, grokHandshake(handshake("xai.api_key", "grok.com")).auth)
+        assertEquals(GrokAuthAvailability.UNKNOWN, grokHandshake(handshake("future-auth")).auth)
+        assertEquals(GrokAuthAvailability.UNKNOWN, grokHandshake(handshake()).auth)
+    }
+
+    @Test fun malformedHandshakeNeverEstablishesAUsableConnection() {
+        assertFails { grokHandshake(JsonObject(handshake("grok.com") + ("protocolVersion" to JsonPrimitive(2)))) }
+        assertFails { grokHandshake(handshake("cached_token", "cached_token")) }
+        assertFails { grokHandshake(handshake("x".repeat(129))) }
+        assertFails { grokHandshake(handshake(*Array(9) { "method-$it" })) }
+        assertFails { grokHandshake(buildJsonObject { put("protocolVersion", 1) }) }
+        assertFails { grokHandshake(JsonObject(handshake() + ("agentCapabilities" to buildJsonObject { put("loadSession", "true") }))) }
+    }
+
     @Test fun onlyPersonalOidcSubscriptionWithExplicitNoGatePasses() {
         verifyGrokSubscription(subscription())
         for ((key, value) in listOf(
@@ -86,22 +106,6 @@ class GrokReadinessTest {
         } finally { root.toFile().deleteRecursively() }
     }
 
-    @Test fun toolEvidenceMustArriveForTheExactSessionAndNeverRecoversFromUnsafe() {
-        val evidence = GrokToolEvidence()
-        evidence.observe(toolUpdate("other", emptyList()))
-        assertFails { evidence.requireAllowed("current", 10.milliseconds) }
-        evidence.observe(toolUpdate("current", emptyList()))
-        evidence.requireAllowed("current", 10.milliseconds)
-        evidence.observe(toolUpdate("other", listOf("shell")))
-        assertFails { evidence.observe(toolUpdate("current", listOf("shell"))) }
-        evidence.observe(toolUpdate("current", emptyList()))
-        assertFails { evidence.requireAllowed("current", 10.milliseconds) }
-        val early = GrokToolEvidence()
-        early.observe(toolUpdate("current", listOf("shell")))
-        early.observe(toolUpdate("current", emptyList()))
-        assertFails { early.requireAllowed("current", 10.milliseconds) }
-    }
-
     @Test fun relaunchKeepsOnlySessionDataAndCleanupNeverFollowsItsLink() {
         val root = Files.createTempDirectory("grok-persistence-test")
         try {
@@ -149,100 +153,8 @@ class GrokReadinessTest {
     }
 }
 
-/** Explicit account opt-in: no prompts unless HOVEL_GROK_TALK_PROMPT_SMOKE is also set. */
-class GrokTalkSessionSmokeTest {
-    @Test fun installedRuntimeExcludesSkillsOnDiskAndRejectsEmptyStoreWithoutInteractiveAuth() {
-        val executable = System.getenv("HOVEL_GROK_TALK_SMOKE")
-        assumeTrue("Set HOVEL_GROK_TALK_SMOKE for the installed-runtime control checks", executable != null)
-        val root = Files.createTempDirectory("grok-empty-login-smoke")
-        val launch = GrokLaunch.create(Path.of(requireNotNull(executable)), System.getenv() +
-            ("GROK_AUTH_PATH" to root.resolve("missing-auth.json").toString()), "Control check")
-        var rpc: GrokAcp? = null
-        try {
-            val home = Path.of(launch.agentBuilder().environment().getValue("GROK_HOME"))
-            val skill = Files.createDirectories(home.resolve("skills/hovel-isolation-fixture"))
-            Files.writeString(skill.resolve("SKILL.md"), "---\nname: hovel-isolation-fixture\ndescription: Must stay excluded\n---\nUnexpected instructions")
-            launch.verify()
-            val transport = GrokAcp(launch.agentBuilder(), GROK_ACCOUNT_METHODS, allowReloadResponses = true)
-            rpc = transport
-            assertEquals(GrokAuthAvailability.SIGNED_OUT, grokHandshake(transport.call("initialize", grokInitialize())).auth)
-            val error = assertFailsWith<GrokRequestRejected> {
-                transport.call("authenticate", buildJsonObject { put("methodId", "cached_token"); putJsonObject("_meta") { put("headless", true) } })
-            }
-            assertEquals(-32000, error.code)
-            println("GROK_CONTROL_SMOKE: on-disk skill excluded; empty credential store rejected without client requests")
-        } finally { launch.closeAfter(rpc); root.toFile().deleteRecursively() }
-    }
-
-    @Test fun installedRuntimeEstablishesAnAuthenticatedToolFreeSession() {
-        val executable = System.getenv("HOVEL_GROK_TALK_SMOKE")
-        assumeTrue("Set HOVEL_GROK_TALK_SMOKE to the signed-in runtime", executable != null)
-        val updates = java.util.concurrent.CopyOnWriteArrayList<JsonObject>()
-        GrokTalkSession.open(Path.of(requireNotNull(executable)), System.getenv(),
-            "You are the Hovel integration test companion. Answer concisely.", onUpdate = { updates += it }).use { session ->
-            assertTrue(session.account.models.isNotEmpty())
-            assertTrue(updates.any { it["update"]?.jsonObject?.get("sessionUpdate") == JsonPrimitive("available_commands_update") })
-            if (System.getenv("HOVEL_GROK_TALK_PROMPT_SMOKE") == "1") {
-                val outcome = session.prompt("Reply with exactly HOVEL_GROK_OK.", 60.seconds)
-                var state = GrokTurnState(session.sessionId)
-                updates.forEach { state = state.update(it) }
-                state = state.finish(outcome)
-                assertEquals(GrokTurnEnd.COMPLETE, state.end)
-                assertEquals("HOVEL_GROK_OK", state.text.trim())
-                println("GROK_TALK_SMOKE: authenticated, zero tools, one successful reply")
-            } else println("GROK_TALK_SMOKE: authenticated, zero tools, no prompt sent")
-        }
-    }
-
-    @Test fun installedRuntimeReloadsPrivateConversationAndCancelsAnActivePrompt() {
-        val executable = System.getenv("HOVEL_GROK_TALK_SMOKE")
-        assumeTrue("Enable HOVEL_GROK_LIFECYCLE_SMOKE for the two-prompt reload and cancellation check",
-            executable != null && System.getenv("HOVEL_GROK_LIFECYCLE_SMOKE") == "1")
-        val folder = Files.createTempDirectory("grok-resume-smoke")
-        val updates = java.util.concurrent.CopyOnWriteArrayList<JsonObject>()
-        val instructions = "You are the Hovel integration test companion. Follow short exact-output requests."
-        try {
-            val saved = GrokTalkSession.open(Path.of(requireNotNull(executable)), System.getenv(), instructions,
-                persistentFolder = folder, onUpdate = { updates += it }).use { session ->
-                assertEquals(JsonPrimitive("end_turn"), session.prompt("Remember HOVEL_ORCHID. Reply exactly SAVED.")["stopReason"])
-                Triple(session.sessionId, session.account.fingerprint, session.model)
-            }
-            GrokTalkSession.open(Path.of(executable), System.getenv(), instructions, saved.third, persistentFolder = folder,
-                resume = saved.first, expectedAccount = saved.second, onUpdate = { updates += it }).use { session ->
-                updates.clear()
-                val outcome = session.prompt("What word did I ask you to remember? Reply with that word only.")
-                var state = GrokTurnState(session.sessionId)
-                updates.forEach { state = state.update(it) }
-                state = state.finish(outcome)
-                assertEquals(GrokTurnEnd.COMPLETE, state.end)
-                assertEquals("HOVEL_ORCHID", state.text.trim())
-            }
-            val active = java.util.concurrent.CountDownLatch(1)
-            GrokTalkSession.open(Path.of(executable), System.getenv(), instructions, onUpdate = { params ->
-                if (params["update"]?.jsonObject?.get("sessionUpdate") in listOf(JsonPrimitive("agent_message_chunk"), JsonPrimitive("agent_thought_chunk")))
-                    active.countDown()
-            }).use { session ->
-                val reply = java.util.concurrent.CompletableFuture.supplyAsync {
-                    session.prompt("Print the integers from 1 to 10000, one per line, with no omissions.")
-                }
-                assertTrue(active.await(30, java.util.concurrent.TimeUnit.SECONDS), "No active generation observed")
-                session.cancel()
-                assertEquals(JsonPrimitive("cancelled"), reply.get(5, java.util.concurrent.TimeUnit.SECONDS)["stopReason"])
-            }
-            println("GROK_LIFECYCLE_SMOKE: private session reloaded, context retained, active prompt cancelled within five seconds")
-        } finally { folder.toFile().deleteRecursively() }
-    }
-}
-
 private fun json(value: String) = Json.parseToJsonElement(value).jsonObject
 private fun subscription() = json("""{"auth_mode":"Oidc","backend_billed":false,"is_team_principal":false,"is_organization_principal":false,"team_id":null,"gate":null,"subscription_tier":"SuperGrok"}""")
 private fun identity() = json("""{"methodId":"cached_token","principalType":"user","principalId":"fixture-user","teamId":null,"organizationId":null,"userBlockedReason":null,"teamBlockedReasons":[]}""")
 private val isolatedConfig = Path.of("/isolated/home/.grok/config.toml")
 private fun inspection() = json("""{"projectInstructions":[],"hooks":[],"skills":[],"plugins":[],"mcpServers":[],"lspServers":[],"configSources":{"layers":[{"role":"user","path":"$isolatedConfig"}]},"permissions":{"managedSettingsExists":false}}""")
-private fun toolUpdate(session: String, tools: List<String>) = buildJsonObject {
-    put("sessionId", session)
-    putJsonObject("update") {
-        put("sessionUpdate", "available_commands_update")
-        putJsonObject("_meta") { put("tools", JsonArray(tools.map(::JsonPrimitive))) }
-    }
-}

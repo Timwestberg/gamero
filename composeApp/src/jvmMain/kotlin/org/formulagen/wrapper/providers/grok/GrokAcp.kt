@@ -1,4 +1,4 @@
-package org.formulagen.wrapper.chat.grok
+package org.formulagen.wrapper.providers.grok
 
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CompletableFuture

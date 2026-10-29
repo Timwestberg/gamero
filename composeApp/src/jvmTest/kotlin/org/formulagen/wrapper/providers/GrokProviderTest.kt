@@ -3,7 +3,8 @@ package org.formulagen.wrapper.providers
 import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.grok.GrokAuthAvailability
+import org.formulagen.wrapper.providers.grok.GrokAuthAvailability
+import org.formulagen.wrapper.providers.grok.findGrokExecutable
 import kotlin.test.*
 
 class GrokProviderTest {

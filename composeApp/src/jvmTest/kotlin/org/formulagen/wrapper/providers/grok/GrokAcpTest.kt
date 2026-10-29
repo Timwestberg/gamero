@@ -1,7 +1,6 @@
-package org.formulagen.wrapper.chat.grok
+package org.formulagen.wrapper.providers.grok
 
 import java.nio.file.Files
-import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -10,14 +9,8 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.*
 import kotlin.test.*
-import org.formulagen.wrapper.approvals.ApprovalBroker
-import org.formulagen.wrapper.approvals.ApprovalDecision
-import org.formulagen.wrapper.approvals.ApprovalSubject
-import org.formulagen.wrapper.bridge.RuntimeId
-import org.formulagen.wrapper.bridge.TeamMember
-import org.formulagen.wrapper.chat.ChatFailure
-import org.formulagen.wrapper.chat.TurnEvents
-import org.formulagen.wrapper.chat.WorkScope
+import org.formulagen.wrapper.chat.grok.GrokTurnEnd
+import org.formulagen.wrapper.chat.grok.GrokTurnState
 
 /** Local subprocess integration tests; these are not live Grok inference tests. */
 class GrokAcpTest {
@@ -84,32 +77,6 @@ class GrokAcpTest {
             assertEquals(JsonPrimitive("deny-17"), reply["result"]!!.jsonObject["outcome"]!!.jsonObject["optionId"])
             assertEquals(JsonPrimitive("opaque/session"), rpc.call("session/new")["sessionId"])
         } finally { rpc.close(); rpc.awaitClosed() }
-    }
-
-    @Test fun structuredPermissionsRoundTripThroughTheNativeBroker(): Unit = FakeGrokAcp("native-permission").use { fake ->
-        val observed = CompletableFuture<ApprovalSubject>()
-        val broker = ApprovalBroker { request, _, shown ->
-            observed.complete(request.subject); shown(); ApprovalDecision.ALLOW_ONCE
-        }
-        val events = object : TurnEvents {
-            override fun opened(conversation: String) = Unit
-            override fun accepted() = Unit
-            override fun partial(text: String) = Unit
-            override fun completed(text: String, conversation: String) = Unit
-            override fun failed(failure: ChatFailure) = Unit
-        }
-        val work = WorkScope(Path.of("/scratch/project"), "lease", "Ember", TeamMember(RuntimeId.GROK_BUILD, "grok-model"))
-        GrokApprovals("opaque/session", work, events, broker).use { approvals ->
-            val rpc = GrokAcp(fake.builder(), methods, onRequest = { _, params, answer -> approvals.receive(params, answer) })
-            try {
-                rpc.call("initialize", grokInitialize())
-                val reply = rpc.call("session/prompt")["permissionReply"]!!.jsonObject
-
-                assertEquals(JsonPrimitive("opaque-permission"), reply["id"])
-                assertEquals(JsonPrimitive("allow-23"), reply["result"]!!.jsonObject["outcome"]!!.jsonObject["optionId"])
-                assertEquals(ApprovalSubject.Command("echo hello", null, null, "Run example"), observed.get(2, TimeUnit.SECONDS))
-            } finally { rpc.close(); rpc.awaitClosed() }
-        }
     }
 
     @Test fun unsupportedClientRequestsFailTheTurnWithoutInvokingAHandler(): Unit = FakeGrokAcp("unsupported").use { fake ->
@@ -203,5 +170,14 @@ class GrokAcpTest {
                 assertFailsWith<IllegalStateException>(mode) { rpc.call("initialize", grokInitialize()) }
             } finally { rpc.close(); rpc.awaitClosed() }
         }
+    }
+
+    @Test fun opaqueSessionIdsAreBoundedWithoutAssumingTheyAreUuids() {
+        assertTrue(validGrokSessionId("opaque/session:id"))
+        assertTrue(validGrokSessionId("x".repeat(4_096)))
+        assertFalse(validGrokSessionId("x".repeat(4_097)))
+        assertFalse(validGrokSessionId("é".repeat(2_049)))
+        assertFalse(validGrokSessionId("line\nbreak"))
+        assertFalse(validGrokSessionId(""))
     }
 }

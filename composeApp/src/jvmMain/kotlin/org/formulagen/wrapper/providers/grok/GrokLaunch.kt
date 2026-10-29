@@ -1,4 +1,4 @@
-package org.formulagen.wrapper.chat.grok
+package org.formulagen.wrapper.providers.grok
 
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS

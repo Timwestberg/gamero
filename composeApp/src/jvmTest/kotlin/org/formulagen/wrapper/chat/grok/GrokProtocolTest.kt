@@ -4,11 +4,6 @@ import kotlinx.serialization.json.*
 import kotlin.test.*
 
 class GrokProtocolTest {
-    private fun handshake(vararg ids: String) = buildJsonObject {
-        put("protocolVersion", 1)
-        putJsonArray("authMethods") { ids.forEach { add(buildJsonObject { put("id", it) }) } }
-        putJsonObject("agentCapabilities") { put("loadSession", true) }
-    }
     private fun chunk(text: String, session: String = "opaque/session", kind: String = "agent_message_chunk") = buildJsonObject {
         put("sessionId", session)
         putJsonObject("update") {
@@ -17,32 +12,6 @@ class GrokProtocolTest {
         }
     }
     private fun finish(reason: String) = buildJsonObject { put("stopReason", reason) }
-
-    @Test fun anEmptyHomeAdvertisesInteractiveLoginWithoutImplyingAnUnsupportedProtocol() {
-        assertEquals(GrokHandshake(GrokAuthAvailability.SIGNED_OUT, true), grokHandshake(handshake("grok.com")))
-        assertEquals(GrokAuthAvailability.CACHED_CREDENTIAL, grokHandshake(handshake("cached_token", "grok.com")).auth)
-        assertEquals(GrokAuthAvailability.API_KEY, grokHandshake(handshake("xai.api_key", "grok.com")).auth)
-        assertEquals(GrokAuthAvailability.UNKNOWN, grokHandshake(handshake("future-auth")).auth)
-        assertEquals(GrokAuthAvailability.UNKNOWN, grokHandshake(handshake()).auth)
-    }
-
-    @Test fun malformedHandshakeNeverEstablishesAUsableConnection() {
-        assertFails { grokHandshake(JsonObject(handshake("grok.com") + ("protocolVersion" to JsonPrimitive(2)))) }
-        assertFails { grokHandshake(handshake("cached_token", "cached_token")) }
-        assertFails { grokHandshake(handshake("x".repeat(129))) }
-        assertFails { grokHandshake(handshake(*Array(9) { "method-$it" })) }
-        assertFails { grokHandshake(buildJsonObject { put("protocolVersion", 1) }) }
-        assertFails { grokHandshake(JsonObject(handshake() + ("agentCapabilities" to buildJsonObject { put("loadSession", "true") }))) }
-    }
-
-    @Test fun opaqueSessionIdsAreBoundedWithoutAssumingTheyAreUuids() {
-        assertTrue(validGrokSessionId("opaque/session:id"))
-        assertTrue(validGrokSessionId("x".repeat(4_096)))
-        assertFalse(validGrokSessionId("x".repeat(4_097)))
-        assertFalse(validGrokSessionId("é".repeat(2_049)))
-        assertFalse(validGrokSessionId("line\nbreak"))
-        assertFalse(validGrokSessionId(""))
-    }
 
     @Test fun onlyCorrelatedAssistantTextIsAcceptedAndCompletionRequiresATerminalResponse() {
         val initial = GrokTurnState("opaque/session")

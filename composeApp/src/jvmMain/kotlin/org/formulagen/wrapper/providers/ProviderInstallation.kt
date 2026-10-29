@@ -7,8 +7,9 @@ import kotlin.time.Duration.Companion.seconds
 import org.formulagen.wrapper.bridge.ProviderSetup
 import org.formulagen.wrapper.bridge.ProviderSetupState
 import org.formulagen.wrapper.bridge.RuntimeId
-import org.formulagen.wrapper.chat.grok.grokVersionSupported
 import org.formulagen.wrapper.process.runBounded
+import org.formulagen.wrapper.providers.grok.findGrokExecutable
+import org.formulagen.wrapper.providers.grok.grokVersionSupported
 
 /**
  * Provider-owned login, explicitly requested by the player. Discovery is repeated after installation;

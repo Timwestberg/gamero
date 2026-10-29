@@ -1,4 +1,4 @@
-package org.formulagen.wrapper.chat
+package org.formulagen.wrapper.chat.grok
 
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
@@ -11,11 +11,28 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
-import org.formulagen.wrapper.chat.grok.*
+import org.formulagen.wrapper.chat.ChatFailure
+import org.formulagen.wrapper.chat.ChatRuntime
+import org.formulagen.wrapper.chat.Readiness
+import org.formulagen.wrapper.chat.SummaryRequest
+import org.formulagen.wrapper.chat.TurnEvents
+import org.formulagen.wrapper.chat.TurnHandle
+import org.formulagen.wrapper.chat.TurnRequest
+import org.formulagen.wrapper.chat.boundSummary
+import org.formulagen.wrapper.chat.companionConversationIds
+import org.formulagen.wrapper.chat.loggingDaemonThreads
+import org.formulagen.wrapper.chat.summaryInstruction
 import org.formulagen.wrapper.hovel.HovelCompanion
-import org.formulagen.wrapper.providers.GrokConnection
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
+import org.formulagen.wrapper.providers.GrokConnection
+import org.formulagen.wrapper.providers.grok.GROK_STOP_GRACE
+import org.formulagen.wrapper.providers.grok.GROK_TURN_HANDOFF
+import org.formulagen.wrapper.providers.grok.GrokAuthAvailability
+import org.formulagen.wrapper.providers.grok.GrokBudget
+import org.formulagen.wrapper.providers.grok.GrokSessionLost
+import org.formulagen.wrapper.providers.grok.GrokTransportFailure
+import org.formulagen.wrapper.providers.grok.GrokTransportIssue
 
 /** Grok subscription chat using the same conversation, handover and event seam as Codex and Claude. */
 internal class GrokChatRuntime(

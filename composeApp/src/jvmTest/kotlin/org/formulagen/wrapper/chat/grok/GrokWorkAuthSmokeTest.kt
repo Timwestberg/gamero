@@ -12,6 +12,14 @@ import kotlinx.serialization.json.*
 import org.formulagen.wrapper.process.runBounded
 import org.formulagen.wrapper.approvals.ApprovalDecision
 import org.formulagen.wrapper.approvals.ApprovalSubject
+import org.formulagen.wrapper.providers.grok.GROK_ACCOUNT_METHODS
+import org.formulagen.wrapper.providers.grok.GROK_VERIFIED_VERSION
+import org.formulagen.wrapper.providers.grok.GrokAcp
+import org.formulagen.wrapper.providers.grok.GrokBudget
+import org.formulagen.wrapper.providers.grok.GrokRequestRejected
+import org.formulagen.wrapper.providers.grok.grokAccount
+import org.formulagen.wrapper.providers.grok.grokInitialize
+import org.formulagen.wrapper.providers.grok.validGrokSessionId
 import org.junit.Assume.assumeTrue
 
 /** Local-config acceptance after the owner pins OIDC; model turns require a second explicit opt-in. */

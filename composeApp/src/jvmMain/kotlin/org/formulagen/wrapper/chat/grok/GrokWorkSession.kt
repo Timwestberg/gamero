@@ -5,6 +5,18 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.*
+import org.formulagen.wrapper.providers.grok.GROK_ACCOUNT_METHODS
+import org.formulagen.wrapper.providers.grok.GrokAccount
+import org.formulagen.wrapper.providers.grok.GrokAcp
+import org.formulagen.wrapper.providers.grok.GrokBudget
+import org.formulagen.wrapper.providers.grok.GrokRequestRejected
+import org.formulagen.wrapper.providers.grok.GrokSessionLost
+import org.formulagen.wrapper.providers.grok.GrokWorkLaunch
+import org.formulagen.wrapper.providers.grok.grokAccount
+import org.formulagen.wrapper.providers.grok.grokHandshake
+import org.formulagen.wrapper.providers.grok.grokInitialize
+import org.formulagen.wrapper.providers.grok.grokModels
+import org.formulagen.wrapper.providers.grok.validGrokSessionId
 
 /** One project turn and its process, including persisted-session restoration before live routing begins. */
 internal class GrokWorkSession private constructor(

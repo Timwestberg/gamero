@@ -34,8 +34,8 @@ import org.formulagen.wrapper.workspace.NativeFilePicker
 import org.formulagen.wrapper.workspace.NativeFolderPicker
 import org.formulagen.wrapper.workspace.WorkspaceStore
 import org.formulagen.wrapper.chat.ClaudeChatRuntime
-import org.formulagen.wrapper.chat.GrokChatRuntime
-import org.formulagen.wrapper.chat.GrokWorkRuntime
+import org.formulagen.wrapper.chat.grok.GrokChatRuntime
+import org.formulagen.wrapper.chat.grok.GrokWorkRuntime
 import org.formulagen.wrapper.chat.grok.NativeGrokWorkTrust
 import org.formulagen.wrapper.chat.CodexChatRuntime
 import org.formulagen.wrapper.chat.DesktopChat

@@ -119,7 +119,7 @@ Native dialogs now use modeless presentation so the main chat can receive Stop/C
 
 ## Bumping the supported Grok version
 
-Hovel accepts exactly one Grok Build release. Talk, work, the setup card and the provider copy all read it from `GROK_VERIFIED_VERSION` in `composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/chat/grok/GrokCompatibility.kt`; any other release shows **Update** on the card and cannot sign in or start a conversation.
+Hovel accepts exactly one Grok Build release. Talk, work, the setup card and the provider copy all read it from `GROK_VERIFIED_VERSION` in `composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/providers/grok/GrokCompatibility.kt`; any other release shows **Update** on the card and cannot sign in or start a conversation.
 
 1. Review the new release against the [source audit](source-audit.md): auth fallback, folder trust, the talk and work profiles, permission metadata, watcher replies and the `inspect --json` fields Hovel checks. Pin the audit to the new source commit and record anything that moved.
 2. Set `GROK_VERIFIED_VERSION` to the new release's exact `grok --version` output. The player-facing version and messages derive from it.

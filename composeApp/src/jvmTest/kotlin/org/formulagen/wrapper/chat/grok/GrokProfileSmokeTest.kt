@@ -1,4 +1,4 @@
-package org.formulagen.wrapper.chat
+package org.formulagen.wrapper.chat.grok
 
 import java.nio.file.Files
 import java.nio.file.Path
@@ -10,7 +10,7 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.*
 import org.formulagen.wrapper.approvals.*
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.grok.GrokWorkTrust
+import org.formulagen.wrapper.chat.*
 import org.formulagen.wrapper.providers.GrokConnection
 import org.formulagen.wrapper.workspace.FolderPicker
 import org.formulagen.wrapper.workspace.WorkspaceStore

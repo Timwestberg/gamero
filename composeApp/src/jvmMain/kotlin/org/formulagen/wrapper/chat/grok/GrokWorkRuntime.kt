@@ -1,4 +1,4 @@
-package org.formulagen.wrapper.chat
+package org.formulagen.wrapper.chat.grok
 
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
@@ -15,12 +15,28 @@ import org.formulagen.wrapper.approvals.displayPath
 import org.formulagen.wrapper.bridge.ChatLimits
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
-import org.formulagen.wrapper.chat.grok.*
+import org.formulagen.wrapper.chat.ChatFailure
+import org.formulagen.wrapper.chat.Readiness
+import org.formulagen.wrapper.chat.TurnEvents
+import org.formulagen.wrapper.chat.TurnHandle
+import org.formulagen.wrapper.chat.TurnRequest
+import org.formulagen.wrapper.chat.WorkRuntime
+import org.formulagen.wrapper.chat.companionConversationIds
+import org.formulagen.wrapper.chat.loggingDaemonThreads
 import org.formulagen.wrapper.hovel.HovelCompanion
-import org.formulagen.wrapper.providers.GrokConnection
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.process.readLoginShellPath
+import org.formulagen.wrapper.providers.GrokConnection
+import org.formulagen.wrapper.providers.grok.GROK_STOP_GRACE
+import org.formulagen.wrapper.providers.grok.GROK_TURN_HANDOFF
+import org.formulagen.wrapper.providers.grok.GrokAuthAvailability
+import org.formulagen.wrapper.providers.grok.GrokSessionLost
+import org.formulagen.wrapper.providers.grok.GrokTransportFailure
+import org.formulagen.wrapper.providers.grok.GrokWorkAuthUnpinned
+import org.formulagen.wrapper.providers.grok.GrokWorkLaunch
+import org.formulagen.wrapper.providers.grok.grokWorkConfig
+import org.formulagen.wrapper.providers.grok.grokWorkEnvironment
 import org.formulagen.wrapper.util.shortened
 
 /** Grok project work through the existing native folder, lease, history, activity and approval seams. */

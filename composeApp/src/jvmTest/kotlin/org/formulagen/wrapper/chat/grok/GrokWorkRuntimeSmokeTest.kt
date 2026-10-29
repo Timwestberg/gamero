@@ -1,4 +1,4 @@
-package org.formulagen.wrapper.chat
+package org.formulagen.wrapper.chat.grok
 
 import java.nio.file.Files
 import java.util.concurrent.CompletableFuture
@@ -8,8 +8,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.*
 import org.formulagen.wrapper.approvals.*
 import org.formulagen.wrapper.bridge.*
+import org.formulagen.wrapper.chat.*
 import org.formulagen.wrapper.providers.GrokConnection
-import org.formulagen.wrapper.chat.grok.GrokWorkTrust
 import org.junit.Assume.assumeTrue
 
 /** Opt-in acceptance of the actual work adapter, using only a disposable project and exact operations. */
