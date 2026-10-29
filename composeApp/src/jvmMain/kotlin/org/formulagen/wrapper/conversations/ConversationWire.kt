@@ -383,7 +383,7 @@ internal data class HostHeartbeat(
     val allowances: List<RuntimeAllowance>,
     val directory: ProviderDirectory,
     val features: List<String>,
-    /** `ready`, `auth-required` or `unavailable`: the task lane's Codex, else the best of the directory. */
+    /** `ready`, `auth-required` or `unavailable`: the task lane's Codex, and `unavailable` without a task lane. */
     val providerState: String,
 )
 

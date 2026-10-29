@@ -30,8 +30,9 @@ data class ConnectionApproval(val ownerId: String, val answer: CompletableDeferr
 
 /**
  * A registered Mac's connection to its account: the [registration], the [transport] that alone holds
- * the host token, where status lines go, the [features] its heartbeat declares, the task lane's
- * [providerState] (null without one), and [heartbeat], which hands each heartbeat's answer to the Codex lanes.
+ * the host token, where status lines go, the [features] its heartbeat declares, [providerState] (the task
+ * lane's Codex readiness, null without a task lane), and [heartbeat], which hands each heartbeat's answer to
+ * the Codex lanes.
  */
 class HostConnection(
     val registration: HostRegistration,

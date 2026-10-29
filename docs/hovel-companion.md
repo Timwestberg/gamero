@@ -213,8 +213,10 @@ The task lane and the memory lane ride its heartbeat.
   seconds, so a silently dead connection reconnects.
 - **Heartbeat:** every 10 seconds, hovel-service's heartbeat body plus
   `computerHeartbeat`:
-  - `providerState`: the task lane's Codex readiness when it has one, else the
-    best readiness in the directory (`ready`, `auth-required`, `unavailable`);
+  - `providerState`: the task lane's own Codex readiness (`ready`,
+    `auth-required`, `unavailable`), and `unavailable` without a task lane.
+    Only hovel-service's task routing reads it, so web Hovel never queues a
+    task to a Mac that cannot run it; conversation routing reads `directory`;
   - `features`: `provider-input` with the task lane, and `memory-context` and
     `memory-extraction` with the memory lane (`hovelHostFeatures`);
   - `directory`: the readiness and models of Codex, Claude Code and Grok Build;
@@ -368,8 +370,9 @@ contract, so nothing is filtered by it yet.
 `companion.capabilities` still answers `sandbox: "read-only"`, the page
 contract's literal. It describes the task lane's Codex sandbox, not
 conversation work, whose working specialists write in the project's working
-folder after the start-of-work approval. Changing it needs a host-bridge
-contract change with version skew for older pages.
+folder after the start-of-work approval. It is revisited with the host-bridge
+cleanup in step E, since changing it needs a contract change with version skew
+for older pages.
 
 ### DesktopBrain is frozen
 

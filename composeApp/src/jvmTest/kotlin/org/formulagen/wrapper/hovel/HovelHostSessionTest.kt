@@ -191,7 +191,7 @@ class HovelHostSessionTest {
         HovelHostSession(host, null, null, ExecutionJournal(Files.createTempDirectory("memory-only"), host), { error("no job") },
             { CodexCliProvider.Readiness.AUTH_REQUIRED }, server) {}.use { memoryOnly ->
             assertEquals(listOf("memory-context", "memory-extraction"), memoryOnly.features)
-            assertNull(memoryOnly.taskProviderState(), "without tasks the directory reports readiness")
+            assertNull(memoryOnly.taskProviderState(), "without tasks the heartbeat reports unavailable")
         }
     }
 }

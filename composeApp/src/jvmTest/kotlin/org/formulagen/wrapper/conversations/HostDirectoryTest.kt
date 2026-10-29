@@ -30,7 +30,7 @@ class HostDirectoryTest {
             working = setOf(RuntimeId.CLAUDE_CODE), features = features, clock = clock, directoryEvery = 60.seconds, usageEvery = 300.seconds)
         val beat = directory.heartbeat()
         assertEquals(features, beat.features)
-        assertEquals("ready", beat.providerState, "a runtime is ready")
+        assertEquals("unavailable", beat.providerState, "ready runtimes, but no task lane: no task is queued here")
         assertEquals("2026-10-29T12:00:00Z", beat.directory.observedAt)
         assertEquals(listOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE, RuntimeId.GROK_BUILD), beat.directory.runtimes.map { it.runtimeId })
         assertEquals(listOf(ProviderReadiness.READY, ProviderReadiness.READY, ProviderReadiness.UNAVAILABLE), beat.directory.runtimes.map { it.readiness })
@@ -53,15 +53,22 @@ class HostDirectoryTest {
         val codex = beat.directory.runtimes.first()
         assertEquals(ProviderRuntime(false, emptyList(), ProviderReadiness.SIGNED_OUT, RuntimeId.CODEX), codex)
         assertEquals(emptyList(), beat.allowances)
-        assertEquals("auth-required", beat.providerState)
+        assertEquals("unavailable", beat.providerState)
     }
 
-    @Test fun theTaskLanesCodexSpeaksForTheHeartbeatWhenThereIsOne() {
+    @Test fun providerStateIsTheTaskLanesCodexAndUnavailableWithoutOne() {
         val ready = ConnectedProviders()
-        assertEquals("auth-required", HostDirectory(ready, id(), id(), setOf(RuntimeId.CODEX), emptySet(), listOf("provider-input"),
-            taskProviderState = { "auth-required" }).heartbeat().providerState)
-        assertEquals("unavailable", HostDirectory(ready, id(), id(), emptySet(), emptySet(), emptyList()).heartbeat().providerState,
-            "nothing offered is nothing ready")
+        var codex: String? = "auth-required"
+        val directory = HostDirectory(ready, id(), id(), setOf(RuntimeId.CODEX), emptySet(), listOf("provider-input"),
+            taskProviderState = { codex })
+        val beat = directory.heartbeat()
+        assertEquals("auth-required", beat.providerState, "the task lane's own Codex, though the directory's Codex is ready")
+        assertEquals(ProviderReadiness.READY, beat.directory.runtimes.first { it.runtimeId == RuntimeId.CODEX }.readiness,
+            "conversation readiness stays in the directory")
+        codex = "ready"
+        assertEquals("ready", directory.heartbeat().providerState)
+        val noTasks = HostDirectory(ready, id(), id(), RuntimeId.entries.toSet(), RuntimeId.entries.toSet(), listOf("memory-context"))
+        assertEquals("unavailable", noTasks.heartbeat().providerState, "a Mac without a task lane is never offered a task")
     }
 
     @Test fun usageIsAnAllowanceSnapshotWithAStableOpaqueAccount() {

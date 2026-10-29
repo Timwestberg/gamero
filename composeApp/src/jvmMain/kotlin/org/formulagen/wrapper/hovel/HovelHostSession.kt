@@ -42,8 +42,8 @@ class HovelHostSession(
     }
 
     /**
-     * The heartbeat's `providerState` for Hovel tasks: Codex's own readiness. Null without the task lane, so the
-     * heartbeat reports the provider directory's instead.
+     * The heartbeat's `providerState` for Hovel tasks: Codex's own readiness. Null without the task lane, and the
+     * heartbeat then reports `unavailable`, so no task is queued to this Mac.
      */
     fun taskProviderState(): String? = tasks?.let {
         when (checkReadiness()) {
