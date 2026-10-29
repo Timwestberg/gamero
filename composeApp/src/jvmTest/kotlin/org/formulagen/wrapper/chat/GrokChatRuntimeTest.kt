@@ -5,9 +5,19 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import kotlin.test.*
+import java.util.UUID
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
+import org.formulagen.wrapper.bridge.ChatEntry
+import org.formulagen.wrapper.bridge.ChatOpenForClient
+import org.formulagen.wrapper.bridge.ChatScope
+import org.formulagen.wrapper.bridge.ChatSend
+import org.formulagen.wrapper.bridge.ChatState
+import org.formulagen.wrapper.bridge.ChatVoice
 import org.formulagen.wrapper.bridge.ProviderAction
 import org.formulagen.wrapper.bridge.ProviderState
+import org.formulagen.wrapper.bridge.RuntimeId
+import org.formulagen.wrapper.bridge.TeamMember
 import org.formulagen.wrapper.chat.grok.GROK_VERIFIED_VERSION
 import org.formulagen.wrapper.providers.GrokConnection
 import org.formulagen.wrapper.providers.GrokProvider
@@ -68,6 +78,58 @@ class GrokChatRuntimeTest {
         }
     }
 
+    @Test fun aRejectedSessionLoadLosesOnlyThatConversationAndDropsItsBinding() {
+        FakeGrokRuntime().use { fake ->
+            val providers = fake.root.resolve("providers")
+            GrokChatRuntime(providers, fake.env, GrokConnection(fake.env)).use { runtime ->
+                val first = Events()
+                runtime.startTurn(request(), first); first.await()
+                val saved = NativeConversation(checkNotNull(first.handle), persona.hash)
+                assertTrue(Files.exists(providers.resolve("grok-bindings/${saved.id}.json")))
+                fake.mode("reject-load")
+                val rejected = Events()
+                runtime.startTurn(request(saved), rejected); rejected.await()
+                assertEquals(ChatFailure.ConversationLost, rejected.failure)
+                assertFalse(Files.exists(providers.resolve("grok-bindings/${saved.id}.json")))
+                // The handle no longer names a session, so a repeat cannot repeat the failing load.
+                val again = Events()
+                runtime.startTurn(request(saved), again); again.await()
+                assertEquals(ChatFailure.ConversationLost, again.failure)
+                assertEquals(1, fake.requests().count { it == "session/load" })
+                assertEquals(1, fake.requests().count { it == "session/prompt" })
+            }
+        }
+    }
+
+    @Test fun desktopChatStartsAFreshGrokConversationOnceWhenTheSavedOneCannotLoad() = runBlocking {
+        FakeGrokRuntime().use { fake ->
+            val root = fake.root.resolve("providers")
+            val scope = ChatScope("local", "20000000-0000-4000-8000-000000000002", "Ember", UUID.randomUUID().toString())
+            val member = TeamMember(RuntimeId.GROK_BUILD, "runtime-default")
+            val speech = object : ChatSpeech {
+                override fun status() = ChatVoice()
+                override fun speak(text: String) = Unit
+                override fun stop() = Unit
+                override fun close() = Unit
+            }
+            DesktopChat(root, listOf(GrokChatRuntime(root, fake.env, GrokConnection(fake.env))), speech).use { chat ->
+                chat.openForClient(ChatOpenForClient(scope.profile, scope.companionId, scope.name, scope.sessionId, listOf("grok-build")))
+                suspend fun reply(text: String) {
+                    chat.send(ChatSend(scope.profile, scope.companionId, scope.name, scope.sessionId, member, UUID.randomUUID().toString(), text, false))
+                    val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+                    while (chat.snapshot(scope).state != ChatState.READY) { check(System.nanoTime() < until) { "Chat did not finish" }; Thread.sleep(20) }
+                }
+                reply("First")
+                fake.mode("reject-load")
+                reply("Second")
+                assertEquals(listOf("Hello", "Hello"), chat.snapshot(scope).messages.filterIsInstance<ChatEntry.Assistant>().map { it.text })
+                assertEquals(1, fake.requests().count { it == "session/load" })
+                assertEquals(2, fake.requests().count { it == "session/new" })
+                assertEquals(2, fake.requests().count { it == "session/prompt" })
+            }
+        }
+    }
+
     @Test fun toolsFailBeforePromptAndSummaryDoesNotCreateABinding() {
         FakeGrokRuntime().use { fake ->
             GrokChatRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env)).use { runtime ->
@@ -91,9 +153,9 @@ class GrokChatRuntimeTest {
             val second = "10000000-0000-4000-8000-000000000002"
             val directory = Files.createDirectories(root.resolve("local/companion-chats"))
             ChatHistory(directory.resolve("$first.json")).write(ChatRecord(conversations = mapOf(
-                org.formulagen.wrapper.bridge.RuntimeId.GROK_BUILD to NativeConversation(first, persona.hash))))
+                RuntimeId.GROK_BUILD to NativeConversation(first, persona.hash))))
             ChatHistory(directory.resolve("$second.json")).write(ChatRecord(workConversations = mapOf(
-                org.formulagen.wrapper.bridge.RuntimeId.GROK_BUILD to NativeConversation(second, persona.hash))))
+                RuntimeId.GROK_BUILD to NativeConversation(second, persona.hash))))
             assertEquals(setOf(first, second), grokHistoryHandles(root, "local"))
             Files.writeString(directory.resolve("$second.json"), "invalid")
             assertNull(grokHistoryHandles(root, "local"))
@@ -210,6 +272,7 @@ internal class FakeGrokRuntime : AutoCloseable {
                 elif method=='_x.ai/auth/info': result=dict(methodId='cached_token',principalType='user',principalId='fixture-user')
                 elif method=='_x.ai/auth/check_subscription': result=dict(authenticated=True,meta=meta)
                 elif method=='authenticate': result={'_meta':meta}
+                elif method=='session/load' and mode=='reject-load': out({'id':rid,'error':{'code':-32002,'message':'Session not found'}}); continue
                 elif method in ['session/new','session/load']:
                     out({'method':'session/update','params':{'sessionId':sid,'update':{'sessionUpdate':'available_commands_update','_meta':{'tools':['shell'] if mode=='tools' else []}}}})
                     result={'sessionId':sid,'models':models}

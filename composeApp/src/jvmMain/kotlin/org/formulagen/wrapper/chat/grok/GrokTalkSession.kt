@@ -72,11 +72,13 @@ internal class GrokTalkSession private constructor(
                 val selected = model ?: account.defaultModel
                 check(account.models.any { it.modelId == selected }) { "Grok model unavailable" }
                 if (resume != null) check(validGrokSessionId(resume) && grokHandshake(initialized).loadSession)
-                val created = transport.call(if (resume == null) "session/new" else "session/load", buildJsonObject {
-                    if (resume != null) put("sessionId", resume)
-                    put("cwd", launch.workspace.toString()); putJsonArray("mcpServers") {}
-                    putJsonObject("_meta") { put("modelId", selected) }
-                }, budget.remaining())
+                val created = try {
+                    transport.call(if (resume == null) "session/new" else "session/load", buildJsonObject {
+                        if (resume != null) put("sessionId", resume)
+                        put("cwd", launch.workspace.toString()); putJsonArray("mcpServers") {}
+                        putJsonObject("_meta") { put("modelId", selected) }
+                    }, budget.remaining())
+                } catch (rejected: GrokRequestRejected) { throw if (resume != null) GrokSessionLost() else rejected }
                 val id = resume ?: (created["sessionId"] as? JsonPrimitive)?.takeIf { it.isString }?.content
                     ?.takeIf(::validGrokSessionId) ?: error("Invalid Grok session id")
                 val models = created["models"] as? JsonObject ?: error("Missing session model")

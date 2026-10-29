@@ -145,13 +145,19 @@ internal class GrokWorkRuntime(
                 }
             }
             if (!active()) return
-            val opened = GrokWorkSession.open(executable, environment, folder, request.persona.instructions, model,
-                account.fingerprint, previous?.providerSessionId, ::update, confirmTrust = { selected, root ->
-                    active() && trust.ask(selected, root, startupCancel) && active()
-                }) { params, respond ->
-                val relay = approvals
-                if (active() && relay != null) relay.receive(params, respond)
-                else respond(cancelledGrokPermission())
+            val opened = try {
+                GrokWorkSession.open(executable, environment, folder, request.persona.instructions, model,
+                    account.fingerprint, previous?.providerSessionId, ::update, confirmTrust = { selected, root ->
+                        active() && trust.ask(selected, root, startupCancel) && active()
+                    }) { params, respond ->
+                    val relay = approvals
+                    if (active() && relay != null) relay.receive(params, respond)
+                    else respond(cancelledGrokPermission())
+                }
+            } catch (_: GrokSessionLost) {
+                // Grok refused the saved session before any prompt: start fresh rather than repeat the failing load.
+                previous?.let { bindings.forget(it.handle) }
+                fail(ChatFailure.ConversationLost); return
             }
             session = opened
             if (!active()) { opened.abort(); return }

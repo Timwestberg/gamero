@@ -210,6 +210,41 @@ class GrokWorkRuntimeTest {
         assertEquals("Folder Grok will trust: /work/\\u202Erepo", grokWorkTrustDialog(project, java.nio.file.Path.of("/work/\u202Erepo")).lines[1])
     }
 
+    @Test fun aRejectedWorkSessionLoadStartsFreshOnceAndDropsTheBinding() = runBlocking {
+        FakeGrokRuntime().use { fake ->
+            val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
+            val root = fake.root.resolve("providers")
+            val workspace = WorkspaceStore(root, FolderPicker { _, _ -> fake.root })
+            val dialogs = NativeDialogs(DialogPresenter { _, answer -> answer(0); {} })
+            val scope = ChatScope("local", UUID.randomUUID().toString(), "Ember", UUID.randomUUID().toString())
+            val connection = GrokConnection(fake.env)
+            val speech = object : ChatSpeech {
+                override fun status() = ChatVoice()
+                override fun speak(text: String) = Unit
+                override fun stop() = Unit
+                override fun close() = Unit
+            }
+            val member = TeamMember(RuntimeId.GROK_BUILD, "runtime-default")
+            DesktopChat(root, listOf(GrokChatRuntime(root, fake.env, connection)), speech,
+                work = ChatWork(workspace, StartOfWork(dialogs), listOf(GrokWorkRuntime(root, fake.env, connection, broker)))).use { chat ->
+                workspace.choose(scope.profile, scope.companionId)
+                chat.openForClient(ChatOpenForClient(scope.profile, scope.companionId, scope.name, scope.sessionId, listOf("grok-build")))
+                suspend fun send(text: String) = chat.send(ChatSend(scope.profile, scope.companionId, scope.name, scope.sessionId, member,
+                    UUID.randomUUID().toString(), text, false, MemberMode.WORK))
+                send("First"); awaitCondition { runBlocking { chat.snapshot(scope).state == ChatState.READY } }
+                val bindings = root.resolve("grok-work-bindings")
+                val first = Files.list(bindings).use { it.toList() }.single()
+                fake.mode("reject-load")
+                send("Second"); awaitCondition { runBlocking { chat.snapshot(scope).state == ChatState.READY } }
+                assertEquals(listOf("Hello", "Hello"), chat.snapshot(scope).messages.filterIsInstance<ChatEntry.Assistant>().map { it.text })
+                assertFalse(Files.exists(first))
+                assertEquals(1, fake.requests().count { it == "session/load" })
+                assertEquals(2, fake.requests().count { it == "session/new" })
+                assertEquals(2, fake.requests().count { it == "session/prompt" })
+            }
+        }
+    }
+
     @Test fun workBindingsCannotResumeInAnotherWorkspaceOrReplayAnAmbiguousPrompt() {
         FakeGrokRuntime().use { fake ->
             val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }

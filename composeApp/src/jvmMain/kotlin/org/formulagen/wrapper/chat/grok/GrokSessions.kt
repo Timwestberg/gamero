@@ -91,6 +91,14 @@ internal class GrokSessions(private val root: Path) {
         }
     }
 
+    /** Drop one binding whose provider session can no longer be restored, so its handle cannot repeat the failure. */
+    @Synchronized fun forget(handle: String) {
+        require(canonicalUuid(handle))
+        local.remove(handle)
+        val file = root.resolve("$handle.json")
+        if (Files.isDirectory(root, NOFOLLOW_LINKS) && Files.isRegularFile(file, NOFOLLOW_LINKS)) Files.deleteIfExists(file)
+    }
+
     /** End process-local reuse on account change or teardown without deleting persisted history. */
     @Synchronized fun clearLocal() { local.clear() }
 

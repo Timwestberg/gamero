@@ -102,6 +102,21 @@ class GrokSessionsTest {
         } finally { root.toFile().deleteRecursively() }
     }
 
+    @Test fun aForgottenBindingIsGoneFromMemoryAndDiskWhileOthersStay() {
+        val root = Files.createTempDirectory("grok-forget")
+        try {
+            val store = GrokSessions(root)
+            val lost = store.create("unloadable", scope)
+            val kept = store.create("loadable", scope)
+            store.forget(lost.handle)
+            assertEquals(GrokSessionLookup.Missing, store.find(lost.handle, scope))
+            assertEquals(GrokSessionLookup.Missing, GrokSessions(root).find(lost.handle, scope))
+            assertEquals(GrokSessionLookup.Found(kept), GrokSessions(root).find(kept.handle, scope))
+            store.forget(lost.handle)
+            assertFailsWith<IllegalArgumentException> { store.forget("../${kept.handle}") }
+        } finally { root.toFile().deleteRecursively() }
+    }
+
     @Test fun cleanupRemovesOnlyUnreferencedBindingsOfTheRequestedProfile() {
         val root = Files.createTempDirectory("grok-prune")
         try {

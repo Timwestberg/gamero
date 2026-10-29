@@ -191,6 +191,9 @@ internal class GrokAcp(
 /** Raw provider error messages/data never escape the transport; callers classify only verified codes. */
 internal class GrokRequestRejected(val code: Int) : IllegalStateException("Grok rejected the request")
 
+/** Grok answered `session/load` with a coded rejection. Nothing was prompted, so a fresh session is safe. */
+internal class GrokSessionLost : IllegalStateException("Grok could not restore the saved session")
+
 /** An ambiguous transport failure must never trigger automatic prompt replay. */
 internal enum class GrokTransportIssue { ENDED, READER, PROTOCOL, CLIENT_REQUEST, LOCKDOWN, FRAME, ENVELOPE, PARAMS, RESPONSE_ID, RESULT, TIMEOUT, CALL, METHOD, MIXED, CLIENT_ID, CLIENT_LIMIT, RESPONSE_TYPE }
 internal class GrokTransportFailure(val issue: GrokTransportIssue = GrokTransportIssue.PROTOCOL) :

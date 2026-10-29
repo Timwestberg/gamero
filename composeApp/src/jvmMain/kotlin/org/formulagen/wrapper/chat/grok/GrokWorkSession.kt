@@ -67,11 +67,13 @@ internal class GrokWorkSession private constructor(
                 val account = grokAccount(transport, initialized, budget)
                 check(account.fingerprint == expectedAccount && account.models.any { it.modelId == model })
                 if (resume != null) check(validGrokSessionId(resume) && grokHandshake(initialized).loadSession)
-                val created = transport.call(if (resume == null) "session/new" else "session/load", buildJsonObject {
-                    if (resume != null) put("sessionId", resume)
-                    put("cwd", launch.workspace.toString()); putJsonArray("mcpServers") {}
-                    putJsonObject("_meta") { put("modelId", model) }
-                }, budget.remaining())
+                val created = try {
+                    transport.call(if (resume == null) "session/new" else "session/load", buildJsonObject {
+                        if (resume != null) put("sessionId", resume)
+                        put("cwd", launch.workspace.toString()); putJsonArray("mcpServers") {}
+                        putJsonObject("_meta") { put("modelId", model) }
+                    }, budget.remaining())
+                } catch (rejected: GrokRequestRejected) { throw if (resume != null) GrokSessionLost() else rejected }
                 val id = resume ?: (created["sessionId"] as? JsonPrimitive)?.takeIf { it.isString }?.content
                     ?.takeIf(::validGrokSessionId) ?: error("Invalid Grok session")
                 check(grokModels(created["models"] as? JsonObject ?: error("Missing session model")).first == model)

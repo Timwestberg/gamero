@@ -147,9 +147,15 @@ internal class GrokChatRuntime(
             val location = root.resolve(request.profile).resolve("grok-talk").resolve(request.companionId)
                 .resolve(HovelCompanion.sha256("${account.fingerprint}/${request.persona.hash}/$model"))
             if (ended.get()) return
-            val opened = GrokTalkSession.open(executable, environment, request.persona.instructions, model,
-                persistentFolder = location, resume = previous?.providerSessionId, expectedAccount = account.fingerprint,
-                onUpdate = ::update)
+            val opened = try {
+                GrokTalkSession.open(executable, environment, request.persona.instructions, model,
+                    persistentFolder = location, resume = previous?.providerSessionId, expectedAccount = account.fingerprint,
+                    onUpdate = ::update)
+            } catch (_: GrokSessionLost) {
+                // Grok refused the saved session before any prompt: start fresh rather than repeat the failing load.
+                previous?.let { bindings.forget(it.handle) }
+                fail(ChatFailure.ConversationLost); return
+            }
             session = opened
             if (ended.get() || closed.get()) { opened.abort(); return }
             val binding = synchronized(bindingLock) {
