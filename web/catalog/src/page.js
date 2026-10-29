@@ -24,6 +24,7 @@ export function mount(root, composer, voice = null) {
 
   let picker = null;
   let voiceStatus = null;
+  let hearingStatus = null;
   if (voice) {
     const label = document.createElement("label");
     label.textContent = "Ember's voice ";
@@ -39,6 +40,9 @@ export function mount(root, composer, voice = null) {
     voiceStatus = document.createElement("p");
     voiceStatus.id = "voice-status";
     voiceStatus.setAttribute("role", "status");
+    hearingStatus = document.createElement("p");
+    hearingStatus.id = "hearing-status";
+    hearingStatus.setAttribute("role", "status");
     const form = document.createElement("form");
     form.id = "say-form";
     const text = document.createElement("input");
@@ -51,7 +55,7 @@ export function mount(root, composer, voice = null) {
     say.type = "submit";
     say.textContent = "Say it";
     form.append(text, say);
-    root.append(label, voiceStatus, form);
+    root.append(label, voiceStatus, hearingStatus, form);
     picker.addEventListener("change", () => {
       voice.select(picker.value);
       paint();
@@ -75,6 +79,7 @@ export function mount(root, composer, voice = null) {
     if (voice) {
       picker.value = voice.selected();
       voiceStatus.textContent = voice.status();
+      hearingStatus.textContent = voice.hearingStatus?.() ?? "";
     }
   }
 

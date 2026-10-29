@@ -7,7 +7,17 @@
  * say(text) plays a reply through it: thinking while it prepares, speaking
  * from the first audible sample, listening again when it ends. Barge-in and
  * end call stop(). A reply that was stopped cannot move the state later.
+ *
+ * Microphone frames (listener.js) may carry desktop's own fields:
+ *   voicedMs     milliseconds of VAD windows at or above the hearing threshold in this chunk;
+ *                the committer's "voiced" and the barge-in span then follow DesktopHearing/DesktopChat
+ *   deferCommit  on an endpoint, leave the send to commitTurn(text), which takes the recognizer's
+ *                finished text the way desktop's engine.finish() does
+ * Hooks: onBargeIn(kind) and onEnd(), so the listener can restart or stop the microphone.
  */
+
+/** Desktop keeps Ember "hot" this long after she stops, for echo screening only. */
+export const EMBER_HOT_TAIL_MS = 500;
 
 import {
   BargeInGuard,
@@ -23,7 +33,10 @@ export function createSession(options) {
   const sink = options.sink;
   const speech = options.speech || null;
   const notify = options.onChange || (() => {});
+  const onBargeIn = options.onBargeIn || (() => {});
+  const onEnd = options.onEnd || (() => {});
   let speechTicket = 0;
+  let hotUntil = -Infinity;
   const clock = options.now || (() => 0);
   const duplex = chooseDuplex(options.duplexRequest || "auto", options.aecAvailable, options.selfCheck || "absent");
   const barge = new BargeInGuard(policy.bargeSustainMs, policy.bargeGapResetMs);
@@ -83,6 +96,8 @@ export function createSession(options) {
     stopSpeech();
     const flushMs = clock() - started;
     session.logs.push(`barge-in ${kind} flush_ms=${flushMs}`);
+    hotUntil = clock() + EMBER_HOT_TAIL_MS;
+    onBargeIn(kind);
     session.partial = "";
     session.phase = "listening";
     session.guardLeft = session.duplex.mode === "half" ? policy.guardMs : 0;
@@ -93,6 +108,7 @@ export function createSession(options) {
   function end() {
     sink.stop();
     stopSpeech();
+    onEnd();
     session.talkOn = false;
     session.phase = "off";
     session.partial = "";
@@ -143,30 +159,36 @@ export function createSession(options) {
     return true;
   };
 
-  session.feed = ({ frameMs, vadProb, rms = 0.2, text = "" }) => {
+  /** True while a microphone chunk would be heard: talk is on and half duplex is not holding the mic closed. */
+  Object.defineProperty(session, "micOpen", {
+    get: () => session.talkOn && !(session.duplex.mode === "half" && (audible() || session.guardLeft > 0)),
+  });
+
+  session.feed = ({ frameMs, vadProb, rms = 0.2, text = "", voicedMs, deferCommit = false }) => {
     if (!session.talkOn) return null;
     if (session.duplex.mode === "half" && audible()) return null;
     if (session.duplex.mode === "half" && session.guardLeft > 0) {
       session.guardLeft = Math.max(0, session.guardLeft - frameMs);
       return null;
     }
-    const emberHot = audible();
-    if (session.duplex.mode === "full" && emberHot) {
+    const playing = audible();
+    const emberHot = playing || clock() < hotUntil;
+    const desktopFrame = voicedMs !== undefined;
+    if (session.duplex.mode === "full" && playing) {
       const minProb = policy.bargeMinProbability;
-      const voicedMs = vadProb >= minProb ? frameMs : 0;
-      const span = vadProb >= minProb ? Math.max(frameMs, voicedMs) : voicedMs > 0 ? voicedMs : 0;
+      const windowMs = desktopFrame ? voicedMs : vadProb >= minProb ? frameMs : 0;
+      const span = vadProb >= minProb ? Math.max(frameMs, windowMs) : windowMs > 0 ? windowMs : 0;
       if (barge.frame(span > 0, span > 0 ? span : frameMs)) bargeIn("vad");
-    } else if (!emberHot) {
+    } else if (!playing) {
       barge.reset();
     }
     if (session.phase === "listening") session.partial = text;
-    const event = committer.observe(vadProb >= 0.5 && rms > 0, frameMs, rms, text, vadProb, emberHot, session.assistantText);
+    const voiced = desktopFrame ? voicedMs > 0 : vadProb >= 0.5 && rms > 0;
+    const event = committer.observe(voiced, frameMs, rms, text, vadProb, emberHot, session.assistantText);
     if (event.decision === EndpointDecision.SEND) {
-      const sent = text.trim();
       session.partial = "";
-      session.phase = "thinking";
-      const next = sink.commit(sent);
-      if (next === "speaking" && session.phase === "thinking") session.phase = "speaking";
+      if (deferCommit) return { ...event, pending: true };
+      commit(text);
       return event;
     }
     if (event.decision === EndpointDecision.DROP) {
@@ -176,7 +198,30 @@ export function createSession(options) {
     return event;
   };
 
+  function commit(text) {
+    const sent = text.trim();
+    session.phase = "thinking";
+    const next = sink.commit(sent);
+    if (next === "speaking" && session.phase === "thinking") session.phase = "speaking";
+  }
+
+  /**
+   * Sends a deferred turn with the recognizer's finished text. Blank text is
+   * dropped, as desktop only sends a non-blank result. False when nothing was sent.
+   */
+  session.commitTurn = (text) => {
+    if (!session.talkOn || session.phase !== "listening") return false;
+    if (!text || text.trim() === "") {
+      session.logs.push("drop blank");
+      return false;
+    }
+    commit(text);
+    notify();
+    return true;
+  };
+
   session.playbackEnded = () => {
+    hotUntil = clock() + EMBER_HOT_TAIL_MS;
     if (!session.talkOn) return;
     session.phase = "listening";
     if (session.duplex.mode === "half") session.guardLeft = policy.guardMs;

@@ -57,6 +57,31 @@ export const KOKORO_WEB = {
   },
 };
 
+/**
+ * Ember's browser hearing: Silero VAD v5 (MIT) and the streaming Zipformer
+ * (Apache-2.0), served from KOKORO_WEB's base URL under hearing/, written by
+ * scripts/fetch-web-voice.mjs. The runtime is KOKORO_WEB.files.ortWasm.
+ *
+ * Silero and tokens.txt are desktop's files (MODEL_PINS). The encoder,
+ * decoder, and joiner come one by one from Hugging Face at a fixed revision,
+ * because sherpa's release archive also carries test_wavs, which stay out of
+ * this repo. They are the same checkpoint and precisions desktop loads, but a
+ * different export, so their hashes differ from MODEL_PINS.zipformer*.
+ */
+export const HEARING_WEB = {
+  files: {
+    vad: { name: "hearing/silero_vad.onnx", bytes: 2313101, sha256: MODEL_PINS.sileroVadSha256 },
+    encoder: { name: "hearing/encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx", bytes: 71083163, sha256: "563fde436d16cf7607cf408cd6b30909819d03162652ef389c2450ced3f45ac1" },
+    decoder: { name: "hearing/decoder-epoch-99-avg-1-chunk-16-left-128.onnx", bytes: 2092621, sha256: "7bf787f90b194b307e5a4ad6a34fadb4e748304c35f78a8d66358a05b13ee6ef" },
+    joiner: { name: "hearing/joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx", bytes: 259335, sha256: "d944208d660d67c8d72cd2acaeac971fa5ceb8c80e76c1968148846fedd6e297" },
+    tokens: { name: "hearing/tokens.txt", bytes: 5048, sha256: MODEL_PINS.zipformerTokensSha256 },
+  },
+  upstream: {
+    vad: MODEL_URLS.sileroVad,
+    zipformer: "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/672fbf1b30579d6585301139bb363f42a0ad4a24/",
+  },
+};
+
 const REFUSED = [/kroko/i, /cc-by-nc/i, /non-commercial/i, /expresso/i, /test_wavs/i];
 
 export function refuseNonCommercial(label) {

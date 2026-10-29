@@ -1,6 +1,7 @@
 import { createComposer } from "./src/composer.js";
 import { mount, openMicrophone } from "./src/page.js";
 import { aecFromSettings } from "../hearing/src/media.js";
+import { createHearingClient } from "../hearing/src/hearing-client.js";
 import { createKokoroEngine } from "../hearing/src/kokoro-engine.js";
 import { KOKORO_VOICE_LIST, kokoroVoice } from "../hearing/src/kokoro-voices.js";
 import { allCached } from "../hearing/src/model-cache.js";
@@ -26,10 +27,12 @@ const host = hostMode ? {
 
 let aecAvailable = true;
 let selfCheck = "pass";
+let micStream = null;
 
 if (!scripted && navigator.mediaDevices?.getUserMedia) {
   try {
     const stream = await openMicrophone();
+    micStream = stream;
     const settings = stream.getAudioTracks()[0]?.getSettings?.() || {};
     aecAvailable = aecFromSettings(settings);
     // No loopback has been scored yet. A reported canceller is full duplex, unverified.
@@ -90,7 +93,22 @@ function voiceStatus() {
   return "Ember's voice loads when you first talk.";
 }
 
-const composer = createComposer({ host, speaker, aecAvailable, selfCheck, onChange: repaint });
+// Hearing loads on the first talk click; until then the page only holds the microphone stream.
+const hearing = micStream ? createHearingClient({ baseUrl: voiceBase, onProgress: repaint, onReady: repaint }) : null;
+
+function hearingStatus() {
+  if (!hearing) return scripted ? "Hearing: scripted frames (scripted=1)" : "";
+  if (hearing.status === "loading") {
+    const { loaded, total } = hearing.progress;
+    const percent = total > 0 ? ` ${Math.floor((loaded / total) * 100)}%` : "";
+    return `Getting Ember's hearing ready…${percent}`;
+  }
+  if (hearing.status === "ready") return "Ember can hear you.";
+  if (hearing.status === "error") return "Ember's hearing is unavailable. Run web/hearing/scripts/fetch-web-voice.mjs, then reload.";
+  return "Ember's hearing loads when you first talk.";
+}
+
+const composer = createComposer({ host, speaker, hearing, micStream, aecAvailable, selfCheck, onChange: repaint });
 const voice = {
   voices: KOKORO_VOICE_LIST,
   selected: () => speaker.voiceId,
@@ -103,6 +121,7 @@ const voice = {
     }
   },
   status: voiceStatus,
+  hearingStatus,
   say(text) {
     speaker.prepare?.();
     composer.reply(text);
@@ -131,6 +150,8 @@ window.__app = {
       chat: document.querySelector("#chat-status").textContent,
       duplex: document.querySelector("#duplex").textContent,
       voiceStatus: document.querySelector("#voice-status")?.textContent || "",
+      hearingStatus: document.querySelector("#hearing-status")?.textContent || "",
+      logs: composer.session.logs.slice(-20),
       line: lastLine(),
       calls: host?.calls || [],
     };
@@ -142,6 +163,9 @@ window.__app = {
   selectVoice(id) {
     voice.select(id);
     view.paint();
+  },
+  hearing: {
+    report: () => hearing?.report ?? null,
   },
   voice: {
     load: () => engine?.load(),

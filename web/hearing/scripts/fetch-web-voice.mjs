@@ -6,6 +6,8 @@
  *   voices-ember.bin                       Sam, Jamie, Riley, Harper style tables
  *   tokens.txt, lexicon-us-en.txt          upstream, unchanged
  *   ort-wasm-simd-threaded.asyncify.wasm   onnxruntime-web 1.30.0 runtime
+ *   hearing/                               Silero VAD v5 and the streaming Zipformer, one file at a time
+ *                                          (never the sherpa archive, which carries test_wavs)
  *
  * Every upstream file and every output is checked against the pins in
  * src/models.js and src/kokoro-voices.js. Upstream bytes are reused from
@@ -27,7 +29,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { applyBlends, bytesFromFloats, emberStyles, floatsFromBytes, KOKORO_BLENDS } from "../src/kokoro-voices.js";
-import { KOKORO_WEB, MODEL_PINS, assertNotHovel, refuseNonCommercial } from "../src/models.js";
+import { HEARING_WEB, KOKORO_WEB, MODEL_PINS, assertNotHovel, refuseNonCommercial } from "../src/models.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const hearing = path.resolve(here, "..");
@@ -86,6 +88,34 @@ async function upstream(key) {
   return target;
 }
 
+async function download(url, target, sha256) {
+  refuseNonCommercial(url);
+  assertNotHovel(url, "GET");
+  console.log(`get  ${url}`);
+  const response = await fetch(url, { method: "GET", redirect: "follow" });
+  if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+  const partial = `${target}.partial`;
+  await pipeline(Readable.fromWeb(response.body), createWriteStream(partial));
+  if (!(await hashOk(partial, sha256))) {
+    await rm(partial, { force: true });
+    throw new Error(`hash mismatch for ${url}`);
+  }
+  await rename(partial, target);
+}
+
+/** Hearing files are used as published: no transform, only the pinned hash. */
+async function hearingFile(key) {
+  const file = HEARING_WEB.files[key];
+  const target = path.join(out, file.name);
+  await mkdir(path.dirname(target), { recursive: true });
+  if (!(await hashOk(target, file.sha256))) {
+    const base = path.basename(file.name);
+    const url = key === "vad" ? HEARING_WEB.upstream.vad : `${HEARING_WEB.upstream.zipformer}${base}`;
+    await download(url, target, file.sha256);
+  }
+  await place(file, target);
+}
+
 async function place(file, bytesOrPath) {
   const target = path.join(out, file.name);
   if (typeof bytesOrPath !== "string") await writeFile(target, bytesOrPath);
@@ -125,8 +155,12 @@ async function main() {
   if (!existsSync(ortWasm)) throw new Error("run npm install in web/hearing first (onnxruntime-web 1.30.0)");
   await place(files.ortWasm, ortWasm);
 
+  for (const key of Object.keys(HEARING_WEB.files)) await hearingFile(key);
+
   const total = Object.values(files).reduce((sum, file) => sum + file.bytes, 0);
+  const hearingTotal = Object.values(HEARING_WEB.files).reduce((sum, file) => sum + file.bytes, 0);
   console.log(`\nEmber's browser voice is ready in ${path.relative(process.cwd(), out) || out}: ${total.toLocaleString("en-US")} bytes on first load.`);
+  console.log(`Her hearing adds ${hearingTotal.toLocaleString("en-US")} bytes the first time the microphone is used.`);
   console.log("Remove the .upstream folder to reclaim the 360 MB of source files.");
 }
 
