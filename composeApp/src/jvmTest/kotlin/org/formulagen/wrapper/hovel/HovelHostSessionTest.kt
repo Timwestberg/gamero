@@ -9,6 +9,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.*
 
+/** The Codex lanes (a Hovel task and a memory job), fed by the heartbeat the conversation runner sends. */
 class HovelHostSessionTest {
     private val host = UUID.randomUUID().toString()
     private val owner = UUID.randomUUID().toString()
@@ -67,6 +68,9 @@ class HovelHostSessionTest {
         checkReadiness = { CodexCliProvider.Readiness.READY }, transport = server,
     ) { statuses += it }
 
+    /** One heartbeat as the conversation runner sends it, its answer handed to the Codex lanes. */
+    private fun HovelHostSession.beat(server: Server) = heartbeat(server.post("heartbeat", JsonObject(emptyMap())))
+
     private fun eventually(condition: () -> Boolean) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
         while (!condition()) {
@@ -83,7 +87,7 @@ class HovelHostSessionTest {
         val provider = TaskProvider { taskStarted.countDown(); releaseTask.await(5, TimeUnit.SECONDS); ProviderResult(true, "Task done") }
         val memoryProvider = TaskProvider { synchronized(ran) { ran += it }; ProviderResult(true, "{\"notes\":[]}") }
         session(server, provider, memoryProvider).use { session ->
-            session.heartbeat()
+            session.beat(server)
             assertTrue(taskStarted.await(5, TimeUnit.SECONDS))
             eventually { server.count("memory/consolidate") == 1 }
             assertEquals("succeeded", server.jobState())
@@ -103,9 +107,9 @@ class HovelHostSessionTest {
         var memoryLaunches = 0
         val memoryProvider = TaskProvider { memoryLaunches++; release.await(5, TimeUnit.SECONDS); ProviderResult(true, "{}") }
         session(server, { ProviderResult(true, "Task done") }, memoryProvider).use { session ->
-            session.heartbeat()
+            session.beat(server)
             eventually { server.jobState() == "running" }
-            session.heartbeat()
+            session.beat(server)
             assertEquals(1, server.count("memory/claim"))
             release.countDown()
             eventually { server.count("memory/consolidate") == 1 }
@@ -134,7 +138,7 @@ class HovelHostSessionTest {
             statuses.clear()
             val server = Server(taskItem = task(queued, 0), jobItem = item)
             session(server, { ProviderResult(true, "Task done") }, { error("must not launch") }).use { session ->
-                session.heartbeat()
+                session.beat(server)
                 assertEquals(HovelHostSession.MEMORY_JOB_UNREADABLE, statuses.last())
                 eventually { server.taskState() == "succeeded" }
                 assertEquals(0, server.count("memory/claim"))
@@ -147,7 +151,7 @@ class HovelHostSessionTest {
             task(queued, 0).forEach { (key, value) -> if (key != "characterMemory") put(key, value) }
         })
         session(server, { error("must not launch") }, { ProviderResult(true, "{}") }).use { session ->
-            assertFails { session.heartbeat() }
+            assertFails { session.beat(server) }
             eventually { server.jobState() == "succeeded" }
             assertEquals(0, server.count("claim"))
         }
@@ -156,7 +160,7 @@ class HovelHostSessionTest {
     @Test fun aJobForAnotherProviderIsLeftForAnotherCompanion() {
         val server = Server(taskItem = null, jobItem = job(queued, 0, runtimeId = "claude"))
         session(server, { error("no task") }, { error("must not launch") }).use { session ->
-            session.heartbeat()
+            session.beat(server)
             assertEquals(listOf("heartbeat"), server.routes())
         }
     }
@@ -175,6 +179,19 @@ class HovelHostSessionTest {
             assertFails {
                 HovelHostSession(host, it, { error("no") }, it, { error("no") }, { CodexCliProvider.Readiness.READY }, Server()) {}
             }
+        }
+    }
+
+    @Test fun featuresAndTheTaskProviderStateFollowTheLanes() {
+        val server = Server(taskItem = null, jobItem = null)
+        session(server, { error("no task") }, { error("no job") }).use { session ->
+            assertEquals(listOf("provider-input", "memory-context", "memory-extraction"), session.features)
+            assertEquals("ready", session.taskProviderState())
+        }
+        HovelHostSession(host, null, null, ExecutionJournal(Files.createTempDirectory("memory-only"), host), { error("no job") },
+            { CodexCliProvider.Readiness.AUTH_REQUIRED }, server) {}.use { memoryOnly ->
+            assertEquals(listOf("memory-context", "memory-extraction"), memoryOnly.features)
+            assertNull(memoryOnly.taskProviderState(), "without tasks the heartbeat reports unavailable")
         }
     }
 }

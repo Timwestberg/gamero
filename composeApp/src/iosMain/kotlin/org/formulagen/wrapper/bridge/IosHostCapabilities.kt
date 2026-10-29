@@ -28,4 +28,5 @@ internal fun iosHovelBridgePacks(): List<CapabilityPack> = listOf(
     ProjectMethods.pack(Capability.Unsupported),
     ConversationVoiceMethods.pack(Capability.Unsupported),
     ApprovalMethods.pack(Capability.Unsupported),
+    HostContractMethods.pack(Capability.Unsupported),
 )

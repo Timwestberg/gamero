@@ -67,6 +67,7 @@ internal fun hovelBridgePacks(): List<CapabilityPack> = listOf(
     org.formulagen.wrapper.bridge.ProjectMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.ConversationVoiceMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.ApprovalMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.HostContractMethods.pack(Capability.Unsupported),
 )
 
 /** Plays the Hovel launch and start screen, then opens [url] once the player steps inside. */

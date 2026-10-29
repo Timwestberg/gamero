@@ -1,7 +1,6 @@
 package org.formulagen.wrapper
 
 import java.awt.EventQueue
-import java.net.URI
 import java.nio.file.Path
 import javax.swing.JFrame
 import org.formulagen.wrapper.bridge.Capability
@@ -24,7 +23,14 @@ import org.formulagen.wrapper.bridge.WorkspaceCapability
 import org.formulagen.wrapper.bridge.WorkspaceMethods
 import org.formulagen.wrapper.bridge.ApprovalMethods
 import org.formulagen.wrapper.bridge.ConversationVoiceMethods
+import org.formulagen.wrapper.bridge.HostContractMethods
 import org.formulagen.wrapper.bridge.ProjectMethods
+import org.formulagen.wrapper.bridge.DesktopHostContract
+import org.formulagen.wrapper.bridge.HostContractCapability
+import org.formulagen.wrapper.bridge.ProjectCapability
+import org.formulagen.wrapper.conversations.ConversationHost
+import org.formulagen.wrapper.conversations.ConversationStore
+import org.formulagen.wrapper.conversations.ProjectFolderStore
 import org.formulagen.wrapper.approvals.ComposeDialogPresenter
 import org.formulagen.wrapper.approvals.DialogApprovalBroker
 import org.formulagen.wrapper.approvals.NativeDialogs
@@ -63,6 +69,8 @@ import org.formulagen.wrapper.chat.readSavedFillers
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.hovel.HovelCompanionCapability
+import org.formulagen.wrapper.hovel.appOrigin
+import org.formulagen.wrapper.hovel.hovelStateFolder
 import org.formulagen.wrapper.pet.DesktopPetLauncher
 import org.formulagen.wrapper.progression.embedded.DesktopGameLauncher
 import org.formulagen.wrapper.bridge.RuntimeId
@@ -95,8 +103,12 @@ internal class DesktopServices private constructor(
     val workspace: DesktopWorkspace,
     /** The native approval and start-of-work dialogs; the window renders them with `NativeDialogHost`. */
     val dialogs: ComposeDialogPresenter,
-    /** Hovel's Mac companion; null for another product or without Codex and `GAMERO_WORKSPACE`. */
+    /** Hovel's Mac companion; null for another product or off macOS. */
     val companion: HovelCompanion?,
+    /** Companion conversations on this Mac: the runner's builder and `project.*`; null without the companion. */
+    val conversations: ConversationHost?,
+    /** `host.contract`: the page's companion contract for its context. */
+    val hostContract: DesktopHostContract,
     /** The embedded game; null without `HOVEL_GAME_PROJECT` or a window to host it. */
     val games: DesktopGameLauncher?,
     val voicePicker: VoicePickerModel,
@@ -104,10 +116,15 @@ internal class DesktopServices private constructor(
 ) : AutoCloseable {
     /** The product capability packs [product] registers with the bridge. */
     fun packs(product: String): List<CapabilityPack> =
-        desktopProductPacks(product, companion?.let(::HovelCompanionCapability), chat, providers, pet, games, workspace, brain)
+        desktopProductPacks(product, companion?.let(::HovelCompanionCapability), chat, providers, pet, games, workspace, brain,
+            conversations?.projects, hostContract)
 
-    /** The page's document context ended: end its chat view, close its game and void a pending approval. */
+    /**
+     * The page's document context ended: end its chat view, close its game and void a pending approval.
+     * Conversations keep running: they never belonged to the page.
+     */
     fun invalidate() {
+        hostContract.invalidate()
         companion?.invalidatePending()
         brain.invalidate()
         chat.invalidate()
@@ -138,8 +155,7 @@ internal class DesktopServices private constructor(
             fun <T : AutoCloseable> own(service: T): T = service.also { owned += it }
             try {
                 val codex = findCodexExecutable(environment)
-                val origin = URI(appUrl).let { URI(it.scheme, null, it.host, it.port, null, null, null).toASCIIString() }
-                val providerRoot = support.resolve("providers").resolve(HovelCompanion.sha256(origin))
+                val providerRoot = support.resolve("providers").resolve(HovelCompanion.sha256(appOrigin(appUrl)))
                 // Claude is offered only by a development build that asks for it, until Anthropic confirms a
                 // companion persona on a player's subscription is allowed; anything else fails closed.
                 val claudeOffered = claudeProviderEnabled(environment, release = System.getProperty("gamero.release") == "true",
@@ -200,15 +216,35 @@ internal class DesktopServices private constructor(
                 brain = own(DesktopBrain(providerRoot, brainStore, runtimes, work, providers, nativeDialogs, NativeFilePicker { window },
                     DesktopSpeech(desktopVoiceConfig(environment), route::openLine), chat::invalidate, chat::whileIdle, conversationOwnership))
                 val pet = own(DesktopPetLauncher(environment, support.resolve("ember-pet.log")))
-                val workspace = environment["GAMERO_WORKSPACE"]?.let(Path::of)
-                val companion = if (product == HOVEL_PRODUCT && System.getProperty("os.name").contains("Mac") &&
-                    codex != null && workspace != null) {
-                    own(HovelCompanion(appUrl, support.resolve("hovel-${HovelCompanion.sha256(appUrl)}"), codex, workspace))
-                } else null
+                // Conversations get runtime instances of their own, so a page closing team chat never ends their work,
+                // and every work approval races the phone through the runner's broker.
+                val grokRoot = ConversationHost.grokRoot(providerRoot)
+                val retained = { profile: String -> ConversationStore.bindingHandles(providerRoot, profile) }
+                val conversations = if (product == HOVEL_PRODUCT && System.getProperty("os.name").contains("Mac")) own(ConversationHost(
+                    providerRoot, ProjectFolderStore(providerRoot, NativeFolderPicker { window }), providers, nativeDialogs, offered, working,
+                    talk = {
+                        listOfNotNull(codex?.let { CodexChatRuntime(providerRoot, it) }, claude?.let { ClaudeChatRuntime(it, checkNotNull(claudeSignIn)) },
+                            grokConnection?.let { GrokChatRuntime(grokRoot, environment, it, retained) })
+                    },
+                    work = { approvals ->
+                        listOfNotNull(claude?.takeIf { RuntimeId.CLAUDE_CODE in working }?.let { ClaudeWorkRuntime(it, checkNotNull(claudeSignIn), approvals) },
+                            codex?.takeIf { RuntimeId.CODEX in working }?.let { CodexWorkRuntime(providerRoot, it, approvals) },
+                            grokConnection?.takeIf { RuntimeId.GROK_BUILD in working }?.let {
+                                GrokWorkRuntime(grokRoot, environment, it, approvals, NativeGrokWorkTrust(nativeDialogs), retained = retained)
+                            })
+                    },
+                )) else null
+                // Hovel tasks keep their read-only Codex workspace until step E removes them with the web task UI.
+                val taskWorkspace = environment["GAMERO_WORKSPACE"]?.let(Path::of)
+                val companion = conversations?.let { host ->
+                    own(HovelCompanion(appUrl, hovelStateFolder(support, appUrl), codex, taskWorkspace,
+                        conversations = host::start))
+                }
                 val games = if (window != null && environment["HOVEL_GAME_PROJECT"] != null) {
                     DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }
                 } else null
-                return DesktopServices(chat, brain, providers, pet, DesktopWorkspace(workspaces), dialogs, companion, games, voicePicker, owned.toList())
+                return DesktopServices(chat, brain, providers, pet, DesktopWorkspace(workspaces), dialogs, companion, conversations,
+                    DesktopHostContract(), games, voicePicker, owned.toList())
             } catch (error: Throwable) {
                 runCatching { closeInReverse(owned) }.exceptionOrNull()?.let(error::addSuppressed)
                 throw error
@@ -220,9 +256,10 @@ internal class DesktopServices private constructor(
 /**
  * The product packs a desktop host registers. Every desktop product has chat, providers, pet,
  * games and project folders; Hovel adds its companion and the companion projects capabilities:
- * `project` and `conversationVoice` (`Unsupported` until the conversation runner implements them)
- * and phone `approvals`, which desktop never supports. A missing implementation registers as
- * `Unsupported`, so its methods answer `unsupported` instead of `unknown-method`.
+ * `project` (a project's folders on this Mac), the `host.contract` handshake, `conversationVoice`
+ * (`Unsupported` until voice moves to conversations) and phone `approvals`, which desktop never
+ * supports. A missing implementation registers as `Unsupported`, so its methods answer
+ * `unsupported` instead of `unknown-method`.
  */
 internal fun desktopProductPacks(
     product: String,
@@ -233,12 +270,15 @@ internal fun desktopProductPacks(
     games: GameCapability?,
     workspace: WorkspaceCapability?,
     brain: BrainCapability? = null,
+    projects: ProjectCapability? = null,
+    hostContract: HostContractCapability? = null,
 ): List<CapabilityPack> = buildList {
     if (product == HOVEL_PRODUCT) {
         add(CompanionMethods.pack(supportedIfPresent(companion)))
-        add(ProjectMethods.pack(Capability.Unsupported))
+        add(ProjectMethods.pack(supportedIfPresent(projects)))
         add(ConversationVoiceMethods.pack(Capability.Unsupported))
         add(ApprovalMethods.pack(Capability.Unsupported))
+        add(HostContractMethods.pack(supportedIfPresent(hostContract)))
     }
     add(BrainMethods.pack(supportedIfPresent(brain)))
     add(ChatMethods.pack(supportedIfPresent(chat)))

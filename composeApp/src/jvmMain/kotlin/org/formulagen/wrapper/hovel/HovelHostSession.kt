@@ -8,46 +8,59 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Heartbeats stay responsive while separately owned workers are busy: one user task and one memory
- * job may run at once, each on its own thread with its own journal. Consolidation has a thread of its
- * own too, so a slow server call never delays a heartbeat.
+ * The Codex lanes of a registered Mac, fed by the heartbeat the conversation runner sends: one Hovel task
+ * (when a task workspace is configured, until step E removes tasks) and one memory job may run at once,
+ * each on its own thread with its own journal. Consolidation has a thread of its own too, so a slow
+ * server call never delays a job.
  */
 class HovelHostSession(
     private val hostId: String,
-    journal: ExecutionJournal,
-    provider: TaskProvider,
+    journal: ExecutionJournal?,
+    provider: TaskProvider?,
     memoryJournal: ExecutionJournal,
     memoryProvider: TaskProvider,
     private val checkReadiness: () -> CodexCliProvider.Readiness,
     private val transport: HovelTransport,
     private val status: (String) -> Unit,
 ) : AutoCloseable {
-    init { require(journal !== memoryJournal) { "Tasks and memory jobs need separate journals" } }
+    init {
+        require(journal !== memoryJournal) { "Tasks and memory jobs need separate journals" }
+        require((journal == null) == (provider == null)) { "The task lane needs its journal and its provider" }
+    }
 
-    private val polling = Executors.newSingleThreadScheduledExecutor()
     private val consolidation = Executors.newSingleThreadScheduledExecutor()
-    private val tasks = Lane(journal, provider)
+    private val tasks = if (journal != null && provider != null) Lane(journal, provider) else null
     private val memory = Lane(memoryJournal, memoryProvider)
     private val closed = AtomicBoolean(false)
 
+    /** What this companion declares on its heartbeats ([hovelHostFeatures]). */
+    val features: List<String> = hovelHostFeatures(tasks = tasks != null, memory = true)
+
     fun start() {
-        polling.scheduleWithFixedDelay({
-            if (!closed.get()) runCatching { heartbeat() }.onFailure { status("Server unavailable; tasks remain on this computer") }
-        }, 0, 10, TimeUnit.SECONDS)
         // The first heartbeat declares this companion's features before the server is asked to plan memory jobs.
         consolidation.scheduleWithFixedDelay({ if (!closed.get()) consolidate() }, 1, CONSOLIDATE_MINUTES, TimeUnit.MINUTES)
     }
 
-    internal fun heartbeat() {
-        val readiness = checkReadiness()
-        val response = transport.post("heartbeat", hovelHeartbeat(when (readiness) {
+    /**
+     * The heartbeat's `providerState` for Hovel tasks: Codex's own readiness. Null without the task lane, and the
+     * heartbeat then reports `unavailable`, so no task is queued to this Mac.
+     */
+    fun taskProviderState(): String? = tasks?.let {
+        when (checkReadiness()) {
             CodexCliProvider.Readiness.READY -> "ready"
             CodexCliProvider.Readiness.AUTH_REQUIRED -> "auth-required"
             CodexCliProvider.Readiness.UNAVAILABLE -> "unavailable"
-        }))
-        status(if (readiness == CodexCliProvider.Readiness.READY) "Connected · Codex ready" else "Connected · Sign in to Codex: run `codex login` in Terminal")
-        val ready = readiness == CodexCliProvider.Readiness.READY
-        // A malformed task never holds up a memory job, nor the reverse.
+        }
+    }
+
+    /**
+     * A heartbeat's answer: offer its first task and its first memory job this companion can run, each when its
+     * lane is free. A malformed task never holds up a memory job, nor the reverse; the task's failure is thrown
+     * after the memory job was offered.
+     */
+    fun heartbeat(response: JsonObject) {
+        if (closed.get()) return
+        val ready = checkReadiness() == CodexCliProvider.Readiness.READY
         val taskFailure = runCatching { offerTask(response, ready) }.exceptionOrNull()
         // A job this version cannot read is not the server being down; say what fixes it.
         runCatching { offerMemoryJob(response, ready) }.onFailure { status(MEMORY_JOB_UNREADABLE) }
@@ -55,15 +68,16 @@ class HovelHostSession(
     }
 
     private fun offerTask(response: JsonObject, ready: Boolean) {
-        if (tasks.busy) return
+        val lane = tasks ?: return
+        if (lane.busy) return
         // Outcomes already delivered need no repeated network requests. A durable local
         // outcome behind a still-active server task will be republished by the coordinator.
-        val task = response.getValue("tasks").jsonArray.map { it.jsonObject }.firstOrNull { needsWork(it, ready) } ?: return
+        val task = response["tasks"]?.jsonArray?.map { it.jsonObject }?.firstOrNull { needsWork(it, ready) } ?: return
         val request = hovelExecutionRequest(task, hostId)
-        tasks.offer {
+        lane.offer {
             try {
-                ExecutionCoordinator(tasks.journal, tasks.provider, HovelTaskRemote(transport, task)).accept(request)
-            } catch (_: Exception) { status("Task needs reconciliation on this computer; no automatic host change") }
+                ExecutionCoordinator(lane.journal, lane.provider, HovelTaskRemote(transport, task)).accept(request)
+            } catch (_: Exception) { status(TASK_RECONCILIATION) }
         }
     }
 
@@ -93,10 +107,10 @@ class HovelHostSession(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        val executors = listOf(polling, consolidation, tasks.executor, memory.executor)
+        val executors = listOfNotNull(consolidation, tasks?.executor, memory.executor)
         executors.forEach { it.shutdownNow() }
         // Closing the journals prevents stale workers from acquiring a new launch boundary.
-        tasks.journal.close()
+        tasks?.journal?.close()
         memory.journal.close()
         // One deadline for all of them, so closing never waits more than 5 seconds.
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
@@ -118,6 +132,7 @@ class HovelHostSession(
     companion object {
         const val CONSOLIDATE_MINUTES = 5L
         const val MEMORY_JOB_UNREADABLE = "Connected · Update Hovel on this computer to run its memory jobs"
+        const val TASK_RECONCILIATION = "Task needs reconciliation on this computer; no automatic host change"
 
         /** Unfinished on the server; a queued item only once Codex is ready to launch it. */
         private fun needsWork(item: JsonObject, ready: Boolean): Boolean {

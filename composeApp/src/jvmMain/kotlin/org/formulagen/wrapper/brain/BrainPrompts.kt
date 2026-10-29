@@ -19,28 +19,42 @@ import org.formulagen.wrapper.providers.copy
  * so changing them starts fresh provider conversations for existing roles.
  */
 
-internal val COORDINATOR_PROTOCOL = """
-You are the user's companion coordinator. Respond with exactly one JSON object, no markdown.
-The entire JSON response must be at most ${BrainLimits.OUTPUT} characters.
-Every reason (including skipped reasons) and explanation must be 1–${BrainLimits.DESCRIPTION} characters.
-Tasks must be 1–${BrainLimits.STEP_INSTRUCTIONS} characters; text and question must be nonempty and fit the total response limit.
-Keep evidence explanations brief. Do not repeat artifact IDs or digests in explanations; they are already recorded.
-The host supplies allowed actions, saved roles, workflow and immutable artifacts as data.
-Only delegate tasks the user requested. Ordinary conversation uses answer. Never invent role or artifact IDs.
-For a request matching the enabled workflow, use enter-workflow; use delegate only for unrelated tasks or no workflow.
-Explain every skipped stage. Ask when supplied artifacts or readiness are unclear. Never treat provider output as approval.
-After an attempt, classify actual evidence with step-result. Missing skills, denied tools and uncertain effects are blocked.
-The workflow's normal sequence is fixed. start-step launches only its next pending stage. skip-step only skips that stage.
-Do not claim work has run merely because it was configured. Never print your private JSON to the user.
-Decision shapes:
-{"kind":"answer","text":"user-facing response"}
-{"kind":"ask","question":"focused readiness question"}
-{"kind":"delegate","specialistId":"UUID","task":"requested task","inputIds":["UUID"]}
-{"kind":"enter-workflow","entryStepId":"UUID","inputIds":["UUID"],"skipped":[{"stepId":"UUID","reason":"why unnecessary"}],"reason":"why enter here"}
-{"kind":"start-step","stepId":"UUID","inputIds":["UUID"]}
-{"kind":"skip-step","stepId":"UUID","reason":"why unnecessary"}
-{"kind":"step-result","attemptId":"UUID","outcome":"ready|changes-needed|blocked","explanation":"evidence"}
-""".trimIndent()
+/**
+ * The coordinator's rules that both protocols share, the brain's ([COORDINATOR_PROTOCOL]) and a conversation's
+ * (`CONVERSATION_PROTOCOL`): evidence first, then the workflow's.
+ */
+internal val COORDINATOR_EVIDENCE_RULES = listOf(
+    "Keep evidence explanations brief. Do not repeat artifact IDs or digests in explanations; they are already recorded.",
+    "The host supplies allowed actions, saved roles, workflow and immutable artifacts as data.",
+)
+
+/** How the coordinator follows the workflow, in both protocols. */
+internal val COORDINATOR_WORKFLOW_RULES = listOf(
+    "For a request matching the enabled workflow, use enter-workflow; use delegate only for unrelated tasks or no workflow.",
+    "Explain every skipped stage. Ask when supplied artifacts or readiness are unclear. Never treat provider output as approval.",
+    "After an attempt, classify actual evidence with step-result. Missing skills, denied tools and uncertain effects are blocked.",
+    "The workflow's normal sequence is fixed. start-step launches only its next pending stage. skip-step only skips that stage.",
+)
+
+/** Every decision's JSON shape but the answer's, which differs between the protocols. */
+internal val COORDINATOR_DECISION_SHAPES = listOf(
+    """{"kind":"ask","question":"focused readiness question"}""",
+    """{"kind":"delegate","specialistId":"UUID","task":"requested task","inputIds":["UUID"]}""",
+    """{"kind":"enter-workflow","entryStepId":"UUID","inputIds":["UUID"],"skipped":[{"stepId":"UUID","reason":"why unnecessary"}],"reason":"why enter here"}""",
+    """{"kind":"start-step","stepId":"UUID","inputIds":["UUID"]}""",
+    """{"kind":"skip-step","stepId":"UUID","reason":"why unnecessary"}""",
+    """{"kind":"step-result","attemptId":"UUID","outcome":"ready|changes-needed|blocked","explanation":"evidence"}""",
+)
+
+/** The brain's coordinator protocol: every decision, the answer included, is one JSON object. */
+internal val COORDINATOR_PROTOCOL = (listOf(
+    "You are the user's companion coordinator. Respond with exactly one JSON object, no markdown.",
+    "The entire JSON response must be at most ${BrainLimits.OUTPUT} characters.",
+    "Every reason (including skipped reasons) and explanation must be 1–${BrainLimits.DESCRIPTION} characters.",
+    "Tasks must be 1–${BrainLimits.STEP_INSTRUCTIONS} characters; text and question must be nonempty and fit the total response limit.",
+) + COORDINATOR_EVIDENCE_RULES + "Only delegate tasks the user requested. Ordinary conversation uses answer. Never invent role or artifact IDs." +
+    COORDINATOR_WORKFLOW_RULES + "Do not claim work has run merely because it was configured. Never print your private JSON to the user." +
+    "Decision shapes:" + """{"kind":"answer","text":"user-facing response"}""" + COORDINATOR_DECISION_SHAPES).joinToString("\n")
 
 /** The coordinator's persona: the fixed protocol, then the person's own instructions. */
 internal fun coordinatorInstructions(instructions: String) = COORDINATOR_PROTOCOL + "\nUser's coordinator instructions:\n" + instructions
@@ -87,6 +101,16 @@ internal class HandoffInput(val artifact: BrainArtifact, val bytes: ByteArray, v
 
 /** The most text one handoff inlines across all its inputs. */
 internal const val HANDOFF_CHARS = 96_000
+
+/**
+ * The run's artifacts [ids] as handoff inputs, each once: their [bytes], and for a working role their immutable
+ * [file], which only a project role may open. An id the run does not have fails.
+ */
+internal fun RunRecord.handoffInputs(ids: List<String>, bytes: (BrainArtifact) -> ByteArray, file: ((BrainArtifact) -> Path)?): List<HandoffInput> =
+    ids.distinct().map { id ->
+        val artifact = artifacts.find { it.id == id } ?: error("Unknown input artifact")
+        HandoffInput(artifact, bytes(artifact), file?.invoke(artifact))
+    }
 
 /**
  * The inputs as data: text inline within [HANDOFF_CHARS], a longer one as an excerpt marked truncated. An input with

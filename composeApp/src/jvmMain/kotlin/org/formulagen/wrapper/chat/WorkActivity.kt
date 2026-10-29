@@ -61,6 +61,13 @@ internal class WorkPaths(folder: Path, home: Path? = System.getProperty("user.ho
         return result
     }
 
-    /** [base] followed by the end of a path: not `/game` inside `/game-old`. */
-    private fun whole(base: Path) = Regex(Regex.escape(base.toString()) + "(?=$|[/\\s'\"`:;,)\\]}>])")
+    private fun whole(base: Path) = wholePath(base.toString())
 }
+
+/**
+ * [path] where it stands as a whole path in free text: after the start or a delimiter (not inside a longer
+ * path) and before the end of a path (not `/game` inside `/game-old`). The one boundary rule for every place
+ * that writes a native path in other terms.
+ */
+internal fun wholePath(path: String): Regex =
+    Regex("(?<![^\\s\"'`=(\\[{<:,;])" + Regex.escape(path) + "(?=$|[/\\s'\"`:;,)\\]}>])")

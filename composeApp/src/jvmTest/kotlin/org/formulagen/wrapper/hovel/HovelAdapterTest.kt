@@ -78,11 +78,10 @@ class HovelAdapterTest {
         assertFails { hovelExecutionRequest(followUp(JsonPrimitive("Earlier exchanges"), JsonPrimitive("c-1")), host) }
     }
 
-    @Test fun everyHeartbeatDeclaresProviderInputAndMemory() {
-        val body = hovelHeartbeat("ready")
-        assertEquals("ready", body.getValue("providerState").jsonPrimitive.content)
-        assertEquals(listOf("provider-input", "memory-context", "memory-extraction"),
-            body.getValue("features").jsonArray.map { it.jsonPrimitive.content })
+    @Test fun aHeartbeatDeclaresOnlyTheLanesThisComputerRuns() {
+        assertEquals(listOf("provider-input", "memory-context", "memory-extraction"), hovelHostFeatures(tasks = true, memory = true))
+        assertEquals(listOf("memory-context", "memory-extraction"), hovelHostFeatures(tasks = false, memory = true))
+        assertEquals(listOf("memory-context"), hovelHostFeatures(tasks = false, memory = false))
     }
 
     private fun withRecalled(value: JsonElement) = buildJsonObject {
