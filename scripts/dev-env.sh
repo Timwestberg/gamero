@@ -46,9 +46,14 @@ export HOVEL_VOICE_REFERENCE="${HOVEL_VOICE_REFERENCE:-$VOICE_ROOT/models/voices
 export HOVEL_HEARING_MODEL="${HOVEL_HEARING_MODEL:-$VOICE_ROOT/models/hearing}"
 # Fillers default off. The Voice row saves the choice in ~/.gamero/voice-fillers.
 # HOVEL_VOICE_FILLERS=1 turns them on for this launch and overrides that file.
-# HOVEL_VOICE_FILLER_MS is the wait before a filler. HOVEL_HEARING_SILENCE_MS (1000)
-# and HOVEL_HEARING_GUARD_MS (300) tune the hands-free endpoint and the resume pause.
+# HOVEL_VOICE_FILLER_MS is the wait before a filler. Fillers stay off unless the Voice row
+# or HOVEL_VOICE_FILLERS turns them on. HOVEL_HEARING_SILENCE_MS (1000) and
+# HOVEL_HEARING_GUARD_MS (300) tune the endpoint and the half-duplex resume pause.
+# HOVEL_HEARING_DUPLEX is auto, full, or half. auto uses the Mac voice-processing graph
+# when libember_audio.dylib loads and ~/.gamero/hearing-self-check is not "fail".
 export HOVEL_VOICE_FILLER_MS="${HOVEL_VOICE_FILLER_MS:-450}"
+export HOVEL_HEARING_DUPLEX="${HOVEL_HEARING_DUPLEX:-auto}"
+export HOVEL_EMBER_AUDIO="${HOVEL_EMBER_AUDIO:-$VOICE_ROOT/deps/ember-audio/libember_audio.dylib}"
 
 # Stop unless the game project runs the pinned embedding engine.
 require_embed_godot() {
@@ -75,6 +80,9 @@ warn_missing_voice() {
   fi
   if [[ ! -f "$HOVEL_HEARING_MODEL/silero_vad.onnx" || ! -f "$HOVEL_HEARING_MODEL/zipformer/tokens.txt" ]]; then
     echo 'Talk with Ember is off: hearing models are missing. Run scripts/fetch-voice.sh to enable them.' >&2
+  fi
+  if [[ ! -f "$HOVEL_EMBER_AUDIO" ]]; then
+    echo 'Full duplex is off until scripts/build-ember-audio.sh writes libember_audio.dylib. Conversation stays half duplex.' >&2
   fi
 }
 

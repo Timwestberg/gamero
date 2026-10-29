@@ -31,6 +31,7 @@ import org.formulagen.wrapper.chat.KokoroVoicePicker
 import org.formulagen.wrapper.bridge.desktopHostCapabilities
 import org.formulagen.wrapper.companion.NativeBridge
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
+import org.formulagen.wrapper.voice.runEchoSelfTest
 import org.formulagen.wrapper.hovel.HovelLaunchScreen
 import org.formulagen.wrapper.hovel.HovelStartState
 import java.awt.EventQueue
@@ -135,7 +136,21 @@ fun main(args: Array<String>) {
                         }
                     }
                     if (System.getProperty("os.name").contains("Mac")) {
+                        LaunchedEffect(Unit) {
+                            val flag = System.getenv("HOVEL_HEARING_SELF_TEST")?.trim()?.lowercase()
+                            if (flag == "1" || flag == "true" || flag == "yes") {
+                                withContext(Dispatchers.IO) { runEchoSelfTest() }
+                            }
+                        }
                         MenuBar {
+                            Menu("Develop") {
+                                Item("Echo self-test", onClick = {
+                                    Thread({
+                                        println("echo self-test: starting inside Gamero Adventures")
+                                        println("echo self-test: finished exit=${runEchoSelfTest()}")
+                                    }, "ember-echo-self-test").apply { isDaemon = true }.start()
+                                })
+                            }
                             Menu("Edit") {
                                 Item("Undo", onClick = { editActions.perform(BrowserEditAction.UNDO) })
                                 Item("Redo", onClick = { editActions.perform(BrowserEditAction.REDO) })

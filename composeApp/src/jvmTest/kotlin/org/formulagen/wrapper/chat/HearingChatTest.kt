@@ -15,7 +15,10 @@ import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.bridge.TeamMember
 import org.formulagen.wrapper.bridge.VoiceState
+import org.formulagen.wrapper.voice.DuplexChoice
 import org.formulagen.wrapper.voice.FILLER_LINES
+import org.formulagen.wrapper.voice.HearingDuplex
+import org.formulagen.wrapper.voice.cancelEcho
 import org.formulagen.wrapper.voice.FillerPcm
 import org.formulagen.wrapper.voice.FillerSettings
 import org.formulagen.wrapper.voice.HearingEngine
@@ -566,6 +569,253 @@ class StreamBargeTest {
     )
 }
 
+class FullDuplexSessionTest {
+    private val scope = ChatScope("local", UUID.randomUUID().toString(), "Ember", UUID.randomUUID().toString())
+    private val member = TeamMember(RuntimeId.CODEX, SharedRules.RUNTIME_DEFAULT_MODEL)
+
+    @Test fun tenTurnsIgnoreCancelledEchoUntilTheUserSpeaks() = runBlocking {
+        val speech = RowSpeech()
+        val runtime = ScriptedRuntime(completeOnStart = true)
+        val row = VoicePickerModel()
+        val mic = QueueMic()
+        val hearing = DesktopHearing(LevelEngine(), { mic })
+        desktop(speech, runtime, row, hearing).use { desk ->
+            desk.open(scope)
+            desk.send(send("Hello"))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            speech.settle()
+            runtime.completeOnStart = false
+            desk.converseClick()
+            await { row.state.value.phase == TalkPhase.LISTENING }
+            val echo = FloatArray(1600) { 0.45f }
+            repeat(10) { turn ->
+                val turns = runtime.turns
+                pushUtterance(mic)
+                await { runtime.turns > turns }
+                runtime.finish("ok $turn")
+                await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+                speech.become(VoiceState.SPEAKING)
+                repeat(8) { mic.push(cancelEcho(echo, echo, gain = 1f)) }
+                Thread.sleep(80)
+                assertEquals(turns + 1, runtime.turns, "echo became a turn on $turn")
+                assertEquals(TalkPhase.SPEAKING, row.state.value.phase, "echo barged in on $turn")
+                speech.settle()
+                await { row.state.value.phase == TalkPhase.LISTENING && !hearing.isPaused() }
+            }
+            desk.converseClick()
+            assertEquals(TalkPhase.OFF, row.state.value.phase)
+        }
+    }
+
+    @Test fun sustainedSpeechBargesInAndACoughDoesNot() = runBlocking {
+        val speech = StreamingSpeech()
+        val runtime = ScriptedRuntime()
+        val row = VoicePickerModel()
+        val mic = QueueMic()
+        val hearing = DesktopHearing(LevelEngine(), { mic })
+        val order = java.util.concurrent.CopyOnWriteArrayList<String>()
+        speech.onStop = { order += "flush" }
+        runtime.onStop = { order += "cancel" }
+        desktop(speech, runtime, row, hearing).use { desk ->
+            runtime.completeOnStart = true
+            desk.open(scope)
+            desk.send(send("Hello"))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            speech.settle()
+            speech.pieces.clear()
+            runtime.completeOnStart = false
+            desk.converseClick()
+            await { row.state.value.phase == TalkPhase.LISTENING }
+            val turns = runtime.turns
+            pushUtterance(mic)
+            await { runtime.turns > turns }
+            runtime.partial("Hello there friend. Still talking")
+            speech.become(VoiceState.SPEAKING)
+            repeat(2) { mic.push(FloatArray(1600) { 0.3f }) }
+            Thread.sleep(80)
+            assertEquals(TalkPhase.SPEAKING, row.state.value.phase)
+            repeat(2) { mic.push(FloatArray(1600) { 0.3f }) }
+            await { row.state.value.phase == TalkPhase.LISTENING }
+            await { order.contains("cancel") }
+            assertEquals("flush", order[order.lastIndex - 1])
+            val reply = runBlocking { desk.snapshot(scope) }.messages.last() as ChatEntry.Assistant
+            assertTrue(reply.text.contains("Hello there friend."))
+            assertNull(runBlocking { desk.snapshot(scope) }.notice)
+        }
+    }
+
+    private fun send(text: String) =
+        ChatSend(scope.profile, scope.companionId, scope.name, scope.sessionId, member, UUID.randomUUID().toString(), text, true)
+
+    private fun desktop(speech: ChatSpeech, runtime: ChatRuntime, row: VoicePickerModel, hearing: DesktopHearing) =
+        DesktopChat(
+            Files.createTempDirectory("full-duplex"),
+            listOf(runtime),
+            speech,
+            voices = row,
+            fillers = FillerSettings(thresholdMs = 60_000),
+            silenceMs = 200,
+            guardMs = 0,
+            hearing = hearing,
+            duplexChoice = DuplexChoice(HearingDuplex.FULL, "test"),
+            bargeMs = 250,
+        )
+}
+
+class PlaybackBargeTest {
+    private val scope = ChatScope("local", UUID.randomUUID().toString(), "Ember", UUID.randomUUID().toString())
+    private val member = TeamMember(RuntimeId.CODEX, SharedRules.RUNTIME_DEFAULT_MODEL)
+
+    @Test fun fullDuplexSpeechDuringPlaybackFlushesAndCancels() = runBlocking {
+        val order = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val line = HoldingLine { order += "flush" }
+        val runtime = ScriptedRuntime()
+        runtime.onStop = { order += "cancel" }
+        val windows = WindowEngine()
+        val hearing = DesktopHearing(windows, { QueueMic().also { mic = it } })
+        val speech = DesktopSpeech(
+            VoiceConfig(backend = VoiceConfig.KOKORO, fillersEnabled = false, sentenceGapMs = 0),
+            { line },
+            { ImmediateEngine() },
+        )
+        DesktopChat(
+            Files.createTempDirectory("playback-barge"),
+            listOf(runtime),
+            speech,
+            fillers = FillerSettings(thresholdMs = 60_000),
+            silenceMs = 1000,
+            guardMs = 0,
+            hearing = hearing,
+            duplexChoice = DuplexChoice(HearingDuplex.FULL, "self-check-passed"),
+            bargeMs = 250,
+        ).use { desk ->
+            runtime.completeOnStart = true
+            desk.open(scope)
+            desk.send(send("Hello"))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            await { speech.status().state == VoiceState.IDLE }
+            runtime.completeOnStart = false
+            desk.converseClick()
+            await { mic != null }
+            val turns = runtime.turns
+            desk.testingUtterance(HearingResult("interrupt her", speechMs = 500, decodeMs = 1.0))
+            await { runtime.turns > turns }
+            runtime.partial("Hello there friend. Still talking now.")
+            await { line.playing.await(2, TimeUnit.SECONDS) }
+            await { speech.status().state == VoiceState.SPEAKING || speech.status().state == VoiceState.PREPARING }
+            val mic = checkNotNull(this@PlaybackBargeTest.mic)
+            mic.push(FloatArray(1600) { 0.4f })
+            mic.push(FloatArray(1600) { 0.4f })
+            mic.push(FloatArray(1600))
+            mic.push(FloatArray(1600) { 0.4f })
+            assertTrue(line.flushed.await(2, TimeUnit.SECONDS), "playback was not flushed")
+            val flushMs = (line.flushNs - windows.bargeNs) / 1_000_000
+            assertTrue(windows.bargeNs != 0L && flushMs in 0..50, "flush took ${flushMs}ms")
+            await { order.contains("cancel") }
+            assertEquals("flush", order.first())
+            val reply = runBlocking { desk.snapshot(scope) }.messages.last { it is ChatEntry.Assistant } as ChatEntry.Assistant
+            assertTrue(reply.text.contains("Hello there friend."))
+        }
+    }
+
+    @Test fun clickAndEscapeBargeWhilePlaybackIsPreparing() = runBlocking {
+        val release = CountDownLatch(1)
+        val runtime = ScriptedRuntime()
+        var cancelled = false
+        runtime.onStop = { cancelled = true }
+        val speech = DesktopSpeech(
+            VoiceConfig(backend = VoiceConfig.KOKORO, fillersEnabled = false, sentenceGapMs = 0),
+            { HoldingLine {} },
+            {
+                object : PieceEngine {
+                    override val sampleRate = 24000
+                    override fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio {
+                        release.await(2, TimeUnit.SECONDS)
+                        return PieceAudio(FloatArray(4800), 24000, 1.0, 1.0)
+                    }
+                    override fun release() {}
+                }
+            },
+        )
+        DesktopChat(
+            Files.createTempDirectory("prepare-barge"),
+            listOf(runtime),
+            speech,
+            fillers = FillerSettings(thresholdMs = 60_000),
+            hearing = DesktopHearing(LevelEngine(), { QueueMic() }),
+            duplexChoice = DuplexChoice(HearingDuplex.FULL, "self-check-passed"),
+        ).use { desk ->
+            try {
+                runtime.completeOnStart = true
+                desk.open(scope)
+                desk.send(send("Hello"))
+                await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+                runtime.completeOnStart = false
+                desk.testingSession()
+                val turns = runtime.turns
+                desk.testingUtterance(HearingResult("keep talking", speechMs = 500, decodeMs = 1.0))
+                await { runtime.turns > turns }
+                runtime.partial("Hello there friend. This sentence is still open")
+                await { speech.status().state == VoiceState.PREPARING }
+                desk.converseClick()
+                assertTrue(cancelled, "click did not cancel the provider")
+                assertEquals(VoiceState.IDLE, speech.status().state)
+            } finally {
+                release.countDown()
+            }
+        }
+    }
+
+    private var mic: QueueMic? = null
+
+    private fun send(text: String) =
+        ChatSend(scope.profile, scope.companionId, scope.name, scope.sessionId, member, UUID.randomUUID().toString(), text, true)
+}
+
+private class WindowEngine : HearingEngine {
+    private var loud = false
+    private var loudCount = 0
+    @Volatile var bargeNs = 0L
+    override fun startUtterance() { loud = false }
+    override fun accept(samples: FloatArray) {
+        loud = samples.any { kotlin.math.abs(it) > 0.2f }
+        if (loud && ++loudCount == 3) bargeNs = System.nanoTime()
+    }
+    override fun voicedMillisOfLastAccept() = if (loud) 32 else 0
+    override fun lastVadProbability() = if (loud) 0.91f else 0.02f
+    override fun partial() = if (loud) "THAT'S NOW THANKS" else ""
+    override fun finish() = HearingResult(if (loud) "THAT'S NOW THANKS" else "", 400, 1.0)
+    override fun close() {}
+}
+
+private class ImmediateEngine : PieceEngine {
+    override val sampleRate = 24000
+    override fun synthesize(text: String, maxFrames: Int, seed: Int) = PieceAudio(FloatArray(4800) { 0.2f }, 24000, 1.0, 1.0)
+    override fun release() {}
+}
+
+private class HoldingLine(private val onFlush: () -> Unit) : PcmLine {
+    val playing = CountDownLatch(1)
+    val flushed = CountDownLatch(1)
+    @Volatile var flushNs = 0L
+    private val release = CountDownLatch(1)
+    override fun start() {}
+    override fun write(pcm: ByteArray) {
+        if (pcm.isEmpty()) return
+        playing.countDown()
+        release.await(3, TimeUnit.SECONDS)
+    }
+    override fun drain() {}
+    override fun flush() {
+        flushNs = System.nanoTime()
+        onFlush()
+        flushed.countDown()
+        release.countDown()
+    }
+    override fun stop() { release.countDown() }
+    override fun close() { release.countDown() }
+}
+
 class FillerWarmTest {
     @Test fun aCancelledWarmKeepsGoingForTheSelectedVoice() {
         var cancelled = false
@@ -660,6 +910,10 @@ private class StreamingSpeech : ChatSpeech {
     }
     fun settle() {
         voice = ChatVoice()
+        listener?.invoke()
+    }
+    fun become(state: VoiceState) {
+        voice = ChatVoice(state)
         listener?.invoke()
     }
 }

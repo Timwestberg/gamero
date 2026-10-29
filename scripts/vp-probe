@@ -1,0 +1,15 @@
+#!/bin/bash
+# Bisect macOS voice processing: VP alone, then with a player, then with a tap, then the raw AudioUnit.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ "$(uname -s)" != Darwin || "$(uname -m)" != arm64 ]]; then
+  echo "vp-probe runs on Apple silicon macOS." >&2
+  exit 1
+fi
+OUT="${TMPDIR:-/tmp}/vp-probe"
+clang -fobjc-arc -arch arm64 \
+  -framework Foundation -framework AppKit -framework AVFoundation -framework CoreAudio -framework AudioToolbox \
+  -o "$OUT" \
+  "$ROOT/voice/native/vp-probe.m"
+codesign -s - --force "$OUT"
+exec "$OUT"

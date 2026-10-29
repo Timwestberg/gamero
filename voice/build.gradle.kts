@@ -93,3 +93,12 @@ if (mobileTargets) {
         }
     }
 }
+
+tasks.register<JavaExec>("echoSelfTest") {
+    group = "verification"
+    description = "Play a clip through the Mac voice-processing graph and write ~/.gamero/hearing-self-check."
+    val compilation = kotlin.targets.getByName("jvm").compilations.getByName("main")
+    dependsOn(compilation.compileTaskProvider)
+    classpath(compilation.output.allOutputs, compilation.runtimeDependencyFiles)
+    mainClass.set("org.formulagen.wrapper.voice.EchoSelfTestKt")
+}
