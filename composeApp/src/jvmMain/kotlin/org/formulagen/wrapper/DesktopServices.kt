@@ -37,7 +37,24 @@ import org.formulagen.wrapper.chat.ClaudeChatRuntime
 import org.formulagen.wrapper.chat.CodexChatRuntime
 import org.formulagen.wrapper.chat.DesktopChat
 import org.formulagen.wrapper.chat.DesktopSpeech
+import org.formulagen.wrapper.chat.DesktopHearing
+import org.formulagen.wrapper.chat.HearingRoute
+import org.formulagen.wrapper.chat.VoicePickerModel
+import org.formulagen.wrapper.chat.openTargetMic
+import java.nio.file.Files
+import org.formulagen.wrapper.voice.EmberAudio
+import org.formulagen.wrapper.voice.chooseDuplex
+import org.formulagen.wrapper.voice.hearingBargeMs
+import org.formulagen.wrapper.voice.openHearingEngine
+import org.formulagen.wrapper.voice.readDuplexRequest
+import org.formulagen.wrapper.voice.readFillerSettings
+import org.formulagen.wrapper.voice.readSelfCheck
+import org.formulagen.wrapper.voice.selfCheckFile
 import org.formulagen.wrapper.chat.desktopVoiceConfig
+import org.formulagen.wrapper.chat.fillerChoiceFile
+import org.formulagen.wrapper.chat.hearingGuardMs
+import org.formulagen.wrapper.chat.hearingSilenceMs
+import org.formulagen.wrapper.chat.readSavedFillers
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.hovel.HovelCompanionCapability
@@ -72,6 +89,7 @@ internal class DesktopServices private constructor(
     val companion: HovelCompanion?,
     /** The embedded game; null without `HOVEL_GAME_PROJECT` or a window to host it. */
     val games: DesktopGameLauncher?,
+    val voicePicker: VoicePickerModel,
     private val owned: List<AutoCloseable>,
 ) : AutoCloseable {
     /** The product capability packs [product] registers with the bridge. */
@@ -138,13 +156,32 @@ internal class DesktopServices private constructor(
                 val brainStore = BrainStore(providerRoot)
                 val conversationOwnership = Any()
                 var brain: DesktopBrain? = null
-                val chat = own(DesktopChat(providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment)), offered, work,
-                    isConverted = brainStore::converted, beforeOpen = { brain?.invalidate() }, ownershipGate = conversationOwnership))
+                val voicePicker = VoicePickerModel()
+                val selfCheck = readSelfCheck(runCatching { Files.readString(selfCheckFile(environment)) }.getOrNull())
+                val choice = chooseDuplex(readDuplexRequest(environment), EmberAudio.tryLoad(environment), selfCheck)
+                val route = HearingRoute(choice, environment)
+                val hearing = DesktopHearing(openHearingEngine(environment["HOVEL_HEARING_MODEL"].orEmpty()), route::openMic)
+                val fillerFile = fillerChoiceFile(environment)
+                val chat = own(DesktopChat(
+                    providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment), route::openLine), offered, work, voicePicker,
+                    fillers = readFillerSettings(environment, readSavedFillers(fillerFile)),
+                    fillerFile = fillerFile,
+                    silenceMs = hearingSilenceMs(environment),
+                    guardMs = hearingGuardMs(environment),
+                    hearing = hearing,
+                    route = route,
+                    duplexChoice = choice,
+                    bargeMs = hearingBargeMs(environment),
+                    product = product,
+                    isConverted = brainStore::converted,
+                    beforeOpen = { brain?.invalidate() },
+                    ownershipGate = conversationOwnership,
+                ))
                 // Both runtimes sign in outside Hovel, on the player's own install, so a status check never signs a chat out.
                 val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),
                     claudeSignIn?.let(::ClaudeProvider)), working))
                 brain = own(DesktopBrain(providerRoot, brainStore, runtimes, work, providers, nativeDialogs, NativeFilePicker { window },
-                    DesktopSpeech(desktopVoiceConfig(environment)), chat::invalidate, chat::whileIdle, conversationOwnership))
+                    DesktopSpeech(desktopVoiceConfig(environment), route::openLine), chat::invalidate, chat::whileIdle, conversationOwnership))
                 val pet = own(DesktopPetLauncher(environment, support.resolve("ember-pet.log")))
                 val workspace = environment["GAMERO_WORKSPACE"]?.let(Path::of)
                 val companion = if (product == HOVEL_PRODUCT && System.getProperty("os.name").contains("Mac") &&
@@ -154,7 +191,7 @@ internal class DesktopServices private constructor(
                 val games = if (window != null && environment["HOVEL_GAME_PROJECT"] != null) {
                     DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }
                 } else null
-                return DesktopServices(chat, brain, providers, pet, DesktopWorkspace(workspaces), dialogs, companion, games, owned.toList())
+                return DesktopServices(chat, brain, providers, pet, DesktopWorkspace(workspaces), dialogs, companion, games, voicePicker, owned.toList())
             } catch (error: Throwable) {
                 runCatching { closeInReverse(owned) }.exceptionOrNull()?.let(error::addSuppressed)
                 throw error

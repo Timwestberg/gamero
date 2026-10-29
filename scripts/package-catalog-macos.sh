@@ -26,3 +26,13 @@ if [[ ! -d "$APP/Contents/runtime/Contents/Frameworks" ]]; then
   # JBR stores signed Chromium frameworks beside Home, outside jpackage's copy.
   ditto "$GAMERO_BROWSER_JAVA_HOME/../Frameworks" "$APP/Contents/runtime/Contents/Frameworks"
 fi
+PLIST="$APP/Contents/Info.plist"
+if [[ -f "$PLIST" ]] && ! /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$PLIST" >/dev/null 2>&1; then
+  /usr/libexec/PlistBuddy -c 'Add :NSMicrophoneUsageDescription string Ember hears you on this Mac to turn what you say into a chat message. The recording is not saved.' "$PLIST"
+fi
+AUDIO="$ROOT/spikes/ember-voice/mac/deps/ember-audio/libember_audio.dylib"
+if [[ -f "$AUDIO" ]]; then
+  mkdir -p "$APP/Contents/Frameworks"
+  cp "$AUDIO" "$APP/Contents/Frameworks/libember_audio.dylib"
+  codesign -s - --force "$APP/Contents/Frameworks/libember_audio.dylib"
+fi
