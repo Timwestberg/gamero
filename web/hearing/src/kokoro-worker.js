@@ -18,8 +18,9 @@
  */
 
 import { scaleSilence, concatSamples } from "./kokoro-audio.js";
-import { loadLexicons, parseTokens, textToTokenIds } from "./kokoro-frontend.js";
-import { chatLexiconText, coverUnknownWords, kokoroChatLexicon, parseKokoroLexicon } from "./kokoro-lexicon.js";
+import { parseTokens, textToTokenIds } from "./kokoro-frontend.js";
+import { coverUnknownWords } from "./kokoro-lexicon.js";
+import { loadPreparedLexicon } from "./kokoro-lexicon-pack.js";
 import { floatsFromBytes, kokoroVoice, styleRow } from "./kokoro-voices.js";
 import { loadPinned } from "./model-cache.js";
 import { KOKORO_WEB } from "./models.js";
@@ -79,18 +80,17 @@ async function load(options) {
   report.downloadMs = round(performance.now() - started);
   report.downloadedBytes = Object.values(report.files).filter((file) => file.source === "network").reduce((sum, file) => sum + file.bytes, 0);
 
-  const prepStarted = performance.now();
+  // lexicon-us-en.txt plus desktop's lexicon-chat.txt inflections, packed after the first build.
   const decoder = new TextDecoder();
-  const baseText = decoder.decode(bytes.lexicon);
-  const chat = kokoroChatLexicon(parseKokoroLexicon(baseText));
-  const lexiconTexts = chat.additions.size > 0 ? [baseText, chatLexiconText(chat.additions)] : [baseText];
-  const known = chat.additions.size > 0 ? chat.known : new Set([...chat.known].filter((word) => !chat.additions.has(word)));
-  const { lexicon, maxPhraseLen } = loadLexicons(lexiconTexts);
-  const frontend = { tokens: parseTokens(decoder.decode(bytes.tokens)), lexicon, maxPhraseLen };
+  const tokens = parseTokens(decoder.decode(bytes.tokens));
+  const prepared = await loadPreparedLexicon({ baseUrl: options.baseUrl, files, tokens, lexiconBytes: bytes.lexicon });
+  const frontend = { tokens, lexicon: prepared.lexicon, maxPhraseLen: prepared.maxPhraseLen };
+  const known = prepared.lexicon;
   const styles = floatsFromBytes(bytes.styles);
-  report.lexiconMs = round(performance.now() - prepStarted);
-  report.lexiconWords = lexicon.size;
-  report.chatAdditions = chat.additions.size;
+  report.lexiconMs = round(prepared.ms);
+  report.lexiconSource = prepared.source;
+  report.lexiconWords = prepared.lexicon.size;
+  report.chatAdditions = prepared.chatAdditions;
 
   const ort = await import(options.ortModuleUrl);
   ort.env.wasm.wasmBinary = bytes.ortWasm;

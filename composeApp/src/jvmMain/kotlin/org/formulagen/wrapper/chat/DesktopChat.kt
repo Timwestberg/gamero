@@ -66,6 +66,9 @@ internal class DesktopChat(
     duplexChoice: DuplexChoice = DuplexChoice(HearingDuplex.HALF, "default"),
     private val bargeMs: Int = HEARING_BARGE_SUSTAIN_MS,
     private val product: String = GAMERO_PRODUCT_NAME,
+    private val isConverted: (String, String) -> Boolean = { _, _ -> false },
+    private val beforeOpen: () -> Unit = {},
+    private val ownershipGate: Any = Any(),
 ) : ChatCapability, AutoCloseable {
     private val runtimes = runtimes.associateBy { it.id }
     private val workers: Map<RuntimeId, WorkRuntime> = work?.runtimes.orEmpty()
@@ -91,14 +94,17 @@ internal class DesktopChat(
     private var hearingNotice: String? = null
     /** The catalog page sent press. The native icon stays hidden so only one capture can arm. */
     private var pageOwnsCapture = false
-    /** The page asked for [ChatSnapshot.hearing]. Until then the result stays host-bridge v2. */
-    private var pageHears = false
     /** The member the page named on press. The native row leaves this null and uses the active member. */
     private var hearingMember: TeamMember? = null
-    /** The page's effort. Chat send on this host still uses the runtime default when the field is absent. */
-    private var hearingEffort: String? = null
+    /** The page's effort for a heard turn. Null, as when the native row armed hearing, is the runtime default. */
+    private var hearingEffort: ModelEffort? = null
     private var userMuted = false
     private var hearingUnavailable = false
+    /** The page is dictating into its draft: one hold on [hearing]. Never true while [talkOn]. */
+    private var dictating = false
+    private var dictationPartial = ""
+    /** Why dictation is unavailable, until the page starts it again. */
+    private var dictationNotice: String? = null
     /** The permission sentence is shown until the first arm, then the row stays quiet. */
     private var explained = false
     private var active: Session? = null
@@ -110,7 +116,9 @@ internal class DesktopChat(
         speech.onVoice { synchronized(gate) { if (!closed) publishPicker() } }
     }
 
-    private class Session(val scope: ChatScope, val persona: Persona, val history: ChatHistory, var record: ChatRecord) {
+    private class Session(val scope: ChatScope, val persona: Persona, val history: ChatHistory, var record: ChatRecord, val understood: Set<RuntimeId>) {
+        /** This lease's page asked for [ChatSnapshot.hearing]. Until then its results stay host-bridge v2. */
+        var pageHears = false
         var state = ChatState.READY
         var notice: String? = null
         var generation = 0
@@ -144,6 +152,13 @@ internal class DesktopChat(
         class Start(val ear: DesktopHearing?) : HearingArm
     }
 
+    private sealed interface DictationStep {
+        class Ready(val snapshot: ChatSnapshot) : DictationStep
+        class Start(val ear: DesktopHearing?) : DictationStep
+        /** Close the hold; [keep] answers its text, a cancel drops it. */
+        class Finish(val ear: DesktopHearing?, val keep: Boolean) : DictationStep
+    }
+
     /**
      * A turn answering the user entry [userEntryId] with [member], whose reply is the entry [replyId].
      * [mode] is what was asked; [work] is the folder once a working turn is confirmed, and [notice]
@@ -156,29 +171,47 @@ internal class DesktopChat(
     }
 
     /** Opening is the only operation allowed to replace an active conversation. */
-    override suspend fun open(scope: ChatScope): ChatSnapshot = synchronized(gate) {
-        check(!closed)
-        val old = active
-        if (old != null && old.scope.sameChat(scope) && old.state !in setOf(ChatState.ERROR, ChatState.DISCONNECTED)) {
-            notePage(scope)
+    override suspend fun open(scope: ChatScope): ChatSnapshot = open(scope, SharedRules.LEGACY_RUNTIMES)
+
+    override suspend fun openForClient(args: ChatOpenForClient): ChatSnapshot = open(args.scope(), SharedRules.understood(args.supportedRuntimes))
+
+    private fun open(scope: ChatScope, understood: Set<RuntimeId>): ChatSnapshot = synchronized(ownershipGate) {
+        require(!isConverted(scope.profile, scope.companionId)) { "Use the coordinator conversation for this companion" }
+        beforeOpen()
+        synchronized(gate) state@{
+            require(!isConverted(scope.profile, scope.companionId)) { "Use the coordinator conversation for this companion" }
+            check(!closed)
+            val old = active
+            if (old != null && old.scope.sameChat(scope) && old.understood != understood) throw BridgeUpdateRequiredException()
+            if (old != null && old.scope.sameChat(scope) && old.state !in setOf(ChatState.ERROR, ChatState.DISCONNECTED)) {
+                notePage(old, scope)
+                publishPicker()
+                return@state view(old)
+            }
+            invalidateLocked(keepEnded = false)
+            ended = null
+            val history = companionChatHistory(providerRoot, scope.profile, scope.companionId)
+            val record = history.read()
+            requireDecodable(understood, record.runtimeIds())
+            val snapshot = view(Session(scope, Persona.companion(scope.name), history, record, understood).also { notePage(it, scope); active = it })
             publishPicker()
-            return@synchronized view(old)
+            if (liveFillers.enabled) speech.warmFillers(FILLER_LINES)
+            snapshot
         }
-        invalidateLocked(keepEnded = false)
-        ended = null
-        notePage(scope)
-        val history = companionChatHistory(providerRoot, scope.profile, scope.companionId)
-        val snapshot = view(Session(scope, Persona.companion(scope.name), history, history.read()).also { active = it })
-        publishPicker()
-        if (liveFillers.enabled) speech.warmFillers(FILLER_LINES)
-        snapshot
+    }
+
+    /** A conversion cannot cancel a legacy turn or race a new send. */
+    fun <T> whileIdle(profile: String, companionId: String, action: () -> T): T = synchronized(gate) {
+        val session = active?.takeIf { it.scope.profile == profile && it.scope.companionId == companionId }
+        if (session?.state in setOf(ChatState.RESPONDING, ChatState.HANDING_OVER, ChatState.AWAITING_YOU)) throw BridgeBusyException()
+        action()
     }
 
     /** Polling cannot reopen an expired lease, but a view the host ended keeps reading its final state. */
     override suspend fun snapshot(scope: ChatScope): ChatSnapshot = synchronized(gate) {
-        notePage(scope)
         publishPicker()
-        ended?.takeIf { !closed && it.first.sameChat(scope) }?.second?.copy(voice = speech.status()) ?: view(current(scope))
+        ended?.takeIf { !closed && it.first.sameChat(scope) }?.second?.copy(voice = speech.status())
+            ?: current(scope).let { notePage(it, scope); view(it) }
     }
 
     /**
@@ -190,7 +223,9 @@ internal class DesktopChat(
     override suspend fun send(args: ChatSend): ChatSnapshot = synchronized(gate) { submitLocked(args) }
 
     private fun submitLocked(args: ChatSend): ChatSnapshot {
+        require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
         val session = current(args.scope())
+        requireDecodable(session.understood, listOf(args.member.runtimeId))
         if (session.record.entries.any { it.id == args.requestId }) return view(session)
         if (session.state == ChatState.AWAITING_YOU) return refuse(session, ANSWER_FIRST)
         if (session.state == ChatState.RESPONDING || session.state == ChatState.HANDING_OVER) throw BridgeBusyException()
@@ -219,7 +254,9 @@ internal class DesktopChat(
      * no reply or switch is in progress.
      */
     override suspend fun retry(args: ChatRetry): ChatSnapshot = synchronized(gate) {
+        require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
         val session = current(args.scope())
+        requireDecodable(session.understood, listOf(args.member.runtimeId))
         val record = session.record
         if (record.entries.any { it.id == args.requestId }) return@synchronized view(session)
         if (session.state == ChatState.AWAITING_YOU) return@synchronized refuse(session, ANSWER_FIRST)
@@ -321,7 +358,9 @@ internal class DesktopChat(
      * and, when there is something it missed, handed a summary (or the recent messages) on the worker.
      */
     override suspend fun handover(args: ChatHandover): ChatSnapshot = synchronized(gate) {
+        require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
         val session = current(args.scope())
+        requireDecodable(session.understood, listOfNotNull(args.to.runtimeId, args.from?.runtimeId))
         if (session.record.entries.any { it.id == args.requestId } || session.handover?.requestId == args.requestId) return@synchronized view(session)
         // A refusal is a snapshot with a notice and no new entry; the page keeps the current member.
         if (session.state == ChatState.AWAITING_YOU) return@synchronized refuse(session, ANSWER_FIRST)
@@ -329,6 +368,9 @@ internal class DesktopChat(
         if (session.state == ChatState.HANDING_OVER) return@synchronized refuse(session, "Another switch is still in progress.")
         val to = args.to.runtimeId
         if (to !in runtimes) { session.notice = missing(to); return@synchronized view(session) }
+        // Heard turns follow the switch: the current member answers them, at its default effort, until the next press.
+        hearingMember = null
+        hearingEffort = null
         val from = args.from
         // A member that only worked here has spoken too: its summary comes from its talk-only runtime, from the transcript.
         val canSummarize = from != null && from.runtimeId in runtimes &&
@@ -351,8 +393,8 @@ internal class DesktopChat(
      * or cancels a handover being prepared. With neither in progress it changes nothing.
      */
     override suspend fun stop(scope: ChatScope): ChatSnapshot = synchronized(gate) {
-        notePage(scope)
         val session = current(scope)
+        notePage(session, scope)
         if (talkOn) {
             endConversationLocked()
             return@synchronized view(session)
@@ -375,8 +417,8 @@ internal class DesktopChat(
 
     /** Audio can stop independently while text generation continues. */
     override suspend fun stopSpeaking(scope: ChatScope): ChatSnapshot = synchronized(gate) {
-        notePage(scope)
-        val session = current(scope); session.speak = false; speech.stop(); publishPicker(); view(session)
+        val session = current(scope); notePage(session, scope)
+        session.speak = false; speech.stop(); publishPicker(); view(session)
     }
 
     /** An old view cannot close the newly opened companion. */
@@ -402,15 +444,31 @@ internal class DesktopChat(
 
     private fun current(scope: ChatScope): Session = checkNotNull(active?.takeIf { !closed && it.scope.sameChat(scope) }) { "Chat view expired" }
 
-    /** A v2 page leaves [ChatScope.hearing] unset. A later page sets it, or calls [hearing]. */
-    private fun notePage(scope: ChatScope) {
-        if (scope.hearing == true) pageHears = true
+    /**
+     * A v2 page leaves [ChatScope.hearing] unset. A later page sets it, or calls [hearing]. Called only
+     * once [scope] holds [session]'s lease, so a stale view cannot opt in another page's lease.
+     */
+    private fun notePage(session: Session, scope: ChatScope) {
+        if (scope.hearing == true) session.pageHears = true
     }
     private fun live(session: Session, generation: Int = session.generation) = !closed && active === session && generation == session.generation
-    private fun view(session: Session) = ChatSnapshot(session.state, session.record.entries,
-        session.refusal?.takeIf { it.first == session.state }?.second ?: session.notice, speech.status(), session.failure,
-        session.waiting?.takeIf { session.state == ChatState.AWAITING_YOU },
-        if (pageHears) hearingField() else null)
+    private fun view(session: Session): ChatSnapshot {
+        requireDecodable(session.understood, session.record.runtimeIds())
+        return ChatSnapshot(session.state, session.record.entries,
+            session.refusal?.takeIf { it.first == session.state }?.second ?: session.notice, speech.status(), session.failure,
+            session.waiting?.takeIf { session.state == ChatState.AWAITING_YOU },
+            if (session.pageHears) hearingField() else null, dictationField())
+    }
+
+    /** Present while dictating, or with the reason it stopped until the page starts again. */
+    private fun dictationField(): ChatDictation? = when {
+        dictating -> {
+            val partial = dictationPartial.trim().take(ChatLimits.MESSAGE).takeIf { it.isNotEmpty() }
+            ChatDictation(if (partial == null) DictationState.LISTENING else DictationState.HEARING, partial = partial)
+        }
+        dictationNotice != null -> ChatDictation(DictationState.UNAVAILABLE, notice = dictationNotice!!.take(ChatLimits.NOTICE))
+        else -> null
+    }
 
     /** Present on this build. An older snapshot that omitted [ChatSnapshot.hearing] still decodes. */
     private fun hearingField(): ChatHearing {
@@ -757,17 +815,27 @@ internal class DesktopChat(
      */
     override suspend fun hearing(args: ChatHearingRequest): ChatSnapshot {
         val armed = synchronized(gate) {
+            val arming = args.action == HearingAction.PRESS || args.action == HearingAction.HANDS_FREE
+            // Arming checks what a chat.send of the heard text would, so a turn is not lost after capture.
+            if (arming) require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
             val session = current(args.scope())
+            // The handshake is not a change, so even a refused call opts the lease in.
+            session.pageHears = true
+            if (arming) requireDecodable(session.understood, listOf(args.member.runtimeId))
             if (session.state == ChatState.AWAITING_YOU && args.action != HearingAction.OFF && args.action != HearingAction.RELEASE) {
                 return@synchronized HearingArm.Ready(refuse(session, ANSWER_FIRST))
             }
+            if (arming && args.member.runtimeId !in offered) {
+                return@synchronized HearingArm.Ready(view(session).copy(notice = args.member.runtimeId.copy.notOffered))
+            }
             pageOwnsCapture = true
-            pageHears = true
             when (args.action) {
-                HearingAction.PRESS, HearingAction.HANDS_FREE -> {
+                HearingAction.PRESS, HearingAction.HANDS_FREE -> if (dictating) {
+                    HearingArm.Ready(refuse(session, TALK_WHILE_DICTATING))
+                } else {
                     hearingMember = args.member
                     hearingEffort = args.effort
-                    log(LogLevel.Info, "hearing", "page action=${args.action.name.lowercase()} effort=${if (hearingEffort == null) "default" else "page"}")
+                    log(LogLevel.Info, "hearing", "page action=${args.action.name.lowercase()} effort=${hearingEffort?.value ?: "default"}")
                     if (talkOn && replyLiveLocked()) {
                         bargeInLocked("press")
                         HearingArm.Ready(view(session))
@@ -802,6 +870,94 @@ internal class DesktopChat(
                 synchronized(gate) { view(current(args.scope())) }
             }
         }
+    }
+
+    /**
+     * Dictation is one hold on the hearing engine: [DesktopHearing.down] streams the transcript into the snapshot, and
+     * stop waits for the last decode, outside the lock, and answers the text once. Nothing is sent or spoken. Starting
+     * stops reply audio so the microphone does not hear Ember. It works while a dialog waits, since it sends nothing.
+     */
+    override suspend fun dictation(args: ChatDictationRequest): ChatSnapshot {
+        val step = synchronized(gate) {
+            val session = current(args.scope())
+            pageOwnsCapture = true
+            when (args.action) {
+                DictationAction.START -> when {
+                    dictating -> DictationStep.Ready(view(session))
+                    talkOn -> {
+                        dictationNotice = DICTATION_WHILE_TALKING
+                        DictationStep.Ready(view(session))
+                    }
+                    else -> {
+                        dictating = true
+                        dictationPartial = ""
+                        dictationNotice = null
+                        explained = true
+                        if (playbackAudible()) speech.stop()
+                        log(LogLevel.Info, "dictation", "start")
+                        publishPicker()
+                        DictationStep.Start(hearing)
+                    }
+                }
+                DictationAction.STOP, DictationAction.CANCEL ->
+                    if (dictating) DictationStep.Finish(hearing, keep = args.action == DictationAction.STOP)
+                    else DictationStep.Ready(view(session))
+            }
+        }
+        return when (step) {
+            is DictationStep.Ready -> step.snapshot
+            is DictationStep.Start -> {
+                launchDictation(step.ear)
+                synchronized(gate) { view(current(args.scope())) }
+            }
+            is DictationStep.Finish -> {
+                val heard = step.ear?.let(::finishHold)
+                synchronized(gate) {
+                    dictating = false
+                    dictationPartial = ""
+                    publishPicker()
+                    val text = heard?.trim()?.take(ChatLimits.MESSAGE)?.takeIf { step.keep && it.isNotEmpty() }
+                    log(LogLevel.Info, "dictation", "${if (step.keep) "stop" else "cancel"} chars=${text?.length ?: 0}")
+                    val snapshot = view(current(args.scope()))
+                    if (step.keep) snapshot.copy(dictation = ChatDictation(DictationState.DONE, text = text)) else snapshot
+                }
+            }
+        }
+    }
+
+    private fun launchDictation(ear: DesktopHearing?) {
+        if (ear == null) return dictationUnavailable(DICTATION_NEEDS_MODELS)
+        // A voice conversation that just ended may still be letting go of the microphone.
+        ear.awaitStopped(MICROPHONE_HANDOFF_MS)
+        val started = ear.down(
+            onPartial = { text ->
+                synchronized(gate) {
+                    if (dictating && text != dictationPartial) {
+                        dictationPartial = text
+                        publishPicker()
+                    }
+                }
+            },
+            onFailed = { message ->
+                dictationUnavailable(if (message.contains("denied", ignoreCase = true)) VoiceConversation.MIC_SETTINGS_NOTICE else message)
+            },
+        )
+        if (!started) dictationUnavailable(MICROPHONE_IN_USE)
+    }
+
+    private fun dictationUnavailable(notice: String) = synchronized(gate) {
+        dictating = false
+        dictationPartial = ""
+        dictationNotice = notice
+        log(LogLevel.Info, "dictation", "unavailable")
+        publishPicker()
+    }
+
+    /** Close the hold and wait for its last decode. Null when the hold had already failed or ended. */
+    private fun finishHold(ear: DesktopHearing): String? {
+        var text: String? = null
+        ear.up { text = it.text }
+        return text
     }
 
     /** Opens one session. A call while one is already open returns the live engine only when [talkOn] was just set. */
@@ -1162,7 +1318,7 @@ internal class DesktopChat(
                 hearingNotice = null
                 submitLocked(ChatSend(
                     session.scope.profile, session.scope.companionId, session.scope.name, session.scope.sessionId,
-                    member, UUID.randomUUID().toString(), decision.text, speak = true, mode = MemberMode.TALK,
+                    member, UUID.randomUUID().toString(), decision.text, speak = true, mode = MemberMode.TALK, effort = hearingEffort,
                 ))
                 fillerTurn.begin()
                 if (session.state == ChatState.RESPONDING && session.speak && fillerTurn.arm(System.nanoTime())) {
@@ -1195,11 +1351,13 @@ internal class DesktopChat(
             talkOn = false
             playbackNoted = false
             pageOwnsCapture = false
-            pageHears = false
             hearingMember = null
             hearingEffort = null
             userMuted = false
             hearingUnavailable = false
+            dictating = false
+            dictationPartial = ""
+            dictationNotice = null
             explained = false
             resumePending = false
             guardGeneration++
@@ -1234,6 +1392,15 @@ internal data class StageLatency(
 /** Every send, retry and handover while a native dialog is up is refused with this. */
 internal const val ANSWER_FIRST = "Answer the approval first."
 
+/** Talk and dictation share the microphone, so each waits for the other. */
+internal const val DICTATION_WHILE_TALKING = "End the voice conversation to dictate."
+internal const val TALK_WHILE_DICTATING = "Finish dictating to start a voice conversation."
+internal const val DICTATION_NEEDS_MODELS = "Dictation needs the hearing models. Run scripts/fetch-voice.sh, then rebuild."
+/** How long dictation waits for a capture that is stopping to let go of the microphone. */
+private const val MICROPHONE_HANDOFF_MS = 1_000L
+/** The microphone is held by another capture, such as the native chat row's. */
+internal const val MICROPHONE_IN_USE = "The microphone is in use. Try again in a moment."
+
 /** How long a talk-only reply may take. */
 private const val TALK_TIMEOUT_MINUTES = 3L
 
@@ -1247,7 +1414,7 @@ private fun failureKind(failure: ChatFailure) = when (failure) {
     ChatFailure.ModelUnavailable -> ChatFailureKind.MODEL_UNAVAILABLE
     ChatFailure.Temporary -> ChatFailureKind.TEMPORARY
     ChatFailure.Lockdown -> ChatFailureKind.LOCKDOWN
-    ChatFailure.ConversationLost, ChatFailure.Unexpected -> ChatFailureKind.UNEXPECTED
+    ChatFailure.ConversationLost, ChatFailure.Unexpected, ChatFailure.ProjectTrustRequired, ChatFailure.ProjectTrustTooBroad -> ChatFailureKind.UNEXPECTED
 }
 
 /** A lost sign-in leaves the chat "disconnected"; every other failure is an error the person can retry. */
@@ -1266,6 +1433,9 @@ private fun couldNotComplete(runtime: RuntimeId) = "${runtime.copy.program} coul
 
 /** The person-facing reason a turn failed. Raw runtime output never reaches it. */
 internal fun failureNotice(runtime: RuntimeId, failure: ChatFailure, zone: ZoneId = ZoneId.systemDefault()): String = when (failure) {
+    ChatFailure.ProjectTrustRequired -> "Work did not start. ${runtime.copy.product} needs your approval to trust this project and load its instructions."
+    ChatFailure.ProjectTrustTooBroad -> "Work did not start. ${runtime.copy.program} treats your home folder, or a folder above it, " +
+        "as this project, and Hovel will not ask you to trust all of that. Choose a project folder that is its own repository."
     ChatFailure.SignedOut -> signedOutNotice(runtime)
     is ChatFailure.UsageLimit -> "You've reached your ${runtime.copy.product} usage limit. " +
         (failure.resetsAt?.let { "It resets at ${resetTime(it, zone)}." } ?: "Try again later.")

@@ -297,8 +297,9 @@ unknown capabilities; an empty list means no selectable effort. Codex supplies
 `supportedReasoningEfforts` and `defaultReasoningEffort`; Claude supplies
 `supportsEffort` and `supportedEffortLevels`, with no assumed default.
 
-`chat.send` and `chat.retry` accept optional `effort` separately from member
-identity. Talk and Work forward it to Codex `turn/start.effort` or Claude
+`chat.send`, `chat.retry` and `chat.hearing` accept optional `effort`
+separately from member identity; `chat.hearing`'s applies to the talk turns it
+hears. Talk and Work forward it to Codex `turn/start.effort` or Claude
 `--effort`. The page resolves Auto to the advertised default, when known, so
 Codex does not retain an earlier turn's override. Claude Work includes effort
 in its process-reuse key and resumes the conversation after changing it.

@@ -24,9 +24,11 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogWindow
+import androidx.compose.ui.window.DialogModalityType
 import androidx.compose.ui.window.rememberDialogState
 import java.awt.Desktop
 import java.awt.EventQueue
@@ -59,8 +61,10 @@ internal class ComposeDialogPresenter(private val window: () -> Window?) : Dialo
  * Renders the dialog [presenter] shows, if any. Its buttons stay disabled for
  * [DIALOG_ARMING_MILLIS] after it appears, so a click or key press meant for something else cannot
  * answer it. The dismiss button (Deny, Not now) is the primary one, and closing the window, Escape
- * and Enter all choose it.
+ * and Enter all choose it. Modeless dialogs keep the chat's Stop and Close controls reachable;
+ * approval decisions remain native and cancellation dismisses the outstanding question.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 internal fun NativeDialogHost(presenter: ComposeDialogPresenter) {
     val shown = presenter.shown ?: return
@@ -74,6 +78,7 @@ internal fun NativeDialogHost(presenter: ComposeDialogPresenter) {
             title = "Hovel",
             resizable = true,
             alwaysOnTop = true,
+            modalityType = DialogModalityType.Modeless,
             onPreviewKeyEvent = { event ->
                 val decline = event.type == KeyEventType.KeyDown && (event.key == Key.Escape || event.key == Key.Enter || event.key == Key.NumPadEnter)
                 if (decline) shown.answer(dismiss)

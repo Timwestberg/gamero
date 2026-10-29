@@ -67,11 +67,12 @@ test("Ember speaks in Chrome: chosen blend, cached reload, barge-in within one c
       assert.deepEqual(last.pieces.map((piece) => piece.chars), [14, 66, 26]);
       assert.ok(last.pieces.every((piece) => piece.audioMs > 300));
       assert.ok(Object.values(report.files).every((file) => file.source === "network"));
+      assert.equal(report.lexiconSource, "built", "the first load builds the lexicon pack");
       assert.equal(report.downloadedBytes, 198_251_088);
       if (report.backend === "webgpu") assert.ok(last.rtf < 1, `real-time factor ${last.rtf}`);
       assert.match(await page.locator("#voice-status").textContent(), /ready/);
       metrics.backend = report.backend;
-      metrics.firstLoad = { bytes: report.downloadedBytes, readyMs: report.readyMs, downloadMs: report.downloadMs, lexiconMs: report.lexiconMs, sessionMs: report.sessionMs, warmupMs: report.warmupMs, ttfaColdMs: last.ttfaMs, wallMs: Date.now() - started };
+      metrics.firstLoad = { bytes: report.downloadedBytes, readyMs: report.readyMs, lexiconSource: report.lexiconSource, downloadMs: report.downloadMs, lexiconMs: report.lexiconMs, sessionMs: report.sessionMs, warmupMs: report.warmupMs, ttfaColdMs: last.ttfaMs, wallMs: Date.now() - started };
     });
 
     await t.test("a warm reply starts fast and keeps up with playback", async () => {
@@ -89,10 +90,11 @@ test("Ember speaks in Chrome: chosen blend, cached reload, barge-in within one c
       const report = await page.evaluate(() => window.__app.voice.report());
       assert.ok(Object.values(report.files).every((file) => file.source === "cache"), JSON.stringify(report.files));
       assert.equal(report.downloadedBytes, 0);
+      assert.equal(report.lexiconSource, "cache", "a reload reads the prepared lexicon instead of rebuilding it");
       const voiceGets = server.requests.slice(before).filter((request) => request.path.startsWith("/voice-assets/"));
       assert.deepEqual(voiceGets, [], "no voice file was requested again");
       const last = await sayAndFinish(page, "Back again, from the cache.");
-      metrics.cached = { readyMs: report.readyMs, cacheReadMs: Math.max(...Object.values(report.files).map((file) => file.ms)), lexiconMs: report.lexiconMs, sessionMs: report.sessionMs, warmupMs: report.warmupMs, ttfaMs: last.ttfaMs };
+      metrics.cached = { readyMs: report.readyMs, lexiconSource: report.lexiconSource, cacheReadMs: Math.max(...Object.values(report.files).map((file) => file.ms)), lexiconMs: report.lexiconMs, sessionMs: report.sessionMs, warmupMs: report.warmupMs, ttfaMs: last.ttfaMs };
     });
 
     await t.test("clicking the talk button while Ember speaks stops her within one chunk", async () => {

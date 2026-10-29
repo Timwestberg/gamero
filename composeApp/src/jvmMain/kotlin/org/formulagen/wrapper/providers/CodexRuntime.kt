@@ -67,7 +67,8 @@ internal fun scrubCodexEnvironment(environment: MutableMap<String, String>) {
         (it.startsWith("CODEX_") && it !in KEPT_CODEX_VARIABLES) }
 }
 
-private val KEPT_CODEX_VARIABLES = setOf("CODEX_HOME", "CODEX_CA_CERTIFICATE")
+/** The only `CODEX_*` variables a Codex child or login keeps: the player's Codex home and network setup. */
+internal val KEPT_CODEX_VARIABLES = setOf("CODEX_HOME", "CODEX_CA_CERTIFICATE")
 
 /**
  * Hovel's old per-profile Codex home, `<providers root>/<profile>/codex`, from when Hovel signed
@@ -84,10 +85,11 @@ internal fun legacyCodexProfileHome(root: Path, profile: String): Path {
 /** Prefer explicit configuration, then an installed executable; never download a runtime. */
 internal fun findCodexExecutable(environment: Map<String, String>): Path? {
     val configured = environment["GAMERO_CODEX_PATH"]
+    val home = environment["HOME"] ?: System.getProperty("user.home")
     val candidates = if (configured != null) listOf(configured) else
         environment["PATH"].orEmpty().split(java.io.File.pathSeparator).filter { it.isNotBlank() }
             .map { Path.of(it).resolve("codex").toString() } + listOf(
-            "/opt/homebrew/bin/codex", "/usr/local/bin/codex",
+            "$home/.local/bin/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex",
             "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex")
     return candidates.mapNotNull { runCatching { Path.of(it) }.getOrNull() }
         .firstOrNull { it.isAbsolute && Files.isRegularFile(it) && Files.isExecutable(it) }
