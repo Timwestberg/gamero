@@ -12,6 +12,7 @@ import org.formulagen.wrapper.chat.WorkRuntime
 import org.formulagen.wrapper.chat.loggingDaemonThreads
 import org.formulagen.wrapper.closeInReverse
 import org.formulagen.wrapper.hovel.HostConnection
+import org.formulagen.wrapper.hovel.HovelStatusException
 
 /**
  * What this Mac's voice needs from the running account: where heard turns go ([connected], null once the
@@ -43,13 +44,23 @@ internal class ConversationHost(
     @Volatile private var running: Running? = null
     private val publishing = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-project-folders"))
 
-    /** The account the runner serves, and how its folders reach the account. */
-    private class Running(val accountId: String, val publisher: ProjectFolderPublisher, val readableBy: () -> List<RuntimeId>)
+    /** The account the runner serves, how its folders reach the account, and whether a project is this Mac's. */
+    private class Running(
+        val accountId: String,
+        val publisher: ProjectFolderPublisher,
+        val readableBy: () -> List<RuntimeId>,
+        val owns: (projectId: String) -> Boolean?,
+    )
 
-    /** `project.*` for the page: answers `failed` until this Mac is connected to an account. */
-    val projects = DesktopProjects(folders, { running?.accountId }, { running?.readableBy?.invoke().orEmpty() }) { accountId, projectId ->
-        running?.takeIf { it.accountId == accountId }?.let { current -> runCatching { publishing.execute { current.publisher.publish(projectId) } } }
-    }
+    /** `project.*` for the page: answers `failed` until this Mac is connected to an account, and for another Mac's project. */
+    val projects = DesktopProjects(folders, { running?.accountId }, { running?.readableBy?.invoke().orEmpty() },
+        changed = { accountId, projectId ->
+            running?.takeIf { it.accountId == accountId }?.let { current ->
+                runCatching { publishing.execute { current.publisher.publish(projectId) } }
+            }
+        },
+        owns = { accountId, projectId -> running?.takeIf { it.accountId == accountId }?.owns?.invoke(projectId) },
+    )
 
     /** Start the runner for [connection]'s account. Closing the answer stops it and its runtimes. */
     fun start(connection: HostConnection): AutoCloseable {
@@ -66,10 +77,12 @@ internal class ConversationHost(
             val publisher = ProjectFolderPublisher(folders, api, registration.ownerId, registration.id, engine::readableBy)
             val directory = HostDirectory(providers, registration.ownerId, registration.id, offered,
                 working.intersect(workRuntimes.map { it.id }.toSet()), connection.features, connection.providerState)
-            val runner = ConversationRunner(api, store, engine, approvals, folders, publisher, directory::heartbeat, connection.heartbeat, connection.status,
-                replies = voice ?: ReplyListeners.NONE)
+            val runner = ConversationRunner(api, store, engine, approvals, folders, publisher, directory::heartbeat, connection.heartbeat,
+                connection.status, replies = voice ?: ReplyListeners.NONE)
             owned += runner
-            running = Running(registration.ownerId, publisher, engine::readableBy)
+            running = Running(registration.ownerId, publisher, engine::readableBy) { projectId ->
+                projectOnThisMac(api, folders, registration.ownerId, registration.id, projectId)
+            }
             runner.start()
             voice?.connected(heardTurns(api, runner))
             return AutoCloseable {
@@ -87,6 +100,19 @@ internal class ConversationHost(
     override fun close() { publishing.shutdownNow() }
 
     companion object {
+        /**
+         * Whether [projectId] runs on computer [hostId], as the account says (`GET projects/:id`, which answers only this
+         * computer's projects). A refusal marks it another computer's here; null when the account cannot be reached.
+         */
+        internal fun projectOnThisMac(api: ConversationApi, folders: ProjectFolderStore, accountId: String, hostId: String,
+            projectId: String): Boolean? = try {
+            api.project(projectId).computerId == hostId
+        } catch (refusal: HovelStatusException) {
+            if (!refusal.final) null else { folders.foreign(accountId, projectId); false }
+        } catch (_: Exception) {
+            null
+        }
+
         /** Where the runner's Grok runtimes keep their bindings: apart from team chat's, so neither prunes the other's. */
         fun grokRoot(providerRoot: Path): Path = providerRoot.resolve("conversation-runtimes")
     }

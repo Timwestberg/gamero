@@ -46,7 +46,8 @@ internal fun brain(vararg specialists: Pair<String, MemberMode>, workflow: Boole
 /** One conversation's fixed parts: its project, companion and account records as a claim carries them. */
 internal class TestConversation(val id: String = id(), val projectId: String = id(), val companionId: String = id(), val computerId: String = id()) {
     fun claim(claimId: String, message: ConversationMessage, document: BrainDocument, history: List<ConversationMessage> = emptyList(),
-        thread: ConversationThread? = null, recalledMemory: String? = null, projectRevision: Long = 3, speak: Boolean = false) = ClaimResult(
+        thread: ConversationThread? = null, recalledMemory: String? = null, projectRevision: Long = 3,
+        speak: Boolean = false) = ClaimResult(
         document, claimId, AccountCompanion(companionId, buildJsonObject { put("body", "round") }, "Ember", 1),
         Conversation(false, id, AT, projectId, 2, null, speak, "Add sign-in"), history, message,
         CompanionProject(false, companionId, computerId, emptyList(), projectId, "Hovel notes", projectRevision), recalledMemory, thread,
@@ -134,6 +135,8 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     @Volatile var sendStatus: Int? = null
     /** Sends that fail as unreachable before one gets through. */
     @Volatile var sendFailures = 0
+    /** Sends the server stores and queues, then loses the answer of, as a timeout after the commit. */
+    @Volatile var lostSendAnswers = 0
     /** Queues a sent heard turn for its claim; null leaves it unqueued, as a message the web cancelled at once. */
     @Volatile var onSend: ((conversationId: String, message: ConversationMessage) -> Queued?)? = null
 
@@ -204,6 +207,7 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
         if (sent.any { it.second.id == request.id }) return stored
         sent += conversationId to request
         onSend?.invoke(conversationId, stored)?.let { queue(conversationId, it) }
+        if (lostSendAnswers > 0) { lostSendAnswers--; throw java.io.IOException("the answer was lost") }
         return stored
     }
 

@@ -62,6 +62,8 @@ internal class DesktopChat(
     private val isConverted: (String, String) -> Boolean = { _, _ -> false },
     private val beforeOpen: () -> Unit = {},
     private val ownershipGate: Any = Any(),
+    /** The Mac's voice settings, shared with conversations; built from the parameters above when none is given. */
+    settings: TalkSettings = TalkSettings(fillers, fillerFile, route, duplexChoice, silenceMs, guardMs, bargeMs),
 ) : ChatCapability, AutoCloseable {
     private val runtimes = runtimes.associateBy { it.id }
     private val workers: Map<RuntimeId, WorkRuntime> = work?.runtimes.orEmpty()
@@ -89,7 +91,7 @@ internal class DesktopChat(
         }
 
         /** A heard turn is a talk turn to the member the page named, or the active member, spoken. */
-        override fun sendHeard(result: HearingResult): HearingCommit {
+        override fun sendHeardLocked(result: HearingResult): HearingCommit {
             val session = active ?: return HearingCommit.Ignore
             val member = hearingMember ?: Handovers.currentMember(session.record.entries)
             val decision = decideHearing(result, member, session.state)
@@ -98,14 +100,15 @@ internal class DesktopChat(
                 is HearingCommit.Notice -> session.notice = decision.text
                 is HearingCommit.Send -> submitLocked(ChatSend(
                     session.scope.profile, session.scope.companionId, session.scope.name, session.scope.sessionId,
-                    checkNotNull(member), UUID.randomUUID().toString(), decision.text, speak = true, mode = MemberMode.TALK, effort = hearingEffort,
+                    checkNotNull(member), UUID.randomUUID().toString(), decision.text, speak = true, mode = MemberMode.TALK,
+                    effort = hearingEffort,
                 ))
             }
             return decision
         }
 
         /** The turn ends with no notice and its partial reply kept; heard turns are spoken from here on. */
-        override fun interrupt() {
+        override fun interruptLocked() {
             val session = active ?: return
             val turn = session.turn
             session.generation++
@@ -120,7 +123,7 @@ internal class DesktopChat(
             turn?.stop()
         }
 
-        override fun endReply(): Boolean {
+        override fun endReplyLocked(): Boolean {
             val session = active ?: return false
             if (session.state != ChatState.RESPONDING && session.state != ChatState.AWAITING_YOU) return false
             val turn = session.turn
@@ -129,16 +132,15 @@ internal class DesktopChat(
             return true
         }
 
-        override fun lastReply(): String {
+        override fun lastReplyLocked(): String {
             val assistant = active?.record?.entries?.lastOrNull { it is ChatEntry.Assistant } as? ChatEntry.Assistant
             return assistant?.text.orEmpty()
         }
 
-        override fun changed() = publishPicker()
+        override fun changedLocked() = publishPicker()
     }
 
-    private val talk = TalkLoop(gate, talkHost, speech, hearing, route, duplexChoice, timer, fillers, fillerFile, silenceMs, guardMs,
-        bargeMs, ChatLimits.MESSAGE)
+    private val talk = TalkLoop(gate, talkHost, speech, hearing, settings, timer, ChatLimits.MESSAGE)
 
     /** Stage times of the last heard turn. */
     internal val stageLatency: StageLatency? get() = talk.stageLatency
@@ -219,7 +221,7 @@ internal class DesktopChat(
             requireDecodable(understood, record.runtimeIds())
             val snapshot = view(Session(scope, Persona.companion(scope.name), history, record, understood).also { notePage(it, scope); active = it })
             publishPicker()
-            talk.warm()
+            talk.warmLocked()
             snapshot
         }
     }
@@ -255,7 +257,7 @@ internal class DesktopChat(
         if (session.state == ChatState.RESPONDING || session.state == ChatState.HANDING_OVER) throw BridgeBusyException()
         val kind = args.member.runtimeId
         if (kind !in offered) return view(session).copy(notice = kind.copy.notOffered)
-        talk.cancelFiller()
+        talk.cancelFillerLocked()
         speech.stop()
         val text = args.text.trimEcma()
         val record = session.record
@@ -420,7 +422,7 @@ internal class DesktopChat(
         val session = current(scope)
         notePage(session, scope)
         if (talk.on) {
-            talk.end()
+            talk.endLocked()
             return@synchronized view(session)
         }
         val handover = session.handover
@@ -481,8 +483,8 @@ internal class DesktopChat(
         return ChatSnapshot(session.state, session.record.entries,
             session.refusal?.takeIf { it.first == session.state }?.second ?: session.notice, speech.status(), session.failure,
             session.waiting?.takeIf { session.state == ChatState.AWAITING_YOU },
-            if (session.pageHears) talk.hearing().let { ChatHearing(it.state, it.partial, it.notice) } else null,
-            talk.dictation()?.let { ChatDictation(it.state, partial = it.partial, notice = it.notice) })
+            if (session.pageHears) talk.hearingLocked().let { ChatHearing(it.state, it.partial, it.notice) } else null,
+            talk.dictationLocked()?.let { ChatDictation(it.state, partial = it.partial, notice = it.notice) })
     }
 
     /** A refusal: no change, and its notice stays in every snapshot until the chat's state changes. */
@@ -582,7 +584,7 @@ internal class DesktopChat(
 
     /** One turn's events, applied only while its view and generation are current and the reply is open. */
     private inner class Reply(val session: Session, val generation: Int, val turn: InFlight, val request: TurnRequest, val retried: Boolean) : TurnEvents {
-        private val spoken = talk.spokenReply()
+        private val spoken = talk.spokenReplyLocked()
         private val member = turn.member
         private val kind = member.runtimeId
         private val working = request.work != null
@@ -616,7 +618,7 @@ internal class DesktopChat(
             if (!open()) return@synchronized
             updateReply(session, turn.replyId, text)
             if (session.speak && !working) {
-                spoken.grow(text)
+                spoken.growLocked(text)
                 publishPicker()
             }
         }
@@ -644,8 +646,8 @@ internal class DesktopChat(
                 session.notice = "This reply could not be saved. Keep this chat open and try again later."
             }
             if (session.speak) {
-                talk.replyArrived()
-                spoken.finish(text)
+                talk.replyArrivedLocked()
+                spoken.finishLocked(text)
             }
             publishPicker()
         }
@@ -728,7 +730,7 @@ internal class DesktopChat(
         session.turn = null; session.speak = false; session.handover = null; session.inFlight = null
         // A start-of-work dialog still up is denied; an approval is denied by the runtime's stop or release.
         session.waiting = null; session.startCancel?.cancel(); session.startCancel = null
-        talk.cancelFiller()
+        talk.cancelFillerLocked()
         if (release) session.used.forEach { runtimes[it]?.release(); workers[it]?.release() }
         speech.stop()
         runCatching { session.history.write(session.record) }
@@ -736,8 +738,8 @@ internal class DesktopChat(
     }
 
     private fun publishPicker() {
-        talk.observe()
-        voices?.update(talk.picker(open = !closed && active != null, product = product))
+        talk.observeLocked()
+        voices?.update(talk.pickerLocked(open = !closed && active != null, product = product))
     }
 
     /**
@@ -765,7 +767,7 @@ internal class DesktopChat(
             if (arming && args.member.runtimeId !in offered) {
                 return@synchronized HearingArm.Ready(view(session).copy(notice = args.member.runtimeId.copy.notOffered))
             }
-            talk.pageOwns()
+            talk.pageOwnsLocked()
             when (args.action) {
                 HearingAction.PRESS, HearingAction.HANDS_FREE -> if (talk.isDictating) {
                     HearingArm.Ready(refuse(session, TALK_WHILE_DICTATING))
@@ -773,18 +775,18 @@ internal class DesktopChat(
                     hearingMember = args.member
                     hearingEffort = args.effort
                     log(LogLevel.Info, "hearing", "page action=${args.action.name.lowercase()} effort=${hearingEffort?.value ?: "default"}")
-                    if (talk.press()) HearingArm.Start else HearingArm.Ready(view(session))
+                    if (talk.pressLocked()) HearingArm.Start else HearingArm.Ready(view(session))
                 }
                 HearingAction.RELEASE, HearingAction.OFF -> {
-                    talk.end()
+                    talk.endLocked()
                     HearingArm.Ready(view(session))
                 }
                 HearingAction.MUTE -> {
-                    talk.mute()
+                    talk.muteLocked()
                     HearingArm.Ready(view(session))
                 }
                 HearingAction.UNMUTE -> {
-                    talk.unmute()
+                    talk.unmuteLocked()
                     HearingArm.Ready(view(session))
                 }
             }
@@ -802,8 +804,8 @@ internal class DesktopChat(
     override suspend fun dictation(args: ChatDictationRequest): ChatSnapshot {
         val step = synchronized(gate) {
             val session = current(args.scope())
-            talk.pageOwns()
-            when (val step = talk.dictate(args.action)) {
+            talk.pageOwnsLocked()
+            when (val step = talk.dictateLocked(args.action)) {
                 DictationStep.Ready -> return view(session)
                 else -> step
             }
@@ -812,7 +814,7 @@ internal class DesktopChat(
             is DictationStep.Finish -> {
                 val heard = talk.awaitDictation()
                 synchronized(gate) {
-                    val text = talk.dictationEnded(heard, step.keep)
+                    val text = talk.dictationEndedLocked(heard, step.keep)
                     val snapshot = view(current(args.scope()))
                     if (step.keep) snapshot.copy(dictation = ChatDictation(DictationState.DONE, text = text)) else snapshot
                 }
@@ -850,7 +852,7 @@ internal class DesktopChat(
             work?.startOfWork?.forget(it.scope.sessionId)
             hearingMember = null
             hearingEffort = null
-            talk.reset()
+            talk.resetLocked()
             // A reply cut off by the closed view leaves its message unanswered, for a retry after reconnecting.
             fail(it, null, null, ChatState.ERROR, "This chat was closed. Reconnect to continue.")
             if (keepEnded) ended = it.scope to view(it)

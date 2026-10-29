@@ -325,9 +325,13 @@ internal class DesktopSpeech(
         }
     }
 
-    /** Caller holds [gate]. A stream already open for this generation is left alone. */
+    /**
+     * Caller holds [gate]. A stream already open for this generation is left alone. A new one picks up a voice chosen
+     * meanwhile in the voice file, by another speaker included; the old engine is released after any synthesis queued.
+     */
     private fun ensureStreamLocked() {
         if (playQueue != null && streamTicket == generation) return
+        refreshKokoroChoiceLocked()?.let { stale -> runCatching { worker.execute { runCatching { stale.release() } } } }
         val ticket = generation
         streamTicket = ticket
         streamIndex = 0

@@ -27,8 +27,9 @@ import org.formulagen.wrapper.storage.sha256
  *
  * Every visible step is a checkpoint, kept in the record's outbox until the server stores it; [run] answers
  * the state that settles the message. A coordinator reply in the main conversation also reaches the claim's
- * listener as it streams and once written ([ClaimOutput.wrote]), so this Mac can speak it. Work dialogs (start of work, stages, the resume review, provider
- * permissions) race the phone through [approvals]. Provider turns go through [turns].
+ * listener as it streams and once written ([ClaimOutput.wrote]), so this Mac can speak it. Work dialogs
+ * (start of work, stages, the resume review, provider permissions) race the phone through [approvals].
+ * Provider turns go through [turns].
  */
 internal class CoordinatorEngine(
     private val store: ConversationStore,

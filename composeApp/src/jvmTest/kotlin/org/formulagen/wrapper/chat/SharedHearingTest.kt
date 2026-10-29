@@ -20,8 +20,13 @@ class SharedHearingTest {
         override fun up(onResult: (HearingResult) -> Unit): Boolean {
             running = false; calls += "up"; onResult(HearingResult("heard", 900, 1.0)); return true
         }
-        override fun startSession(silenceMs: Int, onPartial: (String) -> Unit, onUtterance: (HearingResult) -> Unit, onFailed: (String) -> Unit,
-            onFrame: (voicedMs: Int, chunkMs: Int, vadProb: Float) -> Unit): Boolean {
+        override fun startSession(
+            silenceMs: Int,
+            onPartial: (String) -> Unit,
+            onUtterance: (HearingResult) -> Unit,
+            onFailed: (String) -> Unit,
+            onFrame: (voicedMs: Int, chunkMs: Int, vadProb: Float) -> Unit,
+        ): Boolean {
             if (running) return false
             running = true; failed = onFailed; calls += "session"; return true
         }

@@ -30,7 +30,6 @@ import org.formulagen.wrapper.bridge.HostContractCapability
 import org.formulagen.wrapper.bridge.ProjectCapability
 import org.formulagen.wrapper.bridge.ConversationVoiceCapability
 import org.formulagen.wrapper.conversations.ConversationHost
-import org.formulagen.wrapper.conversations.ConversationVoiceSettings
 import org.formulagen.wrapper.conversations.DesktopConversationVoice
 import org.formulagen.wrapper.conversations.ConversationStore
 import org.formulagen.wrapper.conversations.ProjectFolderStore
@@ -55,6 +54,7 @@ import org.formulagen.wrapper.chat.DesktopSpeech
 import org.formulagen.wrapper.chat.DesktopHearing
 import org.formulagen.wrapper.chat.HearingRoute
 import org.formulagen.wrapper.chat.SharedHearing
+import org.formulagen.wrapper.chat.TalkSettings
 import org.formulagen.wrapper.chat.VoicePickerModel
 import java.nio.file.Files
 import org.formulagen.wrapper.voice.EmberAudio
@@ -207,18 +207,16 @@ internal class DesktopServices private constructor(
                 val choice = chooseDuplex(readDuplexRequest(environment), EmberAudio.tryLoad(environment), selfCheck)
                 val route = HearingRoute(choice, environment)
                 // One microphone: team chat and conversations each hold a share, and only one captures at a time.
-                val hearing = own(SharedHearing(DesktopHearing(openHearingEngine(environment["HOVEL_HEARING_MODEL"].orEmpty()), route::openMic)))
+                val hearingEngine = openHearingEngine(environment["HOVEL_HEARING_MODEL"].orEmpty())
+                val hearing = own(SharedHearing(DesktopHearing(hearingEngine, route::openMic)))
                 val fillerFile = fillerChoiceFile(environment)
+                // One set of voice preferences: a filler choice or a duplex fallback holds in team chat and every conversation.
+                val talkSettings = TalkSettings(readFillerSettings(environment, readSavedFillers(fillerFile)), fillerFile, route, choice,
+                    hearingSilenceMs(environment), hearingGuardMs(environment), hearingBargeMs(environment))
                 val chat = own(DesktopChat(
                     providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment), route::openLine), offered, work, voicePicker,
-                    fillers = readFillerSettings(environment, readSavedFillers(fillerFile)),
-                    fillerFile = fillerFile,
-                    silenceMs = hearingSilenceMs(environment),
-                    guardMs = hearingGuardMs(environment),
                     hearing = hearing.user(),
-                    route = route,
-                    duplexChoice = choice,
-                    bargeMs = hearingBargeMs(environment),
+                    settings = talkSettings,
                     product = product,
                     isConverted = brainStore::converted,
                     beforeOpen = { brain?.invalidate() },
@@ -236,12 +234,10 @@ internal class DesktopServices private constructor(
                 val retained = { profile: String -> ConversationStore.bindingHandles(providerRoot, profile) }
                 val conversationsHere = product == HOVEL_PRODUCT && System.getProperty("os.name").contains("Mac")
                 val conversationPicker = VoicePickerModel()
-                // Conversation voice has its own speaker; the microphone is the share team chat does not hold.
+                // Conversation voice has its own speaker until step E removes team chat's; each conversation gets its own
+                // share of the microphone.
                 val conversationVoice = if (conversationsHere) own(DesktopConversationVoice(
-                    DesktopSpeech(desktopVoiceConfig(environment), route::openLine), hearing.user(), route,
-                    ConversationVoiceSettings(choice, readFillerSettings(environment, readSavedFillers(fillerFile)), fillerFile,
-                        hearingSilenceMs(environment), hearingGuardMs(environment), hearingBargeMs(environment)),
-                    conversationPicker, product,
+                    DesktopSpeech(desktopVoiceConfig(environment), route::openLine), hearing, talkSettings, conversationPicker, product,
                 )) else null
                 val conversations = if (conversationsHere) own(ConversationHost(
                     providerRoot, ProjectFolderStore(providerRoot, NativeFolderPicker { window }), providers, nativeDialogs, offered, working,
@@ -281,8 +277,9 @@ internal class DesktopServices private constructor(
  * The product packs a desktop host registers. Every desktop product has chat, providers, pet,
  * games and project folders; Hovel adds its companion and the companion projects capabilities:
  * `project` (a project's folders on this Mac), the `host.contract` handshake, `conversationVoice`
- * (voice in conversations, on a Mac with them) and phone `approvals`, which desktop never supports. A missing implementation registers as `Unsupported`, so its methods answer
- * `unsupported` instead of `unknown-method`.
+ * (voice in conversations, on a Mac with them) and phone `approvals`, which desktop never supports.
+ * A missing implementation registers as `Unsupported`, so its methods answer `unsupported` instead
+ * of `unknown-method`.
  */
 internal fun desktopProductPacks(
     product: String,

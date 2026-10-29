@@ -47,8 +47,10 @@ private class DesktopResources : AutoCloseable {
     val windowActive = AtomicBoolean(false)
     var services: DesktopServices? = null
     private var keyboardClient: CefClient? = null
+    // Escape the page receives is the page's: team chat keeps its catalog barge-in here, and a project conversation's
+    // page sends its own barge-in only when it has no other use for the key. The window's own Escape reaches both.
     private val keyboard = BrowserEditKeyboard(browser::get, windowActive::get, onEscape = {
-        services?.endVoiceConversation() == true
+        services?.chat?.endConversation() == true
     })
 
     fun attachBrowser(target: org.cef.browser.CefBrowser) {

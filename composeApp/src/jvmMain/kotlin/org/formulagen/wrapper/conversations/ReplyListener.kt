@@ -2,8 +2,9 @@ package org.formulagen.wrapper.conversations
 
 /**
  * What this Mac hears of one claimed message as it runs: the coordinator's replies in the main
- * conversation, as they stream and once written, and the end of the run. Voice speaks them
- * ([VoiceConversation]); threads are never heard. Calls come from the run's threads and must not block.
+ * conversation, as they stream and once written, whether a delegated task has started, and the end
+ * of the run. Voice speaks the replies ([VoiceConversation]); threads are never heard. Calls come from
+ * the run's threads and must not block.
  */
 internal interface ReplyListener {
     /** One more piece of reply [replyId], in order. A repaired reply streams under a new id. */
@@ -11,6 +12,9 @@ internal interface ReplyListener {
 
     /** Coordinator message [replyId] in the main conversation is written, with its whole [text]; it may never have streamed. */
     fun appended(replyId: String, text: String) {}
+
+    /** The run has delegated: a thread is queued or working for it. From here on it is the agents' work, not only a reply. */
+    fun threadStarted() {}
 
     /** The message settled, or will settle from the journal: nothing more comes for it. */
     fun ended() {}

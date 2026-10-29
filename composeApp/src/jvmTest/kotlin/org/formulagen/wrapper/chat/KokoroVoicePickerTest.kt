@@ -4,6 +4,8 @@ import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import org.formulagen.wrapper.bridge.ChatScope
 import org.formulagen.wrapper.bridge.ChatVoice
+import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
+import org.formulagen.wrapper.voice.HearingDuplex
 import org.formulagen.wrapper.voice.kokoroVoices
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -59,6 +61,24 @@ class KokoroVoicePickerTest {
         } finally {
             root.toFile().deleteRecursively()
         }
+    }
+}
+
+class VoicePickerStateTest {
+    private val voices = listOf(VoiceChoice("adam70-michael30", "Sam"))
+
+    @Test fun theCatalogOwnsTeamChatsRowAndAConversationOwnsItsOwnInEveryProduct() {
+        val half = HearingDuplex.HALF
+        val catalog = voicePickerState(true, true, voices, "adam70-michael30", duplexMode = half, duplexReason = "aec-unavailable")
+        assertTrue(catalog.visible && catalog.showTalk)
+        assertEquals("Half duplex · aec-unavailable", catalog.duplexLabel)
+        val paged = voicePickerState(true, true, voices, "adam70-michael30", pageOwnsTalk = true, duplexMode = HearingDuplex.FULL)
+        assertTrue(paged.visible)
+        assertFalse(paged.showTalk, "the page owns Talk")
+        assertEquals("Full duplex", paged.duplexLabel)
+        assertFalse(voicePickerState(true, true, voices, "adam70-michael30", product = HOVEL_PRODUCT).visible, "team chat in Hovel")
+        val conversation = voicePickerState(true, true, voices, "adam70-michael30", product = HOVEL_PRODUCT, owned = true)
+        assertTrue(conversation.visible && conversation.showTalk, "a conversation's row shows in Hovel")
     }
 }
 

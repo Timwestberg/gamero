@@ -1,7 +1,8 @@
 package org.formulagen.wrapper.conversations
 
-import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
 import org.formulagen.wrapper.bridge.ConversationDictationArgs
 import org.formulagen.wrapper.bridge.ConversationHearingArgs
 import org.formulagen.wrapper.bridge.ConversationVoiceCapability
@@ -9,45 +10,45 @@ import org.formulagen.wrapper.bridge.ConversationVoiceStatus
 import org.formulagen.wrapper.bridge.DictationAction
 import org.formulagen.wrapper.bridge.HearingAction
 import org.formulagen.wrapper.chat.ChatSpeech
-import org.formulagen.wrapper.chat.Hearing
-import org.formulagen.wrapper.chat.HearingRoute
+import org.formulagen.wrapper.chat.SharedHearing
+import org.formulagen.wrapper.chat.TalkSettings
 import org.formulagen.wrapper.chat.VoicePickerModel
 import org.formulagen.wrapper.chat.VoicePickerState
 import org.formulagen.wrapper.chat.loggingDaemonThreads
-import org.formulagen.wrapper.voice.DuplexChoice
-import org.formulagen.wrapper.voice.FillerSettings
-
-/** The settings every conversation's voice shares on this Mac. */
-internal class ConversationVoiceSettings(
-    val duplex: DuplexChoice,
-    val fillers: FillerSettings,
-    val fillerFile: Path?,
-    val silenceMs: Int,
-    val guardMs: Int,
-    val bargeMs: Int,
-)
 
 /**
- * `conversationVoice.*` on the Mac: the microphone and speaker serve one conversation at a time, its
- * [VoiceConversation]. A page's action names the conversation and moves the voice to it, unless Talk or
- * dictation is on in another, which keeps it (the answer then names that conversation). A claimed
- * message of the served conversation is spoken by it; one of another conversation whose `speak` is on
- * moves the voice there when nothing is in progress, so the first reply keeps the speaker. [hearing] is
- * the conversations' share of the Mac's microphone, which team chat shares too.
+ * `conversationVoice.*` on the Mac, named like `DesktopProjects` and `DesktopChat`: the microphone and speaker serve
+ * one conversation at a time, its [VoiceConversation], each with its own share of [microphone] and the [settings]
+ * team chat shares too.
+ *
+ * - A page's action names the conversation and moves the voice to it, unless Talk or dictation is on in another,
+ *   which keeps it (the answer then names that conversation).
+ * - A claimed message of the served conversation is spoken by it; one of another conversation whose `speak` is on
+ *   moves the voice there when nothing is in progress, so the first reply keeps the speaker.
+ * - A heard turn given up on before its claim never runs: its id is kept here, checked before any routing, and
+ *   journaled as a stop on claim ([HeardTurns.abandon]), which holds across a move, the page going away and a restart.
  */
 internal class DesktopConversationVoice(
     private val speech: ChatSpeech,
-    private val hearing: Hearing?,
-    private val route: HearingRoute?,
-    private val settings: ConversationVoiceSettings,
+    private val microphone: SharedHearing?,
+    private val settings: TalkSettings,
     private val picker: VoicePickerModel?,
     private val product: String,
+    /** How long a posted heard turn waits for its claim before Talk listens again. */
+    private val claimWaitMs: Long = HEARD_CLAIM_WAIT_MS,
+    private val now: () -> Long = System::nanoTime,
+    /** Waits between a heard turn's post attempts. */
+    private val sleep: (Long) -> Unit = Thread::sleep,
+    /** Runs the voice's timers: the resume guard, fillers and the claim wait. */
+    private val timer: ScheduledExecutorService =
+        Executors.newSingleThreadScheduledExecutor(loggingDaemonThreads("hovel-conversation-voice-timer")),
 ) : ConversationVoiceCapability, ConversationVoiceLink, AutoCloseable {
     private val lock = Any()
     @Volatile private var current: VoiceConversation? = null
     @Volatile private var turns: HeardTurns? = null
     @Volatile private var closed = false
-    private val timer = Executors.newSingleThreadScheduledExecutor(loggingDaemonThreads("hovel-conversation-voice-timer"))
+    /** Heard turns given up on before their claim, by message id. */
+    private val abandoned: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val worker = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-conversation-voice"))
 
     init {
@@ -61,13 +62,22 @@ internal class DesktopConversationVoice(
         this.turns = turns
     }
 
-    override fun forClaim(claim: ClaimResult, stop: () -> Unit): ReplyListener? = synchronized(lock) {
-        if (closed) return null
-        val id = claim.conversation.id
-        val voice = current
-        if (voice?.conversationId == id) return voice.forClaim(claim, stop)
-        if (!claim.conversation.speak || voice?.busy == true) return null
-        serve(id).forClaim(claim, stop)
+    override fun forClaim(claim: ClaimResult, stop: () -> Unit): ReplyListener? {
+        // An abandoned heard turn stops on arrival, whichever conversation the voice serves now.
+        if (abandoned.remove(claim.message.id)) {
+            stop()
+            return null
+        }
+        return synchronized(lock) {
+            if (closed) return@synchronized null
+            val id = claim.conversation.id
+            val voice = current
+            when {
+                voice?.conversationId == id -> voice.forClaim(claim, stop)
+                !claim.conversation.speak || voice?.busy == true -> null
+                else -> serveLocked(id).forClaim(claim, stop)
+            }
+        }
     }
 
     override suspend fun dictation(args: ConversationDictationArgs): ConversationVoiceStatus {
@@ -81,7 +91,8 @@ internal class DesktopConversationVoice(
         return voice.hearing(args.action)
     }
 
-    override suspend fun voiceStatus(): ConversationVoiceStatus = current?.status() ?: ConversationVoiceStatus(null, voice = speech.status())
+    override suspend fun voiceStatus(): ConversationVoiceStatus =
+        current?.status() ?: ConversationVoiceStatus(null, voice = speech.status())
 
     /** The voice row's voice choice: the next spoken sentence uses [id], and a short line plays now. */
     internal fun chooseSpokenVoice(id: String) {
@@ -89,12 +100,12 @@ internal class DesktopConversationVoice(
         current?.refresh()
     }
 
-    /** The voice row's Talk icon, for the conversation the voice serves. */
+    /** The voice row's Talk icon, for the conversation the voice serves; it also ends a session the page started. */
     internal fun converseClick() { current?.talk?.click() }
 
     internal fun toggleFillers() { current?.talk?.toggleFillers() }
 
-    /** Escape: interrupts or ends Talk in the served conversation. False when Talk is off, so the page keeps the key. */
+    /** Escape from the native window: interrupts or ends Talk in the served conversation. False when Talk is off. */
     internal fun escape(): Boolean = current?.talk?.escape() == true
 
     /**
@@ -117,26 +128,32 @@ internal class DesktopConversationVoice(
         when {
             voice?.conversationId == conversationId -> voice
             !starts || voice?.engaged == true -> null
-            else -> serve(conversationId)
+            else -> serveLocked(conversationId)
         }
     }
 
-    /** Serve [conversationId] from now on; the voice it served lets go. Holds [lock]. */
-    private fun serve(conversationId: String): VoiceConversation {
+    /** Serve [conversationId] from now on; the voice it served lets go. Kokoro warms when Talk starts, not here. */
+    private fun serveLocked(conversationId: String): VoiceConversation {
         current?.close()
-        val voice = VoiceConversation(conversationId, speech, hearing, route, settings.duplex, timer, settings.fillers, settings.fillerFile,
-            settings.silenceMs, settings.guardMs, settings.bargeMs, { turns }, worker, ::publish)
+        val voice = VoiceConversation(conversationId, speech, microphone?.user(), settings, timer, { turns }, worker,
+            abandon = { messageId -> abandon(conversationId, messageId) }, onChange = ::publish, claimWaitMs = claimWaitMs,
+            now = now, sleep = sleep)
         current = voice
-        voice.talk.warm()
         voice.refresh()
         return voice
     }
 
-    /** The voice row shows the conversation the voice serves; any other is hidden. */
+    /** Give up on heard turn [messageId] of [conversationId]: it stops on arrival, here and in the journal. */
+    private fun abandon(conversationId: String, messageId: String) {
+        abandoned += messageId
+        turns?.let { link -> runCatching { link.abandon(conversationId, messageId) } }
+    }
+
+    /** The voice row shows the conversation the voice serves; any other is hidden. Called under [voice]'s lock. */
     private fun publish(voice: VoiceConversation) {
         val model = picker ?: return
         if (current !== voice) return
-        model.update(if (closed) VoicePickerState.Hidden else voice.picker(product))
+        model.update(if (closed) VoicePickerState.Hidden else voice.pickerLocked(product))
     }
 
     override fun close() {
@@ -149,7 +166,6 @@ internal class DesktopConversationVoice(
         }
         timer.shutdownNow()
         worker.shutdownNow()
-        hearing?.close()
         speech.close()
     }
 }

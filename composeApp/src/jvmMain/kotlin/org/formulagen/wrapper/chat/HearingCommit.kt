@@ -38,11 +38,10 @@ internal fun decideHearing(
 }
 
 /**
- * What a finished utterance should do in a conversation whose reply is [reply]: wait for a dialog, be
- * ignored while a reply is in progress, or be sent, at most [limit] characters.
+ * What a finished utterance should do in a project conversation whose reply is [reply]: be ignored while a
+ * reply is in progress, or be sent, at most [limit] characters. Its dialogs are native and never block a turn.
  */
 internal fun decideHeard(result: HearingResult, reply: TalkReply, limit: Int, minSpeechMs: Int = HEARING_MIN_SPEECH_MS): HearingCommit {
-    if (reply == TalkReply.AWAITING_YOU) return HearingCommit.Notice(ANSWER_FIRST)
     if (reply.busy) return HearingCommit.Ignore
     return heardText(result, limit, minSpeechMs)
 }

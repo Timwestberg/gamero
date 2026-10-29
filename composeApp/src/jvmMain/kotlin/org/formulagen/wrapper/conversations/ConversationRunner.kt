@@ -67,7 +67,8 @@ internal fun interface MessageEngine {
  *   `stopped` with no provider turn, and the lane claims again once the server takes it. A `stop.requested` for a
  *   conversation where this Mac runs and claims nothing claims it once, so a lost claim settles too.
  * - **Voice:** [wake] claims a conversation's next message at once, for a heard turn this Mac just sent, by the
- *   same claim, journal and fencing as `work.available`; [replies] names who hears each claimed message's replies.
+ *   same claim, journal and fencing as `work.available`; [replies] names who hears each claimed message's replies;
+ *   [stopOnClaim] journals a heard turn given up on, which then settles `stopped` on arrival with no provider turn.
  */
 internal class ConversationRunner(
     private val api: ConversationApi,
@@ -210,6 +211,16 @@ internal class ConversationRunner(
      */
     fun wake(conversationId: String) {
         if (!closed.get()) session(conversationId).poke()
+    }
+
+    /**
+     * Stop [messageId] as soon as it is claimed, with no provider turn: a heard turn given up on before its claim
+     * landed. The mark is journaled ([ConversationStore.stopOnClaim]), so it holds across a restart; a message of
+     * the conversation already running under that id stops at once.
+     */
+    fun stopOnClaim(conversationId: String, messageId: String) {
+        store.stopOnClaim(conversationId, messageId)
+        sessions[conversationId]?.cancel(messageId)
     }
 
     private fun session(conversationId: String): Session = sessions.computeIfAbsent(conversationId, ::Session)
@@ -456,7 +467,8 @@ internal class ConversationRunner(
             // Running at once, so a Stop from here on is never lost.
             val cancel = CancelSignal()
             current = Running(messageId, cancel)
-            val stoppedOnTheWay = stopPending.also { stopPending = false }
+            val abandoned = store.stopsOnClaim(conversationId, messageId)
+            val stoppedOnTheWay = stopPending.also { stopPending = false } || abandoned
             val listener = runCatching { replies.forClaim(claim, cancel::cancel) }
                 .onFailure { log(LogLevel.Warn, "conversations", "A claim's reply listener failed", it) }.getOrNull()
             try {
@@ -468,7 +480,10 @@ internal class ConversationRunner(
                 later { publisher.publish(claim.project.id) }
                 // A Stop that came while the claim was on its way: the message stops before any provider turn.
                 if (stoppedOnTheWay || cancel.isCancelled) {
-                    if (!closed.get()) settle(entry, MessageState.STOPPED)
+                    if (closed.get()) return
+                    settle(entry, MessageState.STOPPED)
+                    // The stop is journaled as the outcome now; a mark written meanwhile has done its work too.
+                    store.clearStopOnClaim(conversationId, messageId)
                     return
                 }
                 entry = store.journal(entry.copy(phase = ClaimPhase.LAUNCHING))

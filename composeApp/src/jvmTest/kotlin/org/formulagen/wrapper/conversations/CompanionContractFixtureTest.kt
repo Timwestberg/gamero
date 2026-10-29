@@ -81,7 +81,8 @@ class CompanionContractFixtureTest {
         assertEquals("ready", heartbeat.providerState)
         assertEquals(hovelHostFeatures(tasks = true, memory = true), heartbeat.features)
         val heard = fromWire(MessageSend.serializer(), fixtures.getValue("messageSend.heard").getValue("value"))
-        assertEquals(MessageSend(heard.id, emptyList(), "What time is it?", null), heard, "a heard turn attaches nothing, in the main conversation")
+        assertEquals(MessageSend(heard.id, emptyList(), "What time is it?", null), heard,
+            "a heard turn attaches nothing, in the main conversation")
         val queued = fromWire(ConversationMessage.serializer(), fixtures.getValue("message.queued").getValue("value"))
         assertEquals(MessageState.QUEUED to MessageAuthor.USER, queued.state to queued.author)
         val first = fromWire(ArtifactTextPage.serializer(), fixtures.getValue("artifactText.page").getValue("value"))
