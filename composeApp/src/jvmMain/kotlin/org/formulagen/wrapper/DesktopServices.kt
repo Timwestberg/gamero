@@ -6,6 +6,10 @@ import java.nio.file.Path
 import javax.swing.JFrame
 import org.formulagen.wrapper.bridge.Capability
 import org.formulagen.wrapper.bridge.CapabilityPack
+import org.formulagen.wrapper.brain.BrainStore
+import org.formulagen.wrapper.brain.DesktopBrain
+import org.formulagen.wrapper.bridge.BrainCapability
+import org.formulagen.wrapper.bridge.BrainMethods
 import org.formulagen.wrapper.bridge.ChatCapability
 import org.formulagen.wrapper.bridge.ChatMethods
 import org.formulagen.wrapper.bridge.CompanionCapability
@@ -26,6 +30,7 @@ import org.formulagen.wrapper.chat.ChatWork
 import org.formulagen.wrapper.chat.claude.ClaudeWorkRuntime
 import org.formulagen.wrapper.chat.codex.CodexWorkRuntime
 import org.formulagen.wrapper.workspace.DesktopWorkspace
+import org.formulagen.wrapper.workspace.NativeFilePicker
 import org.formulagen.wrapper.workspace.NativeFolderPicker
 import org.formulagen.wrapper.workspace.WorkspaceStore
 import org.formulagen.wrapper.chat.ClaudeChatRuntime
@@ -73,6 +78,7 @@ import org.formulagen.wrapper.providers.findCodexExecutable
  */
 internal class DesktopServices private constructor(
     val chat: DesktopChat,
+    val brain: DesktopBrain,
     val providers: DesktopProviders,
     val pet: DesktopPetLauncher,
     /** Each companion's project folder, chosen with the Mac's folder picker. */
@@ -88,11 +94,12 @@ internal class DesktopServices private constructor(
 ) : AutoCloseable {
     /** The product capability packs [product] registers with the bridge. */
     fun packs(product: String): List<CapabilityPack> =
-        desktopProductPacks(product, companion?.let(::HovelCompanionCapability), chat, providers, pet, games, workspace)
+        desktopProductPacks(product, companion?.let(::HovelCompanionCapability), chat, providers, pet, games, workspace, brain)
 
     /** The page's document context ended: end its chat view, close its game and void a pending approval. */
     fun invalidate() {
         companion?.invalidatePending()
+        brain.invalidate()
         chat.invalidate()
         games?.let { EventQueue.invokeLater(it::close) }
     }
@@ -146,6 +153,9 @@ internal class DesktopServices private constructor(
                 val workers = listOfNotNull(claude?.takeIf { RuntimeId.CLAUDE_CODE in working }?.let { ClaudeWorkRuntime(it, checkNotNull(claudeSignIn), broker) },
                     codex?.takeIf { RuntimeId.CODEX in working }?.let { CodexWorkRuntime(providerRoot, it, broker) })
                 val work = ChatWork(workspaces, StartOfWork(nativeDialogs), workers)
+                val brainStore = BrainStore(providerRoot)
+                val conversationOwnership = Any()
+                var brain: DesktopBrain? = null
                 val voicePicker = VoicePickerModel()
                 val selfCheck = readSelfCheck(runCatching { Files.readString(selfCheckFile(environment)) }.getOrNull())
                 val choice = chooseDuplex(readDuplexRequest(environment), EmberAudio.tryLoad(environment), selfCheck)
@@ -163,10 +173,15 @@ internal class DesktopServices private constructor(
                     duplexChoice = choice,
                     bargeMs = hearingBargeMs(environment),
                     product = product,
+                    isConverted = brainStore::converted,
+                    beforeOpen = { brain?.invalidate() },
+                    ownershipGate = conversationOwnership,
                 ))
                 // Both runtimes sign in outside Hovel, on the player's own install, so a status check never signs a chat out.
                 val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),
                     claudeSignIn?.let(::ClaudeProvider)), working))
+                brain = own(DesktopBrain(providerRoot, brainStore, runtimes, work, providers, nativeDialogs, NativeFilePicker { window },
+                    DesktopSpeech(desktopVoiceConfig(environment), route::openLine), chat::invalidate, chat::whileIdle, conversationOwnership))
                 val pet = own(DesktopPetLauncher(environment, support.resolve("ember-pet.log")))
                 val workspace = environment["GAMERO_WORKSPACE"]?.let(Path::of)
                 val companion = if (product == HOVEL_PRODUCT && System.getProperty("os.name").contains("Mac") &&
@@ -176,7 +191,7 @@ internal class DesktopServices private constructor(
                 val games = if (window != null && environment["HOVEL_GAME_PROJECT"] != null) {
                     DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }
                 } else null
-                return DesktopServices(chat, providers, pet, DesktopWorkspace(workspaces), dialogs, companion, games, voicePicker, owned.toList())
+                return DesktopServices(chat, brain, providers, pet, DesktopWorkspace(workspaces), dialogs, companion, games, voicePicker, owned.toList())
             } catch (error: Throwable) {
                 runCatching { closeInReverse(owned) }.exceptionOrNull()?.let(error::addSuppressed)
                 throw error
@@ -198,8 +213,10 @@ internal fun desktopProductPacks(
     pet: PetCapability?,
     games: GameCapability?,
     workspace: WorkspaceCapability?,
+    brain: BrainCapability? = null,
 ): List<CapabilityPack> = buildList {
     if (product == HOVEL_PRODUCT) add(CompanionMethods.pack(supportedIfPresent(companion)))
+    add(BrainMethods.pack(supportedIfPresent(brain)))
     add(ChatMethods.pack(supportedIfPresent(chat)))
     add(ProviderMethods.pack(supportedIfPresent(providers)))
     add(PetMethods.pack(supportedIfPresent(pet)))

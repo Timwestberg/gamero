@@ -66,6 +66,9 @@ internal class DesktopChat(
     duplexChoice: DuplexChoice = DuplexChoice(HearingDuplex.HALF, "default"),
     private val bargeMs: Int = HEARING_BARGE_SUSTAIN_MS,
     private val product: String = GAMERO_PRODUCT_NAME,
+    private val isConverted: (String, String) -> Boolean = { _, _ -> false },
+    private val beforeOpen: () -> Unit = {},
+    private val ownershipGate: Any = Any(),
 ) : ChatCapability, AutoCloseable {
     private val runtimes = runtimes.associateBy { it.id }
     private val workers: Map<RuntimeId, WorkRuntime> = work?.runtimes.orEmpty()
@@ -156,22 +159,34 @@ internal class DesktopChat(
     }
 
     /** Opening is the only operation allowed to replace an active conversation. */
-    override suspend fun open(scope: ChatScope): ChatSnapshot = synchronized(gate) {
-        check(!closed)
-        val old = active
-        if (old != null && old.scope.sameChat(scope) && old.state !in setOf(ChatState.ERROR, ChatState.DISCONNECTED)) {
+    override suspend fun open(scope: ChatScope): ChatSnapshot = synchronized(ownershipGate) {
+        require(!isConverted(scope.profile, scope.companionId)) { "Use the coordinator conversation for this companion" }
+        beforeOpen()
+        synchronized(gate) state@{
+            require(!isConverted(scope.profile, scope.companionId)) { "Use the coordinator conversation for this companion" }
+            check(!closed)
+            val old = active
+            if (old != null && old.scope.sameChat(scope) && old.state !in setOf(ChatState.ERROR, ChatState.DISCONNECTED)) {
+                notePage(scope)
+                publishPicker()
+                return@state view(old)
+            }
+            invalidateLocked(keepEnded = false)
+            ended = null
             notePage(scope)
+            val history = companionChatHistory(providerRoot, scope.profile, scope.companionId)
+            val snapshot = view(Session(scope, Persona.companion(scope.name), history, history.read()).also { active = it })
             publishPicker()
-            return@synchronized view(old)
+            if (liveFillers.enabled) speech.warmFillers(FILLER_LINES)
+            snapshot
         }
-        invalidateLocked(keepEnded = false)
-        ended = null
-        notePage(scope)
-        val history = companionChatHistory(providerRoot, scope.profile, scope.companionId)
-        val snapshot = view(Session(scope, Persona.companion(scope.name), history, history.read()).also { active = it })
-        publishPicker()
-        if (liveFillers.enabled) speech.warmFillers(FILLER_LINES)
-        snapshot
+    }
+
+    /** A conversion cannot cancel a legacy turn or race a new send. */
+    fun <T> whileIdle(profile: String, companionId: String, action: () -> T): T = synchronized(gate) {
+        val session = active?.takeIf { it.scope.profile == profile && it.scope.companionId == companionId }
+        if (session?.state in setOf(ChatState.RESPONDING, ChatState.HANDING_OVER, ChatState.AWAITING_YOU)) throw BridgeBusyException()
+        action()
     }
 
     /** Polling cannot reopen an expired lease, but a view the host ended keeps reading its final state. */
@@ -190,6 +205,7 @@ internal class DesktopChat(
     override suspend fun send(args: ChatSend): ChatSnapshot = synchronized(gate) { submitLocked(args) }
 
     private fun submitLocked(args: ChatSend): ChatSnapshot {
+        require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
         val session = current(args.scope())
         if (session.record.entries.any { it.id == args.requestId }) return view(session)
         if (session.state == ChatState.AWAITING_YOU) return refuse(session, ANSWER_FIRST)
@@ -219,6 +235,7 @@ internal class DesktopChat(
      * no reply or switch is in progress.
      */
     override suspend fun retry(args: ChatRetry): ChatSnapshot = synchronized(gate) {
+        require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
         val session = current(args.scope())
         val record = session.record
         if (record.entries.any { it.id == args.requestId }) return@synchronized view(session)
@@ -321,6 +338,7 @@ internal class DesktopChat(
      * and, when there is something it missed, handed a summary (or the recent messages) on the worker.
      */
     override suspend fun handover(args: ChatHandover): ChatSnapshot = synchronized(gate) {
+        require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
         val session = current(args.scope())
         if (session.record.entries.any { it.id == args.requestId } || session.handover?.requestId == args.requestId) return@synchronized view(session)
         // A refusal is a snapshot with a notice and no new entry; the page keeps the current member.
