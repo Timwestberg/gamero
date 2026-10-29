@@ -408,22 +408,38 @@ it themselves.
   the voice then serves it; the first reply keeps the speaker.
 - **Barge-in** (speech in full duplex, a press, or Escape) always flushes the
   speaker. It stops the message, as Stop does, only while that message is this
-  Talk session's own heard turn and no thread has started (`threadStarted`).
-  Once the coordinator has delegated, the agents' run continues: the reply
-  being said goes quiet and a later reply in the run is still spoken. The
-  person's Stop on the page still stops everything.
+  Talk session's own heard turn (one claimed after the 30 second wait
+  included) and no thread has started (`threadStarted`). Once the coordinator
+  has delegated, the agents' run continues: the reply being said goes quiet and
+  a later reply in the run is still spoken. The person's Stop on the page still
+  stops everything. A barge-in during a run never abandons a newer heard turn
+  waiting behind it.
+- **While agents work** on a run Talk waits for, Talk says "Agents are working
+  on this. Talk listens again when they finish; Stop interrupts them." until
+  the run ends: the microphone stays closed in half duplex, and in full duplex
+  what is heard is not sent.
 - **Ending Talk**, a microphone failure included, flushes the speaker,
-  abandons a heard turn not claimed yet, and says nothing more of the run. It
-  never stops a claimed message. The page turning Speak replies off sends
-  `off` for the served conversation, which stops the speaker the same way.
+  abandons heard turns not claimed yet, and says nothing more of the run. It
+  never stops a claimed message, and it ends the microphone session only when
+  one was on, so a dictation holding the microphone goes on.
+- **The page's actions** keep `ember-hearing.v1`'s words, with these meanings
+  in a conversation: `handsFree` arms Talk (or interrupts a reply when it is
+  on); `press` interrupts a reply and never arms (the page's Escape); `release`
+  quiets the speaker and mutes the rest of the run, leaving Talk and dictation
+  on (Speak replies off); `off` ends Talk, and with Talk off only quiets;
+  `mute` and `unmute` hold the microphone. Only `handsFree` makes the page
+  Talk's owner.
 - **An abandoned heard turn never runs.** Its id is kept by
   `DesktopConversationVoice` and checked before any routing, its remaining post
   attempts are skipped, and `ConversationRunner.stopOnClaim` journals a stop on
   claim in `ConversationStore` (`stop-on-claim/<message id>.json`). Whenever it
   is claimed, after the voice moved, the page went away or Hovel restarted, it
   settles `stopped` with no provider turn, and the mark is cleared once that
-  outcome is journaled. The project runs on one Mac, so this Mac's journal is
-  the whole rule; no server route is involved.
+  outcome is journaled. At quit or sign-out the voice gives up its heard turns
+  while the account link is still up (`connected(null)`), so those are
+  journaled too; one given up with no link is logged and held in memory only.
+  The project runs on one Mac, so this Mac's journal is the whole rule; no
+  server route is involved.
 - **The microphone** is one `SharedHearing`: team chat holds one share and each
   conversation its own, and only one captures at a time. The other, or a
   capture that cannot start, is told "The microphone is in use. Try again in a
@@ -431,11 +447,17 @@ it themselves.
 - **This Mac's projects only.** `project.folderStatus` asks the account
   (`GET projects/:id`) whether the project runs on this Mac and fails for any
   other, so a page offers voice, and folders, only on the project's own Mac.
-  When the account cannot be reached, what this Mac last learned stands.
-- **Escape.** The page owns Escape for conversations: it sends a barge-in only
-  when it has no other use for the key. The window's own Escape (the native
-  voice row focused) interrupts or ends the served conversation's Talk first,
-  then team chat's. Team chat keeps its catalog Escape as before.
+  The answer is recorded as `ProjectFolderPublisher` records a read: this
+  Mac's project is claimed, so its folders can be chosen again, and another
+  computer's is marked foreign. A project the account confirmed answers at
+  once and is checked again in the background; when the account cannot be
+  reached, what this Mac last learned stands.
+- **Escape.** The page owns Escape for conversations: it sends `press` only
+  when it has no other use for the key and the key is not ending a
+  composition. No page Escape reaches conversation voice natively: the JCEF
+  keyboard hook (`BrowserEditKeyboard`) and the window's key handler are team
+  chat's, as before, and the conversation's voice row hears Escape only while
+  it has focus, where it interrupts or ends that conversation's Talk.
 - **The voice row** shows the served conversation in Hovel too (its page has no
   voice choice or filler toggle). Its icon ends a session the page started and
   never starts one the page owns.
@@ -443,8 +465,9 @@ it themselves.
   the filler choice (remembered in `~/.gamero/voice-fillers`), the duplex mode
   (the hearing route's, which falls back to half duplex when the graph fails),
   and the timings. A choice made anywhere holds in the next conversation and
-  after the page reloads. Kokoro warms its fillers when Talk starts, not when a
-  conversation is served, and a new spoken stream re-reads the voice choice.
+  after the page reloads. Every arm, the row icon's included, warms the voice
+  engine (`ChatSpeech.warm`) and, when fillers are on, the fillers; serving a
+  conversation warms nothing. A new spoken stream re-reads the voice choice.
 - **The page going away** lets go of the microphone and stops speaking; the
   conversation's messages keep running.
 
