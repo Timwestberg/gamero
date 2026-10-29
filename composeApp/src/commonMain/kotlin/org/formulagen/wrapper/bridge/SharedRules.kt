@@ -46,6 +46,12 @@ object SharedRules {
         names.size <= CLIENT_RUNTIME_LIMIT && names.distinct().size == names.size && names.all(CLIENT_RUNTIME::matches)
     /** Recognized names only; advertising a name does not offer its runtime. */
     fun clientRuntimes(names: List<String>): Set<RuntimeId> = RuntimeId.entries.filter { it.wireName in names }.toSet()
+    /** The runtimes a page decodes: those it declared, or [LEGACY_RUNTIMES] for a page that predates declaring them. */
+    fun understood(names: List<String>?): Set<RuntimeId> {
+        if (names == null) return LEGACY_RUNTIMES
+        require(validClientRuntimes(names))
+        return clientRuntimes(names)
+    }
 
     /** The profile of a person who is not signed in. */
     const val LOCAL_PROFILE = "local"

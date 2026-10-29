@@ -161,10 +161,7 @@ internal class DesktopChat(
     /** Opening is the only operation allowed to replace an active conversation. */
     override suspend fun open(scope: ChatScope): ChatSnapshot = open(scope, SharedRules.LEGACY_RUNTIMES)
 
-    override suspend fun openForClient(args: ChatOpenForClient): ChatSnapshot {
-        require(SharedRules.validClientRuntimes(args.supportedRuntimes))
-        return open(args.scope(), SharedRules.clientRuntimes(args.supportedRuntimes))
-    }
+    override suspend fun openForClient(args: ChatOpenForClient): ChatSnapshot = open(args.scope(), SharedRules.understood(args.supportedRuntimes))
 
     private fun open(scope: ChatScope, understood: Set<RuntimeId>): ChatSnapshot = synchronized(ownershipGate) {
         require(!isConverted(scope.profile, scope.companionId)) { "Use the coordinator conversation for this companion" }
@@ -183,7 +180,7 @@ internal class DesktopChat(
             ended = null
             val history = companionChatHistory(providerRoot, scope.profile, scope.companionId)
             val record = history.read()
-            if (!understood.containsAll(record.runtimeIds())) throw BridgeUpdateRequiredException()
+            requireDecodable(understood, record.runtimeIds())
             val snapshot = view(Session(scope, Persona.companion(scope.name), history, record, understood).also { notePage(it, scope); active = it })
             publishPicker()
             if (liveFillers.enabled) speech.warmFillers(FILLER_LINES)
@@ -216,7 +213,7 @@ internal class DesktopChat(
     private fun submitLocked(args: ChatSend): ChatSnapshot {
         require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
         val session = current(args.scope())
-        if (args.member.runtimeId !in session.understood) throw BridgeUpdateRequiredException()
+        requireDecodable(session.understood, listOf(args.member.runtimeId))
         if (session.record.entries.any { it.id == args.requestId }) return view(session)
         if (session.state == ChatState.AWAITING_YOU) return refuse(session, ANSWER_FIRST)
         if (session.state == ChatState.RESPONDING || session.state == ChatState.HANDING_OVER) throw BridgeBusyException()
@@ -247,7 +244,7 @@ internal class DesktopChat(
     override suspend fun retry(args: ChatRetry): ChatSnapshot = synchronized(gate) {
         require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
         val session = current(args.scope())
-        if (args.member.runtimeId !in session.understood) throw BridgeUpdateRequiredException()
+        requireDecodable(session.understood, listOf(args.member.runtimeId))
         val record = session.record
         if (record.entries.any { it.id == args.requestId }) return@synchronized view(session)
         if (session.state == ChatState.AWAITING_YOU) return@synchronized refuse(session, ANSWER_FIRST)
@@ -351,8 +348,7 @@ internal class DesktopChat(
     override suspend fun handover(args: ChatHandover): ChatSnapshot = synchronized(gate) {
         require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
         val session = current(args.scope())
-        if (args.to.runtimeId !in session.understood || args.from?.runtimeId?.let { it !in session.understood } == true)
-            throw BridgeUpdateRequiredException()
+        requireDecodable(session.understood, listOfNotNull(args.to.runtimeId, args.from?.runtimeId))
         if (session.record.entries.any { it.id == args.requestId } || session.handover?.requestId == args.requestId) return@synchronized view(session)
         // A refusal is a snapshot with a notice and no new entry; the page keeps the current member.
         if (session.state == ChatState.AWAITING_YOU) return@synchronized refuse(session, ANSWER_FIRST)
@@ -445,7 +441,7 @@ internal class DesktopChat(
     }
     private fun live(session: Session, generation: Int = session.generation) = !closed && active === session && generation == session.generation
     private fun view(session: Session): ChatSnapshot {
-        if (!session.understood.containsAll(session.record.runtimeIds())) throw BridgeUpdateRequiredException()
+        requireDecodable(session.understood, session.record.runtimeIds())
         return ChatSnapshot(session.state, session.record.entries,
             session.refusal?.takeIf { it.first == session.state }?.second ?: session.notice, speech.status(), session.failure,
             session.waiting?.takeIf { session.state == ChatState.AWAITING_YOU },
@@ -803,7 +799,7 @@ internal class DesktopChat(
             val session = current(args.scope())
             // The handshake is not a change, so even a refused call opts the lease in.
             session.pageHears = true
-            if (arming && args.member.runtimeId !in session.understood) throw BridgeUpdateRequiredException()
+            if (arming) requireDecodable(session.understood, listOf(args.member.runtimeId))
             if (session.state == ChatState.AWAITING_YOU && args.action != HearingAction.OFF && args.action != HearingAction.RELEASE) {
                 return@synchronized HearingArm.Ready(refuse(session, ANSWER_FIRST))
             }

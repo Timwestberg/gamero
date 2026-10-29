@@ -99,17 +99,17 @@ private fun projectSmoke(presenter: DialogPresenter, progress: (String) -> Unit)
                 Thread.sleep(300)
                 snapshot = brainJson.decodeFromJsonElement(call("snapshot"))
                 progress("$providerId · ${snapshot.run?.state} · ${snapshot.attempts.lastOrNull()?.role?.name.orEmpty()}\n${snapshot.waiting?.summary.orEmpty()}\nProject: $project")
-            } while (snapshot.run?.state in setOf("planning", "running", "awaiting-approval") && System.nanoTime() < deadline)
+            } while (snapshot.run?.state?.active == true && System.nanoTime() < deadline)
             Files.writeString(root.resolve("snapshot.json"), call("snapshot").toString())
-            check(snapshot.run?.state == "completed") { "Ended ${snapshot.run?.state}: ${snapshot.notice ?: snapshot.waiting?.summary}" }
-            check(snapshot.attempts.count { it.state == "completed" } == 5)
+            check(snapshot.run?.state == BrainRunState.COMPLETED) { "Ended ${snapshot.run?.state}: ${snapshot.notice ?: snapshot.waiting?.summary}" }
+            check(snapshot.attempts.count { it.state == BrainAttemptState.COMPLETED } == 5)
             check(snapshot.attempts.map { it.role.roleId } == roles.map { it.id })
             check(Files.readString(project.resolve("greeting.md")).trim().removeSuffix(".") == "Hello from the coordinated brain")
             check(Files.readString(project.resolve("review.md")).contains("PASS"))
             check(Files.readString(project.resolve("ready.md")).contains("Ready for merge"))
             snapshot.artifacts.forEach { check(store.bytes(scope.profile, scope.companionId, it).isNotEmpty()) }
             call("close"); call("open")
-            check(brainJson.decodeFromJsonElement<BrainSnapshot>(call("snapshot")).run?.state == "completed")
+            check(brainJson.decodeFromJsonElement<BrainSnapshot>(call("snapshot")).run?.state == BrainRunState.COMPLETED)
             check(BrainStore(root).readRecord(scope.profile, scope.companionId).run?.attempts?.size == 5)
             println("BRAIN_PROJECT_SMOKE verified model=${model.modelId} roles=5 artifacts=${snapshot.artifacts.size} project=$project")
         }
@@ -129,7 +129,7 @@ private fun reopenSmoke(root: Path, presenter: DialogPresenter) {
         DesktopBrain(root, store, emptyList(), ChatWork(WorkspaceStore(root, FolderPicker { _, _ -> error("No folder picker during recovery") }), StartOfWork(dialogs), emptyList()), providers, dialogs, FilePicker { null }, speech, {}).use { brain ->
             val scope = brainWire(ChatScope("local", companion, "Workflow smoke", brainId())).jsonObject
             // Reopening pauses unfinished work, except a run that was already waiting for the user's message.
-            val expected = if (original.summary.state in setOf("completed", "cancelled", "failed", "awaiting-input")) original.summary.state else "paused"
+            val expected = if (original.summary.state.terminal || original.summary.state == BrainRunState.AWAITING_INPUT) original.summary.state else BrainRunState.PAUSED
             runBlocking { brain.call("open", scope) }
             repeat(10) {
                 Thread.sleep(200)
