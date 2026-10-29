@@ -30,7 +30,7 @@ internal class GrokLaunch private constructor(
         check(version?.exitCode == 0 && grokVersionSupported(version.output)) { "Untested Grok version" }
         val inspected = runBounded(builder(listOf("--no-auto-update", "inspect", "--json")), budget.remaining())
         check(inspected?.exitCode == 0) { "Grok inspection unavailable" }
-        verifyGrokInspection(Json.parseToJsonElement(inspected.output).jsonObject)
+        verifyGrokInspection(Json.parseToJsonElement(inspected.output).jsonObject, grokHome.resolve("config.toml"))
         checkPolicies()
     }
 
@@ -115,21 +115,37 @@ private fun removeGrokLaunchFolder(folder: Path) {
     })
 }
 
-/** Require known discovery arrays and reject warnings rather than assuming an absent field means empty. */
-internal fun verifyGrokInspection(report: JsonObject) {
+/**
+ * Require known discovery arrays and reject warnings rather than assuming an absent field means empty.
+ * The only configuration Grok loaded must be the isolated [config] Hovel wrote.
+ */
+internal fun verifyGrokInspection(report: JsonObject, config: Path) {
     for (key in listOf("projectInstructions", "hooks", "skills", "plugins", "mcpServers", "lspServers"))
         check((report[key] as? JsonArray)?.isEmpty() == true) { "Grok discovery is not isolated: $key" }
     for (key in listOf("configWarnings", "mcpConfigProblems"))
         check(report[key] == null || (report[key] as? JsonArray)?.isEmpty() == true) { "Grok configuration was not accepted" }
-    val layers = (report["configSources"] as? JsonObject)?.get("layers") as? JsonArray ?: error("Missing configuration sources")
-    check(layers.all { entry ->
-        val layer = entry as? JsonObject ?: return@all false
-        layer["role"] == JsonPrimitive("user") && layer["note"] == null || layer["note"] == JsonPrimitive("empty")
-    }) { "Unexpected Grok configuration source" }
+    verifyGrokConfigLayers(report, config)
     val permissions = report["permissions"] as? JsonObject ?: error("Missing policy inspection")
     check(permissions["managedSettingsExists"] == JsonPrimitive(false)) { "Managed Grok policy needs preservation" }
     check(permissions["enforced"] == null || (permissions["enforced"] as? JsonArray)?.isEmpty() == true)
 }
+
+/**
+ * Exactly one configuration layer: the user layer, with no note, read from [config]. An empty list, any
+ * other role or note, or another file is a configuration source Hovel has not accepted for this launch.
+ */
+internal fun verifyGrokConfigLayers(report: JsonObject, config: Path) {
+    val layers = (report["configSources"] as? JsonObject)?.get("layers") as? JsonArray ?: error("Missing Grok configuration sources")
+    val layer = layers.singleOrNull() as? JsonObject
+    val path = (layer?.get("path") as? JsonPrimitive)?.takeIf { it.isString }?.content?.let { runCatching { Path.of(it) }.getOrNull() }
+    check(layer != null && layer["role"] == JsonPrimitive("user") && layer["note"] == null && path != null && samePath(path, config)) {
+        "Additional Grok configuration layers need a separate acceptance"
+    }
+}
+
+/** The same file, also when one side names it through a symbolic link such as macOS's `/var` → `/private/var`. */
+private fun samePath(reported: Path, expected: Path): Boolean = reported.normalize() == expected.normalize() ||
+    runCatching { reported.toRealPath() == expected.toRealPath() }.getOrDefault(false)
 
 private val directoryPermissions = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------"))
 private val POLICY_FILES = listOf("requirements.toml", "managed_config.toml")

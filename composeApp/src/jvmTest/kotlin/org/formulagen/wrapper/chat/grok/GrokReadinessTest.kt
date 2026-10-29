@@ -45,14 +45,45 @@ class GrokReadinessTest {
 
     @Test fun inspectionFailsOnAmbientCapabilitiesWarningsPoliciesOrMissingFields() {
         val clean = inspection()
-        verifyGrokInspection(clean)
+        verifyGrokInspection(clean, isolatedConfig)
         for (key in listOf("projectInstructions", "hooks", "skills", "plugins", "mcpServers", "lspServers")) {
-            assertFails { verifyGrokInspection(JsonObject(clean - key)) }
-            assertFails { verifyGrokInspection(JsonObject(clean + (key to JsonArray(listOf(JsonPrimitive("ambient")))))) }
+            assertFails { verifyGrokInspection(JsonObject(clean - key), isolatedConfig) }
+            assertFails { verifyGrokInspection(JsonObject(clean + (key to JsonArray(listOf(JsonPrimitive("ambient"))))), isolatedConfig) }
         }
-        assertFails { verifyGrokInspection(JsonObject(clean + ("configWarnings" to JsonArray(listOf(JsonPrimitive("bad-config")))))) }
-        assertFails { verifyGrokInspection(JsonObject(clean + ("configSources" to json("""{"layers":[{"role":"mdm"}]}""")))) }
-        assertFails { verifyGrokInspection(JsonObject(clean + ("permissions" to json("""{"managedSettingsExists":true}""")))) }
+        assertFails { verifyGrokInspection(JsonObject(clean + ("configWarnings" to JsonArray(listOf(JsonPrimitive("bad-config"))))), isolatedConfig) }
+        assertFails { verifyGrokInspection(JsonObject(clean + ("configSources" to json("""{"layers":[{"role":"mdm"}]}"""))), isolatedConfig) }
+        assertFails { verifyGrokInspection(JsonObject(clean + ("permissions" to json("""{"managedSettingsExists":true}"""))), isolatedConfig) }
+    }
+
+    @Test fun inspectionProvesTheIsolatedConfigurationIsTheOnlyOneLoaded() {
+        val user = """{"role":"user","path":"$isolatedConfig"}"""
+        fun layers(vararg entries: String) = JsonObject(inspection() + ("configSources" to json("""{"layers":[${entries.joinToString(",")}]}""")))
+        verifyGrokInspection(layers(user), isolatedConfig)
+        verifyGrokInspection(layers("""{"role":"user","path":"/isolated/home/./.grok/config.toml"}"""), isolatedConfig)
+        for (refused in listOf(
+            layers(),
+            layers("""{"role":"project","note":"empty"}"""),
+            layers("""{"role":"user","note":"empty"}"""),
+            layers(user, """{"role":"project","note":"empty"}"""),
+            layers(user, user),
+            layers("""{"role":"user"}"""),
+            layers("""{"role":"user","path":"/Users/player/.grok/config.toml"}"""),
+            layers("""{"role":"system","path":"$isolatedConfig"}"""),
+            layers("""{"role":"user","path":"$isolatedConfig","note":"overridden"}"""),
+            layers("""{"role":"user","path":7}"""),
+        )) assertFails { verifyGrokInspection(refused, isolatedConfig) }
+        assertFails { verifyGrokInspection(JsonObject(inspection() - "configSources"), isolatedConfig) }
+    }
+
+    @Test fun aConfigurationPathThroughASymbolicLinkIsTheSameFile() {
+        val root = Files.createTempDirectory("grok-config-link")
+        try {
+            val real = Files.writeString(Files.createDirectories(root.resolve("real/.grok")).resolve("config.toml"), "")
+            val link = Files.createSymbolicLink(root.resolve("linked"), root.resolve("real"))
+            val report = JsonObject(inspection() + ("configSources" to json("""{"layers":[{"role":"user","path":"$real"}]}""")))
+            verifyGrokInspection(report, link.resolve(".grok/config.toml"))
+            assertFails { verifyGrokInspection(report, root.resolve("other/.grok/config.toml")) }
+        } finally { root.toFile().deleteRecursively() }
     }
 
     @Test fun toolEvidenceMustArriveForTheExactSessionAndNeverRecoversFromUnsafe() {
@@ -206,7 +237,8 @@ class GrokTalkSessionSmokeTest {
 private fun json(value: String) = Json.parseToJsonElement(value).jsonObject
 private fun subscription() = json("""{"auth_mode":"Oidc","backend_billed":false,"is_team_principal":false,"is_organization_principal":false,"team_id":null,"gate":null,"subscription_tier":"SuperGrok"}""")
 private fun identity() = json("""{"methodId":"cached_token","principalType":"user","principalId":"fixture-user","teamId":null,"organizationId":null,"userBlockedReason":null,"teamBlockedReasons":[]}""")
-private fun inspection() = json("""{"projectInstructions":[],"hooks":[],"skills":[],"plugins":[],"mcpServers":[],"lspServers":[],"configSources":{"layers":[{"role":"user"}]},"permissions":{"managedSettingsExists":false}}""")
+private val isolatedConfig = Path.of("/isolated/home/.grok/config.toml")
+private fun inspection() = json("""{"projectInstructions":[],"hooks":[],"skills":[],"plugins":[],"mcpServers":[],"lspServers":[],"configSources":{"layers":[{"role":"user","path":"$isolatedConfig"}]},"permissions":{"managedSettingsExists":false}}""")
 private fun toolUpdate(session: String, tools: List<String>) = buildJsonObject {
     put("sessionId", session)
     putJsonObject("update") {

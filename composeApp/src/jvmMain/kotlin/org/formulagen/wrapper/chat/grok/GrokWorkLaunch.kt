@@ -126,11 +126,7 @@ internal fun verifyGrokWorkInspection(report: JsonObject, config: Path) {
     for (key in listOf("configWarnings", "mcpConfigProblems"))
         check(report[key] == null || (report[key] as? JsonArray)?.isEmpty() == true) { "Grok configuration warning" }
     check(report["projectInstructions"] is JsonArray && report["skills"] is JsonArray)
-    val layers = (report["configSources"] as? JsonObject)?.get("layers") as? JsonArray ?: error("Missing Grok configuration sources")
-    check(layers.size == 1 && (layers.single() as? JsonObject)?.let {
-        it["role"] == JsonPrimitive("user") && it["note"] == null &&
-            (it["path"] as? JsonPrimitive)?.content?.let(Path::of)?.normalize() == config.normalize()
-    } == true) { "Additional Grok configuration layers need a separate work acceptance" }
+    verifyGrokConfigLayers(report, config)
     val permissions = report["permissions"] as? JsonObject ?: error("Missing Grok policy inspection")
     check(permissions["managedSettingsExists"] == JsonPrimitive(false))
     check(permissions["enforced"] == null || (permissions["enforced"] as? JsonArray)?.isEmpty() == true)
