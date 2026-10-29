@@ -37,7 +37,6 @@ HOVEL_GROK_CHAT_SMOKE=/absolute/path/to/grok \
 HOVEL_GROK_TALK_SMOKE=/absolute/path/to/grok \
 HOVEL_GROK_LIFECYCLE_SMOKE=1 \
 HOVEL_GROK_ACP_SMOKE=/absolute/path/to/grok \
-HOVEL_GROK_SIGNED_IN_SMOKE=/absolute/path/to/grok \
   ./gradlew :composeApp:jvmTest --tests '*Grok*' --tests '*Provider*' --tests '*bridge*'
 ```
 

@@ -24,21 +24,6 @@ class GrokSessionsTest {
         } finally { root.toFile().deleteRecursively() }
     }
 
-    @Test fun noVerifiedAccountIdentityMeansNoPersistedResume() {
-        val root = Files.createTempDirectory("grok-local-binding")
-        try {
-            val store = GrokSessions(root)
-            val transient = scope.copy(accountFingerprint = null)
-            val binding = store.create("ephemeral/session", transient)
-
-            assertEquals(GrokSessionLookup.Found(binding), store.find(binding.handle, transient))
-            assertEquals(0, Files.list(root).use { it.count() }.toInt())
-            assertEquals(GrokSessionLookup.Missing, GrokSessions(root).find(binding.handle, transient))
-            store.clearLocal()
-            assertEquals(GrokSessionLookup.Missing, store.find(binding.handle, transient))
-        } finally { root.toFile().deleteRecursively() }
-    }
-
     @Test fun accountProfileCompanionAndModelChangesCannotSelectTheSavedSession() {
         val root = Files.createTempDirectory("grok-binding-owner")
         try {
@@ -48,7 +33,6 @@ class GrokSessionsTest {
             assertEquals(GrokSessionLookup.Mismatch, store.find(binding.handle, scope.copy(profile = companion)))
             assertEquals(GrokSessionLookup.Mismatch, store.find(binding.handle, scope.copy(companionId = "22222222-2222-4222-8222-222222222222")))
             assertEquals(GrokSessionLookup.ModelChanged, store.find(binding.handle, scope.copy(resolvedModel = "other-model")))
-            assertEquals(GrokSessionLookup.Mismatch, store.find(binding.handle, scope.copy(accountFingerprint = null)))
             assertFailsWith<IllegalArgumentException> { store.create("invalid-default", scope.copy(resolvedModel = "runtime-default")) }
         } finally { root.toFile().deleteRecursively() }
     }
@@ -123,17 +107,17 @@ class GrokSessionsTest {
             val store = GrokSessions(root)
             val kept = store.create("saved-or-active", scope)
             val orphan = store.create("orphan", scope)
-            val transient = store.create("transient", scope.copy(accountFingerprint = null))
             val foreignScope = scope.copy(profile = companion)
             val foreign = store.create("foreign", foreignScope)
 
-            assertEquals(GrokPruneResult(2, true), store.prune("local", setOf(kept.handle)))
+            store.prune("local", setOf(kept.handle))
 
             assertEquals(GrokSessionLookup.Missing, store.find(orphan.handle, scope))
-            assertEquals(GrokSessionLookup.Missing, store.find(transient.handle, transient.scope))
+            assertEquals(GrokSessionLookup.Missing, GrokSessions(root).find(orphan.handle, scope))
             assertEquals(GrokSessionLookup.Found(kept), store.find(kept.handle, scope))
             assertEquals(GrokSessionLookup.Found(foreign), store.find(foreign.handle, foreignScope))
-            assertEquals(GrokPruneResult(0, true), store.prune("local", setOf(kept.handle)))
+            store.prune("local", setOf(kept.handle))
+            assertEquals(GrokSessionLookup.Found(kept), GrokSessions(root).find(kept.handle, scope))
         } finally { root.toFile().deleteRecursively() }
     }
 
@@ -147,10 +131,11 @@ class GrokSessionsTest {
             Files.writeString(corrupt, "not json")
             Files.createSymbolicLink(link, future)
             val store = GrokSessions(root)
-            store.create("known-orphan", scope)
+            val orphan = store.create("known-orphan", scope)
 
-            assertEquals(GrokPruneResult(1, true), store.prune("local", emptySet()))
+            store.prune("local", emptySet())
 
+            assertEquals(GrokSessionLookup.Missing, GrokSessions(root).find(orphan.handle, scope))
             assertEquals("""{"version":2,"scope":{"mode":"future"}}""", Files.readString(future))
             assertEquals("not json", Files.readString(corrupt))
             assertTrue(Files.isSymbolicLink(link))
@@ -164,7 +149,7 @@ class GrokSessionsTest {
             val one = store.create("one", scope)
             val two = store.create("two", scope)
 
-            assertEquals(GrokPruneResult(0, false), store.prune("local", emptySet(), limit = 1))
+            store.prune("local", emptySet(), limit = 1)
 
             assertEquals(GrokSessionLookup.Found(one), GrokSessions(root).find(one.handle, scope))
             assertEquals(GrokSessionLookup.Found(two), GrokSessions(root).find(two.handle, scope))

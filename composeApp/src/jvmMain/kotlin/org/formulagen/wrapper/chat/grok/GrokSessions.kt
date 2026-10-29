@@ -12,21 +12,21 @@ import org.formulagen.wrapper.bridge.SharedRules
 
 internal enum class GrokMode { TALK, WORK }
 
-/** Exact ownership required to resume; absent verified account identity permits memory-only reuse. */
+/** Exact ownership required to resume, including the verified account's fingerprint. */
 @Serializable
 internal data class GrokSessionScope(
     val profile: String,
     val companionId: String,
     val mode: GrokMode,
     val resolvedModel: String,
-    val accountFingerprint: String? = null,
+    val accountFingerprint: String,
     val workspaceFingerprint: String? = null,
 ) {
     /** Validate Hovel ownership before a provider identifier can be stored or looked up. */
     fun validate() {
         require(SharedRules.isProfileId(profile) && canonicalUuid(companionId))
         require(SharedRules.isModelId(resolvedModel) && resolvedModel != SharedRules.RUNTIME_DEFAULT_MODEL)
-        require(accountFingerprint == null || FINGERPRINT.matches(accountFingerprint))
+        require(FINGERPRINT.matches(accountFingerprint))
         require(if (mode == GrokMode.WORK) workspaceFingerprint?.let(FINGERPRINT::matches) == true else workspaceFingerprint == null)
     }
 }
@@ -44,10 +44,7 @@ internal sealed interface GrokSessionLookup {
     data object Unavailable : GrokSessionLookup
 }
 
-/** A bounded cleanup never deletes from an incomplete directory snapshot. */
-internal data class GrokPruneResult(val removed: Int, val complete: Boolean)
-
-/** UUID-keyed private sidecars, with process-local reuse when no stable account identity is verified. */
+/** UUID-keyed private sidecars, with an in-memory copy of each binding this process created or found. */
 internal class GrokSessions(private val root: Path) {
     private val local = LinkedHashMap<String, GrokSessionBinding>()
 
@@ -59,18 +56,16 @@ internal class GrokSessions(private val root: Path) {
         require(validGrokSessionId(providerSessionId))
         check(local.size < 256) { "Grok session binding limit reached" }
         val binding = GrokSessionBinding(handle = UUID.randomUUID().toString(), providerSessionId = providerSessionId, scope = scope)
-        if (scope.accountFingerprint != null) {
-            Files.createDirectories(root)
-            require(Files.isDirectory(root, NOFOLLOW_LINKS))
-            Files.setPosixFilePermissions(root, PosixFilePermissions.fromString("rwx------"))
-            val target = root.resolve("${binding.handle}.json")
-            check(!Files.exists(target, NOFOLLOW_LINKS))
-            val temp = Files.createTempFile(root, ".grok-", ".tmp", PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))
-            try {
-                Files.writeString(temp, bindingJson.encodeToString(binding))
-                Files.move(temp, target, ATOMIC_MOVE)
-            } finally { Files.deleteIfExists(temp) }
-        }
+        Files.createDirectories(root)
+        require(Files.isDirectory(root, NOFOLLOW_LINKS))
+        Files.setPosixFilePermissions(root, PosixFilePermissions.fromString("rwx------"))
+        val target = root.resolve("${binding.handle}.json")
+        check(!Files.exists(target, NOFOLLOW_LINKS))
+        val temp = Files.createTempFile(root, ".grok-", ".tmp", PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))
+        try {
+            Files.writeString(temp, bindingJson.encodeToString(binding))
+            Files.move(temp, target, ATOMIC_MOVE)
+        } finally { Files.deleteIfExists(temp) }
         local[binding.handle] = binding
         return binding
     }
@@ -99,43 +94,36 @@ internal class GrokSessions(private val root: Path) {
         if (Files.isDirectory(root, NOFOLLOW_LINKS) && Files.isRegularFile(file, NOFOLLOW_LINKS)) Files.deleteIfExists(file)
     }
 
-    /** End process-local reuse on account change or teardown without deleting persisted history. */
+    /** Drop the in-memory copies on teardown without deleting persisted bindings. */
     @Synchronized fun clearLocal() { local.clear() }
 
     /**
      * Remove this profile's orphan bindings using all saved and active handles after a successful history load.
      * A failed/partial history read must never call this method. Unknown or corrupt files are preserved.
-     * More than [limit] entries returns incomplete without deleting anything; cleanup runs off the UI thread.
+     * More than [limit] entries deletes nothing; cleanup runs off the UI thread.
      */
-    @Synchronized fun prune(profile: String, retainedHandles: Set<String>, limit: Int = 256): GrokPruneResult {
+    @Synchronized fun prune(profile: String, retainedHandles: Set<String>, limit: Int = 256) {
         require(SharedRules.isProfileId(profile) && retainedHandles.all(::canonicalUuid))
         require(limit in 1..4_096)
         val files = ArrayList<Path>()
         if (Files.exists(root, NOFOLLOW_LINKS)) {
-            if (!Files.isDirectory(root, NOFOLLOW_LINKS)) return GrokPruneResult(0, false)
+            if (!Files.isDirectory(root, NOFOLLOW_LINKS)) return
             Files.newDirectoryStream(root).use { entries ->
                 for (file in entries) {
-                    if (files.size == limit) return GrokPruneResult(0, false)
+                    if (files.size == limit) return
                     files.add(file)
                 }
             }
         }
-        val removed = HashSet<String>()
         for (file in files) {
             val name = file.fileName.toString()
             if (!name.endsWith(".json")) continue
             val handle = name.removeSuffix(".json")
             if (!canonicalUuid(handle) || handle in retainedHandles) continue
             val binding = readBinding(handle) ?: continue
-            if (binding.scope.profile == profile && Files.deleteIfExists(file)) {
-                local.remove(handle)
-                removed.add(handle)
-            }
+            if (binding.scope.profile == profile && Files.deleteIfExists(file)) local.remove(handle)
         }
-        local.entries.removeIf { (handle, binding) ->
-            (binding.scope.profile == profile && handle !in retainedHandles).also { if (it) removed.add(handle) }
-        }
-        return GrokPruneResult(removed.size, true)
+        local.entries.removeIf { (handle, binding) -> binding.scope.profile == profile && handle !in retainedHandles }
     }
 
     /** Read only a supported private sidecar; validation is shared by resume and orphan cleanup. */
@@ -148,7 +136,7 @@ internal class GrokSessions(private val root: Path) {
             if (value["version"] != JsonPrimitive(1)) return null
             bindingJson.decodeFromJsonElement<GrokSessionBinding>(value).also {
                 it.scope.validate()
-                require(it.handle == handle && validGrokSessionId(it.providerSessionId) && it.scope.accountFingerprint != null)
+                require(it.handle == handle && validGrokSessionId(it.providerSessionId))
             }
         } catch (_: Exception) { null }
     }
