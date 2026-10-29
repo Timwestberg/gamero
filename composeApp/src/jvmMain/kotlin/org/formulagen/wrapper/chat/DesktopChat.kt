@@ -47,7 +47,7 @@ internal class DesktopChat(
     private var ended: Pair<ChatScope, ChatSnapshot>? = null
     private var closed = false
 
-    private class Session(val scope: ChatScope, val persona: Persona, val history: ChatHistory, var record: ChatRecord) {
+    private class Session(val scope: ChatScope, val persona: Persona, val history: ChatHistory, var record: ChatRecord, val understood: Set<RuntimeId>) {
         var state = ChatState.READY
         var notice: String? = null
         var generation = 0
@@ -88,14 +88,24 @@ internal class DesktopChat(
     }
 
     /** Opening is the only operation allowed to replace an active conversation. */
-    override suspend fun open(scope: ChatScope): ChatSnapshot = synchronized(gate) {
+    override suspend fun open(scope: ChatScope): ChatSnapshot = open(scope, SharedRules.LEGACY_RUNTIMES)
+
+    override suspend fun openForClient(args: ChatOpenForClient): ChatSnapshot {
+        require(SharedRules.validClientRuntimes(args.supportedRuntimes))
+        return open(args.scope(), SharedRules.clientRuntimes(args.supportedRuntimes))
+    }
+
+    private fun open(scope: ChatScope, understood: Set<RuntimeId>): ChatSnapshot = synchronized(gate) {
         check(!closed)
         val old = active
+        if (old?.scope == scope && old.understood != understood) throw BridgeUpdateRequiredException()
         if (old?.scope == scope && old.state !in setOf(ChatState.ERROR, ChatState.DISCONNECTED)) return@synchronized view(old)
         invalidateLocked(keepEnded = false)
         ended = null
         val history = companionChatHistory(providerRoot, scope.profile, scope.companionId)
-        view(Session(scope, Persona.companion(scope.name), history, history.read()).also { active = it })
+        val record = history.read()
+        if (!understood.containsAll(record.runtimeIds())) throw BridgeUpdateRequiredException()
+        view(Session(scope, Persona.companion(scope.name), history, record, understood).also { active = it })
     }
 
     /** Polling cannot reopen an expired lease, but a view the host ended keeps reading its final state. */
@@ -111,6 +121,7 @@ internal class DesktopChat(
      */
     override suspend fun send(args: ChatSend): ChatSnapshot = synchronized(gate) {
         val session = current(args.scope())
+        if (args.member.runtimeId !in session.understood) throw BridgeUpdateRequiredException()
         if (session.record.entries.any { it.id == args.requestId }) return@synchronized view(session)
         if (session.state == ChatState.AWAITING_YOU) return@synchronized refuse(session, ANSWER_FIRST)
         if (session.state == ChatState.RESPONDING || session.state == ChatState.HANDING_OVER) throw BridgeBusyException()
@@ -139,6 +150,7 @@ internal class DesktopChat(
      */
     override suspend fun retry(args: ChatRetry): ChatSnapshot = synchronized(gate) {
         val session = current(args.scope())
+        if (args.member.runtimeId !in session.understood) throw BridgeUpdateRequiredException()
         val record = session.record
         if (record.entries.any { it.id == args.requestId }) return@synchronized view(session)
         if (session.state == ChatState.AWAITING_YOU) return@synchronized refuse(session, ANSWER_FIRST)
@@ -241,6 +253,8 @@ internal class DesktopChat(
      */
     override suspend fun handover(args: ChatHandover): ChatSnapshot = synchronized(gate) {
         val session = current(args.scope())
+        if (args.to.runtimeId !in session.understood || args.from?.runtimeId?.let { it !in session.understood } == true)
+            throw BridgeUpdateRequiredException()
         if (session.record.entries.any { it.id == args.requestId } || session.handover?.requestId == args.requestId) return@synchronized view(session)
         // A refusal is a snapshot with a notice and no new entry; the page keeps the current member.
         if (session.state == ChatState.AWAITING_YOU) return@synchronized refuse(session, ANSWER_FIRST)
@@ -308,9 +322,12 @@ internal class DesktopChat(
 
     private fun current(scope: ChatScope): Session = checkNotNull(active?.takeIf { !closed && it.scope == scope }) { "Chat view expired" }
     private fun live(session: Session, generation: Int = session.generation) = !closed && active === session && generation == session.generation
-    private fun view(session: Session) = ChatSnapshot(session.state, session.record.entries,
+    private fun view(session: Session): ChatSnapshot {
+        if (!session.understood.containsAll(session.record.runtimeIds())) throw BridgeUpdateRequiredException()
+        return ChatSnapshot(session.state, session.record.entries,
         session.refusal?.takeIf { it.first == session.state }?.second ?: session.notice, speech.status(), session.failure,
         session.waiting?.takeIf { session.state == ChatState.AWAITING_YOU })
+    }
 
     /** A refusal: no change, and its notice stays in every snapshot until the chat's state changes. */
     private fun refuse(session: Session, notice: String): ChatSnapshot {
@@ -583,7 +600,7 @@ private fun failureKind(failure: ChatFailure) = when (failure) {
     ChatFailure.ModelUnavailable -> ChatFailureKind.MODEL_UNAVAILABLE
     ChatFailure.Temporary -> ChatFailureKind.TEMPORARY
     ChatFailure.Lockdown -> ChatFailureKind.LOCKDOWN
-    ChatFailure.ConversationLost, ChatFailure.Unexpected -> ChatFailureKind.UNEXPECTED
+    ChatFailure.ConversationLost, ChatFailure.Unexpected, ChatFailure.ProjectTrustRequired -> ChatFailureKind.UNEXPECTED
 }
 
 /** A lost sign-in leaves the chat "disconnected"; every other failure is an error the person can retry. */
@@ -602,6 +619,7 @@ private fun couldNotComplete(runtime: RuntimeId) = "${runtime.copy.program} coul
 
 /** The person-facing reason a turn failed. Raw runtime output never reaches it. */
 internal fun failureNotice(runtime: RuntimeId, failure: ChatFailure, zone: ZoneId = ZoneId.systemDefault()): String = when (failure) {
+    ChatFailure.ProjectTrustRequired -> "Work did not start. ${runtime.copy.product} needs your approval to trust this project and load its instructions."
     ChatFailure.SignedOut -> signedOutNotice(runtime)
     is ChatFailure.UsageLimit -> "You've reached your ${runtime.copy.product} usage limit. " +
         (failure.resetsAt?.let { "It resets at ${resetTime(it, zone)}." } ?: "Try again later.")

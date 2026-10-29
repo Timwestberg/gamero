@@ -12,6 +12,18 @@ import org.junit.Assume.assumeTrue
 
 /** Explicit local checks, not evidence of authenticated inference or other hardware. */
 class DesktopChatSmokeTest {
+    @Test fun installedCodexReadinessSurvivesAccountNotifications() {
+        val executable = System.getenv("HOVEL_CHAT_CODEX_SMOKE")
+        assumeTrue("Set HOVEL_CHAT_CODEX_SMOKE to a signed-in codex executable", executable != null)
+        val root = Files.createTempDirectory("hovel-codex-readiness-")
+        try {
+            CodexChatRuntime(root, Path.of(requireNotNull(executable))).use { runtime ->
+                assertEquals(Readiness.Ready, runtime.readiness("local"))
+                assertEquals(Readiness.Ready, runtime.readiness("local"))
+            }
+        } finally { root.toFile().deleteRecursively() }
+    }
+
     @Test fun installedCodexAcceptsConversationConfiguration() {
         val executable = System.getenv("HOVEL_CHAT_CODEX_SMOKE")
         assumeTrue("Set HOVEL_CHAT_CODEX_SMOKE to an installed codex executable", executable != null)

@@ -1,0 +1,153 @@
+{
+  "checkedAt": "2026-10-28",
+  "runtime": "grok 1.0.70 (f50904eaee6c)",
+  "sourceAuditCommit": "2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8",
+  "scope": "Development WorkRuntime, production-adapter lifecycle tests and native Mac acceptance on the pinned runtime",
+  "configuration": {
+    "oidcPinExplicitlyApprovedAndAppended": true,
+    "privateBackupCreated": true,
+    "otherSettingsPreserved": true,
+    "originalHomeAndConfigUsed": true,
+    "configByteIdenticalAfterEachProbe": true,
+    "credentialContentsReadOrCopied": false,
+    "userSkillsAndProjectInstructionsRetained": true,
+    "hooksPluginsMcpLspAbsentAtPreflight": true,
+    "managedSettingsAbsentAtPreflight": true
+  },
+  "authentication": {
+    "personalOidcSubscriptionVerified": true,
+    "workSessionCreatedWithoutPrompt": true,
+    "missingStoreRejectedWithAuthRequired": true,
+    "clientRequestsDuringAuthChecks": 0
+  },
+  "permissions": {
+    "realCommandAndSearchReplaceDecoded": true,
+    "rawInputVariantRequiredToMatchCanonicalOperationWhenPresent": true,
+    "allowOnceExecutedExactTemporaryOperation": true,
+    "explicitRepeatRequestedPermissionAgain": true,
+    "rejectOncePreservedFile": true,
+    "clientFilesystemAndTerminalDisabled": true,
+    "alwaysApproveEnabled": false,
+    "nativeDialogTested": true
+  },
+  "cancellation": {
+    "activeTemporaryCommandObserved": true,
+    "terminalCancelledWithinFiveSeconds": true,
+    "observedDescendantsReapedAfterProcessTeardown": true,
+    "finalMarkerAbsent": true,
+    "implicitDetachmentResult": "Profile kept the command foreground beyond 35 seconds without a blocking override; arbitrary self-detachment is not covered",
+    "adapterActionsPassed": [
+      "Stop",
+      "release",
+      "close"
+    ],
+    "automaticBackgroundingPreventedTested": true
+  },
+  "regressionSelection": {
+    "discovered": 141,
+    "passed": 124,
+    "skippedOptInSmokes": 17,
+    "failed": 0,
+    "separateProductionAdapterSmokesPassed": 2,
+    "earlierWorkProtocolChecksPassed": 5
+  },
+  "limits": [
+    "No raw identity, credential, provider session ID, prompt, response or tool input is included.",
+    "Source and binary revisions are different identifiers, not asserted identical.",
+    "Ordinary work preserves the provider home; trust/edit adapter and UI fixtures used disposable configuration homes referencing the existing credential store without copying it.",
+    "Only the documented single-user-layer configuration subset is accepted; additional integrations and layers fail closed.",
+    "Foreground cleanup covers observed local processes. Arbitrary self-detaching commands and remote jobs are outside this evidence.",
+    "Native pending-approval Stop and authenticated Hovel account switching remain unverified in the desktop UI; explicit Retry has passed.",
+    "Current main baselines are reconciled locally; release/rollback acceptance and repository merges remain outstanding. Six broad-web failures reproduce on the main baseline."
+  ],
+  "adapter": {
+    "registeredBehindBothDevelopmentFlags": true,
+    "projectInstructionsObserved": true,
+    "editAllowOnceAndDenyPassed": true,
+    "privateResumeAfterRestartPassed": true,
+    "configurationRevalidatedBeforePrompt": true,
+    "toolActivityMappedToExistingUi": true,
+    "pendingApprovalStopReleaseClosePassedWithFakePeer": true,
+    "lateApprovalCannotReviveCancelledTurn": true,
+    "activeProcessCleanupPrecedesCompletion": true
+  },
+  "nativeMac": {
+    "rebuiltAppLaunchedWithJcef": true,
+    "projectFolderAndWorkingRoleSelectedInUi": true,
+    "startWorkDialogPassed": true,
+    "separatePersistentTrustDialogPassed": true,
+    "trustStoredOnlyInDisposableProviderHome": true,
+    "exactEditPreviewAndAllowOncePassed": true,
+    "secondEditRequestedNewApproval": true,
+    "denyPreservedFileAndShowedClearOutcome": true,
+    "projectInstructionsObservedInReply": true,
+    "activityVisible": true,
+    "stopButtonReapedObservedShellAndChild": true,
+    "closeChatReapedObservedShellAndChild": true,
+    "cancelledFinalWritesAbsent": true,
+    "quitWithPendingApproval": true,
+    "postRestartWorkReply": true
+  },
+  "finalCopyCheck": {
+    "providerStatusTestsPassed": 2,
+    "macPackageRebuilt": true,
+    "change": "Removed obsolete work-unavailable copy from Connected status"
+  },
+  "integration": {
+    "nativeMainBase": "99ef589728b67d6fa2c43c2d952d369d866ae436",
+    "contractMainBase": "651ab1eb9de6119da7bfaba52d72fc8a3249edc5",
+    "webMainBase": "715a7dd2fab8790c9df1efbb54f2d99567bd6ade",
+    "nativeTests": {
+      "discovered": 467,
+      "passed": 444,
+      "skippedOptIn": 23,
+      "failed": 0
+    },
+    "contractTestsPassed": 520,
+    "focusedWebTestsPassed": 94,
+    "storybookTestsPassed": 27,
+    "webTypecheckPassed": true,
+    "contractFixtureParityPassed": true,
+    "broadWebFailuresReproducedOnMain": 6,
+    "grokClaudeWorkHandoverPassedWithProductionCoordinator": true,
+    "nativeGrokClaudeWorkHandoverPassed": true,
+    "nativeGrokToCodexTalkContextReplyPassed": true,
+    "nativeReturnFromCodexToGrokPassed": true,
+    "threadlessCodexNotificationRegressionFixed": true,
+    "profileSwitchCancelsApprovalAndSeparatesHistoryWithFakePeer": true,
+    "actualAuthenticatedProfileSwitchTested": false,
+    "grokQuotaUnknownWithoutProbe": true,
+    "grokBrainGlyphDistinct": true,
+    "macPackageRebuiltAndLaunched": true,
+    "mergedOrReleased": false
+  },
+  "lifecycleFollowThrough": {
+    "nativeTests": {
+      "discovered": 469,
+      "passed": 445,
+      "skippedOptIn": 24,
+      "failed": 0
+    },
+    "realGrokProfileLeaseReplacement": {
+      "passed": true,
+      "pendingApprovalCancelled": true,
+      "lateAllowRejected": true,
+      "observedProcessReaped": true,
+      "cancelledEditAbsent": true,
+      "workspaceAndHistorySeparated": true,
+      "originalContextRestored": true,
+      "hovelAccountAuthenticationExercised": false
+    },
+    "explicitRetry": {
+      "fakePeerAmbiguousFailureAndDuplicateSuppressionPassed": true,
+      "nativeForcedTransportFailureObserved": true,
+      "reconnectDidNotResend": true,
+      "explicitRetryReturnedRealReply": true,
+      "onePersistedUserMessage": true
+    },
+    "nativeApprovalPresentation": "Modeless; existing native grant, arming and cancellation rules retained",
+    "nativeStopWithApprovalOpen": "Unverified; attempted run applied the disposable edit, action taken awaits clarification",
+    "authenticatedHovelAccountSwitch": "Pending working identity environment and test accounts; local identity proxy returned 502",
+    "macPackageRebuilt": true
+  }
+}

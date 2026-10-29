@@ -5,9 +5,10 @@ import kotlinx.serialization.Serializable
 
 /** An AI runtime the host runs on the person's own subscription. The names are Hovel Brain's `runtimeId`. */
 @Serializable
-enum class RuntimeId(val providerId: RuntimeProviderId) {
-    @SerialName("codex") CODEX(RuntimeProviderId.OPENAI),
-    @SerialName("claude-code") CLAUDE_CODE(RuntimeProviderId.ANTHROPIC),
+enum class RuntimeId(val providerId: RuntimeProviderId, val wireName: String) {
+    @SerialName("codex") CODEX(RuntimeProviderId.OPENAI, "codex"),
+    @SerialName("claude-code") CLAUDE_CODE(RuntimeProviderId.ANTHROPIC, "claude-code"),
+    @SerialName("grok-build") GROK_BUILD(RuntimeProviderId.XAI, "grok-build"),
 }
 
 /** Hovel Brain's provider: the company behind a runtime. [RuntimeId.providerId] is `RUNTIME_PROVIDERS`. */
@@ -15,6 +16,7 @@ enum class RuntimeId(val providerId: RuntimeProviderId) {
 enum class RuntimeProviderId {
     @SerialName("openai") OPENAI,
     @SerialName("anthropic") ANTHROPIC,
+    @SerialName("xai") XAI,
 }
 
 /** Reasoning levels advertised by installed runtimes; omitted effort uses the runtime default. */
@@ -32,6 +34,15 @@ enum class ModelEffort(val value: String) {
 
 /** Rules more than one capability uses. Mirrors event-contracts `host-bridge/shared.ts`. */
 object SharedRules {
+    /** The runtime vocabulary understood by legacy bridge calls. */
+    val LEGACY_RUNTIMES = setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE)
+    private val CLIENT_RUNTIME = Regex("^[a-z][a-z0-9-]{0,63}$")
+    /** Client declarations allow bounded future names, never duplicate names. */
+    fun validClientRuntimes(names: List<String>): Boolean =
+        names.size <= 8 && names.distinct().size == names.size && names.all(CLIENT_RUNTIME::matches)
+    /** Recognized names only; advertising a name does not offer its runtime. */
+    fun clientRuntimes(names: List<String>): Set<RuntimeId> = RuntimeId.entries.filter { it.wireName in names }.toSet()
+
     /** The profile of a person who is not signed in. */
     const val LOCAL_PROFILE = "local"
     const val COMPANION_NAME_LIMIT = 40

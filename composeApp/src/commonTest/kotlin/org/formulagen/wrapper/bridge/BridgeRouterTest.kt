@@ -28,6 +28,21 @@ import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class BridgeRouterTest {
+    @Test fun newerHistoryUsesAnExistingErrorCodeAndFixedUpdateGuidance() = runTest {
+        val chat = object : ChatCapability by FakeChatCapability() {
+            override suspend fun open(scope: ChatScope): ChatSnapshot = throw BridgeUpdateRequiredException()
+        }
+        val router = router(HostPlatform.DESKTOP, products = listOf(ChatMethods.pack(Capability.Supported(chat))))
+        call(router, watch)
+        val reply = call(router, request("chat.open", buildJsonObject {
+            put("profile", "local"); put("companionId", "10000000-0000-4000-8000-000000000001")
+            put("sessionId", "20000000-0000-4000-8000-000000000002"); put("name", "Ember")
+        })).single()
+        assertEquals("failed", reply.getValue("error").jsonObject.getValue("code").jsonPrimitive.content)
+        assertEquals(BridgeUpdateRequiredException().message, reply.getValue("error").jsonObject.getValue("message").jsonPrimitive.content)
+        router.close()
+    }
+
     private val parity = Json.parseToJsonElement(HostBridgeFixtures.PARITY).jsonObject
     private val trusted = FrameFacts(mainFrame = true, trustedOrigin = true, documentId = "document-1")
     private val watch = """{"version":2,"method":"watchContext","args":{}}"""

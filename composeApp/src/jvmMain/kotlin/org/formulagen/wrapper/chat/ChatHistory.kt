@@ -8,7 +8,8 @@ import java.time.Instant
 import java.util.UUID
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.*
+import org.formulagen.wrapper.bridge.BridgeUpdateRequiredException
 import org.formulagen.wrapper.bridge.ChatEntry
 import org.formulagen.wrapper.bridge.ChatLimits
 import org.formulagen.wrapper.bridge.Activity
@@ -19,7 +20,7 @@ import org.formulagen.wrapper.bridge.TeamMember
 import org.formulagen.wrapper.providers.legacyCodexProfileHome
 
 /**
- * One companion's conversation for one profile, shared by every runtime on its team (version 2).
+ * One companion's conversation for one profile, shared by every runtime on its team (version 2; version 3 after Grok).
  * Native ids and handover text stay here; the page sees only the entries, in their wire shape.
  */
 @Serializable
@@ -47,10 +48,15 @@ internal const val PENDING_CONTEXT_LIMIT = 12_000
  * first read; an unreadable one is left untouched and the conversation starts fresh beside it.
  */
 internal class ChatHistory(private val file: Path, private val legacy: Path? = null) {
+    private var writtenVersion = 2
+    private var incompatible = false
     fun read(): ChatRecord {
         if (Files.exists(file)) {
             require(Files.size(file) <= MAX_RECORD_BYTES)
-            return historyJson.decodeFromString<ChatRecord>(Files.readString(file)).validated()
+            val text = Files.readString(file)
+            val version = historyJson.parseToJsonElement(text).jsonObject["version"]?.jsonPrimitive?.intOrNull
+            if (version != null && version > 3) { incompatible = true; throw BridgeUpdateRequiredException() }
+            return historyJson.decodeFromString<ChatRecord>(text).validated().also { writtenVersion = it.version }
         }
         val old = legacy?.takeIf { Files.exists(it) } ?: return ChatRecord()
         val migrated = runCatching { migrate(old) }.getOrNull() ?: return ChatRecord()
@@ -61,7 +67,10 @@ internal class ChatHistory(private val file: Path, private val legacy: Path? = n
 
     /** Replace only after the complete new record has been written privately, always small enough to [read] back. */
     fun write(record: ChatRecord) {
-        val text = fitted(record)
+        if (incompatible) throw BridgeUpdateRequiredException()
+        require(record.version in 2..3)
+        val version = if (record.version >= 3 || RuntimeId.GROK_BUILD in record.runtimeIds() || writtenVersion >= 3) 3 else 2
+        val text = fitted(record.copy(version = version).validated())
         Files.createDirectories(file.parent)
         Files.setPosixFilePermissions(file.parent, PosixFilePermissions.fromString("rwx------"))
         val temp = Files.createTempFile(file.parent, ".chat-", ".tmp",
@@ -69,6 +78,7 @@ internal class ChatHistory(private val file: Path, private val legacy: Path? = n
         try {
             Files.writeString(temp, text)
             Files.move(temp, file, ATOMIC_MOVE, REPLACE_EXISTING)
+            writtenVersion = version
         } finally { Files.deleteIfExists(temp) }
     }
 }
@@ -107,12 +117,13 @@ private const val MAX_RECORD_BYTES = 3_000_000
 private val PERSONA_HASH = Regex("^([0-9a-f]{64})?$")
 /**
  * Writes `version` explicitly. Entries keep their wire shape, told apart by `role`. A field this
- * build does not know (a later build's) is skipped, so a record a newer build wrote still opens.
+ * build does not know (a later build's) is skipped, so compatible additive fields do not break reading. Newer versions are rejected before decoding.
  */
 private val historyJson = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
 private fun ChatRecord.validated(): ChatRecord = also { record ->
-    require(record.version == 2 && record.entries.size <= ChatLimits.HISTORY)
+    require(record.version in 2..3 && record.entries.size <= ChatLimits.HISTORY)
+    require(record.version >= 3 || RuntimeId.GROK_BUILD !in record.runtimeIds())
     (record.conversations.values + record.workConversations.values).forEach { require(UUID.fromString(it.id).toString() == it.id && PERSONA_HASH.matches(it.personaHash)) }
     record.entries.forEach { entry ->
         UUID.fromString(entry.id)
@@ -155,4 +166,14 @@ private fun migrate(file: Path): ChatRecord {
             }
         },
     ).validated()
+}
+
+/** All runtime identities retained in a record, including context that is not displayed. */
+internal fun ChatRecord.runtimeIds(): Set<RuntimeId> = buildSet {
+    addAll(conversations.keys); addAll(workConversations.keys); addAll(pendingContext.keys)
+    entries.forEach { entry -> when (entry) {
+        is ChatEntry.Assistant -> add(entry.author.runtimeId)
+        is ChatEntry.Handover -> { entry.from?.let { add(it.runtimeId) }; add(entry.to.runtimeId) }
+        is ChatEntry.User -> Unit
+    } }
 }

@@ -84,10 +84,11 @@ internal fun legacyCodexProfileHome(root: Path, profile: String): Path {
 /** Prefer explicit configuration, then an installed executable; never download a runtime. */
 internal fun findCodexExecutable(environment: Map<String, String>): Path? {
     val configured = environment["GAMERO_CODEX_PATH"]
+    val home = environment["HOME"] ?: System.getProperty("user.home")
     val candidates = if (configured != null) listOf(configured) else
         environment["PATH"].orEmpty().split(java.io.File.pathSeparator).filter { it.isNotBlank() }
             .map { Path.of(it).resolve("codex").toString() } + listOf(
-            "/opt/homebrew/bin/codex", "/usr/local/bin/codex",
+            "$home/.local/bin/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex",
             "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex")
     return candidates.mapNotNull { runCatching { Path.of(it) }.getOrNull() }
         .firstOrNull { it.isAbsolute && Files.isRegularFile(it) && Files.isExecutable(it) }

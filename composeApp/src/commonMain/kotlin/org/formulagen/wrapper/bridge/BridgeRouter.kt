@@ -163,6 +163,8 @@ class BridgeRouter(
                 bridgeFailureEnvelope(BridgeErrorCode.BUSY)
             } catch (_: BridgeDeclinedException) {
                 bridgeFailureEnvelope(BridgeErrorCode.DECLINED)
+            } catch (error: BridgeUpdateRequiredException) {
+                BridgeEnvelopes.failure(BridgeErrorCode.FAILED, checkNotNull(error.message))
             } catch (error: Throwable) {
                 onFailure(call.method, error)
                 bridgeFailureEnvelope(BridgeErrorCode.FAILED)

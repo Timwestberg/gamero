@@ -99,8 +99,8 @@ class ChatHistoryTest {
         val root = Files.createTempDirectory("history-invalid")
         val (file, _) = paths(root)
         val history = ChatHistory(file)
-        fun rejects(record: ChatRecord) { history.write(record); assertFails { history.read() } }
-        rejects(ChatRecord(version = 3))
+        fun rejects(record: ChatRecord) { assertFails { history.write(record) } }
+        rejects(ChatRecord(version = 4))
         rejects(ChatRecord(entries = List(41) { ChatEntry.User(java.util.UUID.randomUUID().toString(), "x") }))
         rejects(ChatRecord(entries = listOf(ChatEntry.Assistant(reply, TeamMember(RuntimeId.CODEX, "--model"), ""))))
         rejects(ChatRecord(entries = listOf(ChatEntry.User(user, "x".repeat(4_001)))))
@@ -108,6 +108,7 @@ class ChatHistoryTest {
         rejects(ChatRecord(conversations = mapOf(RuntimeId.CLAUDE_CODE to NativeConversation("../session", hash))))
         rejects(ChatRecord(entries = listOf(ChatEntry.Handover(handover, "yesterday", null, TeamMember(RuntimeId.CODEX, "x"), HandoverMethod.FRESH, HandoverReason.MANUAL))))
         rejects(ChatRecord(pendingContext = mapOf(RuntimeId.CODEX to "x".repeat(PENDING_CONTEXT_LIMIT + 1))))
+        Files.createDirectories(file.parent)
         Files.writeString(file, " ".repeat(3_000_001)); assertFails { history.read() }
         assertFails { companionChatHistory(root, "../../.codex", companion) }
     }

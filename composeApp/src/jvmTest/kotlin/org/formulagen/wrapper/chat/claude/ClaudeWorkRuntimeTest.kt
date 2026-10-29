@@ -163,6 +163,10 @@ class ClaudeWorkRuntimeTest {
             while (fake.stdin().none { it.type() == "control_request" && it["request"]?.jsonObject?.get("subtype") == JsonPrimitive("interrupt") }) {
                 check(System.nanoTime() < until) { "Never interrupted" }; Thread.sleep(10)
             }
+            // The interrupt and the dialog's denial run on separate threads. Observe both before asserting.
+            while (broker.cancelled.isEmpty() || fake.stdin().none { it.type() == "control_response" }) {
+                check(System.nanoTime() < until) { "Dialog denial did not arrive" }; Thread.sleep(10)
+            }
             assertEquals(listOf(true), broker.cancelled.toList(), "Stop cancels the dialog")
             val deny = fake.stdin().single { it.type() == "control_response" }.getValue("response").jsonObject.getValue("response").jsonObject
             assertEquals(JsonPrimitive("deny"), deny["behavior"])

@@ -117,6 +117,8 @@ internal sealed interface ChatFailure {
     /** The plan's limit is reached; [resetsAt] when the runtime says. */
     data class UsageLimit(val resetsAt: Instant?) : ChatFailure
     data object ModelUnavailable : ChatFailure
+    /** The provider's explicit project trust was declined or revoked before work could start. */
+    data object ProjectTrustRequired : ChatFailure
     /** Overloaded, a server error or a dropped connection: sending again later may work. */
     data object Temporary : ChatFailure
     /** The runtime no longer has the conversation, or it was started with another persona: start a new one. */

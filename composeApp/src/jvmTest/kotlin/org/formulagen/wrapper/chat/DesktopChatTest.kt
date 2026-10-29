@@ -77,6 +77,28 @@ class DesktopChatTest {
     private fun chat(root: Path, speech: ChatSpeech, rpc: (receive: (String, JsonObject) -> Unit) -> CodexAppServer) =
         DesktopChat(root, listOf(CodexChatRuntime(root, Path.of("/usr/bin/true")) { _, receive -> rpc(receive) }), speech)
 
+    @Test fun accountNotificationsWithoutAThreadDoNotBreakReadinessOrAnActiveReply() = runBlocking {
+        val root = Files.createTempDirectory("chat-account-notification")
+        val created = java.util.concurrent.CompletableFuture<Rpc>()
+        try {
+            chat(root, Speech()) { receive -> Rpc(receive).also {
+                it.beforeAccount = { receive("account/rateLimits/updated", json("""{"rateLimits":{}}""")) }
+                created.complete(it)
+            } }.use { chat ->
+                val scope = scope()
+                chat.open(scope)
+                chat.send(send(scope, speak = false))
+                val rpc = created.get(5, TimeUnit.SECONDS)
+                await { rpc.calls.contains("turn/start") || state(chat, scope).state == ChatState.ERROR }
+                assertEquals(ChatState.RESPONDING, state(chat, scope).state)
+                rpc.notify("account/updated", json("""{"authMode":"chatgpt"}"""))
+                rpc.delta("Still connected"); rpc.complete()
+                assertEquals("Still connected", state(chat, scope).messages.last().text)
+                assertFalse(rpc.closed)
+            }
+        } finally { root.toFile().deleteRecursively() }
+    }
+
     @Test fun streamsPersistsDeduplicatesAndResumesOnlyItsCompanion() = runBlocking {
         val root = Files.createTempDirectory("chat-history")
         val speech = Speech(); val rpcs = CopyOnWriteArrayList<Rpc>()
