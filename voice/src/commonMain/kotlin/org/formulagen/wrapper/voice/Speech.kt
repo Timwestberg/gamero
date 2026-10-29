@@ -47,6 +47,9 @@ interface PieceEngine {
     val sampleRate: Int
     fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio
     fun release()
+
+    /** PocketTTS retries when a take fills [maxFrames]. Kokoro does not use that cap. */
+    fun usesFrameCeiling(): Boolean = true
     fun requestCancel() {}
     fun clearCancel() {}
     fun isCancelled(): Boolean = false
@@ -135,6 +138,7 @@ class EmberVoice(
         val parts = ArrayList<FloatArray>()
         var ttfaMs = 0.0
         var sampleRate = engine.sampleRate
+        val gapMs = config.resolvedSentenceGapMs
         for ((index, piece) in pieces.withIndex()) {
             if (engine.isCancelled()) break
             val take = try {
@@ -145,11 +149,25 @@ class EmberVoice(
             if (take.samples.isEmpty() || engine.isCancelled()) break
             if (index == 0) ttfaMs = take.ttfaMs
             sampleRate = take.sampleRate
-            emit(SpeechEvent(SPEECH_LEVEL, rms = rms(take.samples)))
-            parts.add(take.samples)
-            if (!onSentence(take.samples, take.sampleRate)) break
+            val shaped = if (gapMs > 0) {
+                shapeSentence(
+                    take.samples,
+                    config.silenceTrimThreshold.toFloat(),
+                    sampleRate * config.crossfadeMs / 1000,
+                    fadeHead = index > 0,
+                    fadeTail = true,
+                )
+            } else {
+                take.samples
+            }
+            if (shaped.isEmpty()) continue
+            emit(SpeechEvent(SPEECH_LEVEL, rms = rms(shaped)))
+            val gapSamples = sampleRate * gapMs / 1000
+            val played = if (parts.isNotEmpty() && gapSamples > 0) joinRaw(FloatArray(gapSamples), shaped) else shaped
+            parts.add(shaped)
+            if (!onSentence(played, take.sampleRate)) break
         }
-        val gap = sampleRate * config.silenceBetweenPiecesMs / 1000
+        val gap = if (gapMs > 0) sampleRate * gapMs / 1000 else sampleRate * config.silenceBetweenPiecesMs / 1000
         val fade = if (gap == 0) sampleRate * config.crossfadeMs / 1000 else 0
         val samples = concat(parts, gap, fade, config.crossfadeEdgeThreshold.toFloat())
         val totalMs = nowMs() - started
@@ -183,7 +201,7 @@ internal fun retryFrames(firstCap: Int, factor: Int, maxFrames: Int): Int = minO
 internal fun synthesizePiece(engine: PieceEngine, config: VoiceConfig, piece: String): PieceAudio {
     val frames = config.framesFor(piece.length)
     val first = engine.synthesize(piece, frames, config.seed)
-    if (!hitFrameCeiling(first.samples.size, first.sampleRate, frames)) {
+    if (!engine.usesFrameCeiling() || !hitFrameCeiling(first.samples.size, first.sampleRate, frames)) {
         return first.copy(ttfaMs = firstAudibleMs(first.ttfaMs, false, first.synthMs))
     }
     val second = engine.synthesize(
@@ -207,6 +225,56 @@ fun rms(samples: FloatArray): Float {
     var sum = 0.0
     for (sample in samples) sum += sample * sample
     return sqrt(sum / samples.size).toFloat()
+}
+
+/**
+ * Drops samples quieter than [threshold] at both ends. A take that is quiet
+ * all the way through is left as it is.
+ */
+internal fun trimEdgeSilence(samples: FloatArray, threshold: Float): FloatArray {
+    if (samples.isEmpty() || threshold <= 0f) return samples
+    var start = 0
+    while (start < samples.size && abs(samples[start]) < threshold) start++
+    var end = samples.size
+    while (end > start && abs(samples[end - 1]) < threshold) end--
+    if (start == 0 && end == samples.size) return samples
+    if (end <= start) return samples
+    return samples.copyOfRange(start, end)
+}
+
+/** Fades an edge to silence over [fade] samples so a trimmed cut does not click. */
+internal fun fadeEdge(samples: FloatArray, fade: Int, fadeHead: Boolean, fadeTail: Boolean): FloatArray {
+    if (fade <= 0 || samples.isEmpty() || (!fadeHead && !fadeTail)) return samples
+    val used = minOf(fade, samples.size / 2)
+    if (used <= 0) return samples
+    val out = samples.copyOf()
+    var index = 0
+    while (index < used) {
+        val gain = index.toFloat() / used.toFloat()
+        if (fadeHead) out[index] *= gain
+        if (fadeTail) out[out.size - 1 - index] *= gain
+        index++
+    }
+    return out
+}
+
+internal fun shapeSentence(
+    samples: FloatArray,
+    threshold: Float,
+    fadeSamples: Int,
+    fadeHead: Boolean,
+    fadeTail: Boolean,
+): FloatArray = fadeEdge(trimEdgeSilence(samples, threshold), fadeSamples, fadeHead, fadeTail)
+
+/** Samples quieter than [threshold] from [from] until speech, and from the end back. */
+internal fun edgeSilenceSamples(samples: FloatArray, threshold: Float): Pair<Int, Int> {
+    var start = 0
+    while (start < samples.size && abs(samples[start]) < threshold) start++
+    var end = samples.size
+    while (end > start && abs(samples[end - 1]) < threshold) end--
+    val tail = if (end <= start) samples.size else samples.size - end
+    val lead = if (end <= start) 0 else start
+    return lead to tail
 }
 
 /**

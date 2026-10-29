@@ -1,0 +1,63 @@
+{
+  "defaultId": "adam70-michael30",
+  "modelOnnxSha256": "b40f62b166ac8164b0627ef48a0b358eda0985e272fb03ef5252e7206305da11",
+  "tokensSha256": "6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425",
+  "lexiconUsEnSha256": "7daaab53a181be9885b853a8582bf1838186317e5dadacbcef9c426d6fa0da14",
+  "upstreamVoicesSha256": "1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29",
+  "derivedVoicesSha256": "35cce6c473585fd74244f31c2623d6f2f835283918dad6fa2e2a79d60639b26f",
+  "replacedSlots": "50 zm_yunxi, 51 zm_yunxia, 52 zm_yunyang, 53 em_santa",
+  "layout": {
+    "speakers": 54,
+    "frames": 510,
+    "dim": 256
+  },
+  "speakers": {
+    "af_bella": 2,
+    "af_heart": 3,
+    "am_adam": 11,
+    "am_michael": 16,
+    "bm_george": 26
+  },
+  "voices": [
+    {
+      "id": "adam70-michael30",
+      "name": "Sam",
+      "sid": 50,
+      "speed": "1.00",
+      "weights": [
+        {"speaker": "am_adam", "weight": "0.70"},
+        {"speaker": "am_michael", "weight": "0.30"}
+      ]
+    },
+    {
+      "id": "adam60-george40",
+      "name": "Jamie",
+      "sid": 51,
+      "speed": "0.95",
+      "weights": [
+        {"speaker": "am_adam", "weight": "0.60"},
+        {"speaker": "bm_george", "weight": "0.40"}
+      ]
+    },
+    {
+      "id": "adam55-bella45",
+      "name": "Riley",
+      "sid": 52,
+      "speed": "0.95",
+      "weights": [
+        {"speaker": "am_adam", "weight": "0.55"},
+        {"speaker": "af_bella", "weight": "0.45"}
+      ]
+    },
+    {
+      "id": "heart60-adam40",
+      "name": "Harper",
+      "sid": 53,
+      "speed": "0.97",
+      "weights": [
+        {"speaker": "af_heart", "weight": "0.60"},
+        {"speaker": "am_adam", "weight": "0.40"}
+      ]
+    }
+  ]
+}

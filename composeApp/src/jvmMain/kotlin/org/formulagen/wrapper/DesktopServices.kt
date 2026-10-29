@@ -32,6 +32,7 @@ import org.formulagen.wrapper.chat.ClaudeChatRuntime
 import org.formulagen.wrapper.chat.CodexChatRuntime
 import org.formulagen.wrapper.chat.DesktopChat
 import org.formulagen.wrapper.chat.DesktopSpeech
+import org.formulagen.wrapper.chat.VoicePickerModel
 import org.formulagen.wrapper.chat.desktopVoiceConfig
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.hovel.HovelCompanion
@@ -66,6 +67,7 @@ internal class DesktopServices private constructor(
     val companion: HovelCompanion?,
     /** The embedded game; null without `HOVEL_GAME_PROJECT` or a window to host it. */
     val games: DesktopGameLauncher?,
+    val voicePicker: VoicePickerModel,
     private val owned: List<AutoCloseable>,
 ) : AutoCloseable {
     /** The product capability packs [product] registers with the bridge. */
@@ -128,7 +130,8 @@ internal class DesktopServices private constructor(
                 val workers = listOfNotNull(claude?.takeIf { RuntimeId.CLAUDE_CODE in working }?.let { ClaudeWorkRuntime(it, checkNotNull(claudeSignIn), broker) },
                     codex?.takeIf { RuntimeId.CODEX in working }?.let { CodexWorkRuntime(providerRoot, it, broker) })
                 val work = ChatWork(workspaces, StartOfWork(nativeDialogs), workers)
-                val chat = own(DesktopChat(providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment)), offered, work))
+                val voicePicker = VoicePickerModel()
+                val chat = own(DesktopChat(providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment)), offered, work, voicePicker))
                 // Both runtimes sign in outside Hovel, on the player's own install, so a status check never signs a chat out.
                 val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),
                     claudeSignIn?.let(::ClaudeProvider)), working))
@@ -141,7 +144,7 @@ internal class DesktopServices private constructor(
                 val games = if (window != null && environment["HOVEL_GAME_PROJECT"] != null) {
                     DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }
                 } else null
-                return DesktopServices(chat, providers, pet, DesktopWorkspace(workspaces), dialogs, companion, games, owned.toList())
+                return DesktopServices(chat, providers, pet, DesktopWorkspace(workspaces), dialogs, companion, games, voicePicker, owned.toList())
             } catch (error: Throwable) {
                 runCatching { closeInReverse(owned) }.exceptionOrNull()?.let(error::addSuppressed)
                 throw error

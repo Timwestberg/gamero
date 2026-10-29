@@ -1,10 +1,27 @@
 # :voice
 
-On-device PocketTTS for the Ember pet. The Mac companion uses the JVM backend through `DesktopSpeech`. iOS and Android stay in this module for the same speak path.
+Mac chat speaks with Kokoro 82M v1.0. PocketTTS stays behind the same `PieceEngine` seam for a later "speak in my voice" clip (`HOVEL_VOICE_BACKEND=sherpa`). iOS and Android still use Pocket. Kokoro on those targets is not linked.
+
+`scripts/fetch-voice.sh` downloads both. Kokoro's pinned files are `model.onnx`, upstream `voices.bin`, `tokens.txt`, and `lexicon-us-en.txt`. `voice/kokoro/pack-blends.py` writes the four chat blends into a derived `voices-blends.bin` (speaker slots 50–53). That file is not committed. The voice a person picks is one of:
+
+| Id | Name | Speed | Blend |
+| --- | --- | --- | --- |
+| `adam70-michael30` | Sam | 1.00 | Adam 70 / Michael 30, the default |
+| `adam60-george40` | Jamie | 0.95 | Adam 60 / George 40 |
+| `adam55-bella45` | Riley | 0.95 | Adam 55 / Bella 45 |
+| `heart60-adam40` | Harper | 0.97 | Heart 60 / Adam 40 |
+
+Sam is the default because it is the blend closest to the Adam sample that was the clearest of the set, at the same speed. While Ember's chat is open, the Mac window shows a Voice row with these names. The selected name is the one in use. Choosing another speaks "Hi, I'm …" and the next sentence uses it, and the id is saved to `~/.gamero/kokoro-voice`. `HOVEL_KOKORO_VOICE` still overrides that file at launch. The row is hidden when the engine is Pocket.
+
+A word missing from `lexicon-us-en.txt` used to be skipped. Regular inflections of a listed stem are written to `lexicon-chat.txt` beside it, and any word that is still unknown is spelled letter by letter so it is not dropped.
+
+Speech is normalized before it is split into sentences: versions (`Sonnet 5.5`, `2.0.1`), units, URLs, and filenames become words. A token the normalizer does not know is spelled. It is not dropped. Each sentence is one Kokoro generate. Playback is the existing stream: the first sentence can start while the next one is still generating. Kokoro's padding at a period is trimmed, then `sentenceGapMs` (160) is the only pause inserted between sentences. The next sentence is synthesized while the current one is still playing, on `KOKORO_THREADS` (4) threads. `startAfterMs` waits once, before the first sentence of a reply.
+
+On-device PocketTTS remains in this module for the cloned-voice path. The Mac companion uses the JVM backend through `DesktopSpeech`.
 
 ## What it does
 
-`EmberVoice.speak` sends one piece per sentence. A sentence longer than 400 characters is split at a word boundary. Each piece is capped with `ceil(max(12, 4 + 0.8 * chars))`, so `4 + 0.8 * 28` is 27 frames, and a piece of 24 characters or fewer gets at least 36 frames. `max_char_in_sentence` is at least the piece length, so sherpa-onnx's own splitter does not cut the piece again. Expected audio is `max(0.8 s, normalized chars / 15)`. A take is generated again only when it fills that frame cap, with the same seed and twice the cap. There is no inserted silence. A join whose edge is at least 0.02 is crossfaded for 10 ms. Five flow steps are the default. If a Mac cannot stay in real time, the fallback is 3. A second `speak` or `release` while a speak is running throws. The listener events are `speech_start`, one `speech_level` per committed piece (RMS), and `speech_end`.
+`EmberVoice.speak` sends one piece per sentence. A sentence longer than 400 characters is split at a word boundary. Each piece is capped with `ceil(max(12, 4 + 0.8 * chars))`, so `4 + 0.8 * 28` is 27 frames, and a piece of 24 characters or fewer gets at least 36 frames. `max_char_in_sentence` is at least the piece length, so sherpa-onnx's own splitter does not cut the piece again. Expected audio is `max(0.8 s, normalized chars / 15)`. A take is generated again only when it fills that frame cap, with the same seed and twice the cap. Pocket inserts no silence; a join whose edge is at least 0.02 is crossfaded for 10 ms. Kokoro trims edges quieter than 0.02 and inserts `sentenceGapMs` instead. Five flow steps are the default. If a Mac cannot stay in real time, the fallback is 3. A second `speak` or `release` while a speak is running throws. The listener events are `speech_start`, one `speech_level` per committed piece (RMS), and `speech_end`.
 
 sherpa-onnx 2.0.0 finishes the language model for a piece before the first audio callback. This module does not pretend that callback is a frame streamed while the model is still generating. The first callback is still the TTFA the benchmark records.
 
