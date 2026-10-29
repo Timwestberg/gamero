@@ -862,10 +862,12 @@ internal class DesktopChat(
     /**
      * Escape. While Ember is answering, this interrupts her and keeps listening.
      * While the session is only listening, this ends it. Stop always ends it.
+     * False when no voice session is up, so the catalog page can keep the key.
      */
-    internal fun endConversation() = synchronized(gate) {
-        if (!talkOn) return@synchronized
+    internal fun endConversation(): Boolean = synchronized(gate) {
+        if (!talkOn) return@synchronized false
         if (replyLiveLocked()) bargeInLocked("press") else endConversationLocked()
+        true
     }
 
     /** The Voice row toggle. The env var wins at the next launch; this choice is what the file remembers. */
