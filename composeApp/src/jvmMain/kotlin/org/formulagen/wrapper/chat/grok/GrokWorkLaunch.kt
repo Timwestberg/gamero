@@ -85,7 +85,7 @@ internal class GrokWorkLaunch private constructor(
             val provider = Path.of(env.getValue("GROK_HOME"))
             val auth = Path.of(env.getValue("GROK_AUTH_PATH"))
             require(listOf(executable, home, provider, auth, workspace).all { it.isAbsolute })
-            val config = provider.resolve("config.toml")
+            val config = grokWorkConfig(parent)
             verifyGrokWorkConfig(readGrokWorkConfig(config))
             val profile = Files.createTempFile("hovel-grok-work-", ".md",
                 PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))
@@ -108,7 +108,7 @@ internal class GrokWorkLaunch private constructor(
  */
 internal fun grokWorkEnvironment(parent: Map<String, String>, loginPath: String?, executable: Path): Map<String, String> {
     val home = parent["HOME"] ?: System.getProperty("user.home")
-    val provider = parent["GROK_HOME"] ?: Path.of(home).resolve(".grok").toString()
+    val provider = grokProviderHome(parent)
     val auth = parent["GROK_AUTH_PATH"] ?: Path.of(provider).resolve("auth.json").toString()
     val kept = parent.filterKeys { !it.startsWith("XAI_") && !it.startsWith("GROK_") }
     val path = (listOfNotNull(executable.parent?.toString()) + (loginPath ?: parent["PATH"]).orEmpty().split(File.pathSeparator) +
@@ -116,6 +116,15 @@ internal fun grokWorkEnvironment(parent: Map<String, String>, loginPath: String?
     return kept + mapOf("HOME" to home, "PATH" to path.joinToString(File.pathSeparator), "GROK_HOME" to provider, "GROK_AUTH_PATH" to auth,
         "BROWSER" to "/usr/bin/false", "GROK_DISABLE_AUTOUPDATER" to "1", "GROK_SUBAGENTS" to "0", "GROK_GOAL" to "0", "GROK_WORKFLOWS" to "0")
 }
+
+/** The player's own Grok configuration, which only they edit: `$GROK_HOME/config.toml`, by default `~/.grok/config.toml`. */
+internal fun grokWorkConfig(parent: Map<String, String>): Path = Path.of(grokProviderHome(parent)).resolve("config.toml")
+
+private fun grokProviderHome(parent: Map<String, String>): String =
+    parent["GROK_HOME"] ?: Path.of(parent["HOME"] ?: System.getProperty("user.home")).resolve(".grok").toString()
+
+/** The player's Grok configuration does not pin account sign-in, and only the player may add that setting. */
+internal class GrokWorkAuthUnpinned : IllegalStateException("Grok work requires an explicit OIDC auth preference")
 
 /** Configuration contents stay local and are never included in errors or diagnostics. */
 private fun readGrokWorkConfig(path: Path): String {
@@ -130,7 +139,7 @@ private fun readGrokWorkConfig(path: Path): String {
 internal fun verifyGrokWorkConfig(text: String) {
     val config = Toml.parse(text)
     check(!config.hasErrors()) { "Grok configuration could not be verified" }
-    check(config.getString("auth.preferred_method") == "oidc") { "Grok work requires an explicit OIDC auth preference" }
+    if (config.getString("auth.preferred_method") != "oidc") throw GrokWorkAuthUnpinned()
     for (key in listOf("model", "model_providers", "auth_provider", "endpoints", "grok_com_config", "version_overrides", "campaigns"))
         check(!config.contains(key)) { "Grok configuration needs a separate work acceptance" }
     check(config.getBoolean("relay.enabled") != true) { "Grok relay needs a separate work acceptance" }

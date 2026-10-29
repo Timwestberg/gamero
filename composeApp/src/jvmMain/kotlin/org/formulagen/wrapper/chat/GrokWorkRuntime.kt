@@ -11,6 +11,8 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.approvals.ApprovalBroker
 import org.formulagen.wrapper.approvals.CancelSignal
+import org.formulagen.wrapper.approvals.displayPath
+import org.formulagen.wrapper.bridge.ChatLimits
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.chat.grok.*
@@ -19,6 +21,7 @@ import org.formulagen.wrapper.providers.GrokConnection
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.process.readLoginShellPath
+import org.formulagen.wrapper.util.shortened
 
 /** Grok project work through the existing native folder, lease, history, activity and approval seams. */
 internal class GrokWorkRuntime(
@@ -51,8 +54,10 @@ internal class GrokWorkRuntime(
             val home = Path.of(environment["HOME"] ?: System.getProperty("user.home"))
             GrokWorkLaunch.create(executable, environment, home, "Readiness check.").use { }
             Readiness.Ready
-        } catch (_: Exception) {
-            Readiness.Unavailable("Grok work requires an OIDC auth preference and supported local configuration. See Manage subscriptions.")
+        } catch (error: Exception) {
+            // Hovel never writes the player's Grok configuration: the notice says exactly what to add, and what else it changes.
+            Readiness.Unavailable(if (error is GrokWorkAuthUnpinned || error is java.nio.file.NoSuchFileException)
+                grokWorkAuthNotice(grokWorkConfig(environment)) else GROK_WORK_CONFIG_UNSUPPORTED)
         }
     }
 
@@ -237,3 +242,11 @@ internal class GrokWorkRuntime(
         val loginShellPath = lazy { readLoginShellPath(System.getenv()) }
     }
 }
+
+/** The manual setting Grok work needs, with its effect outside Hovel; the file's path goes last, so only it can be cut. */
+internal fun grokWorkAuthNotice(config: Path): String = ("Grok work needs Grok Build to use only your account sign-in. " +
+    "Add [auth] with preferred_method = \"oidc\" to your Grok config yourself. " +
+    "This also changes how Grok Build signs in outside Hovel. File: ${displayPath(config)}").shortened(ChatLimits.NOTICE)
+
+internal const val GROK_WORK_CONFIG_UNSUPPORTED = "Grok work can't use your Grok config: it has settings Hovel has not " +
+    "accepted for project work, such as custom models, endpoints, relays or command prefixes."

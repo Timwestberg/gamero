@@ -269,6 +269,37 @@ class GrokWorkRuntimeTest {
         }
     }
 
+    @Test fun theAuthNoticeNamesTheSettingItsEffectOutsideHovelAndTheFile() {
+        val notice = grokWorkAuthNotice(java.nio.file.Path.of("/Users/player/.grok/config.toml"))
+        assertEquals("Grok work needs Grok Build to use only your account sign-in. Add [auth] with preferred_method = \"oidc\" " +
+            "to your Grok config yourself. This also changes how Grok Build signs in outside Hovel. File: " +
+            org.formulagen.wrapper.approvals.displayPath(java.nio.file.Path.of("/Users/player/.grok/config.toml")), notice)
+        // An unusually long path is what gets cut, never the setting.
+        val long = grokWorkAuthNotice(java.nio.file.Path.of("/" + "nested/".repeat(60) + "config.toml"))
+        assertEquals(ChatLimits.NOTICE, long.length)
+        assertTrue(long.startsWith(notice.substringBefore("File: ") + "File: /nested/"))
+    }
+
+    @Test fun readinessSaysExactlyWhatToAddToTheGrokConfigAndNeverWritesIt() {
+        FakeGrokRuntime().use { fake ->
+            val config = fake.root.resolve(".grok/config.toml")
+            val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
+            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker).use { runtime ->
+                assertEquals(Readiness.Ready, runtime.readiness("local"))
+                Files.writeString(config, "theme = 'dark'\n")
+                val unpinned = runtime.readiness("local") as Readiness.Unavailable
+                assertEquals(grokWorkAuthNotice(config), unpinned.reason)
+                assertTrue(unpinned.reason.length <= ChatLimits.NOTICE)
+                assertEquals("theme = 'dark'\n", Files.readString(config))
+                Files.delete(config)
+                assertEquals(unpinned, runtime.readiness("local"))
+                assertFalse(Files.exists(config))
+                Files.writeString(config, "[auth]\npreferred_method = 'oidc'\n[endpoints]\nproxy_url = 'https://example.test'\n")
+                assertEquals(Readiness.Unavailable(GROK_WORK_CONFIG_UNSUPPORTED), runtime.readiness("local"))
+            }
+        }
+    }
+
     @Test fun workBindingsCannotResumeInAnotherWorkspaceOrReplayAnAmbiguousPrompt() {
         FakeGrokRuntime().use { fake ->
             val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
