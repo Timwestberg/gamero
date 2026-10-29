@@ -24,13 +24,18 @@ interface ChatCapability {
     suspend fun stopSpeaking(scope: ChatScope): ChatSnapshot
     /**
      * The catalog page arms, mutes, or ends the microphone the host owns.
-     * The arguments are a scope, an action, the member, and an optional effort.
-     * A path, a model file, or a token is rejected.
+     * The arguments are the lease, an action, the member, and an optional effort; no argument
+     * names a path, a model file, a token or audio, and an unknown one is rejected.
      */
     suspend fun hearing(args: ChatHearingRequest): ChatSnapshot
     suspend fun closeSession(scope: ChatScope)
 }
 
+/**
+ * The lease (`chatScope`) and the hearing handshake (`chatViewScope`). `chat.open`, `chat.snapshot`,
+ * `chat.stop` and `chat.stopSpeaking` take the handshake; `chat.close` answers no snapshot, so it
+ * takes the plain lease and rejects [hearing].
+ */
 @Serializable
 data class ChatScope(
     val profile: String,
@@ -40,19 +45,20 @@ data class ChatScope(
     /**
      * Handshake for a page that can read [ChatSnapshot.hearing]. Host-bridge v2 pages omit it.
      * The host then omits `hearing` on every chat result, which a strict v2 decoder requires.
+     * `true` opts the lease in until it ends; absent or `false` changes nothing.
      */
     val hearing: Boolean? = null,
 )
 
-/** The lease is the four ids. [ChatScope.hearing] is a handshake, not a different chat. */
+/** The lease is the four fields. [ChatScope.hearing] is a handshake, not a different chat. */
 internal fun ChatScope.sameChat(other: ChatScope) =
     profile == other.profile && companionId == other.companionId && name == other.name && sessionId == other.sessionId
 
-/** A chat lease with the page's immutable runtime vocabulary. */
+/** A chat lease with the page's immutable runtime vocabulary, and the [ChatScope.hearing] handshake. */
 @Serializable
 data class ChatOpenForClient(val profile: String, val companionId: String, val name: String, val sessionId: String,
-    val supportedRuntimes: List<String>) {
-    fun scope() = ChatScope(profile, companionId, name, sessionId)
+    val supportedRuntimes: List<String>, val hearing: Boolean? = null) {
+    fun scope() = ChatScope(profile, companionId, name, sessionId, hearing)
 }
 
 /**
@@ -352,8 +358,10 @@ enum class HearingAction {
 }
 
 /**
- * [member] answers the heard turn, as it would a [ChatSend]. [effort] is the page's effort for that
- * turn, as [ChatSend.effort]: null for the runtime default. No path, model file, or token.
+ * [member] answers a heard turn, as it would a [ChatSend]. [effort] is the page's effort for it, as
+ * [ChatSend.effort]: null for the runtime default. The last [HearingAction.PRESS] or
+ * [HearingAction.HANDS_FREE] sets both for every heard turn until the next one; a handover clears
+ * them, so heard turns go to the new active member at its default effort. Other actions ignore them.
  */
 @Serializable
 data class ChatHearingRequest(
@@ -424,7 +432,7 @@ object ChatMethods {
     val SNAPSHOT = method("snapshot")
     val STOP = method("stop")
     val STOP_SPEAKING = method("stopSpeaking")
-    val CLOSE = BridgeMethod("chat.close", ChatScope.serializer(), NoResult.serializer(), accepts = ::valid)
+    val CLOSE = BridgeMethod("chat.close", ChatScope.serializer(), NoResult.serializer()) { valid(it) && it.hearing == null }
     val SEND = BridgeMethod("chat.send", ChatSend.serializer(), ChatSnapshot.serializer()) {
         valid(it.scope()) && valid(it.member) && BridgeProtocol.UUID_PATTERN.matches(it.requestId) && it.text.trimEcma().length in 1..ChatLimits.MESSAGE
     }

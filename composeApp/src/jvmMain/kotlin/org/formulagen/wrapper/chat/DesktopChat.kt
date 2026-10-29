@@ -94,8 +94,6 @@ internal class DesktopChat(
     private var hearingNotice: String? = null
     /** The catalog page sent press. The native icon stays hidden so only one capture can arm. */
     private var pageOwnsCapture = false
-    /** The page asked for [ChatSnapshot.hearing]. Until then the result stays host-bridge v2. */
-    private var pageHears = false
     /** The member the page named on press. The native row leaves this null and uses the active member. */
     private var hearingMember: TeamMember? = null
     /** The page's effort for a heard turn. Null, as when the native row armed hearing, is the runtime default. */
@@ -114,6 +112,8 @@ internal class DesktopChat(
     }
 
     private class Session(val scope: ChatScope, val persona: Persona, val history: ChatHistory, var record: ChatRecord, val understood: Set<RuntimeId>) {
+        /** This lease's page asked for [ChatSnapshot.hearing]. Until then its results stay host-bridge v2. */
+        var pageHears = false
         var state = ChatState.READY
         var notice: String? = null
         var generation = 0
@@ -175,17 +175,16 @@ internal class DesktopChat(
             val old = active
             if (old != null && old.scope.sameChat(scope) && old.understood != understood) throw BridgeUpdateRequiredException()
             if (old != null && old.scope.sameChat(scope) && old.state !in setOf(ChatState.ERROR, ChatState.DISCONNECTED)) {
-                notePage(scope)
+                notePage(old, scope)
                 publishPicker()
                 return@state view(old)
             }
             invalidateLocked(keepEnded = false)
             ended = null
-            notePage(scope)
             val history = companionChatHistory(providerRoot, scope.profile, scope.companionId)
             val record = history.read()
             if (!understood.containsAll(record.runtimeIds())) throw BridgeUpdateRequiredException()
-            val snapshot = view(Session(scope, Persona.companion(scope.name), history, record, understood).also { active = it })
+            val snapshot = view(Session(scope, Persona.companion(scope.name), history, record, understood).also { notePage(it, scope); active = it })
             publishPicker()
             if (liveFillers.enabled) speech.warmFillers(FILLER_LINES)
             snapshot
@@ -201,9 +200,9 @@ internal class DesktopChat(
 
     /** Polling cannot reopen an expired lease, but a view the host ended keeps reading its final state. */
     override suspend fun snapshot(scope: ChatScope): ChatSnapshot = synchronized(gate) {
-        notePage(scope)
         publishPicker()
-        ended?.takeIf { !closed && it.first.sameChat(scope) }?.second?.copy(voice = speech.status()) ?: view(current(scope))
+        ended?.takeIf { !closed && it.first.sameChat(scope) }?.second?.copy(voice = speech.status())
+            ?: current(scope).let { notePage(it, scope); view(it) }
     }
 
     /**
@@ -361,6 +360,9 @@ internal class DesktopChat(
         if (session.state == ChatState.HANDING_OVER) return@synchronized refuse(session, "Another switch is still in progress.")
         val to = args.to.runtimeId
         if (to !in runtimes) { session.notice = missing(to); return@synchronized view(session) }
+        // Heard turns follow the switch: the current member answers them, at its default effort, until the next press.
+        hearingMember = null
+        hearingEffort = null
         val from = args.from
         // A member that only worked here has spoken too: its summary comes from its talk-only runtime, from the transcript.
         val canSummarize = from != null && from.runtimeId in runtimes &&
@@ -383,8 +385,8 @@ internal class DesktopChat(
      * or cancels a handover being prepared. With neither in progress it changes nothing.
      */
     override suspend fun stop(scope: ChatScope): ChatSnapshot = synchronized(gate) {
-        notePage(scope)
         val session = current(scope)
+        notePage(session, scope)
         if (talkOn) {
             endConversationLocked()
             return@synchronized view(session)
@@ -407,8 +409,8 @@ internal class DesktopChat(
 
     /** Audio can stop independently while text generation continues. */
     override suspend fun stopSpeaking(scope: ChatScope): ChatSnapshot = synchronized(gate) {
-        notePage(scope)
-        val session = current(scope); session.speak = false; speech.stop(); publishPicker(); view(session)
+        val session = current(scope); notePage(session, scope)
+        session.speak = false; speech.stop(); publishPicker(); view(session)
     }
 
     /** An old view cannot close the newly opened companion. */
@@ -434,9 +436,12 @@ internal class DesktopChat(
 
     private fun current(scope: ChatScope): Session = checkNotNull(active?.takeIf { !closed && it.scope.sameChat(scope) }) { "Chat view expired" }
 
-    /** A v2 page leaves [ChatScope.hearing] unset. A later page sets it, or calls [hearing]. */
-    private fun notePage(scope: ChatScope) {
-        if (scope.hearing == true) pageHears = true
+    /**
+     * A v2 page leaves [ChatScope.hearing] unset. A later page sets it, or calls [hearing]. Called only
+     * once [scope] holds [session]'s lease, so a stale view cannot opt in another page's lease.
+     */
+    private fun notePage(session: Session, scope: ChatScope) {
+        if (scope.hearing == true) session.pageHears = true
     }
     private fun live(session: Session, generation: Int = session.generation) = !closed && active === session && generation == session.generation
     private fun view(session: Session): ChatSnapshot {
@@ -444,7 +449,7 @@ internal class DesktopChat(
         return ChatSnapshot(session.state, session.record.entries,
             session.refusal?.takeIf { it.first == session.state }?.second ?: session.notice, speech.status(), session.failure,
             session.waiting?.takeIf { session.state == ChatState.AWAITING_YOU },
-            if (pageHears) hearingField() else null)
+            if (session.pageHears) hearingField() else null)
     }
 
     /** Present on this build. An older snapshot that omitted [ChatSnapshot.hearing] still decodes. */
@@ -792,17 +797,25 @@ internal class DesktopChat(
      */
     override suspend fun hearing(args: ChatHearingRequest): ChatSnapshot {
         val armed = synchronized(gate) {
+            val arming = args.action == HearingAction.PRESS || args.action == HearingAction.HANDS_FREE
+            // Arming checks what a chat.send of the heard text would, so a turn is not lost after capture.
+            if (arming) require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
             val session = current(args.scope())
+            // The handshake is not a change, so even a refused call opts the lease in.
+            session.pageHears = true
+            if (arming && args.member.runtimeId !in session.understood) throw BridgeUpdateRequiredException()
             if (session.state == ChatState.AWAITING_YOU && args.action != HearingAction.OFF && args.action != HearingAction.RELEASE) {
                 return@synchronized HearingArm.Ready(refuse(session, ANSWER_FIRST))
             }
+            if (arming && args.member.runtimeId !in offered) {
+                return@synchronized HearingArm.Ready(view(session).copy(notice = args.member.runtimeId.copy.notOffered))
+            }
             pageOwnsCapture = true
-            pageHears = true
             when (args.action) {
                 HearingAction.PRESS, HearingAction.HANDS_FREE -> {
                     hearingMember = args.member
                     hearingEffort = args.effort
-                    log(LogLevel.Info, "hearing", "page action=${args.action.name.lowercase()} effort=${if (hearingEffort == null) "default" else "page"}")
+                    log(LogLevel.Info, "hearing", "page action=${args.action.name.lowercase()} effort=${hearingEffort?.value ?: "default"}")
                     if (talkOn && replyLiveLocked()) {
                         bargeInLocked("press")
                         HearingArm.Ready(view(session))
@@ -1230,7 +1243,6 @@ internal class DesktopChat(
             talkOn = false
             playbackNoted = false
             pageOwnsCapture = false
-            pageHears = false
             hearingMember = null
             hearingEffort = null
             userMuted = false

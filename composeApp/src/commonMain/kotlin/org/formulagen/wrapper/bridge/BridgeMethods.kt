@@ -1,9 +1,13 @@
 package org.formulagen.wrapper.bridge
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.StructureKind
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonElement
 import kotlin.time.Duration
@@ -102,9 +106,20 @@ internal val bridgeJson = Json { ignoreUnknownKeys = false; isLenient = false; e
 
 /** Decodes and checks arguments, or returns null when they do not match the method. */
 internal fun <A> BridgeMethod<A, *>.decodeArgs(args: JsonObject): A? {
+    if (this.args.descriptor.nullForOptional(args)) return null
     val decoded = runCatching { bridgeJson.decodeFromJsonElement(this.args, args) }.getOrNull() ?: return null
     return decoded.takeIf { accepts(it) }
 }
+
+/**
+ * Whether [value] sends `null` for an optional key. A property with a default is zod's `.optional()`:
+ * absent, never `null`. Only a property without one, such as a handover's `from` (`.nullable()`),
+ * takes `null`. Top-level keys only, since no argument nests an optional key; `JsonObject`
+ * arguments (`brain.*`) check their own.
+ */
+@OptIn(ExperimentalSerializationApi::class)
+private fun SerialDescriptor.nullForOptional(value: JsonObject): Boolean =
+    kind == StructureKind.CLASS && (0 until elementsCount).any { value[getElementName(it)] is JsonNull && isElementOptional(it) }
 
 internal fun <R> BridgeMethod<*, R>.encodeResult(result: R): JsonElement = bridgeJson.encodeToJsonElement(this.result, result)
 
