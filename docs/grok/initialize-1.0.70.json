@@ -1,0 +1,15 @@
+{
+  "version": "grok 1.0.70 (f50904eaee6c)",
+  "protocolVersion": 1,
+  "authMethodIds": [
+    "grok.com"
+  ],
+  "loadSession": true,
+  "sessionCapabilities": [
+    "list",
+    "resume",
+    "close"
+  ],
+  "authenticationAttempted": false,
+  "promptSent": false
+}

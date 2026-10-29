@@ -260,6 +260,15 @@ internal class DesktopHearing(
         synchronized(gate) { runCatching { mic?.close() } }
     }
 
+    /**
+     * Wait up to [timeoutMs] for a capture that was told to stop to let go of the microphone, so the next one can open
+     * it. A capture still running is left alone. Call outside any lock: it joins.
+     */
+    fun awaitStopped(timeoutMs: Long) {
+        val running = synchronized(gate) { thread }
+        if (stop.get()) running?.join(timeoutMs)
+    }
+
     /** Stop the microphone without a transcript. Safe to call while holding another lock: it does not join. */
     fun cancel() {
         stop.set(true)

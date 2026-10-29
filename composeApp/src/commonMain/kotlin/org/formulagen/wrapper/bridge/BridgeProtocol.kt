@@ -49,7 +49,23 @@ data class FrameFacts(val mainFrame: Boolean, val trustedOrigin: Boolean, val do
 /** Thrown by a single-flight capability that is already running a call. The router answers `busy`. */
 class BridgeBusyException : IllegalStateException("Another call to this capability is running")
 
-/** Thrown by a capability when the person said no, such as to a connection request. The router answers `declined`. */
+/**
+ * Fixed compatibility copy, safe to expose without leaking a storage path or raw exception. The router answers it as
+ * `failed` with [MESSAGE], which mirrors `HOST_BRIDGE_UPDATE_REQUIRED_MESSAGE` (`fixtures/limits.json`), so a page can
+ * tell it from other failures.
+ */
+class BridgeUpdateRequiredException : IllegalStateException(MESSAGE) {
+    companion object {
+        const val MESSAGE = "Update Hovel and reload this page to open this conversation. Your saved conversation has been kept."
+    }
+}
+
+/** A page reads only [runtimes] it decodes ([understood]); for any other it is told to update, never sent what it cannot parse. */
+fun requireDecodable(understood: Set<RuntimeId>, runtimes: Collection<RuntimeId>) {
+    if (!understood.containsAll(runtimes)) throw BridgeUpdateRequiredException()
+}
+
+/** Thrown by a capability when the person said no. The router answers `declined`. */
 class BridgeDeclinedException(message: String) : IllegalStateException(message)
 
 /** A failure reply with the code's standard message, for transports that reject before the router. */

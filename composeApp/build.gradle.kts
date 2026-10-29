@@ -112,6 +112,7 @@ kotlin {
         }
         jvmMain.dependencies {
             implementation(project(":voice"))
+            implementation("org.tomlj:tomlj:1.1.1")
             // Upgrade the WebView's old 2.5.0 transitive dependencies to the stable Maven Central release.
             implementation("org.jogamp.gluegen:gluegen-rt:2.6.0")
             implementation("org.jogamp.jogl:jogl-all:2.6.0")

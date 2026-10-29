@@ -6,17 +6,27 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
+import org.formulagen.wrapper.bridge.BridgeUpdateRequiredException
+import org.formulagen.wrapper.bridge.HandoverReason
+import org.formulagen.wrapper.bridge.ChatDictation
+import org.formulagen.wrapper.bridge.ChatDictationRequest
+import org.formulagen.wrapper.bridge.DictationAction
+import org.formulagen.wrapper.bridge.DictationState
 import org.formulagen.wrapper.bridge.HearingAction
 import org.formulagen.wrapper.bridge.HearingState
 import org.formulagen.wrapper.bridge.ChatEntry
+import org.formulagen.wrapper.bridge.ChatHandover
+import org.formulagen.wrapper.bridge.ChatHearingRequest
 import org.formulagen.wrapper.bridge.ChatScope
 import org.formulagen.wrapper.bridge.ChatSend
 import org.formulagen.wrapper.bridge.ChatState
 import org.formulagen.wrapper.bridge.ChatVoice
+import org.formulagen.wrapper.bridge.ModelEffort
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.bridge.TeamMember
 import org.formulagen.wrapper.bridge.VoiceState
+import org.formulagen.wrapper.providers.copy
 import org.formulagen.wrapper.voice.DuplexChoice
 import org.formulagen.wrapper.voice.FILLER_LINES
 import org.formulagen.wrapper.voice.HearingDuplex
@@ -33,6 +43,7 @@ import org.formulagen.wrapper.voice.VoiceConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -69,6 +80,68 @@ class HearingChatTest {
             assertTrue(speech.clips.isEmpty())
         }
     }
+
+    /** The heard turn runs with the effort the page pressed with, as a `chat.send` would. */
+    @Test fun aHeardTurnUsesTheEffortThePagePressedWith() = runBlocking {
+        val runtime = ScriptedRuntime(completeOnStart = true)
+        chat(RememberingSpeech(), runtime, FillerSettings(thresholdMs = 60_000)).use { desk ->
+            desk.open(scope)
+            desk.hearing(request(HearingAction.PRESS, effort = ModelEffort.HIGH))
+            desk.commitHeard(HearingResult("what time is it", 900, 8.0))
+            await { runtime.lastText == "what time is it" && runtime.lastEffort == ModelEffort.HIGH }
+        }
+    }
+
+    /** A switch hands heard turns to the new member, at its default effort, until the next press. */
+    @Test fun aHandoverHandsHeardTurnsToTheNewMember() = runBlocking {
+        val runtime = ScriptedRuntime(completeOnStart = true)
+        val sol = TeamMember(RuntimeId.CODEX, "gpt-6.1-sol")
+        chat(RememberingSpeech(), runtime, FillerSettings(thresholdMs = 60_000)).use { desk ->
+            desk.open(scope)
+            desk.send(ChatSend(scope.profile, scope.companionId, scope.name, scope.sessionId, member, UUID.randomUUID().toString(), "Hello", false))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            desk.hearing(request(HearingAction.PRESS, effort = ModelEffort.HIGH))
+            desk.handover(ChatHandover(scope.profile, scope.companionId, scope.name, scope.sessionId, member, HandoverReason.MANUAL,
+                UUID.randomUUID().toString(), sol))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            desk.commitHeard(HearingResult("what time is it", 900, 8.0))
+            await { runtime.lastText == "what time is it" && runtime.lastModel == sol.modelId && runtime.lastEffort == null }
+        }
+    }
+
+    /** Arming checks what a send of the heard text would, so a turn is not lost after capture. */
+    @Test fun aPressIsRefusedUpFrontWhenItsTurnCouldNotBeSent() = runBlocking<Unit> {
+        var converted = false
+        DesktopChat(Files.createTempDirectory("hearing-chat"), listOf(ScriptedRuntime(completeOnStart = true)), RememberingSpeech(),
+            offered = setOf(RuntimeId.CODEX), fillers = FillerSettings(thresholdMs = 60_000), isConverted = { _, _ -> converted }).use { desk ->
+            desk.open(scope)
+            val grok = TeamMember(RuntimeId.GROK_BUILD, SharedRules.RUNTIME_DEFAULT_MODEL)
+            assertTrue(runCatching { desk.hearing(request(HearingAction.PRESS, grok)) }.exceptionOrNull() is BridgeUpdateRequiredException,
+                "a member on a runtime this page cannot read")
+            val sonnet = TeamMember(RuntimeId.CLAUDE_CODE, "sonnet")
+            assertEquals(RuntimeId.CLAUDE_CODE.copy.notOffered, desk.hearing(request(HearingAction.PRESS, sonnet)).notice)
+            converted = true
+            assertTrue(runCatching { desk.hearing(request(HearingAction.HANDS_FREE)) }.exceptionOrNull() is IllegalArgumentException,
+                "a companion converted to a coordinator")
+            assertNotNull(desk.hearing(request(HearingAction.OFF)).hearing, "off still answers")
+        }
+    }
+
+    /** A stale view's handshake cannot opt in the page that holds the lease now. */
+    @Test fun aStaleViewCannotOptInTheActiveLease() = runBlocking<Unit> {
+        chat(RememberingSpeech(), ScriptedRuntime(completeOnStart = true), FillerSettings(thresholdMs = 60_000)).use { desk ->
+            desk.open(scope)
+            val stale = scope.copy(sessionId = UUID.randomUUID().toString(), hearing = true)
+            assertTrue(runCatching { desk.snapshot(stale) }.isFailure)
+            assertTrue(runCatching { desk.stop(stale) }.isFailure)
+            assertTrue(runCatching { desk.stopSpeaking(stale) }.isFailure)
+            assertNull(desk.snapshot(scope).hearing)
+            assertNotNull(desk.snapshot(scope.copy(hearing = true)).hearing, "the page that holds the lease opts in")
+        }
+    }
+
+    private fun request(action: HearingAction, who: TeamMember = member, effort: ModelEffort? = null) =
+        ChatHearingRequest(scope.profile, scope.companionId, scope.name, scope.sessionId, action, who, effort)
 
     @Test fun aTranscriptBecomesOneTalkTurnAndOneFiller() = runBlocking {
         val speech = RememberingSpeech()
@@ -959,11 +1032,16 @@ private class RememberingSpeech : ChatSpeech {
     }
 }
 
+/** A runtime conversation handle as runtimes report them: histories keep only UUIDs. */
+private const val CONVERSATION = "5f0c2f4e-1d2b-4c3a-9e8f-7a6b5c4d3e2f"
+
 private class ScriptedRuntime(var completeOnStart: Boolean = false) : ChatRuntime {
     override val id = RuntimeId.CODEX
     val started = CountDownLatch(1)
     private val release = CountDownLatch(1)
     var lastText = ""
+    var lastEffort: ModelEffort? = null
+    var lastModel: String? = null
     var turns = 0
     private var events: TurnEvents? = null
 
@@ -973,11 +1051,13 @@ private class ScriptedRuntime(var completeOnStart: Boolean = false) : ChatRuntim
 
     override fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle {
         this.events = events
+        lastEffort = turn.effort
+        lastModel = turn.model
         lastText = turn.text
         turns += 1
-        events.opened("conv")
+        events.opened(CONVERSATION)
         events.accepted()
-        if (completeOnStart) events.completed("Ready.", "conv")
+        if (completeOnStart) events.completed("Ready.", CONVERSATION)
         else started.countDown()
         return TurnHandle {
             onStop()
@@ -991,7 +1071,7 @@ private class ScriptedRuntime(var completeOnStart: Boolean = false) : ChatRuntim
 
     fun finish(text: String) {
         release.countDown()
-        events?.completed(text, "conv")
+        events?.completed(text, CONVERSATION)
     }
 
     override fun summarize(request: SummaryRequest) = "summary"
@@ -1053,9 +1133,83 @@ class CatalogControlTest {
         }
     }
 
-    private fun request(action: HearingAction) = org.formulagen.wrapper.bridge.ChatHearingRequest(
+    private fun request(action: HearingAction) = ChatHearingRequest(
         scope.profile, scope.companionId, scope.name, scope.sessionId, action, member,
     )
+
+    @Test fun dictationFillsTheDraftWithoutSendingOrSpeaking() = runBlocking {
+        val engine = object : HearingEngine {
+            override fun startUtterance() {}
+            override fun accept(samples: FloatArray) {}
+            override fun partial() = "move the lamp"
+            override fun finish() = HearingResult("  move the lamp by the window  ", 900, 6.0)
+            override fun close() {}
+        }
+        val runtime = ScriptedRuntime(completeOnStart = true)
+        val row = VoicePickerModel()
+        DesktopChat(
+            Files.createTempDirectory("dictation"),
+            listOf(runtime),
+            RowSpeech(),
+            voices = row,
+            fillers = FillerSettings(thresholdMs = 60_000),
+            hearing = DesktopHearing(engine, { ScriptedMic(FloatArray(4800) { 0.2f }) }),
+        ).use { desk ->
+            desk.open(scope)
+            assertNull(desk.snapshot(scope).dictation, "No dictation until the page starts it")
+            assertNotNull(desk.dictation(dictate(DictationAction.START)).dictation)
+            await { runBlocking { desk.snapshot(scope) }.dictation?.partial == "move the lamp" }
+            assertEquals(DictationState.HEARING, desk.snapshot(scope).dictation?.state)
+            assertNull(desk.snapshot(scope).hearing, "Dictation is not a voice conversation")
+            assertFalse(row.state.value.showTalk, "The page owns the microphone while it dictates")
+            val done = desk.dictation(dictate(DictationAction.STOP))
+            assertEquals(ChatDictation(DictationState.DONE, text = "move the lamp by the window"), done.dictation)
+            assertNull(desk.snapshot(scope).dictation, "The text is answered once")
+            assertTrue(desk.snapshot(scope).messages.isEmpty(), "Dictation sends nothing")
+            assertEquals(0, runtime.turns)
+            assertEquals(VoiceState.IDLE, desk.snapshot(scope).voice.state, "Dictation speaks nothing")
+
+            desk.dictation(dictate(DictationAction.START))
+            assertNull(desk.dictation(dictate(DictationAction.CANCEL)).dictation, "Cancel drops the text")
+            assertNull(desk.dictation(dictate(DictationAction.STOP)).dictation, "Stop with nothing open answers nothing")
+        }
+    }
+
+    @Test fun talkAndDictationShareTheMicrophoneOneAtATime() = runBlocking {
+        DesktopChat(
+            Files.createTempDirectory("dictation-talk"),
+            listOf(ScriptedRuntime(completeOnStart = true)),
+            RowSpeech(),
+            voices = VoicePickerModel(),
+            fillers = FillerSettings(thresholdMs = 60_000),
+            hearing = DesktopHearing(LevelEngine(), { ScriptedMic(FloatArray(0)) }),
+        ).use { desk ->
+            desk.open(scope)
+            desk.hearing(request(HearingAction.HANDS_FREE))
+            assertEquals(
+                ChatDictation(DictationState.UNAVAILABLE, notice = DICTATION_WHILE_TALKING),
+                desk.dictation(dictate(DictationAction.START)).dictation,
+            )
+            desk.hearing(request(HearingAction.OFF))
+            // The conversation's capture is still letting go of the microphone; dictation waits for it.
+            assertEquals(DictationState.LISTENING, desk.dictation(dictate(DictationAction.START)).dictation?.state)
+            assertEquals(TALK_WHILE_DICTATING, desk.hearing(request(HearingAction.HANDS_FREE)).notice)
+            assertEquals(HearingState.OFF, desk.snapshot(scope).hearing?.state)
+            assertNull(desk.dictation(dictate(DictationAction.CANCEL)).dictation)
+        }
+    }
+
+    @Test fun dictationWithoutTheHearingModelsSaysHowToGetThem() = runBlocking {
+        DesktopChat(Files.createTempDirectory("dictation-models"), listOf(ScriptedRuntime()), RowSpeech()).use { desk ->
+            desk.open(scope)
+            val refused = desk.dictation(dictate(DictationAction.START))
+            assertEquals(ChatDictation(DictationState.UNAVAILABLE, notice = DICTATION_NEEDS_MODELS), refused.dictation)
+            assertEquals(refused.dictation, desk.snapshot(scope).dictation, "The reason stays until the page starts again")
+        }
+    }
+
+    private fun dictate(action: DictationAction) =
+        ChatDictationRequest(scope.profile, scope.companionId, scope.name, scope.sessionId, action)
 }
 
 private class LevelEngine : HearingEngine {

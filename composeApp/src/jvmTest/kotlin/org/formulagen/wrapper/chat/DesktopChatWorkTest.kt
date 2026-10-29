@@ -73,6 +73,22 @@ class DesktopChatWorkTest {
 
     @AfterTest fun cleanUp() { root.toFile().deleteRecursively() }
 
+    /** The hearing handshake is not a change, so a press refused while a dialog waits still opts the lease in. */
+    @Test fun aHearingPressRefusedWhileADialogWaitsStillOptsTheLeaseIn() = runBlocking<Unit> {
+        workspaces.choose(scope.profile, scope.companionId)
+        chat().use { chat ->
+            chat.open(scope)
+            chat.send(send())
+            await { screen.shown.isNotEmpty() }
+            assertNull(state(chat).hearing)
+            val refused = chat.hearing(ChatHearingRequest(scope.profile, scope.companionId, scope.name, scope.sessionId, HearingAction.PRESS, sonnet))
+            assertEquals(ANSWER_FIRST, refused.notice)
+            assertNotNull(refused.hearing)
+            assertNotNull(state(chat).hearing)
+            chat.stop(scope)
+        }
+    }
+
     @Test fun aWorkingMessageAsksToStartThenWorksInTheFolderWithLiveActivity() = runBlocking {
         workspaces.choose(scope.profile, scope.companionId)
         chat().use { chat ->

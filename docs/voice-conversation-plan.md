@@ -12,12 +12,16 @@
 
 ## What the draft stack shipped
 
-Mac only, still drafts, stacked on #56 (`5911aaf`). Milestones 5–7 are not started.
+Phases 1–4 are on `main`. Milestone 5, the browser loop, is a draft in this repo under `web/` because tool-webkit and game-platform were not readable from the agent that wrote it. Milestones 6–7 are not started.
+
+**Browser speech (milestone 5, stacked on #63).** Ember speaks in the browser with the same Kokoro v1.0 graph desktop loads, run by onnxruntime-web 1.30 on WebGPU (WASM CPU fallback) in a module worker. sherpa-onnx's official WASM build was measured first and ran at 1.8 to 2.6 times slower than real time on an M3 Max, so it cannot keep a sentence ahead of playback. The text path is a port, checked against desktop: `SpeechText.kt`, `KokoroLexicon.kt`, and the sentence shaping in `Speech.kt` through `web/hearing/fixtures/speech-text.json` (written by `SpeechWebFixtureTest`), and sherpa-onnx 2.0.0's Kokoro lexicon frontend and `ScaleSilence(0.2)` through `web/hearing/fixtures/kokoro-tokens.json` (token ids sherpa 2.0.0 logged). The download is the model with float16-stored weights (`voice/kokoro/fp16-weights.py`, float32 compute), the four blends cut from `voices-blends.bin`, the tokens and lexicon, and the runtime: 198,251,088 bytes, fetched once by `web/hearing/scripts/fetch-web-voice.mjs`, sha256-checked, and kept in Cache Storage.
+
+**Browser hearing (milestone 5, stacked on #68).** The catalog page hears the microphone the way `DesktopHearing` does: 100 ms chunks at 16 kHz into a module worker that runs Silero VAD v5 and the streaming Zipformer on onnxruntime-web's WASM backend. The recognizer is a port of sherpa-onnx 2.0.0's online transducer (kaldi-native-fbank 1.22.4 features, Zipformer2 encoder states, greedy search), and `web/hearing/fixtures/hearing-oracle.json` holds what sherpa 2.0.0 hears in Kokoro-voiced clips, chunk by chunk. Silero keeps desktop's call order (`compute` on 512 samples, then `acceptWaveform`'s 576-sample overlap run, on one state), voiced is 0.6, barge-in spans follow `onHearingFrame`, and the sent text is the recognizer's finished text. The encoder, decoder, and joiner are fetched one by one from Hugging Face, not from the release archive, because the archive carries `test_wavs`.
 
 - **#59** Click the chat icon to start a session. Another click, Escape, or Stop ends it. Fillers stay in the product and default off (`~/.gamero/voice-fillers`, `HOVEL_VOICE_FILLERS` overrides one launch). One second of quiet after speech sends. Empty text and speech under 240 ms do not. Half duplex until echo cancellation is actually up: the mic is paused while Ember speaks, then about 300 ms.
 - **#60** The reply is spoken sentence by sentence. A click or Escape during playback flushes first, cancels the provider turn, keeps the partial text, and leaves the session listening.
 - **#61** Full duplex uses one voice-processing graph (`voice/native/ember_audio.m`) for the mic and the speaker. If the library is missing, the graph fails to start, or `~/.gamero/hearing-self-check` says fail, the session stays half duplex and does not leave the mic open. While she is preparing or playing, 250 ms of frames at VAD probability 0.5 or higher flushes playback (`barge-in vad flush_ms=`) and cancels the turn. A short quiet chunk does not wipe that run. Self-echo is discarded (`no_vad_speech`, `too_short`, `self_echo`).
-- **#62** The shared contract lives in gamero `voice` `commonMain` (`VoiceConversation.kt`): states, actions, endpoint and discard reasons, barge-in, latency caps, the four Kokoro ids and speeds, sentence gap 160 ms, fillers default off, and the model checksums. `ChatSnapshot.hearing` is omitted on host-bridge v2 until the page sends `"hearing": true` or calls `chat.hearing`. Until then the native Gamero Adventures row is the control. Ember Tower does not show it. A bare Escape while the catalog page has focus still barges in. No Kotlin/JS target. No server-platform or game-platform PR.
+- **#62** The shared contract is server-platform's `ember-hearing.v1` (`event-contracts/src/voice/hearing.v1.ts`): states, actions, endpoint and discard reasons, barge-in, latency caps, and the model checksums. Host-bridge `chat.hearing` and `chatSnapshot.hearing` (`event-contracts/src/host-bridge/chat.ts`) reuse its states and actions. Gamero `voice` `commonMain` (`VoiceConversation.kt`) mirrors it and adds the four Kokoro ids and speeds, sentence gap 160 ms, and fillers default off; `HearingContractTest` checks the mirror against the generated contract fixtures. `ChatSnapshot.hearing` is omitted on host-bridge v2 until the page sends `"hearing": true` on `chat.open`, `chat.openForClient`, `chat.snapshot`, `chat.stop` or `chat.stopSpeaking`, or calls `chat.hearing`; a page does so only when `host.capabilities` lists `chat.hearing`. Until then the native Gamero Adventures row is the control. Ember Tower does not show it. A bare Escape while the catalog page has focus still barges in. No Kotlin/JS target. No game-platform PR yet.
 
 The speaker wait from #56 is kept: playback is not abandoned after two minutes, and a playback thread that fails to start does not block the voice worker. A streamed player that fails to start clears the preparing state.
 
@@ -484,12 +488,12 @@ gamero, edit on top of #56:
 
 - `composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/chat/DesktopSpeech.kt` — `enqueue`, generation left intact.
 - `composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/chat/DesktopChat.kt` — cursor on `partial` and `completed`, `interruptForHearing`.
-- `composeApp/src/commonMain/kotlin/org/formulagen/wrapper/bridge/ChatCapability.kt` — mirror the contract once server-platform has it.
+- `composeApp/src/commonMain/kotlin/org/formulagen/wrapper/bridge/ChatCapability.kt` — mirrors server-platform `host-bridge/chat.ts`; `tools/sync-server-fixtures.py` generates the fixtures that check it.
 - `composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/chat/KokoroVoicePicker.kt` — the hold control for the first loop.
 - `scripts/package-catalog-macos.sh` — microphone usage string.
 - `scripts/dev-env.sh` — `HOVEL_HEARING_MODEL` default beside `HOVEL_KOKORO_MODEL`.
 
-server-platform, when milestone 4 starts: `event-contracts` hearing schema, host-bridge `chat.hearing`, a limits fixture the Kotlin mirror test already knows how to read.
+server-platform (done): `event-contracts` `ember-hearing.v1`, host-bridge `chat.hearing` and `chatSnapshot.hearing`. No new shared limits: `partial` and `notice` use `CHAT_LIMITS`.
 
 tool-webkit: one presentational control, states from section 5.2, covered by the existing UX test style.
 
@@ -587,12 +591,12 @@ Each milestone is one PR series, based on #56 for gamero. Ship them in order. A 
 
 **Size:** large (WASM, model download, a TypeScript port of the state machine). It does not block the phones. It does not add a server ASR route.
 
-**Files:** game-platform only, plus the JSON transition fixture exported from `HearingTurnTest`.
+**Files:** `web/hearing` and `web/catalog` in gamero (the tool-webkit and game-platform split; those repos were not readable here), plus `web/hearing/fixtures/hearing-transitions.json` from `HearingTransitionFixtureTest`.
 
-- [ ] The fixture covers every transition the Kotlin test covers. A mismatch fails the web test.
-- [ ] `getUserMedia` uses the browser's echo cancellation, and Kokoro plays in that same page.
-- [ ] With a host, the final transcript still goes through `chat.hearing` / `chat.send`. Without a host, the loop stays local and the chat controls stay in their existing unavailable state.
-- [ ] Model bytes are hash-checked and are not posted to the Hovel service.
+- [x] The fixture covers every transition the Kotlin test covers. A mismatch fails the web test.
+- [x] `getUserMedia` uses the browser's echo cancellation, and Kokoro plays in that same page.
+- [x] With a host, the final transcript still goes through `chat.hearing` / `chat.send`. Without a host, the loop stays local and the chat controls stay in their existing unavailable state.
+- [x] Model bytes are hash-checked and are not posted to the Hovel service.
 
 **Done when:** a desktop browser shows a partial transcript and plays a Kokoro line with no host, and sends a real turn when the host is present.
 

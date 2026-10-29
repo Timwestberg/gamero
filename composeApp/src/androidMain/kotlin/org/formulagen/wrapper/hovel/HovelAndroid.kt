@@ -64,7 +64,10 @@ internal fun hovelAutoEnter(debuggable: Boolean, extra: String?): Boolean = debu
 internal fun hovelAutoEnter(intent: Intent?, context: Context): Boolean =
     hovelAutoEnter((context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0, intent?.getStringExtra(AUTO_ENTER_KEY))
 
-/** Hovel's capability packs for the host bridge. Android has none of the desktop product capabilities, so their methods answer `unsupported`. */
+/**
+ * Hovel's capability packs for the host bridge. Android has none of the desktop product capabilities, so their methods
+ * answer `unsupported`. Phone approvals are Android's own; they answer `unsupported` until phone approvals ship.
+ */
 internal fun hovelBridgePacks(): List<CapabilityPack> = listOf(
     CompanionMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.BrainMethods.pack(Capability.Unsupported),
@@ -73,6 +76,9 @@ internal fun hovelBridgePacks(): List<CapabilityPack> = listOf(
     org.formulagen.wrapper.bridge.PetMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.GameMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.WorkspaceMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.ProjectMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.ConversationVoiceMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.ApprovalMethods.pack(Capability.Unsupported),
 )
 
 /** Plays the Hovel launch and start screen, then opens [url] once the player steps inside. */

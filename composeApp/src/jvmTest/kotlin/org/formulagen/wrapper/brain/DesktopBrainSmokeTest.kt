@@ -46,10 +46,10 @@ class DesktopBrainSmokeTest {
                     call("send", buildJsonObject { put("requestId", brainId()); put("expectedRevision", 1); put("text", "Ask the Writer specialist to write one sentence about a blue kite, then briefly tell me the result."); put("inputIds", JsonArray(emptyList())); put("speak", false) })
                     val deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(4)
                     var snapshot: BrainSnapshot
-                    do { Thread.sleep(200); snapshot = brainJson.decodeFromJsonElement(call("snapshot")) } while (snapshot.run?.state in setOf("planning", "running") && System.nanoTime() < deadline)
-                    assertEquals("completed", snapshot.run?.state, "Runtime $id ended ${snapshot.run?.state}: ${snapshot.notice}")
+                    do { Thread.sleep(200); snapshot = brainJson.decodeFromJsonElement(call("snapshot")) } while (snapshot.run?.state?.working == true && System.nanoTime() < deadline)
+                    assertEquals(BrainRunState.COMPLETED, snapshot.run?.state, "Runtime $id ended ${snapshot.run?.state}: ${snapshot.notice}")
                     assertEquals(1, snapshot.attempts.size)
-                    assertTrue(snapshot.messages.any { it.author == "specialist" && it.text.contains("kite", ignoreCase = true) })
+                    assertTrue(snapshot.messages.any { it.author == BrainAuthor.SPECIALIST && it.text.contains("kite", ignoreCase = true) })
                     println("BRAIN_LIVE_SMOKE: $id model=${model.modelId}; completed coordinator + independent specialist + final reply; no tools")
                 }
             }
