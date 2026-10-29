@@ -162,9 +162,10 @@ class DesktopSpeechStreamTest {
                 assertEquals(1, opens.get())
                 speech.chooseVoice("heart60-adam40")
                 assertEquals("heart60-adam40", speech.currentVoiceId())
+                val beforeHarper = seen.size
                 speech.speak("Third sentence here.")
-                assertTrue(waitFor { seen.size == 3 })
-                assertEquals("heart60-adam40", seen[2])
+                assertTrue(waitFor { seen.size > beforeHarper })
+                assertEquals("heart60-adam40", seen.last())
                 assertEquals(2, opens.get())
                 assertFailsWith<IllegalArgumentException> { speech.chooseVoice("expresso") }
             }

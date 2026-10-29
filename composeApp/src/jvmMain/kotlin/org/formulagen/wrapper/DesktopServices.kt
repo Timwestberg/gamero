@@ -32,8 +32,16 @@ import org.formulagen.wrapper.chat.ClaudeChatRuntime
 import org.formulagen.wrapper.chat.CodexChatRuntime
 import org.formulagen.wrapper.chat.DesktopChat
 import org.formulagen.wrapper.chat.DesktopSpeech
+import org.formulagen.wrapper.chat.DesktopHearing
 import org.formulagen.wrapper.chat.VoicePickerModel
+import org.formulagen.wrapper.chat.openTargetMic
+import org.formulagen.wrapper.voice.openHearingEngine
+import org.formulagen.wrapper.voice.readFillerSettings
 import org.formulagen.wrapper.chat.desktopVoiceConfig
+import org.formulagen.wrapper.chat.fillerChoiceFile
+import org.formulagen.wrapper.chat.hearingGuardMs
+import org.formulagen.wrapper.chat.hearingSilenceMs
+import org.formulagen.wrapper.chat.readSavedFillers
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.hovel.HovelCompanionCapability
@@ -131,7 +139,16 @@ internal class DesktopServices private constructor(
                     codex?.takeIf { RuntimeId.CODEX in working }?.let { CodexWorkRuntime(providerRoot, it, broker) })
                 val work = ChatWork(workspaces, StartOfWork(nativeDialogs), workers)
                 val voicePicker = VoicePickerModel()
-                val chat = own(DesktopChat(providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment)), offered, work, voicePicker))
+                val hearing = DesktopHearing(openHearingEngine(environment["HOVEL_HEARING_MODEL"].orEmpty()), ::openTargetMic)
+                val fillerFile = fillerChoiceFile(environment)
+                val chat = own(DesktopChat(
+                    providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment)), offered, work, voicePicker,
+                    fillers = readFillerSettings(environment, readSavedFillers(fillerFile)),
+                    fillerFile = fillerFile,
+                    silenceMs = hearingSilenceMs(environment),
+                    guardMs = hearingGuardMs(environment),
+                    hearing = hearing,
+                ))
                 // Both runtimes sign in outside Hovel, on the player's own install, so a status check never signs a chat out.
                 val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),
                     claudeSignIn?.let(::ClaudeProvider)), working))

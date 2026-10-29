@@ -1,6 +1,9 @@
 package org.formulagen.wrapper.chat
 
 import java.nio.file.Path
+import org.formulagen.wrapper.voice.HEARING_ENDPOINT_SILENCE_MS
+import org.formulagen.wrapper.voice.HEARING_MIN_SPEECH_MS
+import org.formulagen.wrapper.voice.HEARING_RESUME_GUARD_MS
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -17,6 +20,13 @@ import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.closeInReverse
 import org.formulagen.wrapper.providers.copy
 import org.formulagen.wrapper.util.shortened
+import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.logger.log
+import org.formulagen.wrapper.voice.FILLER_LINES
+import org.formulagen.wrapper.voice.FillerRotation
+import org.formulagen.wrapper.voice.FillerSettings
+import org.formulagen.wrapper.voice.FillerTurn
+import org.formulagen.wrapper.voice.HearingResult
 import org.formulagen.wrapper.workspace.ProjectFolder
 
 /**
@@ -37,16 +47,34 @@ internal class DesktopChat(
     private val offered: Set<RuntimeId> = RuntimeId.entries.toSet(),
     private val work: ChatWork? = null,
     private val voices: VoicePickerModel? = null,
+    private val fillers: FillerSettings = FillerSettings(),
+    private val fillerFile: Path? = null,
+    private val silenceMs: Int = HEARING_ENDPOINT_SILENCE_MS,
+    private val guardMs: Int = HEARING_RESUME_GUARD_MS,
+    private val hearing: DesktopHearing? = null,
 ) : ChatCapability, AutoCloseable {
     private val runtimes = runtimes.associateBy { it.id }
     private val workers: Map<RuntimeId, WorkRuntime> = work?.runtimes.orEmpty()
     private val gate = Any()
     private val worker = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-chat"))
     private val timer = Executors.newSingleThreadScheduledExecutor(loggingDaemonThreads("hovel-chat-timeout"))
+    private val fillerRotation = FillerRotation()
+    private var fillerTurn = FillerTurn(fillers, fillerRotation)
+    private var liveFillers = fillers
+    private var talkOn = false
+    private var talkPhase = TalkPhase.OFF
+    private var guardGeneration = 0
+    private var resumePending = false
+    private var hearingPartial = ""
+    private var hearingNotice: String? = null
     private var active: Session? = null
     /** The last view the host ended on its own, so that view's polls keep showing why. */
     private var ended: Pair<ChatScope, ChatSnapshot>? = null
     private var closed = false
+
+    init {
+        speech.onVoice { synchronized(gate) { if (!closed) publishPicker() } }
+    }
 
     private class Session(val scope: ChatScope, val persona: Persona, val history: ChatHistory, var record: ChatRecord) {
         var state = ChatState.READY
@@ -101,11 +129,13 @@ internal class DesktopChat(
         val history = companionChatHistory(providerRoot, scope.profile, scope.companionId)
         val snapshot = view(Session(scope, Persona.companion(scope.name), history, history.read()).also { active = it })
         publishPicker()
+        if (liveFillers.enabled) speech.warmFillers(FILLER_LINES)
         snapshot
     }
 
     /** Polling cannot reopen an expired lease, but a view the host ended keeps reading its final state. */
     override suspend fun snapshot(scope: ChatScope): ChatSnapshot = synchronized(gate) {
+        publishPicker()
         ended?.takeIf { !closed && it.first == scope }?.second?.copy(voice = speech.status()) ?: view(current(scope))
     }
 
@@ -115,13 +145,16 @@ internal class DesktopChat(
      * member's runtime again. A message whose turn fails stays, unanswered, for `chat.retry`. A
      * member on a runtime this build does not offer is refused with a notice and no entry.
      */
-    override suspend fun send(args: ChatSend): ChatSnapshot = synchronized(gate) {
+    override suspend fun send(args: ChatSend): ChatSnapshot = synchronized(gate) { submitLocked(args) }
+
+    private fun submitLocked(args: ChatSend): ChatSnapshot {
         val session = current(args.scope())
-        if (session.record.entries.any { it.id == args.requestId }) return@synchronized view(session)
-        if (session.state == ChatState.AWAITING_YOU) return@synchronized refuse(session, ANSWER_FIRST)
+        if (session.record.entries.any { it.id == args.requestId }) return view(session)
+        if (session.state == ChatState.AWAITING_YOU) return refuse(session, ANSWER_FIRST)
         if (session.state == ChatState.RESPONDING || session.state == ChatState.HANDING_OVER) throw BridgeBusyException()
         val kind = args.member.runtimeId
-        if (kind !in offered) return@synchronized view(session).copy(notice = kind.copy.notOffered)
+        if (kind !in offered) return view(session).copy(notice = kind.copy.notOffered)
+        fillerTurn.cancel()
         speech.stop()
         val text = args.text.trimEcma()
         val record = session.record
@@ -133,7 +166,7 @@ internal class DesktopChat(
         session.history.write(next)
         session.record = next
         begin(session, turn, record.entries, args.speak)
-        view(session)
+        return view(session)
     }
 
     /**
@@ -277,6 +310,10 @@ internal class DesktopChat(
      */
     override suspend fun stop(scope: ChatScope): ChatSnapshot = synchronized(gate) {
         val session = current(scope)
+        if (talkOn) {
+            endConversationLocked()
+            return@synchronized view(session)
+        }
         val handover = session.handover
         if (session.state == ChatState.HANDING_OVER && handover != null) {
             // The outgoing member stays active and nothing is recorded; its summary is abandoned.
@@ -289,12 +326,13 @@ internal class DesktopChat(
         val turn = session.turn
         end(session, ChatState.CANCELLED, "Reply stopped.", release = turn == null)
         turn?.stop()
+        publishPicker()
         view(session)
     }
 
     /** Audio can stop independently while text generation continues. */
     override suspend fun stopSpeaking(scope: ChatScope): ChatSnapshot = synchronized(gate) {
-        val session = current(scope); session.speak = false; speech.stop(); view(session)
+        val session = current(scope); session.speak = false; speech.stop(); publishPicker(); view(session)
     }
 
     /** An old view cannot close the newly opened companion. */
@@ -471,7 +509,11 @@ internal class DesktopChat(
             runCatching { session.history.write(session.record) }.onFailure {
                 session.notice = "This reply could not be saved. Keep this chat open and try again later."
             }
-            if (session.speak) (session.record.entries.firstOrNull { it.id == turn.replyId } as? ChatEntry.Assistant)?.let { speech.speak(it.text) }
+            if (session.speak) (session.record.entries.firstOrNull { it.id == turn.replyId } as? ChatEntry.Assistant)?.let {
+                fillerTurn.replyArrived()
+                speech.speak(it.text)
+            }
+            publishPicker()
         }
 
         /** Errors keep the person's text and never send it again, except once into a new conversation when the runtime lost its own. */
@@ -552,12 +594,15 @@ internal class DesktopChat(
         session.turn = null; session.speak = false; session.handover = null; session.inFlight = null
         // A start-of-work dialog still up is denied; an approval is denied by the runtime's stop or release.
         session.waiting = null; session.startCancel?.cancel(); session.startCancel = null
+        fillerTurn.cancel()
         if (release) session.used.forEach { runtimes[it]?.release(); workers[it]?.release() }
         speech.stop()
         runCatching { session.history.write(session.record) }
+        publishPicker()
     }
 
     private fun publishPicker() {
+        if (talkOn) notePlaybackLocked()
         val model = voices ?: return
         model.update(
             voicePickerState(
@@ -565,8 +610,242 @@ internal class DesktopChat(
                 kokoro = speech.kokoroActive(),
                 voices = speech.voiceChoices(),
                 selectedId = speech.currentVoiceId(),
+                phase = talkPhase,
+                fillersOn = liveFillers.enabled,
+                partial = hearingPartial,
+                hearingNotice = hearingNotice,
             ),
         )
+    }
+
+    /**
+     * Click on the chat icon. The first click listens until a second of quiet, then keeps going.
+     * The next click, Escape, or stop ends the session. The icon stays clickable while Ember speaks.
+     */
+    internal fun converseClick() {
+        val ear = synchronized(gate) {
+            if (closed || active == null) return
+            if (talkOn) {
+                endConversationLocked()
+                return
+            }
+            talkOn = true
+            hearingPartial = ""
+            hearingNotice = null
+            setPhase(TalkPhase.LISTENING)
+            publishPicker()
+            hearing
+        }
+        if (ear == null) {
+            synchronized(gate) {
+                talkOn = false
+                setPhase(TalkPhase.OFF)
+                hearingNotice = "Talk needs the hearing models. Run scripts/fetch-voice.sh, then rebuild."
+                publishPicker()
+            }
+            return
+        }
+        val started = ear.startSession(
+            silenceMs,
+            onPartial = { text ->
+                synchronized(gate) {
+                    if (talkOn && talkPhase == TalkPhase.LISTENING && text != hearingPartial) {
+                        hearingPartial = text
+                        publishPicker()
+                    }
+                }
+            },
+            onUtterance = { result -> synchronized(gate) { onUtteranceLocked(result) } },
+            onFailed = { message ->
+                synchronized(gate) {
+                    hearingNotice = message
+                    if (talkOn) endConversationLocked() else publishPicker()
+                }
+            },
+        )
+        if (!started) synchronized(gate) {
+            talkOn = false
+            setPhase(TalkPhase.OFF)
+            log(LogLevel.Info, "hearing", "button busy")
+            publishPicker()
+        }
+    }
+
+    /** Escape. Stop uses the same path so a session cannot outlive the reply. */
+    internal fun endConversation() = synchronized(gate) {
+        if (talkOn) endConversationLocked()
+    }
+
+    /** The Voice row toggle. The env var wins at the next launch; this choice is what the file remembers. */
+    internal fun toggleFillers() = synchronized(gate) {
+        val enabled = !liveFillers.enabled
+        liveFillers = liveFillers.copy(enabled = enabled)
+        fillerTurn.cancel()
+        fillerTurn = FillerTurn(liveFillers, fillerRotation)
+        fillerFile?.let { writeSavedFillers(it, enabled) }
+        speech.setFillersEnabled(enabled)
+        log(LogLevel.Info, "hearing", "fillers enabled=$enabled")
+        publishPicker()
+    }
+
+    /** A test session with no microphone. Real clicks go through [converseClick]. */
+    internal fun testingSession() = synchronized(gate) {
+        check(active != null && !closed)
+        talkOn = true
+        hearingPartial = ""
+        hearingNotice = null
+        setPhase(TalkPhase.LISTENING)
+        publishPicker()
+    }
+
+    /** A finished hands-free turn, as the microphone thread would deliver it. */
+    internal fun testingUtterance(result: HearingResult) = synchronized(gate) { onUtteranceLocked(result) }
+
+    private fun endConversationLocked() {
+        val session = active
+        talkOn = false
+        resumePending = false
+        guardGeneration++
+        hearingPartial = ""
+        setPhase(TalkPhase.OFF)
+        hearing?.endSession()
+        if (session != null && (session.state == ChatState.RESPONDING || session.state == ChatState.AWAITING_YOU)) {
+            val turn = session.turn
+            end(session, ChatState.CANCELLED, "Reply stopped.", release = turn == null)
+            turn?.stop()
+        } else {
+            speech.stop()
+            publishPicker()
+        }
+    }
+
+    private fun onUtteranceLocked(result: HearingResult) {
+        if (!talkOn || talkPhase != TalkPhase.LISTENING) return
+        log(LogLevel.Info, "hearing", "asr_final decodeMs=${result.decodeMs.toInt()} speechMs=${result.speechMs} chars=${result.text.length}")
+        val text = result.text.trim()
+        if (text.isEmpty() || result.speechMs < HEARING_MIN_SPEECH_MS) {
+            log(LogLevel.Info, "hearing", "drop chars=${text.length} speechMs=${result.speechMs}")
+            hearingPartial = ""
+            publishPicker()
+            return
+        }
+        hearingPartial = ""
+        commitHearingLocked(result)
+        if (talkOn && active?.state == ChatState.RESPONDING) holdMicLocked(TalkPhase.THINKING)
+        publishPicker()
+    }
+
+    /** Half-duplex: the mic stays closed while Ember is speaking or a reply is still in flight. */
+    private fun notePlaybackLocked() {
+        if (!talkOn) return
+        val voice = speech.status().state
+        val chat = active?.state
+        val emberBusy = voice == VoiceState.PREPARING || voice == VoiceState.SPEAKING
+        val chatBusy = chat == ChatState.RESPONDING || chat == ChatState.HANDING_OVER || chat == ChatState.AWAITING_YOU
+        when {
+            emberBusy -> if (talkPhase != TalkPhase.SPEAKING) holdMicLocked(TalkPhase.SPEAKING)
+            chatBusy -> if (talkPhase != TalkPhase.THINKING && talkPhase != TalkPhase.SPEAKING) holdMicLocked(TalkPhase.THINKING)
+                else if (talkPhase == TalkPhase.SPEAKING) {
+                    resumePending = false
+                    guardGeneration++
+                    setPhase(TalkPhase.THINKING)
+                    hearing?.setPaused(true)
+                }
+            talkPhase != TalkPhase.LISTENING && talkPhase != TalkPhase.OFF -> scheduleResumeLocked()
+        }
+    }
+
+    private fun holdMicLocked(phase: TalkPhase) {
+        resumePending = false
+        guardGeneration++
+        setPhase(phase)
+        hearing?.setPaused(true)
+    }
+
+    private fun scheduleResumeLocked() {
+        if (resumePending || !talkOn) return
+        resumePending = true
+        val ticket = ++guardGeneration
+        val wait = guardMs.coerceAtLeast(0).toLong()
+        if (wait == 0L) {
+            resumeListeningLocked(ticket, publish = false)
+            return
+        }
+        timer.schedule({ synchronized(gate) { resumeListeningLocked(ticket, publish = true) } }, wait, TimeUnit.MILLISECONDS)
+    }
+
+    private fun resumeListeningLocked(ticket: Int, publish: Boolean) {
+        if (ticket != guardGeneration) return
+        resumePending = false
+        if (!talkOn || closed) return
+        val voice = speech.status().state
+        val chat = active?.state
+        if (voice == VoiceState.PREPARING || voice == VoiceState.SPEAKING) return
+        if (chat == ChatState.RESPONDING || chat == ChatState.HANDING_OVER || chat == ChatState.AWAITING_YOU) return
+        setPhase(TalkPhase.LISTENING)
+        hearing?.setPaused(false)
+        if (publish) publishPicker()
+    }
+
+    private fun setPhase(next: TalkPhase) {
+        if (talkPhase == next) return
+        val leavingSpeech = talkPhase == TalkPhase.SPEAKING && next != TalkPhase.SPEAKING
+        val enteringSpeech = next == TalkPhase.SPEAKING
+        talkPhase = next
+        log(LogLevel.Info, "hearing", "session=${next.name.lowercase()} chat=${active?.state ?: "none"} voice=${speech.status().state}")
+        val line = emberLine()
+        if (enteringSpeech) hearing?.noteEmberSpeaking(line)
+        if (leavingSpeech) hearing?.noteEmberSilent(line)
+    }
+
+    private fun emberLine(): String {
+        val assistant = active?.record?.entries?.lastOrNull { it is ChatEntry.Assistant } as? ChatEntry.Assistant
+        return assistant?.text.orEmpty()
+    }
+
+    /** A test, or a finished hold, handing the recognizer result to the chat. */
+    internal fun commitHeard(result: HearingResult) = synchronized(gate) {
+        commitHearingLocked(result)
+        publishPicker()
+    }
+
+    private fun commitHearingLocked(result: HearingResult) {
+        val session = active ?: return
+        val member = Handovers.currentMember(session.record.entries)
+        when (val decision = decideHearing(result, member, session.state)) {
+            HearingCommit.Ignore -> Unit
+            is HearingCommit.Notice -> {
+                session.notice = decision.text
+                hearingNotice = decision.text
+            }
+            is HearingCommit.Send -> {
+                if (member == null) return
+                hearingNotice = null
+                submitLocked(ChatSend(
+                    session.scope.profile, session.scope.companionId, session.scope.name, session.scope.sessionId,
+                    member, UUID.randomUUID().toString(), decision.text, speak = true, mode = MemberMode.TALK,
+                ))
+                fillerTurn.begin()
+                if (session.state == ChatState.RESPONDING && session.speak && fillerTurn.arm(System.nanoTime())) {
+                    log(LogLevel.Info, "hearing", "send chars=${decision.text.length}")
+                    timer.schedule({ fillerDue() }, liveFillers.thresholdMs.toLong(), TimeUnit.MILLISECONDS)
+                }
+            }
+        }
+    }
+
+    private fun fillerDue() = synchronized(gate) {
+        if (closed || active == null) return@synchronized
+        val cue = fillerTurn.poll(System.nanoTime()) ?: return@synchronized
+        val voiceId = speech.currentVoiceId().ifEmpty { "unknown" }
+        val pcm = speech.fillerPcm(voiceId, cue.line)
+        if (pcm == null) {
+            fillerTurn.clipFinished()
+            log(LogLevel.Info, "hearing", "filler skipped cache-cold voice=$voiceId")
+            return@synchronized
+        }
+        log(LogLevel.Info, "hearing", "filler line=\"${cue.line}\" voice=$voiceId waitedMs=${cue.waitedMs}")
+        speech.playClip(pcm.pcm, pcm.sampleRate) { synchronized(gate) { fillerTurn.clipFinished() } }
     }
 
     private fun invalidateLocked(keepEnded: Boolean) {
@@ -574,6 +853,11 @@ internal class DesktopChat(
         session?.let {
             // The conversation's start-of-work confirmations end with its view (a closed chat, another companion).
             work?.startOfWork?.forget(it.scope.sessionId)
+            talkOn = false
+            resumePending = false
+            guardGeneration++
+            setPhase(TalkPhase.OFF)
+            hearing?.endSession()
             // A reply cut off by the closed view leaves its message unanswered, for a retry after reconnecting.
             fail(it, null, null, ChatState.ERROR, "This chat was closed. Reconnect to continue.")
             if (keepEnded) ended = it.scope to view(it)
@@ -588,6 +872,7 @@ internal class DesktopChat(
             if (closed) return
             invalidateLocked(keepEnded = false); closed = true; ended = null; publishPicker(); timer.shutdownNow(); worker.shutdownNow()
         }
+        hearing?.close()
         try { closeInReverse(runtimes.values.toList() + workers.values.toList()) } finally { speech.close() }
     }
 }
