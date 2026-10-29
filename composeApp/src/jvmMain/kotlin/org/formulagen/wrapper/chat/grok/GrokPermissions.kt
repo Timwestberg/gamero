@@ -95,7 +95,7 @@ internal class GrokApprovals(
         if (permission == null) { respond(cancelledGrokPermission()); return }
         val subject = runCatching { describeTool(permission.tool) }.getOrNull()
         if (subject == null) { denied.set(true); respond(permission.answer(ApprovalDecision.DENY)); return }
-        val request = ApprovalRequest(work.companion, work.member, work.folder, subject, sessionLabel = null)
+        val request = ApprovalRequest(work.companion, work.member, work.folder, subject, sessionLabel = null, lease = work.lease)
         val current = synchronized(pending) {
             if (closed || pending.size >= PERMISSION_LIMIT || permission.toolCallId in pending) null
             else Pending(relay.register(permission.toolCallId, request, events), respond).also {

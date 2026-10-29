@@ -26,6 +26,7 @@ import org.formulagen.wrapper.chat.ChatFailure
 import org.formulagen.wrapper.chat.ClaudeEvent
 import org.formulagen.wrapper.chat.ClaudeFailures
 import org.formulagen.wrapper.chat.ClaudeStream
+import org.formulagen.wrapper.chat.ContextFolderSupport
 import org.formulagen.wrapper.chat.Persona
 import org.formulagen.wrapper.chat.Readiness
 import org.formulagen.wrapper.chat.TurnEvents
@@ -77,6 +78,8 @@ internal class ClaudeWorkRuntime(
     private val lineLimit: Int = WORK_LINE_LIMIT,
 ) : WorkRuntime {
     override val id = RuntimeId.CLAUDE_CODE
+    /** `--add-dir` with deny rules for Edit and Write ([claudeContextArguments]); unverified until the live probe passes. */
+    override val contextFolders = ContextFolderSupport.UNVERIFIED
     private val processes = ConcurrentHashMap<String, WorkProcess>()
     /** Approvals block on the native dialog, so each one waits on its own thread. */
     private val approvals = Executors.newCachedThreadPool(loggingDaemonThreads("hovel-claude-approval"))
@@ -103,11 +106,12 @@ internal class ClaudeWorkRuntime(
         check(!closed) { "Chat closed" }
         val started = epoch.get()
         val current = processes[work.lease]
-        val process = current?.takeIf { it.fits(work.folder, model, turn.persona, saved?.id, turn.effort) && it.ready(settle) } ?: run {
+        val context = work.folders.context
+        val process = current?.takeIf { it.fits(work.folder, context, model, turn.persona, saved?.id, turn.effort) && it.ready(settle) } ?: run {
             // Changed settings or an unsettled turn replace the process.
             current?.let { processes.remove(work.lease, it); it.closeAndWait() }
             val session = saved?.id ?: UUID.randomUUID().toString()
-            WorkProcess(work.folder, model, turn.persona, session, opens = saved == null, work.companion, work.member, turn.effort).also { fresh ->
+            WorkProcess(work.lease, work.folder, context, model, turn.persona, session, opens = saved == null, work.companion, work.member, turn.effort).also { fresh ->
                 processes[work.lease] = fresh
                 try { fresh.start() } catch (error: Exception) {
                     processes.remove(work.lease, fresh); fresh.close()
@@ -119,6 +123,11 @@ internal class ClaudeWorkRuntime(
         // A release or close while it started: it ends now, and the chat has ended the turn already.
         if (closed || epoch.get() != started) { processes.remove(work.lease, process); process.close(); events.failed(ChatFailure.Temporary); return TurnHandle {} }
         return process.turn(turn.input(), events)
+    }
+
+    /** End [lease]'s working process: its pending approvals are denied and its tree ended. Other leases keep theirs. */
+    override fun release(lease: String) {
+        processes.remove(lease)?.close()
     }
 
     /** End every working process: their pending approvals are denied and their trees ended. */
@@ -138,7 +147,11 @@ internal class ClaudeWorkRuntime(
 
     /** One working `claude -p` process: a session in a folder with a model and a persona. */
     private inner class WorkProcess(
+        /** The lease this process works for; its approvals name it, so a conversation can relay them. */
+        private val lease: String,
         val folder: Path,
+        /** Read-only context folders: readable through `--add-dir`, with Edit and Write denied under each. */
+        val context: List<Path>,
         val model: String,
         val persona: Persona,
         val session: String,
@@ -161,8 +174,9 @@ internal class ClaudeWorkRuntime(
         @Volatile private var asked = false
         @Volatile private var current: WorkTurn? = null
 
-        fun fits(folder: Path, model: String, persona: Persona, session: String?, effort: ModelEffort?) =
-            !ended.get() && process.isAlive && this.folder == folder && this.model == model && this.persona == persona && session == this.session && this.effort == effort
+        fun fits(folder: Path, context: List<Path>, model: String, persona: Persona, session: String?, effort: ModelEffort?) =
+            !ended.get() && process.isAlive && this.folder == folder && this.context == context && this.model == model &&
+                this.persona == persona && session == this.session && this.effort == effort
 
         /** No earlier turn still running: a stopped one gets [wait] to report its end. */
         fun ready(wait: Duration): Boolean {
@@ -172,7 +186,8 @@ internal class ClaudeWorkRuntime(
 
         fun start() {
             val conversation = if (opens) listOf("--session-id", session) else listOf("--resume", session)
-            process = ProcessBuilder(listOf(claude.executable.toString()) + claudeWorkArguments(model, persona) + claudeEffortArguments(effort) + conversation)
+            process = ProcessBuilder(listOf(claude.executable.toString()) + claudeWorkArguments(model, persona) + claudeContextArguments(context) +
+                claudeEffortArguments(effort) + conversation)
                 .directory(folder.toFile()).redirectError(ProcessBuilder.Redirect.DISCARD)
                 .apply { environment().clear(); environment().putAll(this@ClaudeWorkRuntime.environment()) }
                 .start()
@@ -244,7 +259,7 @@ internal class ClaudeWorkRuntime(
                     val permission = control.permission
                     // Registered before the next line is read, so a withdrawal right after it finds it; then checked against a
                     // stop, so a stop either finds it or is seen here. Nothing to show it for (no turn, or one that ended) denies.
-                    val pending = relay.register(permission.requestId, ClaudeControl.approvalRequest(permission, companionName, member, folder), turn?.events)
+                    val pending = relay.register(permission.requestId, ClaudeControl.approvalRequest(permission, companionName, member, folder, lease), turn?.events)
                     if (turn == null || turn.isDone || turn.stopped || ended.get()) pending.cancel.cancel()
                     approvals.execute { runCatching { send(ClaudeControl.answer(permission, relay.ask(permission.requestId, pending))) } }
                 }
@@ -406,3 +421,23 @@ internal fun claudeWorkArguments(model: String, persona: Persona): List<String> 
     "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
     "--permission-prompt-tool", "stdio", "--append-system-prompt", persona.instructions, "--model", model,
 )
+
+/**
+ * Read-only access to [context] folders for a working Claude Code: each is added with `--add-dir`,
+ * and Edit and Write are denied anywhere under it, by permission rules in their absolute form (`//`
+ * then the path, then a recursive glob). Only these paths change; the player's own settings apply
+ * everywhere else. A path
+ * a rule cannot name exactly (relative, not normalized, or with a pattern character) is refused,
+ * so a context folder is never given without its rules.
+ */
+internal fun claudeContextArguments(context: List<Path>): List<String> = context.flatMap { folder ->
+    require(folder.isAbsolute && folder.normalize() == folder && folder.nameCount > 0) { "A context folder must be an absolute, normalized folder" }
+    val path = folder.toString()
+    require(path.none { it in CLAUDE_RULE_SPECIALS || it.code < 0x20 || it.code == 0x7F }) { "A permission rule cannot name this folder exactly" }
+    val rule = "//" + path.removePrefix("/") + "/**"
+    listOf("--add-dir", path, "--disallowedTools", "Edit($rule)", "--disallowedTools", "Write($rule)")
+}
+
+/** Characters with a meaning in a permission rule's path pattern or its tool syntax. */
+private const val CLAUDE_RULE_SPECIALS = "()*?[]{}\\!,"
+

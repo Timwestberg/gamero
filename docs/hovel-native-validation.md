@@ -64,6 +64,19 @@ cancellation delivery must be verified against the installed runtime.
 
 ## 2. Hovel registration and genuine task acceptance
 
+> Project conversations (companion projects step C) run beside Hovel tasks, which
+> stay until step E removes the web task UI; the task steps below still apply
+> with `GAMERO_WORKSPACE` set. The conversation run, against a hovel-service
+> with the conversation routes (server-platform main since step B): register
+> once, then quit and relaunch Hovel and confirm the status line reaches
+> "Connected · Conversations run on this Mac" with no page action. Then, from a
+> browser on the same Mac: send a message in a talk-only project (the reply
+> streams); choose a working folder with `project.chooseFolder` and send work to
+> a working specialist (the start of work asks natively, the thread fills in);
+> reply in the thread; quit mid-turn and relaunch (the message settles
+> `reconciliation-required` and does not run again); go offline, send, come
+> back (it runs once). See [hovel-companion.md](hovel-companion.md).
+
 Use the server-platform Hovel service PR stack, tool-webkit ConnectionCard stack,
 and game-platform Hovel/native-connection stack. Follow server-platform
 `docs/hovel/hovel.README.md` for PostgreSQL configuration, migration and explicit

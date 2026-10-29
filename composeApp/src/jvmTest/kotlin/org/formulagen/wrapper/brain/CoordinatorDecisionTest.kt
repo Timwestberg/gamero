@@ -39,4 +39,22 @@ class CoordinatorDecisionTest {
         )) assertFails(text) { parseDecision(text, DecisionKind.entries.toSet()) }
         assertFails { parseDecision("""{"kind":"answer","text":"Hi"}""", setOf(DecisionKind.ASK)) }
     }
+
+    /** A conversation's thread reply offers only forward, answer and delegate; a run never takes a forward. */
+    @Test fun aThreadReplyForwardsAnswersOrDelegatesAndNothingElse() {
+        val run = RunRecord(BrainRun(brainId(), 1, 1, null, BrainRunState.PLANNING, null), testConfiguration(), null, "Request", emptyList(),
+            phase = BrainPhase.THREAD_REPLY)
+        assertEquals(THREAD_REPLY_DECISIONS, allowedDecisions(run))
+        assertEquals(setOf(DecisionKind.FORWARD, DecisionKind.ANSWER, DecisionKind.DELEGATE), THREAD_REPLY_DECISIONS)
+        for (phase in BrainPhase.entries - BrainPhase.THREAD_REPLY) {
+            assertFalse(DecisionKind.FORWARD in allowedDecisions(run.copy(phase = phase)), "$phase")
+        }
+        val thread = brainId()
+        assertEquals(CoordinatorDecision.Forward(thread, "Context"),
+            parseDecision("""{"kind":"forward","threadId":"$thread","note":"Context"}""", THREAD_REPLY_DECISIONS))
+        assertFails { parseDecision("""{"kind":"forward","threadId":"$thread","note":"${"x".repeat(BrainLimits.STEP_INSTRUCTIONS + 1)}"}""", THREAD_REPLY_DECISIONS) }
+        assertFails("a forward never applies to a run") {
+            BrainRecord(run = run.copy(phase = BrainPhase.PLAN)).decided(CoordinatorDecision.Forward(thread), testConfiguration().coordinator.snapshot()!!, ::brainId)
+        }
+    }
 }

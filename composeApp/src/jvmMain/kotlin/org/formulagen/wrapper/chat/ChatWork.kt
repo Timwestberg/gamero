@@ -22,7 +22,19 @@ internal interface WorkRuntime : AutoCloseable {
     /** As [ChatRuntime.startTurn], for a working turn. */
     fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle
 
-    /** End every working session now: what waits on the player is denied, and processes end. Never blocks for long. */
+    /**
+     * How this runtime keeps context folders read-only. [ProjectFolders.forRuntime] gives it context
+     * folders only when [ContextFolderSupport.readable].
+     */
+    val contextFolders: ContextFolderSupport get() = ContextFolderSupport.NONE
+
+    /**
+     * End the working sessions of one [lease] (a conversation's thread, or a chat view) now: what
+     * waits on the player is denied, and only that lease's processes end. Never blocks for long.
+     */
+    fun release(lease: String)
+
+    /** End every working session now, at shutdown or when a chat view closes: what waits on the player is denied, and processes end. */
     fun release()
 }
 

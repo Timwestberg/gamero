@@ -22,6 +22,7 @@ import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
 import org.formulagen.wrapper.bridge.TeamMember
 import org.formulagen.wrapper.chat.ActivityLog
 import org.formulagen.wrapper.chat.ChatFailure
+import org.formulagen.wrapper.chat.ContextFolderSupport
 import org.formulagen.wrapper.chat.Readiness
 import org.formulagen.wrapper.chat.ReplyText
 import org.formulagen.wrapper.chat.TurnEvents
@@ -59,6 +60,8 @@ internal class CodexWorkRuntime(
     private val createRpc: (CodexRuntime, (String, JsonObject) -> Unit, (String, JsonObject, (JsonObject?) -> Unit) -> Unit) -> CodexAppServer = ::workCodex,
 ) : WorkRuntime {
     override val id = RuntimeId.CODEX
+    /** A thread whose sandbox writes only the working folder ([codexContextSandbox]); unverified until the live probe passes. */
+    override val contextFolders = ContextFolderSupport.UNVERIFIED
     private val connections = ConcurrentHashMap<String, Connection>()
     private val approvals = Executors.newCachedThreadPool(loggingDaemonThreads("hovel-codex-approval"))
     /** Changes on every release; a connection made across one is closed at once. */
@@ -84,7 +87,9 @@ internal class CodexWorkRuntime(
         if (!Files.isDirectory(work.folder)) { events.failed(ChatFailure.Unexpected); return TurnHandle {} }
         check(!closed) { "Chat closed" }
         val started = epoch.get()
-        val connection = connections[work.lease]?.takeIf { it.folder == work.folder && it.open } ?: Connection(work.folder, work.companion).also {
+        val context = work.folders.context
+        val connection = connections[work.lease]?.takeIf { it.folder == work.folder && it.context == context && it.open }
+            ?: Connection(work.lease, work.folder, context, work.companion).also {
             connections.remove(work.lease)?.close(); connections[work.lease] = it
         }
         // A release or close while it started: it ends now, and the chat has ended the turn already.
@@ -92,12 +97,15 @@ internal class CodexWorkRuntime(
         return connection.turn(turn, work.member, model, events)
     }
 
+    /** End [lease]'s app-server: its pending approvals are cancelled. Other leases keep theirs. */
+    override fun release(lease: String) { connections.remove(lease)?.close() }
+
     override fun release() { epoch.incrementAndGet(); connections.keys.toList().forEach { connections.remove(it)?.close() } }
 
     override fun close() { closed = true; release(); approvals.shutdownNow() }
 
-    /** One working app-server and its thread. */
-    private inner class Connection(val folder: Path, private val companionName: String) {
+    /** One working app-server and its thread; [context] folders it may only read. */
+    private inner class Connection(private val lease: String, val folder: Path, val context: List<Path>, private val companionName: String) {
         private val paths = WorkPaths(folder)
         private val relay = ApprovalRelay(broker)
         private val rpc = createRpc(CodexRuntime(executable, providerRoot), ::notify, ::request)
@@ -123,6 +131,7 @@ internal class CodexWorkRuntime(
                 val params = buildJsonObject {
                     saved?.let { put("threadId", it); put("excludeTurns", true) }
                     put("cwd", folder.toString()); put("approvalsReviewer", "user"); put("developerInstructions", request.persona.instructions)
+                    codexContextSandbox(folder, context)?.forEach { (key, value) -> put(key, value) }
                 }
                 val result = if (saved == null) rpc.call("thread/start", params)
                     else try { rpc.call("thread/resume", params) } catch (_: CodexRequestRejected) { events.failed(ChatFailure.ConversationLost); return TurnHandle {} }
@@ -203,7 +212,7 @@ internal class CodexWorkRuntime(
                     val command = params.text("command") ?: items[params.text("itemId")]?.text("command") ?: return null
                     val shown = unwrapShell(command)
                     ApprovalRequest(companionName, member, folder, ApprovalSubject.Command(shown, params.text("cwd")?.let(Path::of), null, params.text("reason")),
-                        "Allow `$shown` for this conversation")
+                        "Allow `$shown` for this conversation", lease)
                 }
                 else -> {
                     val item = awaitItem(params.text("itemId"))
@@ -211,7 +220,7 @@ internal class CodexWorkRuntime(
                     if (changes.isEmpty() || params.text("grantRoot") != null) return null
                     val files = changes.mapNotNull { it.text("path") }.map { Path.of(it).let { p -> if (p.isAbsolute) p else folder.resolve(p) }.normalize() }
                     ApprovalRequest(companionName, member, folder,
-                        ApprovalSubject.Edit("Edit", files, changes.joinToString("\n") { it.text("diff").orEmpty() }), "Allow these edits for this conversation")
+                        ApprovalSubject.Edit("Edit", files, changes.joinToString("\n") { it.text("diff").orEmpty() }), "Allow these edits for this conversation", lease)
                 }
             }
         }
@@ -353,6 +362,20 @@ private const val FILE_APPROVAL = "item/fileChange/requestApproval"
 internal fun unwrapShell(command: String): String {
     val wrapped = Regex("""^(?:/bin/|/usr/bin/)?(?:zsh|bash|sh) -l?c '(.*)'$""", RegexOption.DOT_MATCHES_ALL).find(command.trim())
     return wrapped?.groupValues?.get(1)?.replace("'\\''", "'") ?: command.trim()
+}
+
+/**
+ * The `thread/start` and `thread/resume` fields that keep [context] folders read-only: the
+ * `workspace-write` sandbox, whose writable roots are the [working] folder alone (everything else stays
+ * readable). Null without context folders, so the player's own sandbox settings stand.
+ */
+internal fun codexContextSandbox(working: Path, context: List<Path>): JsonObject? {
+    if (context.isEmpty()) return null
+    require(working.isAbsolute && context.all { it.isAbsolute }) { "Project folders are absolute" }
+    return buildJsonObject {
+        put("sandbox", "workspace-write")
+        putJsonObject("config") { putJsonArray("sandbox_workspace_write.writable_roots") { add(working.toString()) } }
+    }
 }
 
 /** A working app-server: the player's own Codex, unrestricted, answering server requests through [onRequest]. */
