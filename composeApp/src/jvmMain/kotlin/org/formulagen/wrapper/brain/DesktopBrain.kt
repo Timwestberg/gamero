@@ -74,8 +74,7 @@ internal class DesktopBrain(
     /** Apply one transition to a live session's record as one run revision. */
     private fun change(session: Session, transform: (BrainRecord) -> BrainRecord) = synchronized(gate) {
         check(live(session)) { "Expired brain execution" }
-        val value = transform(session.record)
-        persist(session, value.copy(run = value.run?.let { it.copy(summary = it.summary.copy(revision = it.summary.revision + 1)) }))
+        persist(session, transform(session.record).nextRevision())
     }
 
     private fun currentRun(session: Session) = synchronized(gate) { check(live(session)); checkNotNull(session.record.run) }
@@ -86,26 +85,17 @@ internal class DesktopBrain(
      */
     private fun idle(session: Session) = !session.busy || session.record.run?.summary?.state?.active != true
 
-    /** The runtimes a page decodes: those it declared, or the legacy pair when it predates the declaration. */
-    private fun understood(names: List<String>?): Set<RuntimeId> {
-        if (names == null) return SharedRules.LEGACY_RUNTIMES
-        require(SharedRules.validClientRuntimes(names))
-        return SharedRules.clientRuntimes(names)
-    }
-
-    /** A page reads only runtimes it decodes. For any other it is told to update, rather than sent a result it cannot parse. */
-    private fun requireUnderstood(understood: Set<RuntimeId>, runtimes: Set<RuntimeId>) {
-        if (!understood.containsAll(runtimes)) throw BridgeUpdateRequiredException()
-    }
-
-    /** What [session]'s page would read: the saved [document], the run's pinned brain and every role the conversation shows. */
+    /**
+     * What [session]'s page would read, and what work it starts would run on: the saved [document], whose coordinator
+     * the next decision uses, the run's pinned brain, and every role the conversation shows.
+     */
     private fun requireReadable(session: Session, document: BrainDocument?) =
-        requireUnderstood(session.understood, document?.configuration?.runtimeIds().orEmpty() + session.record.runtimeIds())
+        requireDecodable(session.understood, document?.configuration?.runtimeIds().orEmpty() + session.record.runtimeIds())
 
     override suspend fun read(args: BrainRead): BrainReadResult = io {
-        val understood = understood(args.supportedRuntimes)
+        val understood = SharedRules.understood(args.supportedRuntimes)
         val document = store.read(args.profile, args.companionId) ?: return@io BrainReadResult.Absent
-        requireUnderstood(understood, document.configuration.runtimeIds())
+        requireDecodable(understood, document.configuration.runtimeIds())
         BrainReadResult.Found(document, readiness(args.profile, args.companionId, document.configuration))
     }
 
@@ -117,7 +107,7 @@ internal class DesktopBrain(
         result.copy(issues = readiness(args.profile, args.companionId, result.document.configuration))
     }
 
-    override suspend fun open(args: BrainOpen): BrainSnapshot = io { open(args.lease(), understood(args.supportedRuntimes)) }
+    override suspend fun open(args: BrainOpen): BrainSnapshot = io { open(args.lease(), SharedRules.understood(args.supportedRuntimes)) }
 
     override suspend fun send(args: BrainSend): BrainSnapshot = io { sendNow(args) }
 
@@ -198,7 +188,7 @@ internal class DesktopBrain(
             // Before taking over, so a page that cannot read this brain never ends another page's lease or chat.
             val saved = runCatching { store.read(lease.profile, lease.companionId) }.getOrNull()?.configuration?.runtimeIds().orEmpty()
             val shown = runCatching { store.readRecord(lease.profile, lease.companionId) }.getOrNull()?.runtimeIds().orEmpty()
-            requireUnderstood(understood, saved + shown)
+            requireDecodable(understood, saved + shown)
             active?.let { end(it, false) }
             closeLegacy()
             var record = store.readRecord(lease.profile, lease.companionId)
@@ -232,7 +222,7 @@ internal class DesktopBrain(
         val run = record.run
         val snapshot = BrainSnapshot(document?.revision ?: 0, coordinator, record.messages, run?.summary, run?.attempts ?: emptyList(),
             run?.artifacts ?: emptyList(), record.waiting, speech.status(), (run?.summary?.revision ?: 0).toString(), record.notice)
-        requireUnderstood(session.understood, snapshot.runtimeIds() + document?.configuration?.runtimeIds().orEmpty() + record.runtimeIds())
+        requireDecodable(session.understood, snapshot.runtimeIds() + document?.configuration?.runtimeIds().orEmpty() + record.runtimeIds())
         return snapshot
     }
 
@@ -245,7 +235,7 @@ internal class DesktopBrain(
         // A page must never start work it cannot then show.
         requireReadable(session, document)
         if (document.revision != args.expectedRevision) {
-            persist(session, session.record.copy(notice = "The brain changed. Review the current coordinator and send again."))
+            persist(session, session.record.staleSend())
             return@synchronized snapshot(session)
         }
         val available = session.record.staged + (session.record.run?.artifacts ?: emptyList())
@@ -253,15 +243,9 @@ internal class DesktopBrain(
         val text = args.text.trimEcma()
         val attached = available.filter { it.id in args.inputIds }
         val existing = session.record.run
-        val next = if (existing?.summary?.state == BrainRunState.AWAITING_INPUT) {
-            // The message answers the run's question; the coordinator re-plans with it.
-            existing.copy(
-                request = "${existing.request}\nUser clarification: $text".takeLast(BrainLimits.INPUT),
-                inputs = (existing.inputs + args.inputIds).distinct(),
-                artifacts = (existing.artifacts + attached).distinctBy { it.id },
-                summary = existing.summary.copy(state = BrainRunState.PLANNING),
-            )
-        } else {
+        // A message to a run awaiting input answers it; otherwise it starts the next run.
+        val answering = existing?.takeIf { it.summary.state == BrainRunState.AWAITING_INPUT }
+        val next = answering?.answered(text, args.inputIds, attached) ?: run {
             require(existing == null || existing.summary.state.terminal) { "Resume or stop the current run first" }
             existing?.let { store.archive(session.lease.profile, session.lease.companionId, it) }
             val workspace = work.workspaces.folder(session.lease.profile, session.lease.companionId)?.path?.toString()
@@ -270,9 +254,7 @@ internal class DesktopBrain(
         }
         session.cancel = CancelSignal()
         session.speak = args.speak
-        val record = session.record.withEntry(args.requestId, BrainAuthor.USER, text)
-            .copy(run = next, waiting = null, notice = null, staged = session.record.staged.filter { it.id !in args.inputIds })
-        persist(session, record.withReceipt(args.requestId, digest))
+        persist(session, session.record.sent(args.requestId, digest, text, args.inputIds, next))
         launch(session)
         snapshot(session)
     }
@@ -464,10 +446,7 @@ internal class DesktopBrain(
             StageChoice.CONTINUE -> return true
             StageChoice.CHANGES -> change(session) { it.declined(attempt, "Describe the changes before this step starts.") }
             StageChoice.STOP -> synchronized(gate) { if (live(session)) end(session, true) }
-            StageChoice.PAUSE, null -> change(session) {
-                val queued = it.copy(run = it.run?.withLast(attempt.copy(state = BrainAttemptState.QUEUED)))
-                queued.paused("$subject is waiting for approval. No specialist was started. Resume to review it again.")
-            }
+            StageChoice.PAUSE, null -> change(session) { it.stagePostponed(attempt, subject) }
         }
         return false
     }
@@ -587,23 +566,19 @@ internal class DesktopBrain(
         require(run.summary.id == command.runId && run.summary.revision == command.expectedRunRevision)
         require(run.summary.state.resumable)
         if (retry != null) require(run.attempts.lastOrNull()?.id == retry)
-        val adopted = target?.let { revision -> store.read(lease.profile, lease.companionId)?.also { require(it.revision == revision) } }
-        // The resumed work must stay something this page can show.
-        requireUnderstood(session.understood, session.record.runtimeIds() + adopted?.configuration?.runtimeIds().orEmpty())
+        val document = store.read(lease.profile, lease.companionId)
+        // The resumed work, whose next decision runs on the saved coordinator, must stay something this page can show.
+        requireReadable(session, document)
+        val adopted = target?.let { revision -> document?.also { require(it.revision == revision) } }
         if (adopted != null && !adoptable(run.configuration, adopted.configuration)) {
-            val notice = "These changes alter roles or workflow structure. " +
-                "Stop this run and start a new request to use them; finished outputs are preserved."
-            persist(session, session.record.copy(notice = notice))
+            persist(session, session.record.adoptionRefused())
             return@synchronized snapshot(session)
         }
         session.cancel = CancelSignal()
         session.busy = true
         persist(session, session.record.withReceipt(command.requestId, command.digest))
         val previousWaiting = session.record.waiting
-        change(session) {
-            it.copy(waiting = BrainWaiting(BrainWaitingKind.RECOVERY, "Review the native resume dialog."),
-                run = it.run?.let { current -> current.copy(summary = current.summary.copy(state = BrainRunState.AWAITING_APPROVAL)) })
-        }
+        change(session) { it.reviewing() }
         val generation = ++session.generation
         executor.execute { review(session, generation, run, retry != null, adopted, previousWaiting) }
         snapshot(session)
@@ -633,13 +608,9 @@ internal class DesktopBrain(
                 if (!live(session) || session.generation != generation) return@synchronized
                 session.busy = false
                 if (approved) {
-                    val revision = checkNotNull(session.record.run).summary.revision
-                    change(session) { it.copy(waiting = null, notice = null, run = run.resumed(rerun, target, revision, ::uuid)) }
+                    change(session) { it.reviewApproved(run, rerun, target, ::uuid) }
                     launch(session)
-                } else change(session) {
-                    val restored = it.run?.let { current -> current.copy(summary = current.summary.copy(state = run.summary.state)) }
-                    it.copy(waiting = previousWaiting, run = restored)
-                }
+                } else change(session) { it.reviewDeclined(previousWaiting, run.summary.state) }
             }
         } catch (_: Throwable) {
             synchronized(gate) {

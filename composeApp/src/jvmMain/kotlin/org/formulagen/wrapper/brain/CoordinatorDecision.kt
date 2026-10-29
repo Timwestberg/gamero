@@ -34,42 +34,43 @@ internal enum class StepOutcome(val graded: BrainAttemptOutcome?) {
 @Serializable
 @JsonClassDiscriminator("kind")
 internal sealed interface CoordinatorDecision {
-    val kind: DecisionKind
-
     @Serializable @SerialName("answer")
-    data class Answer(val text: String) : CoordinatorDecision { override val kind get() = DecisionKind.ANSWER }
+    data class Answer(val text: String) : CoordinatorDecision
 
     @Serializable @SerialName("ask")
-    data class Ask(val question: String) : CoordinatorDecision { override val kind get() = DecisionKind.ASK }
+    data class Ask(val question: String) : CoordinatorDecision
 
     @Serializable @SerialName("delegate")
-    data class Delegate(val specialistId: String, val task: String, val inputIds: List<String>) : CoordinatorDecision {
-        override val kind get() = DecisionKind.DELEGATE
-    }
+    data class Delegate(val specialistId: String, val task: String, val inputIds: List<String>) : CoordinatorDecision
 
     /** Enter the workflow at [entryStepId]; [skipped] gives a reason for every earlier step. */
     @Serializable @SerialName("enter-workflow")
     data class EnterWorkflow(val entryStepId: String, val inputIds: List<String>, val skipped: List<BrainSkip>, val reason: String) :
-        CoordinatorDecision {
-        override val kind get() = DecisionKind.ENTER_WORKFLOW
-    }
+        CoordinatorDecision
 
     /** Launch the next pending step, which must be [stepId]. */
     @Serializable @SerialName("start-step")
-    data class StartStep(val stepId: String, val inputIds: List<String>) : CoordinatorDecision {
-        override val kind get() = DecisionKind.START_STEP
-    }
+    data class StartStep(val stepId: String, val inputIds: List<String>) : CoordinatorDecision
 
     /** Skip the next pending step, which must be [stepId]. */
     @Serializable @SerialName("skip-step")
-    data class SkipStep(val stepId: String, val reason: String) : CoordinatorDecision { override val kind get() = DecisionKind.SKIP_STEP }
+    data class SkipStep(val stepId: String, val reason: String) : CoordinatorDecision
 
     /** Grade the last attempt, which must be [attemptId]. */
     @Serializable @SerialName("step-result")
-    data class StepResult(val attemptId: String, val outcome: StepOutcome, val explanation: String) : CoordinatorDecision {
-        override val kind get() = DecisionKind.STEP_RESULT
-    }
+    data class StepResult(val attemptId: String, val outcome: StepOutcome, val explanation: String) : CoordinatorDecision
 }
+
+internal val CoordinatorDecision.kind: DecisionKind
+    get() = when (this) {
+        is CoordinatorDecision.Answer -> DecisionKind.ANSWER
+        is CoordinatorDecision.Ask -> DecisionKind.ASK
+        is CoordinatorDecision.Delegate -> DecisionKind.DELEGATE
+        is CoordinatorDecision.EnterWorkflow -> DecisionKind.ENTER_WORKFLOW
+        is CoordinatorDecision.StartStep -> DecisionKind.START_STEP
+        is CoordinatorDecision.SkipStep -> DecisionKind.SKIP_STEP
+        is CoordinatorDecision.StepResult -> DecisionKind.STEP_RESULT
+    }
 
 /**
  * Validate buffered coordinator text before any execution side effect: exactly one decision of an [allowed] kind,
@@ -77,10 +78,8 @@ internal sealed interface CoordinatorDecision {
  */
 internal fun parseDecision(text: String, allowed: Set<DecisionKind>): CoordinatorDecision {
     require(text.length <= BrainLimits.OUTPUT)
-    val element = brainJson.parseToJsonElement(text)
-    val decision = brainJson.decodeFromJsonElement(CoordinatorDecision.serializer(), element)
-    // A quoted value where the decision takes another type, or the reverse, is refused rather than read.
-    require(brainWire(CoordinatorDecision.serializer(), decision) == element)
+    // As a bridge argument is read: an extra field, or a quoted value where another type belongs, is refused.
+    val decision = brainJson.decodeFromString(BrainWireSerializer(CoordinatorDecision.serializer()), text)
     require(decision.kind in allowed)
     fun text(value: String, limit: Int) = require(value.isNotEmpty() && value.length <= limit)
     fun ids(values: List<String>) = require(BrainRules.inputs(values))

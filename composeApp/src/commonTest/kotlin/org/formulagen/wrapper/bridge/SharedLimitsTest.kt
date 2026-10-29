@@ -39,6 +39,7 @@ class SharedLimitsTest {
         assertEquals(SharedRules.MODEL_ID_PATTERN, limits.getValue("MODEL_ID_PATTERN").jsonPrimitive.content)
         assertEquals(SharedRules.CLIENT_RUNTIME_LIMIT, limits.getValue("CLIENT_RUNTIME_LIMIT").jsonPrimitive.int)
         assertEquals(SharedRules.CLIENT_RUNTIME_PATTERN, limits.getValue("CLIENT_RUNTIME_PATTERN").jsonPrimitive.content)
+        assertEquals(BridgeUpdateRequiredException.MESSAGE, limits.getValue("UPDATE_REQUIRED_MESSAGE").jsonPrimitive.content)
         assertEquals(limits.getValue("RUNTIME_PROVIDERS").jsonObject.mapValues { it.value.jsonPrimitive.content },
             RuntimeId.entries.associate { wire(it) to wire(it.providerId) })
     }

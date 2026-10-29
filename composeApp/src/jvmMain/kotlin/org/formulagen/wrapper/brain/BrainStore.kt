@@ -84,7 +84,7 @@ internal class BrainStore(private val root: Path) {
         val json = brainJson.parseToJsonElement(Files.readString(file)).jsonObject
         return brainJson.decodeFromJsonElement<ConfigRecord>(withSlimReceipts(json)).also { record ->
             require(record.version == 1 && record.document.revision > 0 && BrainRules.configuration(record.document.configuration))
-            require(record.receipts.size <= RECEIPTS)
+            require(record.receipts.size <= SAVE_RECEIPTS)
         }
     }
     /** Compare, commit and receipt are protected by one cross-window/process lock. */
@@ -102,7 +102,7 @@ internal class BrainStore(private val root: Path) {
             if ((current?.document?.revision ?: 0) != revision) return@locked BrainSaveResult.Conflict(current?.document?.revision ?: 0)
             require(revision < BrainLimits.REVISION)
             val document = BrainDocument(revision + 1, configuration)
-            val receipts = (current?.receipts.orEmpty() + SaveReceipt(mutationId, digest, document.revision)).takeLast(RECEIPTS)
+            val receipts = (current?.receipts.orEmpty() + SaveReceipt(mutationId, digest, document.revision)).takeLast(SAVE_RECEIPTS)
             val record = ConfigRecord(document = document, receipts = receipts)
             val content = brainJson.encodeToString(ConfigRecord.serializer(), record)
             require(content.toByteArray().size <= CONFIG_RECORD_BYTES)
@@ -186,7 +186,8 @@ internal class BrainStore(private val root: Path) {
         /** The media type of an artifact that is not UTF-8 text. */
         const val BINARY = "application/octet-stream"
         private const val CONFIGURATION = "configuration.json"
-        private const val RECEIPTS = 32
+        /** The most save receipts a configuration keeps. */
+        private const val SAVE_RECEIPTS = 32
         /** The conversation record, and each archived run. */
         private const val RECORD_BYTES = 16_000_000
         // Earlier records kept a whole document in each of their thirty-two receipts; they must still load.

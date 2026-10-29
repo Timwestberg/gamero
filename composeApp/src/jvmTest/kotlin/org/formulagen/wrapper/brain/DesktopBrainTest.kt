@@ -408,6 +408,21 @@ class DesktopBrainTest {
         assertNull(fixture.store.readRecord(fixture.scope.profile, fixture.scope.companionId).run)
     }
 
+    /** Resume and retry run the saved coordinator next, so a page that cannot read it is asked to update first. */
+    @Test fun aPageCannotResumeOrRetryOnceTheSavedCoordinatorUsesARuntimeItCannotRead() = Fixture().use { fixture ->
+        fixture.providers.connected = false
+        fixture.send(); val paused = fixture.await(BrainRunState.PAUSED)
+        val coordinator = fixture.configuration.coordinator.let { it.copy(binding = it.binding!!.copy(runtimeId = RuntimeId.GROK_BUILD)) }
+        fixture.store.save(fixture.scope.profile, fixture.scope.companionId, 1, brainId(), fixture.configuration.copy(coordinator = coordinator))
+        fixture.providers.connected = true
+        val before = fixture.store.readRecord(fixture.scope.profile, fixture.scope.companionId)
+        assertFailsWith<BridgeUpdateRequiredException> { fixture.resume(paused.run!!) }
+        val retry = buildJsonObject { put("attemptId", paused.attempts.single().id) }
+        assertFailsWith<BridgeUpdateRequiredException> { fixture.resume(paused.run!!, retry, method = "retry") }
+        assertTrue(fixture.shown.isEmpty(), "No resume review opened")
+        assertEquals(before, fixture.store.readRecord(fixture.scope.profile, fixture.scope.companionId))
+    }
+
     private companion object {
         val GROK_PAGE = arrayOf("codex", "claude-code", "grok-build")
         fun declaring(vararg runtimes: String) = buildJsonObject { putJsonArray("supportedRuntimes") { runtimes.forEach { add(it) } } }

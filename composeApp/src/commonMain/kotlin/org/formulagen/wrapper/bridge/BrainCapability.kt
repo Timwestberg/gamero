@@ -598,8 +598,8 @@ object BrainRules {
 }
 
 /**
- * The same capability method set as BRAIN_METHODS in event-contracts, in its order. Each method reads its arguments
- * in exactly the contract's form ([BrainWireSerializer]) and writes its result with the contract's nulls.
+ * The same capability method set as BRAIN_METHODS in event-contracts. Each method reads its arguments in exactly the
+ * contract's form ([BrainWireSerializer]) and writes its result with the contract's nulls.
  */
 object BrainMethods {
     private fun <A, R> method(name: String, args: KSerializer<A>, result: KSerializer<R>, accepts: (A) -> Boolean) =

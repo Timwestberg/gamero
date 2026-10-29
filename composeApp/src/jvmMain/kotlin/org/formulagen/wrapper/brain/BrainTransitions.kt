@@ -5,12 +5,12 @@ import org.formulagen.wrapper.chat.ChatFailure
 
 /*
  * The run state machine as pure functions of a record: [DesktopBrain] applies one under its lock and persists the
- * result as one revision, so a decision that does not fit the run applies nothing. [newId] names each new entry and
- * attempt.
+ * result as one revision ([nextRevision]), so a decision that does not fit the run applies nothing. [newId] names each
+ * new entry and attempt.
  */
 
-/** The most request receipts a record keeps. */
-internal const val RECEIPTS = 128
+/** The most `brain.send`, `brain.resume` and `brain.retry` receipts a record keeps. */
+internal const val REQUEST_RECEIPTS = 128
 
 /** A provider ended a turn with [failure]; [context] names the native conversation it ran in. */
 internal class ProviderFailure(val failure: ChatFailure, val runtime: RuntimeId, val context: String, val coordinator: Boolean) :
@@ -23,9 +23,12 @@ internal fun BrainRecord.replays(requestId: String, digest: String): Boolean {
     return true
 }
 
-/** Remember [requestId], keeping the newest [RECEIPTS]. */
+/** Remember [requestId], keeping the newest [REQUEST_RECEIPTS]. */
 internal fun BrainRecord.withReceipt(requestId: String, digest: String) =
-    copy(receipts = (receipts + (requestId to digest)).entries.toList().takeLast(RECEIPTS).associate { it.toPair() })
+    copy(receipts = (receipts + (requestId to digest)).entries.toList().takeLast(REQUEST_RECEIPTS).associate { it.toPair() })
+
+/** The record as one more revision of its run, which the page echoes back to resume or retry it. */
+internal fun BrainRecord.nextRevision() = copy(run = run?.let { it.copy(summary = it.summary.copy(revision = it.summary.revision + 1)) })
 
 internal fun BrainRecord.withEntry(
     id: String,
@@ -94,11 +97,61 @@ internal fun BrainRecord.reopened(): BrainRecord {
 /** When chat closes ([cancelled] false) or Stop ends the run ([cancelled]); null when there is nothing to end. */
 internal fun BrainRecord.ended(cancelled: Boolean): BrainRecord? {
     val run = run?.takeIf { !it.summary.state.terminal && (cancelled || it.pausesWithChat) } ?: return null
-    val halted = run.halted(if (cancelled) BrainRunState.CANCELLED else BrainRunState.PAUSED)
+    val waiting = if (cancelled) null else BrainWaiting(BrainWaitingKind.RECOVERY, "Work paused when chat closed. Review before resuming.")
+    return copy(run = run.halted(if (cancelled) BrainRunState.CANCELLED else BrainRunState.PAUSED), waiting = waiting).nextRevision()
+}
+
+/**
+ * The person's message [text] answers a run awaiting input: it joins the request as a clarification with its
+ * [attached] inputs, and the coordinator plans again.
+ */
+internal fun RunRecord.answered(text: String, inputIds: List<String>, attached: List<BrainArtifact>) = copy(
+    request = "$request\nUser clarification: $text".takeLast(BrainLimits.INPUT),
+    inputs = (inputs + inputIds).distinct(),
+    artifacts = (artifacts + attached).distinctBy { it.id },
+    summary = summary.copy(state = BrainRunState.PLANNING),
+)
+
+/**
+ * The person sent [text] as request [requestId] ([digest]), continuing or starting [run]: the message joins the
+ * conversation, its inputs leave the staging area, and nothing waits any more.
+ */
+internal fun BrainRecord.sent(requestId: String, digest: String, text: String, inputIds: List<String>, run: RunRecord) =
+    withEntry(requestId, BrainAuthor.USER, text)
+        .copy(run = run, waiting = null, notice = null, staged = staged.filter { it.id !in inputIds })
+        .withReceipt(requestId, digest)
+
+/** A send named a revision the brain has moved past; nothing runs until the person reviews the current coordinator. */
+internal fun BrainRecord.staleSend() = copy(notice = "The brain changed. Review the current coordinator and send again.")
+
+/** The person chose Not now on [attempt]'s stage dialog for [subject]: it stays queued, unstarted, until a resume. */
+internal fun BrainRecord.stagePostponed(attempt: BrainAttempt, subject: String) =
+    copy(run = requireRun().withLast(attempt.copy(state = BrainAttemptState.QUEUED)))
+        .paused("$subject is waiting for approval. No specialist was started. Resume to review it again.")
+
+/** A resume would adopt a revision whose roles or workflow structure differ ([adoptable]); the run stays as it is. */
+internal fun BrainRecord.adoptionRefused() = copy(
+    notice = "These changes alter roles or workflow structure. " +
+        "Stop this run and start a new request to use them; finished outputs are preserved.",
+)
+
+/** The native resume review is open: the run waits on it. */
+internal fun BrainRecord.reviewing(): BrainRecord {
+    val run = requireRun()
     return copy(
-        run = halted.copy(summary = halted.summary.copy(revision = halted.summary.revision + 1)),
-        waiting = if (cancelled) null else BrainWaiting(BrainWaitingKind.RECOVERY, "Work paused when chat closed. Review before resuming."),
+        waiting = BrainWaiting(BrainWaitingKind.RECOVERY, "Review the native resume dialog."),
+        run = run.copy(summary = run.summary.copy(state = BrainRunState.AWAITING_APPROVAL)),
     )
+}
+
+/** Continue in the resume review: the run goes on from [from], as it was when the person asked ([RunRecord.resumed]). */
+internal fun BrainRecord.reviewApproved(from: RunRecord, rerun: Boolean, target: BrainDocument?, newId: () -> String) =
+    copy(waiting = null, notice = null, run = from.resumed(rerun, target, requireRun().summary.revision, newId))
+
+/** Keep paused in the resume review: the run waits as it did before, in [state] and for [waiting]. */
+internal fun BrainRecord.reviewDeclined(waiting: BrainWaiting?, state: BrainRunState): BrainRecord {
+    val run = requireRun()
+    return copy(waiting = waiting, run = run.copy(summary = run.summary.copy(state = state)))
 }
 
 /**

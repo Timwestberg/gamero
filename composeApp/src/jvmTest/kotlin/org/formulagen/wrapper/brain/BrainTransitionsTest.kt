@@ -242,13 +242,113 @@ class BrainTransitionsTest {
         assertEquals("Adopted", resumed.attempts.single().role.instructions)
     }
 
+    private fun input() = BrainArtifact(newId(), "Input", "a".repeat(64), BrainSource(BrainSourceKind.USER, messageId = newId()), "text/plain", "")
+
+    @Test fun aMessageAnswersARunAwaitingInputOrStartsTheNextOne() {
+        val staged = input()
+        val before = record(state = BrainRunState.AWAITING_INPUT)
+            .copy(waiting = BrainWaiting(BrainWaitingKind.INPUT, "Which one?"), notice = "Noted", staged = listOf(staged))
+        val answered = before.r.answered("The first", listOf(staged.id), listOf(staged))
+        assertEquals("Write it\nUser clarification: The first", answered.request)
+        assertEquals(listOf(BrainRunState.PLANNING, listOf(staged.id), listOf(staged)), listOf(answered.summary.state, answered.inputs, answered.artifacts))
+        // Answering twice with the same input keeps one copy of it.
+        assertEquals(listOf(staged), answered.answered("Still the first", listOf(staged.id), listOf(staged)).artifacts)
+        val fresh = RunRecord(BrainRun(newId(), 1, 1, null, BrainRunState.PLANNING, null), configuration, null, "New", emptyList())
+        for (next in listOf(answered, fresh)) {
+            val sent = before.sent("40000000-0000-4000-8000-000000000001", "digest", "The first", listOf(staged.id), next)
+            assertEquals(next, sent.run)
+            assertEquals(BrainEntry("40000000-0000-4000-8000-000000000001", BrainAuthor.USER, "The first"), sent.messages.single())
+            assertEquals(listOf(null, null, emptyList<BrainArtifact>()), listOf(sent.waiting, sent.notice, sent.staged))
+            assertTrue(sent.replays("40000000-0000-4000-8000-000000000001", "digest"))
+        }
+    }
+
+    private class Step(val name: String, val before: BrainRecord, val apply: (BrainRecord) -> BrainRecord, val expect: (BrainRecord) -> Unit)
+
+    @Test fun noticesStagesAndTheResumeReviewMoveTheRunAsTheyShould() {
+        val queued = attempt(writer, steps[0], BrainAttemptState.AWAITING_APPROVAL)
+        val paused = record(BrainPhase.EXECUTE, attempts = listOf(queued), inWorkflow = true, state = BrainRunState.PAUSED)
+        val earlier = BrainWaiting(BrainWaitingKind.LIMIT, "Allowance used")
+        val rows = listOf(
+            Step("a stale send only explains itself", paused, { it.staleSend() }) {
+                assertEquals(paused.run, it.run)
+                assertEquals("The brain changed. Review the current coordinator and send again.", it.notice)
+            },
+            Step("a refused adoption only explains itself", paused, { it.adoptionRefused() }) {
+                assertEquals(paused.run, it.run)
+                assertTrue(it.notice!!.startsWith("These changes alter roles or workflow structure."))
+            },
+            Step("Not now keeps the stage queued and pauses", paused.copy(run = paused.r.copy(summary = paused.r.summary.copy(state = BrainRunState.AWAITING_APPROVAL))),
+                { it.stagePostponed(queued, "Writer") }) {
+                assertEquals(listOf(BrainAttemptState.QUEUED, BrainRunState.PAUSED), listOf(it.r.attempts.single().state, it.r.summary.state))
+                assertEquals(BrainWaiting(BrainWaitingKind.RECOVERY, "Writer is waiting for approval. No specialist was started. Resume to review it again."), it.waiting)
+            },
+            Step("opening the review waits on it", paused.copy(waiting = earlier), { it.reviewing() }) {
+                assertEquals(BrainRunState.AWAITING_APPROVAL, it.r.summary.state)
+                assertEquals(BrainWaiting(BrainWaitingKind.RECOVERY, "Review the native resume dialog."), it.waiting)
+            },
+            Step("Keep paused restores the wait", paused.reviewing(), { it.reviewDeclined(earlier, BrainRunState.PAUSED) }) {
+                assertEquals(BrainRunState.PAUSED, it.r.summary.state)
+                assertEquals(earlier, it.waiting)
+            },
+            Step("Continue resumes from the run as it was asked, at the current revision",
+                paused.reviewing().copy(notice = "Noted").nextRevision(), { it.reviewApproved(paused.r, true, null, ::newId) }) {
+                assertEquals(listOf(null, null), listOf(it.waiting, it.notice))
+                assertEquals(listOf(6L, BrainRunState.PLANNING), listOf(it.r.summary.revision, it.r.summary.state))
+                assertEquals(listOf(queued.id), it.r.attempts.map { attempt -> attempt.id })
+            },
+            Step("one revision per transition", paused, { it.nextRevision() }) { assertEquals(6L, it.r.summary.revision) },
+            Step("a record without a run has no revision to advance", BrainRecord(), { it.nextRevision() }) { assertNull(it.run) },
+        )
+        for (row in rows) runCatching { row.expect(row.apply(row.before)) }.getOrElse { throw AssertionError(row.name, it) }
+    }
+
+    @Test fun aCompletedAttemptIsEvaluatedUnlessItsRoleReportsTrouble() {
+        val running = attempt(writer, steps[0], BrainAttemptState.RUNNING)
+        val before = record(BrainPhase.EXECUTE, attempts = listOf(running), inWorkflow = true, state = BrainRunState.RUNNING)
+        val output = BrainArtifact(newId(), "Writer", "b".repeat(64), BrainSource(BrainSourceKind.ATTEMPT, attemptId = running.id), "text/markdown", "Draft")
+        fun step(status: ActivityStatus) = ActivityStep(ActivityKind.EDIT, "draft.md", status)
+        // Activity to the run state after completion; any failed or denied step waits for the person.
+        val rows = listOf(
+            null to BrainRunState.PLANNING,
+            Activity(listOf(step(ActivityStatus.DONE)), truncated = false) to BrainRunState.PLANNING,
+            Activity(listOf(step(ActivityStatus.DONE), step(ActivityStatus.DENIED)), truncated = false) to BrainRunState.AWAITING_INPUT,
+            Activity(listOf(step(ActivityStatus.FAILED)), truncated = false) to BrainRunState.AWAITING_INPUT,
+        )
+        for ((activity, state) in rows) {
+            val done = before.completed(running, output, "Draft", activity, newId())
+            assertEquals(state, done.r.summary.state, "$activity")
+            assertEquals(listOf(BrainPhase.EVALUATE, BrainAttemptState.COMPLETED, listOf(output.id)), listOf(done.r.phase, done.r.attempts.single().state, done.r.attempts.single().outputIds))
+            assertEquals(BrainAuthor.SPECIALIST to activity, done.messages.single().let { it.author to it.activity })
+            if (state == BrainRunState.AWAITING_INPUT) assertEquals("Writer reported failed or denied work. Review it before continuing.", done.notice)
+        }
+    }
+
+    @Test fun aPausedRunAdoptsSettingsButNeverAStructuralChange() {
+        val workflow = configuration.workflow!!
+        // A newer revision to whether a paused run may adopt it.
+        val rows = listOf(
+            "new instructions and models" to configuration.copy(specialists = configuration.specialists.map {
+                it.copy(instructions = "New", binding = it.binding?.copy(modelId = "other"))
+            }) to true,
+            "a changed stage approval" to configuration.copy(workflow = workflow.copy(steps = steps.map { it.copy(askBeforeStarting = true) })) to true,
+            "a new coordinator binding" to configuration.copy(coordinator = configuration.coordinator.copy(binding = null)) to true,
+            "reordered specialists" to configuration.copy(specialists = configuration.specialists.reversed()) to false,
+            "reordered steps" to configuration.copy(workflow = workflow.copy(steps = steps.reversed())) to false,
+            "a renamed step" to configuration.copy(workflow = workflow.copy(steps = steps.map { it.copy(name = "${it.name} 2") })) to false,
+            "a removed return" to configuration.copy(workflow = workflow.copy(steps = steps.map { it.copy(returnTo = null) })) to false,
+            "a talk role made a project role" to configuration.copy(specialists = configuration.specialists.map { it.copy(mode = MemberMode.WORK) }) to false,
+        )
+        for ((change, expected) in rows) assertEquals(expected, adoptable(configuration, change.second), change.first)
+    }
+
     @Test fun receiptsReplayTheSameRequestAndRefuseItsReuse() {
         val record = BrainRecord().withReceipt("a", "digest")
         assertTrue(record.replays("a", "digest"))
         assertFalse(record.replays("b", "digest"))
         assertFails { record.replays("a", "other") }
-        val full = (1..RECEIPTS + 1).fold(BrainRecord()) { value, n -> value.withReceipt("$n", "d$n") }
-        assertEquals(RECEIPTS, full.receipts.size)
+        val full = (1..REQUEST_RECEIPTS + 1).fold(BrainRecord()) { value, n -> value.withReceipt("$n", "d$n") }
+        assertEquals(REQUEST_RECEIPTS, full.receipts.size)
         assertFalse("1" in full.receipts)
     }
 
