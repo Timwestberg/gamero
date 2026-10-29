@@ -6,6 +6,7 @@ import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.ProviderUsage
 import org.formulagen.wrapper.bridge.ProviderUsageWindow
 import org.formulagen.wrapper.bridge.RuntimeId
+import org.formulagen.wrapper.hovel.hovelHostFeatures
 
 /**
  * Parity with server-platform: every payload in [CompanionContractFixtures] was built from the
@@ -22,11 +23,11 @@ class CompanionContractFixtureTest {
         "replyDeltaRequest" to ReplyDeltaRequest.serializer(),
         "messageProgress" to MessageProgress.serializer(),
         "agentApproval" to AgentApproval.serializer(),
-        "approvalAnswer" to ApprovalAnswer.serializer(),
         "hostStreamEvent" to HostStreamEvent.serializer(),
         "projectFoldersSave" to ProjectFoldersSave.serializer(),
-        "messageSend" to MessageSend.serializer(),
-        "computerHeartbeat+features" to HostHeartbeat.serializer(),
+        "companionProject" to CompanionProject.serializer(),
+        "artifactTextPage" to ArtifactTextPage.serializer(),
+        "heartbeatInput" to HostHeartbeat.serializer(),
     )
 
     @Suppress("UNCHECKED_CAST")
@@ -54,6 +55,13 @@ class CompanionContractFixtureTest {
         assertEquals(ApprovalSurface.PHONE, answered.answer?.by)
         val events = fixtures.filterKeys { it.startsWith("hostEvent.") }.values.map { HostEvents.decode(it.getValue("value").toString()) }
         assertEquals(5, events.filterNotNull().size)
+        val heartbeat = fromWire(HostHeartbeat.serializer(), fixtures.getValue("heartbeat").getValue("value"))
+        assertEquals("ready", heartbeat.providerState)
+        assertEquals(hovelHostFeatures(tasks = true, memory = true), heartbeat.features)
+        val first = fromWire(ArtifactTextPage.serializer(), fixtures.getValue("artifactText.page").getValue("value"))
+        val last = fromWire(ArtifactTextPage.serializer(), fixtures.getValue("artifactText.last").getValue("value"))
+        assertEquals(first.text.length, first.nextCursor)
+        assertNull(last.nextCursor)
     }
 
     @Test fun usageIsTheAllowanceSnapshotTheServerAccepts() {

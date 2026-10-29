@@ -10,6 +10,7 @@ import org.formulagen.wrapper.bridge.ActivityLimits
 import org.formulagen.wrapper.bridge.ActivityStep
 import org.formulagen.wrapper.bridge.CompanionLimits
 import org.formulagen.wrapper.bridge.FolderRole
+import org.formulagen.wrapper.chat.wholePath
 import org.formulagen.wrapper.util.shortened
 
 /**
@@ -59,9 +60,7 @@ internal class FolderLabels(folders: List<LocalFolder>, home: Path? = System.get
     }
 
     /** Free text with every folder path written as its label, longest first and only where a whole path ends. */
-    fun scrub(text: String): String = forms.fold(text) { result, (form, label) ->
-        Regex("(?<![^\\s\"'`=(\\[{<:,;])" + Regex.escape(form) + "(?=$|[/\\s'\"`:;,)\\]}>])").replace(result, Regex.escapeReplacement(label))
-    }
+    fun scrub(text: String): String = forms.fold(text) { result, (form, label) -> wholePath(form).replace(result, Regex.escapeReplacement(label)) }
 }
 
 /**

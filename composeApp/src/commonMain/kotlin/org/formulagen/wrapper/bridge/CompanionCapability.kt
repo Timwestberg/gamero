@@ -13,6 +13,12 @@ interface CompanionCapability {
     suspend fun activateConnection(ownerId: String, hostId: String): JsonObject
 }
 
+/**
+ * `companion.capabilities`. [sandbox] is the page contract's literal `read-only` (host-bridge `capabilities.ts`, read
+ * strictly by pages): it describes the Hovel task lane's Codex sandbox, not conversation work, whose working specialists
+ * write in the project's working folder after the start-of-work approval. Saying so on the wire needs a contract change
+ * with version skew for older pages, so the value stays until that lands.
+ */
 @Serializable
 data class CompanionCapabilitiesResult(val connectComputer: Boolean = true, val cloud: Boolean = false, val sandbox: String = "read-only")
 

@@ -25,10 +25,12 @@ class HostDirectoryTest {
     @Test fun everyRuntimeIsListedWithItsReadinessAndOnlyReadyOnesWork() {
         val providers = Counting(ConnectedProviders(setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE)))
         val clock = MutableClock(Instant.parse("2026-10-29T12:00:00Z"))
+        val features = listOf("provider-input", "memory-context", "memory-extraction")
         val directory = HostDirectory(providers, id(), id(), offered = setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE),
-            working = setOf(RuntimeId.CLAUDE_CODE), clock = clock, directoryEvery = 60.seconds, usageEvery = 300.seconds)
+            working = setOf(RuntimeId.CLAUDE_CODE), features = features, clock = clock, directoryEvery = 60.seconds, usageEvery = 300.seconds)
         val beat = directory.heartbeat()
-        assertEquals(CONVERSATION_HOST_FEATURES, beat.features)
+        assertEquals(features, beat.features)
+        assertEquals("ready", beat.providerState, "a runtime is ready")
         assertEquals("2026-10-29T12:00:00Z", beat.directory.observedAt)
         assertEquals(listOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE, RuntimeId.GROK_BUILD), beat.directory.runtimes.map { it.runtimeId })
         assertEquals(listOf(ProviderReadiness.READY, ProviderReadiness.READY, ProviderReadiness.UNAVAILABLE), beat.directory.runtimes.map { it.readiness })
@@ -47,10 +49,19 @@ class HostDirectoryTest {
 
     @Test fun aSignedOutRuntimeHasNoModelsAndNoUsage() {
         val providers = ConnectedProviders().apply { connected = false }
-        val beat = HostDirectory(providers, id(), id(), setOf(RuntimeId.CODEX), setOf(RuntimeId.CODEX)).heartbeat()
+        val beat = HostDirectory(providers, id(), id(), setOf(RuntimeId.CODEX), setOf(RuntimeId.CODEX), listOf("memory-context")).heartbeat()
         val codex = beat.directory.runtimes.first()
         assertEquals(ProviderRuntime(false, emptyList(), ProviderReadiness.SIGNED_OUT, RuntimeId.CODEX), codex)
         assertEquals(emptyList(), beat.allowances)
+        assertEquals("auth-required", beat.providerState)
+    }
+
+    @Test fun theTaskLanesCodexSpeaksForTheHeartbeatWhenThereIsOne() {
+        val ready = ConnectedProviders()
+        assertEquals("auth-required", HostDirectory(ready, id(), id(), setOf(RuntimeId.CODEX), emptySet(), listOf("provider-input"),
+            taskProviderState = { "auth-required" }).heartbeat().providerState)
+        assertEquals("unavailable", HostDirectory(ready, id(), id(), emptySet(), emptySet(), emptyList()).heartbeat().providerState,
+            "nothing offered is nothing ready")
     }
 
     @Test fun usageIsAnAllowanceSnapshotWithAStableOpaqueAccount() {

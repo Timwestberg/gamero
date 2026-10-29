@@ -28,9 +28,10 @@ import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.RuntimeProviderId
 
 /**
- * What this computer's heartbeat reports: each runtime's readiness and models (the provider
- * directory, for Codex, Claude Code and Grok Build alike) and their usage, as `computerHeartbeat`.
- * Provider checks can start processes, so the directory is refreshed every [directoryEvery] and
+ * What this computer's heartbeat reports: hovel-service's heartbeat ([features], and a `providerState`: the
+ * task lane's Codex when it has one ([taskProviderState]), else the best readiness in the directory) and
+ * `computerHeartbeat` (each runtime's readiness and models, for Codex, Claude Code and Grok Build alike, and
+ * their usage). Provider checks can start processes, so the directory is refreshed every [directoryEvery] and
  * usage every [usageEvery]; heartbeats in between send the last reading.
  */
 internal class HostDirectory(
@@ -41,6 +42,8 @@ internal class HostDirectory(
     private val offered: Set<RuntimeId>,
     /** The runtimes that may work in a project folder here. */
     private val working: Set<RuntimeId>,
+    private val features: List<String>,
+    private val taskProviderState: () -> String? = { null },
     private val clock: Clock = Clock.systemUTC(),
     private val directoryEvery: Duration = 60.seconds,
     private val usageEvery: Duration = 5.minutes,
@@ -55,7 +58,17 @@ internal class HostDirectory(
             ?: read(now).also { directory = now to it }
         val allowances = usage?.takeIf { now < it.first.plusMillis(usageEvery.inWholeMilliseconds) }?.second
             ?: usage(current).also { usage = now to it }
-        return HostHeartbeat(allowances, current, CONVERSATION_HOST_FEATURES)
+        return HostHeartbeat(allowances, current, features, taskProviderState() ?: providerState(current))
+    }
+
+    /** The directory's best readiness, in the hovel heartbeat's terms. */
+    private fun providerState(directory: ProviderDirectory): String {
+        val readiness = directory.runtimes.map { it.readiness }
+        return when {
+            ProviderReadiness.READY in readiness -> "ready"
+            ProviderReadiness.SIGNED_OUT in readiness -> "auth-required"
+            else -> "unavailable"
+        }
     }
 
     private fun read(now: Instant) = ProviderDirectory(now.truncatedTo(ChronoUnit.MILLIS).toString(), RuntimeId.entries.map { runtime ->
@@ -80,9 +93,6 @@ internal class HostDirectory(
             RuntimeAllowance(runtime.runtimeId, allowanceSnapshot(reading, hostId))
         }
 }
-
-/** The features a conversation host declares: recalled memory as its own section, and memory jobs. Hovel tasks are gone. */
-internal val CONVERSATION_HOST_FEATURES = listOf("memory-context", "memory-extraction")
 
 /**
  * [usage] as event-contracts `allowanceSnapshot`: its session (five-hour) and weekly windows as

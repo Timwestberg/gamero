@@ -26,7 +26,12 @@ class ConversationStoreTest {
         assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(folder.resolve("conversation.json"))))
         assertFails { ConversationStore(root, "local") }
         assertFails { store.read("../escape") }
-        assertEquals(record.copy(runMessageId = "x"), store.update(conversation) { it.copy(runMessageId = "x") })
+    }
+
+    @Test fun readingCreatesNothing() {
+        assertEquals(ConversationRecord(), store.read(conversation))
+        assertEquals(emptyList(), store.claims(conversation))
+        assertFalse(Files.exists(root.resolve(account).resolve("conversations").resolve(conversation)), "a read leaves no folder behind")
     }
 
     @Test fun theJournalKeepsClaimsUntilTheyAreForgotten() {
@@ -39,9 +44,21 @@ class ConversationStoreTest {
         assertEquals(listOf(claimed), store.claims(conversation))
         store.forget(claimed)
         assertEquals(listOf(launching), store.pendingClaims())
-        Files.writeString(root.resolve(account).resolve("conversations").resolve(other).resolve("journal").resolve("${launching.claimId}.json"),
-            "{\"claimId\":\"${id()}\",\"conversationId\":\"$other\",\"phase\":\"launching\"}")
-        assertFails("a record in another's name is never trusted") { store.pendingClaims() }
+    }
+
+    @Test fun theJournalIsReadOnceAtOpenAndAnUnreadableEntryIsSkipped() {
+        val other = id()
+        val launching = store.journal(ClaimEntry(id(), other, ClaimPhase.LAUNCHING, id(), 3))
+        val settling = store.journal(ClaimEntry(id(), conversation, ClaimPhase.SETTLING, id(), 4, MessageState.ANSWERED))
+        val journal = root.resolve(account).resolve("conversations").resolve(other).resolve("journal")
+        // One in another's name, and one that is not JSON at all: neither is trusted, and neither stops the rest.
+        Files.writeString(journal.resolve("${launching.claimId}.json"), "{\"claimId\":\"${id()}\",\"conversationId\":\"$other\",\"phase\":\"launching\"}")
+        Files.writeString(journal.resolve("${id()}.json"), "{broken")
+        assertEquals(setOf(launching, settling), store.pendingClaims().toSet(), "the open store answers from its index")
+        val reopened = ConversationStore(root, account).open()
+        try {
+            assertEquals(listOf(settling), reopened.pendingClaims())
+        } finally { reopened.close() }
     }
 
     @Test fun onlyOneHovelRunsAnAccountsConversations() {

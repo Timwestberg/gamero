@@ -97,10 +97,22 @@ internal object EmberHearingFixture {{
 """
 
 
+INSTALL_HINT = """Building the companion fixtures needs Node and server-platform's dependencies:
+    (cd {server} && pnpm install)"""
+
+
 def companion_payloads(server: Path) -> str:
     source = "event-contracts/src/hovel/companions"
-    printed = subprocess.run(["node", "--import", "tsx", str(ROOT / "tools/companion-fixtures.mts"), str(server)],
-                             cwd=server / "event-contracts", capture_output=True, text=True, check=True).stdout
+    try:
+        run = subprocess.run(["node", "--import", "tsx", str(ROOT / "tools/companion-fixtures.mts"), str(server)],
+                             cwd=server / "event-contracts", capture_output=True, text=True)
+    except FileNotFoundError:
+        sys.exit(INSTALL_HINT.format(server=server))
+    if run.returncode != 0:
+        sys.exit(run.stderr.strip() + "\n\n" + INSTALL_HINT.format(server=server))
+    if run.stderr:
+        print(run.stderr.strip(), file=sys.stderr)
+    printed = run.stdout
     payloads = json.loads(printed)
     entries = "\n".join(f"        {kotlin_string(name)} to {kotlin_string(json.dumps(payload, separators=(',', ':')))},"
                         for name, payload in payloads.items())

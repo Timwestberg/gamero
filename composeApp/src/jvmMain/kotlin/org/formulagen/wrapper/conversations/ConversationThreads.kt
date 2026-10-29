@@ -4,7 +4,6 @@ import org.formulagen.wrapper.bridge.ActivityStep
 import org.formulagen.wrapper.bridge.BrainArtifact
 import org.formulagen.wrapper.bridge.BrainAttempt
 import org.formulagen.wrapper.bridge.BrainAuthor
-import org.formulagen.wrapper.bridge.BrainLimits
 import org.formulagen.wrapper.bridge.BrainRoleSnapshot
 import org.formulagen.wrapper.bridge.CompanionLimits
 import org.formulagen.wrapper.bridge.WorkflowStep
@@ -24,10 +23,6 @@ internal fun threadTitle(role: String, task: String): String {
     val oneLine = task.map { if (it.code < 0x20 || it.code == 0x7F) ' ' else it }.joinToString("").replace(Regex(" {2,}"), " ").trimEcma()
     return "$role · ${oneLine.ifEmpty { "task" }}".shortened(CompanionLimits.THREAD_TITLE).trimEcma()
 }
-
-/** The coordinator message a new thread hangs under. */
-internal fun announcement(role: BrainRoleSnapshot, step: WorkflowStep?, task: String): String =
-    (if (step != null) "Started ${step.name} with ${role.name}." else "Asked ${role.name}: $task").take(BrainLimits.OUTPUT)
 
 /**
  * [after] with a thread for each new attempt of its run: [rerunOf]'s thread for the attempt a resume

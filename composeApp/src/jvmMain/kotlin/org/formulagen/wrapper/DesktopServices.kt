@@ -234,8 +234,11 @@ internal class DesktopServices private constructor(
                             })
                     },
                 )) else null
+                // Hovel tasks keep their read-only Codex workspace until step E removes them with the web task UI.
+                val taskWorkspace = environment["GAMERO_WORKSPACE"]?.let(Path::of)
                 val companion = conversations?.let { host ->
-                    own(HovelCompanion(appUrl, support.resolve("hovel-${HovelCompanion.sha256(appUrl)}"), codex, conversations = host::start))
+                    own(HovelCompanion(appUrl, support.resolve("hovel-${HovelCompanion.sha256(appUrl)}"), codex, taskWorkspace,
+                        conversations = host::start))
                 }
                 val games = if (window != null && environment["HOVEL_GAME_PROJECT"] != null) {
                     DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }

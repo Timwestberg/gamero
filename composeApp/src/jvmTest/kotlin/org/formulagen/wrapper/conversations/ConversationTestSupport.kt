@@ -61,7 +61,8 @@ internal class Queued(val message: ConversationMessage, val build: (claimId: Str
 /**
  * hovel-service as the Mac sees it, in memory: queued messages per conversation, claims fenced by claim
  * id (a repeated claim id answers the same claim), revisions that refuse a stale progress, checkpoints,
- * deltas, approvals whose first answer wins, folder saves, and a host stream fed by the test.
+ * deltas, approvals whose first answer wins (the Mac's through `approval.closed`), projects and their
+ * folder saves, input texts, and a host stream fed by the test.
  */
 internal class FakeServer(val hostId: String = id()) : ConversationApi {
     private val queues = ConcurrentHashMap<String, ArrayDeque<Queued>>()
@@ -73,13 +74,27 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     val revisions = ConcurrentHashMap<String, Long>()
     val heartbeats = CopyOnWriteArrayList<HostHeartbeat>()
     val approvals = ConcurrentHashMap<String, AgentApproval>()
-    val answers = CopyOnWriteArrayList<Pair<String, ApprovalAnswer>>()
+    /** The Mac's answers, as `approval.closed` (answered) checkpoints the server took. */
+    val answers = CopyOnWriteArrayList<Pair<String, ApprovalOption>>()
     val folderSaves = CopyOnWriteArrayList<Pair<String, ProjectFoldersSave>>()
-    val heard = CopyOnWriteArrayList<Pair<String, MessageSend>>()
+    val projects = ConcurrentHashMap<String, CompanionProject>()
+    val texts = ConcurrentHashMap<String, String>()
+    @Volatile var textsReadable = true
+    /** A claim's or progress's status the server answers instead, such as 404 for a message gone for good. */
+    @Volatile var claimStatus: Int? = null
+    /** A 409 claim refusal's code. */
+    @Volatile var claimCode: String? = null
+    /** Runs as a claim arrives, before it is answered: a test holds the claim on its way. */
+    @Volatile var onClaim: () -> Unit = {}
+    /** Streams opened so far. */
+    val streamsOpened = java.util.concurrent.atomic.AtomicInteger()
+    @Volatile var progressStatus: Int? = null
+    /** Refuses every checkpoint, as a server that took the claim back. */
+    @Volatile var refuseCheckpoints = false
+    @Volatile var approvalsReadable = true
     @Volatile var macUpdateRequired = emptySet<String>()
     @Volatile var offline = false
     @Volatile var refuseRunning = false
-    @Volatile var refuseAnswers = false
     @Volatile var foldersStatus: Int? = null
     @Volatile var streamFailures = 0
     private val stream = LinkedBlockingQueue<String>()
@@ -115,6 +130,7 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     override fun openStream(): HovelEventLines {
         if (offline) throw java.io.IOException("offline")
         synchronized(this) { if (streamFailures > 0) { streamFailures--; throw java.io.IOException("refused") } }
+        streamsOpened.incrementAndGet()
         return object : HovelEventLines {
             @Volatile var open = true
             override fun lines(): Sequence<String> = generateSequence {
@@ -125,9 +141,15 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
         }
     }
 
-    @Synchronized override fun claim(request: ClaimRequest): ClaimResponse {
+    override fun claim(request: ClaimRequest): ClaimResponse {
         if (offline) throw java.io.IOException("offline")
         claimRequests += request
+        onClaim()
+        return answer(request)
+    }
+
+    @Synchronized private fun answer(request: ClaimRequest): ClaimResponse {
+        claimStatus?.let { if (it == 409) throw HovelRejectedException(claimCode) else throw HovelStatusException(it) }
         claims[request.claimId]?.let { return ClaimResponse.Claimed(it) }
         if (request.conversationId in macUpdateRequired) return ClaimResponse.MacUpdateRequired(HovelContract.CURRENT + 1)
         val next = queues[request.conversationId]?.removeFirstOrNull() ?: return ClaimResponse.Empty
@@ -140,12 +162,21 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     @Synchronized override fun checkpoint(messageId: String, request: MessageCheckpointRequest) {
         if (offline) throw java.io.IOException("offline")
         check(claims[request.claimId]?.message?.id == messageId && request.claimedMessageId == messageId) { "Not this claim" }
+        if (refuseCheckpoints) throw HovelRejectedException()
         when (val checkpoint = request.checkpoint) {
             is MessageCheckpoint.ApprovalOpened -> approvals[checkpoint.approval.id] = checkpoint.approval
             is MessageCheckpoint.ApprovalClosed -> {
-                val approval = approvals.getValue(checkpoint.approvalId)
-                if (approval.state == ApprovalState.ANSWERED) throw HovelRejectedException()
-                approvals[checkpoint.approvalId] = approval.copy(state = ApprovalState.WITHDRAWN, revision = approval.revision + 1)
+                val approval = approvals[checkpoint.approvalId] ?: throw HovelStatusException(404)
+                // The first answer wins: a close for an approval that already ended is refused.
+                if (approval.state != ApprovalState.OPEN) throw HovelRejectedException()
+                approvals[checkpoint.approvalId] = when (val outcome = checkpoint.outcome) {
+                    is ApprovalOutcome.Answered -> {
+                        answers += checkpoint.approvalId to outcome.option
+                        approval.copy(state = ApprovalState.ANSWERED, revision = approval.revision + 1,
+                            answer = ApprovalAnswerRecord(ApprovalSurface.MAC, hostId, outcome.option))
+                    }
+                    ApprovalOutcome.Withdrawn -> approval.copy(state = ApprovalState.WITHDRAWN, revision = approval.revision + 1)
+                }
             }
             else -> Unit
         }
@@ -157,6 +188,7 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     @Synchronized override fun progress(messageId: String, progress: MessageProgress): Long? {
         if (offline) throw java.io.IOException("offline")
         if (progress.state == MessageState.RUNNING && refuseRunning) throw HovelRejectedException()
+        progressStatus?.let { throw HovelStatusException(it) }
         if (revisions[messageId] != progress.expectedRevision) throw HovelRejectedException()
         this.progress += progress
         return (progress.expectedRevision + 1).also { revisions[messageId] = it }
@@ -164,25 +196,28 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
 
     @Synchronized override fun saveFolders(projectId: String, save: ProjectFoldersSave): CompanionProject? {
         foldersStatus?.let { if (it == 409) throw HovelRejectedException() else throw HovelStatusException(it) }
+        projects[projectId]?.let { if (it.revision != save.expectedRevision) throw HovelRejectedException() }
         folderSaves += projectId to save
-        return CompanionProject(false, id(), hostId, save.folders, projectId, "Project", save.expectedRevision + 1)
+        return CompanionProject(false, id(), hostId, save.folders, projectId, "Project", save.expectedRevision + 1).also { projects[projectId] = it }
     }
 
-    @Synchronized override fun answer(approvalId: String, answer: ApprovalAnswer): AgentApproval {
-        if (offline) throw java.io.IOException("offline")
-        answers += approvalId to answer
-        if (refuseAnswers) throw HovelRejectedException()
-        val approval = approvals[approvalId] ?: throw HovelStatusException(404)
-        if (approval.state != ApprovalState.OPEN || approval.revision != answer.expectedRevision) throw HovelRejectedException()
-        return approval.copy(state = ApprovalState.ANSWERED, revision = approval.revision + 1,
-            answer = ApprovalAnswerRecord(ApprovalSurface.MAC, hostId, answer.option)).also { approvals[approvalId] = it }
+    override fun approval(approvalId: String): AgentApproval {
+        if (!approvalsReadable) throw java.io.IOException("unreadable")
+        return approvals[approvalId] ?: throw HovelStatusException(404)
     }
 
-    override fun approval(approvalId: String): AgentApproval = approvals[approvalId] ?: throw HovelStatusException(404)
+    override fun project(projectId: String): CompanionProject = projects[projectId] ?: throw HovelStatusException(404)
 
-    override fun sendHeard(conversationId: String, send: MessageSend): ConversationMessage {
-        heard += conversationId to send
-        return ConversationMessage(MessageAuthor.USER, null, conversationId, AT, AT, null, send.id, emptyList(), null, 1, MessageState.QUEUED, send.text, send.threadId)
+    override fun artifactText(artifactId: String, cursor: Int): ArtifactTextPage {
+        if (!textsReadable) throw java.io.IOException("unreadable")
+        val text = texts[artifactId] ?: throw HovelStatusException(404)
+        val end = minOf(text.length, cursor + TEXT_PAGE)
+        return ArtifactTextPage(if (end < text.length) end else null, text.substring(cursor, end))
+    }
+
+    companion object {
+        /** The fake's page size, small enough that a test input spans pages. */
+        const val TEXT_PAGE = 1_000
     }
 }
 

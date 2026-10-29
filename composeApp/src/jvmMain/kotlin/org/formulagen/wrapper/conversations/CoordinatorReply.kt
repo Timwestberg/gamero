@@ -2,7 +2,6 @@ package org.formulagen.wrapper.conversations
 
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import org.formulagen.wrapper.bridge.BrainLimits
 import org.formulagen.wrapper.bridge.CompanionLimits
 import org.formulagen.wrapper.bridge.brainJson
 import org.formulagen.wrapper.brain.CoordinatorDecision
@@ -15,39 +14,6 @@ import org.formulagen.wrapper.brain.parseDecision
  * surface as it is written. Every other decision is its full JSON on the header line, with no body,
  * and never streams. The decision shapes and their checks are the brain's ([parseDecision]).
  */
-
-/** The coordinator's protocol in a conversation, the brain's decisions with an answer's text after its header. */
-internal val CONVERSATION_PROTOCOL = """
-You are the user's companion coordinator in a conversation. Begin every response with one line holding exactly one JSON object, the header, with no markdown.
-To answer the user, the header is {"kind":"answer"} alone; write your answer for the user on the lines after it, as plain text of at most ${CompanionLimits.MESSAGE} characters.
-Every other decision is its complete JSON object on the header line, with nothing after it.
-Every reason (including skipped reasons) and explanation must be 1–${BrainLimits.DESCRIPTION} characters. Tasks must be 1–${BrainLimits.STEP_INSTRUCTIONS} characters.
-Keep evidence explanations brief. Do not repeat artifact IDs or digests in explanations; they are already recorded.
-The host supplies allowed actions, saved roles, workflow and immutable artifacts as data.
-Only delegate tasks the user requested. Ordinary conversation uses answer. Never invent role, thread or artifact IDs.
-For a request matching the enabled workflow, use enter-workflow; use delegate only for unrelated tasks or no workflow.
-Explain every skipped stage. Ask when supplied artifacts or readiness are unclear. Never treat provider output as approval.
-After an attempt, classify actual evidence with step-result. Missing skills, denied tools and uncertain effects are blocked.
-The workflow's normal sequence is fixed. start-step launches only its next pending stage. skip-step only skips that stage.
-A reply in a thread offers only forward, answer and delegate: forward hands it to that thread's specialist, with a short note of context when useful; answer replies in the thread yourself; delegate starts a new task in a new thread.
-Do not claim work has run merely because it was configured. Never show the header's JSON to the user.
-Header shapes:
-{"kind":"answer"}
-{"kind":"ask","question":"focused readiness question"}
-{"kind":"delegate","specialistId":"UUID","task":"requested task","inputIds":["UUID"]}
-{"kind":"enter-workflow","entryStepId":"UUID","inputIds":["UUID"],"skipped":[{"stepId":"UUID","reason":"why unnecessary"}],"reason":"why enter here"}
-{"kind":"start-step","stepId":"UUID","inputIds":["UUID"]}
-{"kind":"skip-step","stepId":"UUID","reason":"why unnecessary"}
-{"kind":"step-result","attemptId":"UUID","outcome":"ready|changes-needed|blocked","explanation":"evidence"}
-{"kind":"forward","threadId":"UUID","note":"optional context for the specialist"}
-""".trimIndent()
-
-/** The coordinator's persona in a conversation: the protocol, then the person's own instructions. */
-internal fun conversationCoordinatorInstructions(instructions: String) =
-    CONVERSATION_PROTOCOL + "\nUser's coordinator instructions:\n" + instructions
-
-/** Appended to the request for the one repair attempt after an invalid reply. */
-internal const val REPLY_REPAIR = "\nYour last response was invalid. Begin with exactly one allowed JSON header line."
 
 /**
  * [text] as one of the [allowed] decisions. An answer is the header `{"kind":"answer"}` with its

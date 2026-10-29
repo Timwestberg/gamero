@@ -20,6 +20,10 @@ import org.formulagen.wrapper.workspace.FilePicker
 /**
  * A single leased, durable controller. Provider work and dialogs run outside the state lock. The run's state changes
  * are the pure functions in `BrainTransitions.kt`; this class owns the lease, the store, the providers and the dialogs.
+ *
+ * Frozen: it serves the page's `brain.*` only, and is removed with `brain.*` in companion projects step E.
+ * Conversations run through `conversations.CoordinatorEngine`, and behaviour fixes go there. Rules both must keep
+ * are pure functions in this package (`BrainTransitions.kt`, `RoleReadiness.kt`, `BrainPrompts.kt`).
  */
 internal class DesktopBrain(
     private val root: Path,
@@ -337,24 +341,8 @@ internal class DesktopBrain(
         }
         val projectExists = work.workspaces.folder(profile, companionId)?.exists == true
         for ((id, binding, mode) in roles) {
-            if (binding == null) {
-                issues += BrainIssue(BrainIssueReason.MISSING_BINDING, id)
-                continue
-            }
-            val (connected, models) = catalogs.getValue(binding.runtimeId)
-            if (!connected) {
-                issues += BrainIssue(BrainIssueReason.UNAVAILABLE_PROVIDER, id)
-                continue
-            }
-            val model = models?.let { binding.model(it) }
-            if (model == null) issues += BrainIssue(BrainIssueReason.UNAVAILABLE_MODEL, id)
-            if (binding.effort != null && model?.effortLevels?.contains(binding.effort) != true) {
-                issues += BrainIssue(BrainIssueReason.UNSUPPORTED_EFFORT, id)
-            }
-            if (mode == MemberMode.WORK) {
-                if (binding.runtimeId !in work.runtimes) issues += BrainIssue(BrainIssueReason.UNSUPPORTED_PROJECT_WORK, id)
-                if (!projectExists) issues += BrainIssue(BrainIssueReason.MISSING_PROJECT, id)
-            }
+            val (connected, models) = binding?.let { catalogs.getValue(it.runtimeId) } ?: (false to null)
+            issues += roleIssues(id, binding, mode, connected, models, binding != null && binding.runtimeId in work.runtimes, projectExists)
         }
         configuration.workflow?.takeIf { it.enabled }?.let { workflow ->
             if (workflow.steps.isEmpty()) issues += BrainIssue(BrainIssueReason.EMPTY_WORKFLOW)
@@ -423,9 +411,7 @@ internal class DesktopBrain(
         change(session) { it.copy(run = checkNotNull(it.run).withLast(attempt)) }
         val step = current.configuration.workflow?.steps?.find { it.id == attempt.stepId }
         // Ad hoc work for a role the enabled workflow uses honors the strictest of that role's stage approvals.
-        val stages = step?.let(::listOf)
-            ?: current.configuration.workflow?.takeIf { it.enabled }?.steps?.filter { it.specialistId == role.roleId }.orEmpty()
-        if (stages.any { it.askBeforeStarting } && !approveStage(session, current, attempt, step)) return
+        if (asksBeforeStarting(current.configuration, role, step) && !approveStage(session, current, attempt, step)) return
         if (role.mode == MemberMode.WORK && !startWork(session, current, attempt)) return
         change(session) { it.dispatched(attempt) }
         val text = specialistTurn(role, current, step, handoff(session, attempt.inputIds, files = role.mode == MemberMode.WORK))
@@ -474,13 +460,9 @@ internal class DesktopBrain(
 
     /** The run's input artifacts [ids] as handoff text; only a project role ([files]) is also given their native files. */
     private fun handoff(session: Session, ids: List<String>, files: Boolean): String {
-        val run = currentRun(session)
         val (profile, companionId) = session.lease.profile to session.lease.companionId
-        return handoffText(ids.distinct().map { id ->
-            val artifact = run.artifacts.find { it.id == id } ?: error("Unknown input artifact")
-            val bytes = store.bytes(profile, companionId, artifact)
-            HandoffInput(artifact, bytes, if (files) store.artifactPath(profile, companionId, artifact) else null)
-        })
+        return handoffText(currentRun(session).handoffInputs(ids, { store.bytes(profile, companionId, it) },
+            if (files) { artifact -> store.artifactPath(profile, companionId, artifact) } else null))
     }
 
     /** Provider callbacks are bound to this exact lease and invocation. */

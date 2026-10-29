@@ -1,20 +1,30 @@
 package org.formulagen.wrapper.hovel
 
 import kotlinx.serialization.json.*
-import org.formulagen.wrapper.companion.ExecutionRequest
 import org.formulagen.wrapper.companion.providerPrompt
 import org.junit.Test
 import java.util.UUID
 import kotlin.test.*
 
-/** The companion's provider text is byte for byte the server's `hovelProviderPrompt`. */
+/** The companion sends a task's provider text byte for byte as the server's `hovelProviderPrompt` builds it. */
 class HovelProviderPromptTest {
     private val host = UUID.randomUUID().toString()
 
-    /** One fixture case's inputs as a request: the conversation text when it has one, else its prompt. */
-    private fun request(case: JsonObject) = ExecutionRequest(UUID.randomUUID().toString(), host,
-        (case["providerInput"] ?: case.getValue("prompt")).jsonPrimitive.content, case.getValue("characterMemory").jsonPrimitive.content,
-        recalledMemory = case["recalledMemory"]?.jsonPrimitive?.content)
+    /** A task as the server sends it, carrying one fixture case's inputs. */
+    private fun task(case: JsonObject) = buildJsonObject {
+        put("ownerId", UUID.randomUUID().toString()); put("revision", 0)
+        put("characterMemory", case.getValue("characterMemory"))
+        put("progress", buildJsonObject { put("state", "queued") })
+        case["providerInput"]?.let { put("providerInput", it) }
+        case["recalledMemory"]?.let { put("recalledMemory", it) }
+        put("request", buildJsonObject {
+            put("id", UUID.randomUUID().toString()); put("hostId", host); put("mode", "local")
+            put("prompt", case.getValue("prompt"))
+            if ("providerInput" in case) put("followUp", buildJsonObject {
+                put("conversationId", UUID.randomUUID().toString()); put("previousTaskId", UUID.randomUUID().toString())
+            })
+        })
+    }
 
     @Test fun everyFixtureCaseBuildsTheServersExactText() {
         val cases = Json.parseToJsonElement(HovelProviderPromptFixture.JSON).jsonObject.getValue("cases").jsonArray.map { it.jsonObject }
@@ -22,7 +32,7 @@ class HovelProviderPromptTest {
             cases.map { it.getValue("name").jsonPrimitive.content }.toSet())
         for (case in cases) {
             val name = case.getValue("name").jsonPrimitive.content
-            assertEquals(case.getValue("expected").jsonPrimitive.content, providerPrompt(request(case)), name)
+            assertEquals(case.getValue("expected").jsonPrimitive.content, providerPrompt(hovelExecutionRequest(task(case), host)), name)
         }
     }
 }

@@ -44,13 +44,14 @@ internal class ClaimOutput(
         }
     }
 
+    /** Store [checkpoint] with one try: a refusal or a failure is thrown. */
+    fun once(checkpoint: MessageCheckpoint) = api.checkpoint(messageId, MessageCheckpointRequest(checkpoint, claimId, messageId))
+
     /**
      * Store [checkpoint] with one try; a failure or refusal is only logged. Approvals use this, so an
      * unreachable server never holds a dialog back.
      */
-    fun bestEffort(checkpoint: MessageCheckpoint): Boolean = try {
-        api.checkpoint(messageId, MessageCheckpointRequest(checkpoint, claimId, messageId)); true
-    } catch (error: Exception) {
+    fun bestEffort(checkpoint: MessageCheckpoint): Boolean = try { once(checkpoint); true } catch (error: Exception) {
         log(LogLevel.Warn, "conversations", "A ${checkpoint::class.simpleName} checkpoint was not stored", error)
         false
     }

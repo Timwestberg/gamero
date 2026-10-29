@@ -51,9 +51,11 @@ internal class ConversationHost(
             val approvals = RemoteApprovals(dialogs, api, registration.id)
             val talkRuntimes = talk().also { owned += it }
             val workRuntimes = work(approvals).also { owned += it }
-            val engine = CoordinatorEngine(store, folders, talkRuntimes, workRuntimes, providers, approvals, StartOfWork(dialogs))
-            val publisher = ProjectFolderPublisher(folders, api, registration.ownerId, engine::readableBy)
-            val directory = HostDirectory(providers, registration.ownerId, registration.id, offered, working.intersect(workRuntimes.map { it.id }.toSet()))
+            val turns = ProviderTurns(talkRuntimes, workRuntimes, providers, approvals)
+            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(dialogs), api)
+            val publisher = ProjectFolderPublisher(folders, api, registration.ownerId, registration.id, engine::readableBy)
+            val directory = HostDirectory(providers, registration.ownerId, registration.id, offered,
+                working.intersect(workRuntimes.map { it.id }.toSet()), connection.features, connection.providerState)
             val runner = ConversationRunner(api, store, engine, approvals, folders, publisher, directory::heartbeat, connection.heartbeat, connection.status)
             owned += runner
             running = Running(registration.ownerId, publisher, engine::readableBy)

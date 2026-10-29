@@ -10,6 +10,7 @@ import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.hovel.HovelHttpTransport
 import org.formulagen.wrapper.hovel.HovelRejectedException
 import org.formulagen.wrapper.hovel.HovelStatusException
+import org.formulagen.wrapper.hovel.NativeRoute
 
 /** The Mac's companion payloads in the contract's exact form, and the routes they travel on. */
 class ConversationWireTest {
@@ -95,27 +96,37 @@ class ConversationWireTest {
 
     @Test fun routesAreSpelledOnceAndOnlyTheirMethodsAreAllowed() {
         val message = id()
-        assertEquals("messages/$message/checkpoints", NativeRoutes.checkpoints(message))
-        assertTrue(NativeRoutes.allows("POST", NativeRoutes.CLAIM))
-        assertTrue(NativeRoutes.allows("GET", NativeRoutes.STREAM))
-        assertTrue(NativeRoutes.allows("PUT", NativeRoutes.folders(message)))
-        assertFalse(NativeRoutes.allows("GET", NativeRoutes.folders(message)))
-        assertFalse(NativeRoutes.allows("POST", "messages/$message/../../claim"))
-        assertFails { NativeRoutes.progress(message.uppercase()) }
-        assertFails { NativeRoutes.answer("../x") }
+        assertEquals("messages/$message/checkpoints", NativeRoute.MESSAGE_CHECKPOINT.path(message))
+        assertEquals("artifacts/$message/text?cursor=40", NativeRoute.ARTIFACT_TEXT.path(message, cursor = 40))
+        assertEquals("artifacts/$message/text", NativeRoute.ARTIFACT_TEXT.path(message))
+        assertTrue(NativeRoute.allows("POST", NativeRoute.CONVERSATION_CLAIM.path()))
+        assertTrue(NativeRoute.allows("GET", NativeRoute.STREAM.path()))
+        assertTrue(NativeRoute.allows("PUT", NativeRoute.PROJECT_FOLDERS.path(message)))
+        assertTrue(NativeRoute.allows("GET", NativeRoute.PROJECT.path(message)))
+        assertTrue(NativeRoute.allows("GET", NativeRoute.ARTIFACT_TEXT.path(message, cursor = 0)))
+        assertTrue(NativeRoute.allows("POST", NativeRoute.TASK_CLAIM.path()), "the task lane stays until step E")
+        assertFalse(NativeRoute.allows("GET", NativeRoute.PROJECT_FOLDERS.path(message)))
+        assertFalse(NativeRoute.allows("POST", "approvals/$message/answer"), "the Mac answers through approval.closed")
+        assertFalse(NativeRoute.allows("POST", "messages/$message/../../claim"))
+        assertFalse(NativeRoute.allows("GET", "projects/$message?cursor=1"), "only an artifact's text pages")
+        assertFails { NativeRoute.MESSAGE_PROGRESS.path(message.uppercase()) }
+        assertFails { NativeRoute.APPROVAL.path("../x") }
+        assertFails { NativeRoute.PROJECT.path(message, cursor = 1) }
+        assertFails { NativeRoute.MESSAGE_DELTA.path(message, message) }
     }
 
     @Test fun theTransportSendsEachRouteWithTheTokenAndTheContract() {
         val owner = id(); val host = id(); val token = "b".repeat(64)
         val seen = CopyOnWriteArrayList<Triple<String, String, String>>()
         val status = java.util.concurrent.atomic.AtomicInteger(200)
+        val refusal = java.util.concurrent.atomic.AtomicReference<String>("{}")
         val talk = TestConversation()
         val claim = talk.claim(id(), talk.message("Hi"), brain())
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/") { exchange ->
             assertEquals(token, exchange.requestHeaders.getFirst("X-Hovel-Host-Token"))
             assertEquals(HovelContract.CURRENT.toString(), exchange.requestHeaders.getFirst(HovelContract.HEADER))
-            val path = exchange.requestURI.path.removePrefix("/native/$owner/$host/")
+            val path = exchange.requestURI.path.removePrefix("/native/$owner/$host/") + (exchange.requestURI.query?.let { "?$it" } ?: "")
             seen += Triple(exchange.requestMethod, path, exchange.requestBody.bufferedReader().readText())
             if (path == "stream") {
                 exchange.responseHeaders.add("Content-Type", "text/event-stream")
@@ -129,9 +140,11 @@ class ConversationWireTest {
                 path.startsWith("approvals/") -> wire(AgentApproval.serializer(), AgentApproval(null, host, talk.id, AT, path.split('/')[1],
                     ApprovalKind.PERMISSION, listOf(ApprovalOption.ALLOW_ONCE, ApprovalOption.DENY), ApprovalPresentation.MacOnly("Answer on the Mac"), 0,
                     ApprovalState.OPEN, null))
+                path.startsWith("projects/") && exchange.requestMethod == "GET" -> wire(CompanionProject.serializer(), claim.project)
+                path.startsWith("artifacts/") -> wire(ArtifactTextPage.serializer(), ArtifactTextPage(null, "Sign-in added."))
                 else -> buildJsonObject {}
             }
-            val body = buildJsonObject { put("data", data) }.toString().toByteArray()
+            val body = if (status.get() == 409) refusal.get().toByteArray() else buildJsonObject { put("data", data) }.toString().toByteArray()
             exchange.sendResponseHeaders(status.get(), body.size.toLong())
             exchange.responseBody.use { it.write(body) }
         }
@@ -146,44 +159,44 @@ class ConversationWireTest {
             api.delta(claim.message.id, ReplyDeltaRequest(claim.claimId, claim.message.id, ReplyDelta(id(), 0, "Hel", null)))
             val approval = id()
             assertEquals(approval, api.approval(approval).id)
-            assertEquals(approval, api.answer(approval, ApprovalAnswer(0, ApprovalOption.DENY)).id)
+            assertEquals(claim.project, api.project(talk.projectId))
+            val artifact = id()
+            assertEquals(ArtifactTextPage(null, "Sign-in added."), api.artifactText(artifact, 0))
             assertNull(api.saveFolders(talk.projectId, ProjectFoldersSave(3, emptyList())), "an answer without the project is fine")
-            api.heartbeat(HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), CONVERSATION_HOST_FEATURES))
+            api.heartbeat(HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), listOf("memory-context"), "ready"))
             val events = mutableListOf<HostStreamEvent>()
             api.openStream().use { HostEvents.read(it.lines(), events::add) }
             assertEquals(listOf<HostStreamEvent>(HostStreamEvent.WorkAvailable(talk.id)), events)
             assertEquals(listOf("POST" to "conversations/claim", "POST" to "messages/${claim.message.id}/progress",
                 "POST" to "messages/${claim.message.id}/checkpoints", "POST" to "messages/${claim.message.id}/deltas", "GET" to "approvals/$approval",
-                "POST" to "approvals/$approval/answer", "PUT" to "projects/${talk.projectId}/folders", "POST" to "heartbeat", "GET" to "stream"),
+                "GET" to "projects/${talk.projectId}", "GET" to "artifacts/$artifact/text?cursor=0", "PUT" to "projects/${talk.projectId}/folders",
+                "POST" to "heartbeat", "GET" to "stream"),
                 seen.map { it.first to it.second })
             val heartbeat = json.parseToJsonElement(seen.single { it.second == "heartbeat" }.third).jsonObject
-            assertEquals(setOf("allowances", "directory", "features"), heartbeat.keys)
+            assertEquals(setOf("allowances", "directory", "features", "providerState"), heartbeat.keys)
+            assertEquals("ready", heartbeat.getValue("providerState").jsonPrimitive.content)
             status.set(409)
-            assertFailsWith<HovelRejectedException> { api.claim(ClaimRequest(claim.claimId, talk.id)) }
+            assertNull(assertFailsWith<HovelRejectedException> { api.claim(ClaimRequest(claim.claimId, talk.id)) }.code)
+            refusal.set("not json")
+            assertNull(assertFailsWith<HovelRejectedException> { api.claim(ClaimRequest(claim.claimId, talk.id)) }.code)
+            refusal.set("""{"code":"update-required","minimumContract":3}""")
+            assertEquals("update-required", assertFailsWith<HovelRejectedException> { api.claim(ClaimRequest(claim.claimId, talk.id)) }.code)
             status.set(404)
-            assertEquals(404, assertFailsWith<HovelStatusException> { api.approval(approval) }.status)
-            assertFails("not a conversation route") { transport.exchange("DELETE", NativeRoutes.CLAIM, buildJsonObject {}) }
-            assertFails("the old task routes are gone") { transport.post("claim", buildJsonObject {}) }
+            val missing = assertFailsWith<HovelStatusException> { api.approval(approval) }
+            assertEquals(404, missing.status)
+            assertTrue(missing.final)
+            status.set(503)
+            assertFalse(assertFailsWith<HovelStatusException> { api.approval(approval) }.final, "a 5xx may hide a committed request")
+            assertFails("not a conversation route") { transport.exchange("DELETE", NativeRoute.CONVERSATION_CLAIM.path(), buildJsonObject {}) }
+            assertFails("the answer route is gone") { transport.post("approvals/$approval/answer", buildJsonObject {}) }
             Unit
         } finally { server.stop(0) }
     }
 
-    @Test fun aHeardVoiceTurnIsSentAsThePersonsMessage() {
-        val server = FakeServer()
-        val conversation = id()
-        val send = MessageSend(id(), emptyList(), "What's next?", null)
-        val stored = server.sendHeard(conversation, send)
-        assertEquals(listOf(conversation to send), server.heard)
-        assertEquals(MessageState.QUEUED, stored.state)
-        assertEquals(json.parseToJsonElement("""{"id":"${send.id}","inputs":[],"text":"What's next?","threadId":null}"""), wire(MessageSend.serializer(), send))
-    }
-
     @Test fun theHostContractIsTradedWithThePageAndForgottenWithItsContext() = kotlinx.coroutines.runBlocking<Unit> {
         val contract = DesktopHostContract()
-        assertEquals(RuntimeId.entries.toSet(), contract.pageRuntimes())
         assertEquals(HovelContract.CURRENT, contract.contract(7))
         assertEquals(7, contract.pageContract)
-        assertEquals(HovelContract.runtimesFor(HovelContract.CURRENT), contract.pageRuntimes(), "a newer page sees what this host has")
         contract.invalidate()
         assertNull(contract.pageContract)
         val limits = Json.parseToJsonElement(HostBridgeFixtures.LIMITS).jsonObject

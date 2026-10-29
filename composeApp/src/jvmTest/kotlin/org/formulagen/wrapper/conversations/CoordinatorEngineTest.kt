@@ -32,7 +32,8 @@ class CoordinatorEngineTest {
         val screen = Screen { 0 }
         val dialogs = NativeDialogs(screen)
         val approvals = RemoteApprovals(dialogs, server, server.hostId)
-        val engine = CoordinatorEngine(store, folders, listOf(chat), listOf(worker), ConnectedProviders(), approvals, StartOfWork(dialogs))
+        val turns = ProviderTurns(listOf(chat), listOf(worker), ConnectedProviders(), approvals)
+        val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(dialogs), server)
 
         init {
             if (workingFolder) { picked = working; folders.choose(account, talk.projectId, FolderRole.WORKING) }
@@ -44,14 +45,17 @@ class CoordinatorEngineTest {
         /** Queue [text] (in [threadId]), claim it and run it here. */
         fun send(text: String, threadId: String? = null, messageId: String = id(), cancel: CancelSignal = CancelSignal(),
             history: List<ConversationMessage> = emptyList(), memory: String? = null, closing: () -> Boolean = { false }): MessageState {
-            val claim = claim(text, threadId, messageId, history, memory)
-            return ClaimOutput(server, claim.claimId, claim.message.id, attempts = 1).use { engine.run(claim, it, cancel, closing) }
+            return run(claim(text, threadId, messageId, history, memory), cancel, closing)
         }
 
+        /** Run [claim] here, as the runner does once it is claimed. */
+        fun run(claim: ClaimResult, cancel: CancelSignal = CancelSignal(), closing: () -> Boolean = { false }): MessageState =
+            ClaimOutput(server, claim.claimId, claim.message.id, attempts = 1).use { engine.run(claim, it, cancel, closing) }
+
         fun claim(text: String, threadId: String? = null, messageId: String = id(), history: List<ConversationMessage> = emptyList(),
-            memory: String? = null): ClaimResult {
-            val thread = threadId?.let { id -> server.threads().lastOrNull { it.id == id } }
-            server.queue(talk.id, Queued(talk.message(text, threadId, messageId)) { claimId, message ->
+            memory: String? = null, inputs: List<ArtifactRef> = emptyList(),
+            thread: ConversationThread? = threadId?.let { id -> server.threads().lastOrNull { it.id == id } }): ClaimResult {
+            server.queue(talk.id, Queued(talk.message(text, threadId, messageId).copy(inputs = inputs)) { claimId, message ->
                 talk.claim(claimId, message, document, history, thread, memory) })
             return (server.claim(ClaimRequest(id(), talk.id)) as ClaimResponse.Claimed).claim
         }
@@ -143,7 +147,7 @@ class CoordinatorEngineTest {
         val opened = fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.ApprovalOpened>().single().approval
         assertEquals(ApprovalKind.START_OF_WORK, opened.kind)
         assertEquals(threadId, opened.threadId)
-        assertEquals(listOf(opened.id to ApprovalAnswer(0, ApprovalOption.CONTINUE)), fixture.server.answers)
+        assertEquals(listOf(opened.id to ApprovalOption.CONTINUE), fixture.server.answers, "answered through approval.closed")
     }
 
     @Test fun anInvalidReplyIsRepairedOnceThenWaitsForThePerson() {
@@ -302,6 +306,9 @@ class CoordinatorEngineTest {
         cancel.cancel()
         assertEquals(MessageState.RECONCILIATION_REQUIRED, state.get(5, TimeUnit.SECONDS))
         assertEquals(BrainRunState.PAUSED, fixture.record().brain.run?.summary?.state, "the person's retry resumes it")
+        assertEquals(BrainRunState.PAUSED, fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.RunChanged>().last().run.state,
+            "the paused run is published before Hovel quits")
+        assertEquals(BrainAttemptState.INTERRUPTED, fixture.server.threads().last().state)
         fixture.worker.reply = { "Implemented sign-in." }
         assertEquals(MessageState.ANSWERED, fixture.send("Add sign-in", messageId = messageId))
     }
@@ -406,6 +413,79 @@ class CoordinatorEngineTest {
         assertEquals("Prefers blue", request.getValue("recalledMemory").jsonPrimitive.content)
         assertEquals(listOf("Earlier question", "Earlier answer", "Remember the colors"),
             request.getValue("conversation").jsonArray.map { it.jsonObject.getValue("text").jsonPrimitive.content })
+    }
+
+    @Test fun aCheckpointTheServerCouldNotTakeIsSentFirstByTheNextRun() {
+        val fixture = Fixture(brain())
+        fixture.chat.reply = { "First answer." }
+        val first = fixture.claim("Hi")
+        fixture.server.offline = true
+        assertEquals(MessageState.ANSWERED, fixture.run(first))
+        assertEquals(emptyList(), fixture.server.appended())
+        assertEquals(1, fixture.record().outbox.size, "the reply waits in the outbox")
+        fixture.server.offline = false
+        fixture.chat.reply = { "Second answer." }
+        assertEquals(MessageState.ANSWERED, fixture.send("And then?"))
+        assertEquals(listOf("First answer.", "Second answer."), fixture.server.appended().map { it.text })
+        assertEquals(emptyList(), fixture.record().outbox)
+    }
+
+    @Test fun aRefusedCheckpointEndsTheClaimAndIsDropped() {
+        val fixture = Fixture(brain())
+        fixture.chat.reply = { "Hello." }
+        val claim = fixture.claim("Hi")
+        fixture.server.refuseCheckpoints = true
+        assertFailsWith<org.formulagen.wrapper.hovel.HovelRejectedException> { fixture.run(claim) }
+        assertEquals(emptyList(), fixture.record().outbox, "a refused checkpoint is never sent again")
+    }
+
+    @Test fun aTextInputIsReadWholeAndAnUnreadableOneSaysItIsAPreview() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.TALK))
+        fixture.decide = { "{\"kind\":\"answer\"}\nRead it." }
+        val whole = "Spec line. ".repeat(250)
+        val input = ArtifactRef(id(), "text/markdown", whole.take(100), "spec.md")
+        fixture.server.texts[input.id] = whole
+        assertEquals(MessageState.ANSWERED, fixture.run(fixture.claim("Read the spec", inputs = listOf(input))))
+        val stored = fixture.record().brain.run!!.artifacts.single { it.id == input.id }
+        assertEquals(whole, fixture.store.bytes(fixture.talk.id, stored).decodeToString(), "every page of the text, not the preview")
+        val other = ArtifactRef(id(), "text/plain", "Only the start", "notes.txt")
+        fixture.server.textsReadable = false
+        assertEquals(MessageState.ANSWERED, fixture.run(fixture.claim("And these notes", inputs = listOf(other))))
+        val preview = fixture.record().brain.run!!.artifacts.single { it.id == other.id }
+        assertEquals(previewOnly("Only the start"), fixture.store.bytes(fixture.talk.id, preview).decodeToString())
+        assertTrue("could not read this input's whole text" in fixture.coordinatorTurns().last().text, "the turn says it has only the preview")
+    }
+
+    @Test fun aThreadReplyBuildsOnTheNewerOfTheLocalAndTheServersThread() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        fixture.delegateThenAnswer()
+        fixture.send("Add sign-in")
+        val local = fixture.server.threads().last()
+        val newer = local.copy(revision = local.revision + 10, title = "Implementer · renamed elsewhere")
+        fixture.decide = { """{"kind":"forward","threadId":"${local.id}"}""" }
+        val before = fixture.server.threads().size
+        assertEquals(MessageState.ANSWERED, fixture.run(fixture.claim("Go on", local.id, thread = newer)))
+        val upserts = fixture.server.threads().drop(before).filter { it.id == local.id }
+        assertTrue(upserts.isNotEmpty() && upserts.all { it.revision > newer.revision }, "every upsert is newer than the server's")
+        assertEquals("Implementer · renamed elsewhere", upserts.last().title)
+    }
+
+    @Test fun aThreadLeftRunningByACrashIsInterruptedByTheNextMessage() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        fixture.delegateThenAnswer()
+        fixture.send("Add sign-in")
+        val threadId = fixture.server.threads().last().id
+        // A crash mid-turn: the record still says the thread runs, though nothing does.
+        val crashed = fixture.record().let { record ->
+            record.copy(threads = record.threads.mapValues { it.value.copy(state = BrainAttemptState.RUNNING) })
+        }
+        fixture.store.write(fixture.talk.id, crashed)
+        fixture.decide = { "{\"kind\":\"answer\"}\nNothing is running now." }
+        assertEquals(MessageState.ANSWERED, fixture.send("Status?"))
+        val recovered = fixture.server.threads().last { it.id == threadId }
+        assertEquals(BrainAttemptState.INTERRUPTED, recovered.state)
+        assertEquals(crashed.threads.getValue(threadId).revision + 1, recovered.revision)
+        assertEquals(BrainAttemptState.INTERRUPTED, fixture.record().threads.getValue(threadId).state)
     }
 
     @Test fun aSignedOutRuntimeFailsWithItsProvidersReason() {

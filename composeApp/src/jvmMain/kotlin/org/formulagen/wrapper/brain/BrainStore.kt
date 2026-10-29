@@ -6,7 +6,6 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption.*
 import java.nio.file.StandardOpenOption.*
 import java.nio.file.attribute.PosixFilePermissions
-import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.SerialName
@@ -14,6 +13,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.chat.NativeConversation
+import org.formulagen.wrapper.storage.Artifacts
+import org.formulagen.wrapper.storage.sha256
 
 /** A committed save: replaying [id] with the same [digest] rebuilds its document at [revision] from the replayed request. */
 @Serializable internal data class SaveReceipt(val id: String, val digest: String, val revision: Long)
@@ -183,10 +184,10 @@ internal class BrainStore(private val root: Path) {
         }
     }
     companion object {
-        /** The largest input file or output an artifact holds. */
-        const val ARTIFACT_BYTES = 8 * 1024 * 1024
-        /** The media type of an artifact that is not UTF-8 text. */
-        const val BINARY = "application/octet-stream"
+        /** The largest input file or output an artifact holds ([Artifacts.MAX_BYTES]). */
+        const val ARTIFACT_BYTES = Artifacts.MAX_BYTES
+        /** The media type of an artifact that is not UTF-8 text ([Artifacts.BINARY]). */
+        const val BINARY = Artifacts.BINARY
         private const val CONFIGURATION = "configuration.json"
         /** The most save receipts a configuration keeps. */
         private const val SAVE_RECEIPTS = 32
@@ -204,7 +205,7 @@ internal class BrainStore(private val root: Path) {
                 JsonObject(fields - "document" + ("revision" to document.getValue("revision")))
             })))
         }
-        fun digest(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+        fun digest(bytes: ByteArray): String = sha256(bytes)
         private fun privateDirectory(path: Path) {
             Files.createDirectories(path)
             Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rwx------"))

@@ -4,9 +4,10 @@ import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.chat.ChatFailure
 
 /*
- * The run state machine as pure functions of a record: [DesktopBrain] applies one under its lock and persists the
- * result as one revision ([nextRevision]), so a decision that does not fit the run applies nothing. [newId] names each
- * new entry and attempt.
+ * The run state machine as pure functions of a record, shared by both coordinators: the brain's (`DesktopBrain`) and
+ * a conversation's (`CoordinatorEngine`). Each applies one transition under its lock and persists the result as one
+ * revision ([nextRevision]), so a decision that does not fit the run applies nothing. [newId] names each new entry
+ * and attempt.
  */
 
 /** The most `brain.send`, `brain.resume` and `brain.retry` receipts a record keeps. */

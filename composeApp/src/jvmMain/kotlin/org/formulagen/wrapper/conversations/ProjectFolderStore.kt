@@ -10,6 +10,8 @@ import org.formulagen.wrapper.bridge.FolderRole
 import org.formulagen.wrapper.bridge.ProjectFolderNames
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.chat.ProjectFolders
+import org.formulagen.wrapper.storage.readBounded
+import org.formulagen.wrapper.storage.writeDurably
 import org.formulagen.wrapper.workspace.FolderPicker
 
 /** One project folder on this Mac: its account [id], display [name], [role], and the [path] that never leaves the Mac. */
@@ -81,13 +83,17 @@ internal class ProjectFolderStore(private val root: Path, private val picker: Fo
         return folders(accountId, projectId)
     }
 
-    /** What the account last said about [projectId]: its revision. A project this Mac claimed runs here. */
-    @Synchronized fun learned(accountId: String, projectId: String, revision: Long) {
-        val id = key(projectId)
+    /**
+     * The account's [project] as a claim or a read gave it: its revision, and whether its folders are this Mac's.
+     * When the account lists other folders than these (the project moved away and back), they are published again.
+     */
+    @Synchronized fun claimed(accountId: String, project: CompanionProject) {
+        val id = key(project.id)
         val record = read(accountId)
-        val project = record.projects[id] ?: StoredProject()
-        if (project.revision == revision && !project.foreign) return
-        write(accountId, record.with(id, project.copy(revision = maxOf(revision, project.revision ?: 0), foreign = false)))
+        val stored = record.projects[id] ?: StoredProject()
+        val differs = stored.folders.map { it.id }.toSet() != project.folders.map { it.id }.toSet()
+        val next = stored.copy(revision = maxOf(project.revision, stored.revision ?: 0), foreign = false, published = stored.published && !differs)
+        if (next != stored) write(accountId, record.with(id, next))
     }
 
     /** The account recorded [folders] at [revision]: nothing is left to publish unless they changed since. */

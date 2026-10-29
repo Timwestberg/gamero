@@ -14,10 +14,4 @@ object HovelContract {
 
     /** `HOVEL_CONTRACT_HEADER`. */
     const val HEADER = "X-Hovel-Contract"
-
-    /** `HOVEL_CONTRACT_RUNTIMES`: the contract each runtime arrived in. */
-    val RUNTIMES: Map<RuntimeId, Int> = mapOf(RuntimeId.CLAUDE_CODE to FIRST, RuntimeId.CODEX to FIRST, RuntimeId.GROK_BUILD to FIRST)
-
-    /** The runtimes a client on [contract] can render: those that arrived in it or before. */
-    fun runtimesFor(contract: Int): Set<RuntimeId> = RuntimeId.entries.filter { RUNTIMES.getValue(it) <= contract }.toSet()
 }

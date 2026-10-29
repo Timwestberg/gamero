@@ -35,7 +35,7 @@ class DesktopParityTest {
             override fun save(hostId: String, token: String) = Unit
             override fun read(hostId: String) = ""
         }
-        val companion = HovelCompanion("https://example.test/hovel.html", directory, directory.resolve("codex"), credentials)
+        val companion = HovelCompanion("https://example.test/hovel.html", directory, directory.resolve("codex"), credentials = credentials)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val router = BridgeRouter(
             product = HOVEL_PRODUCT,

@@ -6,14 +6,16 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 import org.formulagen.wrapper.hovel.HovelEventLines
 import org.formulagen.wrapper.hovel.NativeExchange
+import org.formulagen.wrapper.hovel.NativeRoute
 
 /**
- * The server side of conversations as the Mac sees it: one method per [NativeRoutes] entry. The
- * runner, engine, folders and approvals talk only to this, so tests drive them with a fake server.
- * A 409 refusal throws `HovelRejectedException`; any other failure may hide a committed request.
+ * The server side of conversations as the Mac sees it: one method per conversation [NativeRoute]. The runner,
+ * engine, folders and approvals talk only to this, so tests drive them with a fake server. A 409 refusal throws
+ * `HovelRejectedException`; a 400, 403 or 404 is a final `HovelStatusException`; anything else may hide a
+ * committed request.
  */
 internal interface ConversationApi {
-    /** Reports readiness, the provider directory and usage. Answers the heartbeat's data, which carries memory jobs. */
+    /** Reports readiness, the provider directory and usage. Answers the heartbeat's data, which carries tasks and memory jobs. */
     fun heartbeat(beat: HostHeartbeat): JsonObject
 
     /** Opens the host event stream; reading its lines blocks until the server ends it or it is closed. */
@@ -28,58 +30,55 @@ internal interface ConversationApi {
     /** Moves the claimed message on. Answers its new revision when the server says, else null. */
     fun progress(messageId: String, progress: MessageProgress): Long?
 
+    /** A project of this computer's, with its folders and revision. */
+    fun project(projectId: String): CompanionProject
+
     /** Records a project's folders. Answers the project as stored when the server returns it. */
     fun saveFolders(projectId: String, save: ProjectFoldersSave): CompanionProject?
 
-    /** This Mac's answer. Answers the approval as stored, whose answer is the one that won. */
-    fun answer(approvalId: String, answer: ApprovalAnswer): AgentApproval
-
-    /** One approval, to learn another surface's answer. */
+    /** One approval as stored: who answered it and with what. */
     fun approval(approvalId: String): AgentApproval
 
-    /** A heard voice turn, sent as the person's message. Answers the message as stored. */
-    fun sendHeard(conversationId: String, send: MessageSend): ConversationMessage
+    /** One page of an artifact's text, from character [cursor]. */
+    fun artifactText(artifactId: String, cursor: Int): ArtifactTextPage
 }
 
 /** [ConversationApi] over the host transport: each call is the route's payload, in the contract's form. */
 internal class HttpConversationApi(private val exchange: NativeExchange, private val stream: () -> HovelEventLines) : ConversationApi {
-    override fun heartbeat(beat: HostHeartbeat): JsonObject =
-        exchange.exchange("POST", NativeRoutes.HEARTBEAT, wire(HostHeartbeat.serializer(), beat))
+    override fun heartbeat(beat: HostHeartbeat): JsonObject = send(NativeRoute.HEARTBEAT, NativeRoute.HEARTBEAT.path(), wire(HostHeartbeat.serializer(), beat))
 
     override fun openStream(): HovelEventLines = stream()
 
-    override fun claim(request: ClaimRequest): ClaimResponse =
-        fromWire(ClaimResponse.serializer(), exchange.exchange("POST", NativeRoutes.CLAIM, wire(ClaimRequest.serializer(), request)))
+    override fun claim(request: ClaimRequest): ClaimResponse = fromWire(ClaimResponse.serializer(),
+        send(NativeRoute.CONVERSATION_CLAIM, NativeRoute.CONVERSATION_CLAIM.path(), wire(ClaimRequest.serializer(), request)))
 
     override fun checkpoint(messageId: String, request: MessageCheckpointRequest) {
-        exchange.exchange("POST", NativeRoutes.checkpoints(messageId), wire(MessageCheckpointRequest.serializer(), request))
+        send(NativeRoute.MESSAGE_CHECKPOINT, NativeRoute.MESSAGE_CHECKPOINT.path(messageId), wire(MessageCheckpointRequest.serializer(), request))
     }
 
     override fun delta(messageId: String, request: ReplyDeltaRequest) {
-        exchange.exchange("POST", NativeRoutes.deltas(messageId), wire(ReplyDeltaRequest.serializer(), request))
+        send(NativeRoute.MESSAGE_DELTA, NativeRoute.MESSAGE_DELTA.path(messageId), wire(ReplyDeltaRequest.serializer(), request))
     }
 
     override fun progress(messageId: String, progress: MessageProgress): Long? =
-        revisionOf(exchange.exchange("POST", NativeRoutes.progress(messageId), wire(MessageProgress.serializer(), progress)))
+        revisionOf(send(NativeRoute.MESSAGE_PROGRESS, NativeRoute.MESSAGE_PROGRESS.path(messageId), wire(MessageProgress.serializer(), progress)))
+
+    override fun project(projectId: String): CompanionProject =
+        fromWire(CompanionProject.serializer(), send(NativeRoute.PROJECT, NativeRoute.PROJECT.path(projectId), null))
 
     override fun saveFolders(projectId: String, save: ProjectFoldersSave): CompanionProject? {
-        val data = exchange.exchange("PUT", NativeRoutes.folders(projectId), wire(ProjectFoldersSave.serializer(), save))
-        return runCatching { fromWire(CompanionProject.serializer(), data["project"] ?: data) }.getOrNull()
+        val data = send(NativeRoute.PROJECT_FOLDERS, NativeRoute.PROJECT_FOLDERS.path(projectId), wire(ProjectFoldersSave.serializer(), save))
+        return runCatching { fromWire(CompanionProject.serializer(), data) }.getOrNull()
     }
 
-    override fun answer(approvalId: String, answer: ApprovalAnswer): AgentApproval =
-        approvalOf(exchange.exchange("POST", NativeRoutes.answer(approvalId), wire(ApprovalAnswer.serializer(), answer)))
+    override fun approval(approvalId: String): AgentApproval =
+        fromWire(AgentApproval.serializer(), send(NativeRoute.APPROVAL, NativeRoute.APPROVAL.path(approvalId), null))
 
-    override fun approval(approvalId: String): AgentApproval = approvalOf(exchange.exchange("GET", NativeRoutes.approval(approvalId), null))
+    override fun artifactText(artifactId: String, cursor: Int): ArtifactTextPage =
+        fromWire(ArtifactTextPage.serializer(), send(NativeRoute.ARTIFACT_TEXT, NativeRoute.ARTIFACT_TEXT.path(artifactId, cursor = cursor), null))
 
-    override fun sendHeard(conversationId: String, send: MessageSend): ConversationMessage {
-        val data = exchange.exchange("POST", NativeRoutes.messages(conversationId), wire(MessageSend.serializer(), send))
-        return fromWire(ConversationMessage.serializer(), data["message"] ?: data)
-    }
+    private fun send(route: NativeRoute, path: String, body: JsonObject?) = exchange.exchange(route.method, path, body)
 
-    private fun approvalOf(data: JsonObject) = fromWire(AgentApproval.serializer(), data["approval"] ?: data)
-
-    /** The message's revision in a progress answer: the message itself, or the record that wraps it. */
-    private fun revisionOf(data: JsonObject): Long? =
-        ((data["message"]?.jsonObject ?: data)["revision"] as? JsonPrimitive)?.longOrNull
+    /** The message's revision in a progress answer: the message itself, or a record that wraps it. */
+    private fun revisionOf(data: JsonObject): Long? = ((data["message"]?.jsonObject ?: data)["revision"] as? JsonPrimitive)?.longOrNull
 }

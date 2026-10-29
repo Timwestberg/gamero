@@ -21,7 +21,8 @@ class RemoteApprovalsTest {
     private val working = Files.createDirectories(folder("approvals").resolve("hovel-notes"))
     private val folders = listOf(LocalFolder(id(), "hovel-notes", working, FolderRole.WORKING))
     private val thread = id()
-    private val scope = ApprovalScope(output, talk.id, thread, folders, "Ember")
+    private val queued = java.util.concurrent.CopyOnWriteArrayList<MessageCheckpoint>()
+    private val scope = ApprovalScope(output, talk.id, thread, folders, "Ember") { queued += it }
     private val screen = Screen { null }
     private val clock = Clock.fixed(Instant.parse("2026-10-29T12:00:00Z"), ZoneOffset.UTC)
     private val approvals = RemoteApprovals(NativeDialogs(screen), server, server.hostId, clock)
@@ -52,7 +53,7 @@ class RemoteApprovalsTest {
             assertEquals("2026-10-29T12:30:00Z", approval.expiresAt, "past the Mac's dialog, with room for dialogs before it")
             screen.open.single()(0)
             assertEquals(ApprovalDecision.ALLOW_ONCE, decision.get(5, TimeUnit.SECONDS))
-            assertEquals(listOf(approval.id to ApprovalAnswer(0, ApprovalOption.ALLOW_ONCE)), server.answers)
+            assertEquals(listOf(approval.id to ApprovalOption.ALLOW_ONCE), server.answers, "recorded as the approval's close, fenced by the claim")
             assertEquals(ApprovalReceipt(approval.id, ApprovalKind.PERMISSION, ApprovalOption.ALLOW_ONCE, ApprovalSurface.MAC), approvals.receipt(approval.id))
             assertEquals(emptySet(), approvals.openIds)
         }
@@ -96,14 +97,14 @@ class RemoteApprovalsTest {
         }
     }
 
-    @Test fun aRefusedMacAnswerWhoseWinnerCannotBeReadAppliesTheDialogsDefault() {
+    @Test fun aRefusedMacAnswerWhoseWinnerCannotBeReadKeepsThePersonsAnswer() {
         approvals.register(thread, scope).use {
             val decision = asking()
             val approval = opened()
-            server.refuseAnswers = true
-            server.approvals.remove(approval.id)
+            server.approvals[approval.id] = approval.copy(state = ApprovalState.EXPIRED)
+            server.approvalsReadable = false
             screen.open.single()(0)
-            assertEquals(ApprovalDecision.DENY, decision.get(5, TimeUnit.SECONDS))
+            assertEquals(ApprovalDecision.ALLOW_ONCE, decision.get(5, TimeUnit.SECONDS), "never the dialog's default in place of the person's answer")
         }
     }
 
@@ -155,8 +156,12 @@ class RemoteApprovalsTest {
             server.offline = true
             screen.open.single()(0)
             assertEquals(ApprovalDecision.ALLOW_ONCE, decision.get(5, TimeUnit.SECONDS))
+            assertEquals(listOf<MessageCheckpoint>(MessageCheckpoint.ApprovalClosed(approvalId(), ApprovalOutcome.Answered(ApprovalOption.ALLOW_ONCE))),
+                queued, "its close waits in the conversation's outbox")
         }
     }
+
+    private fun approvalId() = server.approvals.keys.single()
 
     @Test fun anApprovalTheServerNeverGotIsTheMacsAlone() {
         approvals.register(thread, scope).use {
@@ -177,7 +182,7 @@ class RemoteApprovalsTest {
             val approval = opened()
             screen.open.single()(1)
             assertEquals(ApprovalDecision.ALLOW_FOR_CONVERSATION, decision.get(5, TimeUnit.SECONDS))
-            assertEquals(listOf(approval.id to ApprovalAnswer(0, ApprovalOption.ALLOW_ONCE)), server.answers)
+            assertEquals(listOf(approval.id to ApprovalOption.ALLOW_ONCE), server.answers)
         }
     }
 

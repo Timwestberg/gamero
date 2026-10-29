@@ -244,7 +244,8 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
             if (companion != null) {
                 Text(companion.status, Modifier.padding(8.dp))
                 companion.approval?.let { approval ->
-                    Text("Connect account ${approval.ownerId} at $url to this Mac? This stores a host credential in Keychain, and this Mac then runs the account's companion conversations whenever Hovel is open, with your own provider sign-ins. Agents work only in folders you choose here, and ask here before anything your settings do not allow.", Modifier.padding(8.dp))
+                    val tasks = companion.taskWorkspace?.let { " It also runs read-only Codex tasks in $it." }.orEmpty()
+                    Text("Connect account ${approval.ownerId} at $url to this Mac? This stores a host credential in Keychain, and this Mac then runs the account's companion conversations whenever Hovel is open, with your own provider sign-ins. Agents work only in folders you choose here, and ask here before anything your settings do not allow.$tasks", Modifier.padding(8.dp))
                     Button(onClick = { approval.answer.complete(true) }) { Text("Approve computer connection") }
                     Button(onClick = { approval.answer.complete(false) }) { Text("Cancel") }
                 }

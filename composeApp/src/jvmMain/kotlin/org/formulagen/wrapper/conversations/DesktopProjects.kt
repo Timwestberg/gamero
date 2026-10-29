@@ -70,30 +70,43 @@ internal class DesktopProjects(
 }
 
 /**
- * Records each project's folders in the account (`PUT /projects/:id/folders`), against the revision
- * this Mac last saw. The native routes have no project read, so a revision comes from a claim or an
- * earlier save; until one is known, or after a conflict, the folders wait and [publishPending] tries
- * again. A refusal other than a conflict (403, 404) means the project runs elsewhere.
+ * Records each project's folders in the account (`PUT /projects/:id/folders`), against the project's revision:
+ * the one this Mac last saw (from a claim, a read or its own save), else read now (`GET /projects/:id`), so a
+ * project that never had a message still gets its folders. After a conflict the project is read again. A project
+ * whose computer is another, or that the server refuses for good (403, 404), runs elsewhere.
  */
 internal class ProjectFolderPublisher(
     private val store: ProjectFolderStore,
     private val api: ConversationApi,
     private val accountId: String,
+    private val hostId: String,
     private val readableBy: () -> List<RuntimeId>,
 ) {
-    /** Publish [projectId]'s folders now, if its revision is known. Failures leave them pending. */
+    /** Publish [projectId]'s folders now, when they changed. Failures leave them pending. */
     @Synchronized fun publish(projectId: String) {
-        val revision = store.unpublished(accountId)[projectId] ?: return
-        val folders = wireFolders(store.folders(accountId, projectId))
+        if (projectId !in store.unpublished(accountId)) return
         try {
-            val saved = api.saveFolders(projectId, ProjectFoldersSave(revision, folders))
+            val revision = store.unpublished(accountId)[projectId] ?: read(projectId)?.revision ?: return
+            val folders = wireFolders(store.folders(accountId, projectId))
+            val saved = try { api.saveFolders(projectId, ProjectFoldersSave(revision, folders)) } catch (_: HovelRejectedException) {
+                // A stale revision: read the project, and the next round saves against its revision.
+                read(projectId)
+                return
+            }
             store.published(accountId, projectId, folders, saved?.revision ?: (revision + 1))
-        } catch (_: HovelRejectedException) {
-            // A stale revision: the next claim of this project brings the current one.
         } catch (error: HovelStatusException) {
-            if (error.status == 403 || error.status == 404) store.foreign(accountId, projectId)
+            if (error.final) store.foreign(accountId, projectId)
         } catch (_: Exception) {
             // Offline or uncertain: the save is idempotent, so it is simply tried again.
+        }
+    }
+
+    /** `project.changed`: read the project, and publish its folders when the account's differ from this Mac's. */
+    @Synchronized fun refresh(projectId: String) {
+        try {
+            read(projectId) ?: return
+            publish(projectId)
+        } catch (_: Exception) {
         }
     }
 
@@ -103,5 +116,14 @@ internal class ProjectFolderPublisher(
     /** [folders] as the account records them: display data only. */
     fun wireFolders(folders: List<LocalFolder>) = folders.map { folder ->
         WireProjectFolder(folder.id, folder.name, if (folder.role == FolderRole.CONTEXT) readableBy() else emptyList(), folder.role)
+    }
+
+    /** The project as the account has it, remembered; null when it runs on another computer. */
+    private fun read(projectId: String): CompanionProject? = try {
+        val project = api.project(projectId)
+        if (project.computerId != hostId) { store.foreign(accountId, projectId); null } else project.also { store.claimed(accountId, it) }
+    } catch (error: HovelStatusException) {
+        if (error.final) store.foreign(accountId, projectId)
+        null
     }
 }

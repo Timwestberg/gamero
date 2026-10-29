@@ -20,6 +20,10 @@ class ProjectFoldersTest {
     private fun dir(name: String): Path = Files.createDirectories(disk.resolve(name)).toRealPath()
     private fun choose(path: Path?, role: FolderRole): List<LocalFolder> { picked = path; return store.choose(account, project, role) }
 
+    /** A claim or read of the project told this Mac its [revision] and the [folders] the account lists. */
+    private fun seen(revision: Long, folders: List<WireProjectFolder> = emptyList(), computerId: String = id()) =
+        store.claimed(account, CompanionProject(false, id(), computerId, folders, project, "Hovel notes", revision))
+
     @Test fun aWorkingFolderReplacesTheOneBeforeAndContextFoldersJoin() {
         val first = choose(dir("hovel-notes"), FolderRole.WORKING).single()
         assertEquals("hovel-notes", first.name)
@@ -92,12 +96,12 @@ class ProjectFoldersTest {
 
     @Test fun theAccountGetsTheFoldersAgainstTheRevisionLastSeen() {
         val server = FakeServer()
-        val publisher = ProjectFolderPublisher(store, server, account) { listOf(RuntimeId.CLAUDE_CODE) }
+        val publisher = ProjectFolderPublisher(store, server, account, server.hostId) { listOf(RuntimeId.CLAUDE_CODE) }
         choose(dir("hovel-notes"), FolderRole.WORKING)
         choose(dir("docs"), FolderRole.CONTEXT)
         publisher.publish(project)
         assertEquals(emptyList(), server.folderSaves, "no revision known yet: the folders wait")
-        store.learned(account, project, 3)
+        seen(3)
         publisher.publish(project)
         val (savedProject, save) = server.folderSaves.single()
         assertEquals(project, savedProject)
@@ -111,8 +115,8 @@ class ProjectFoldersTest {
 
     @Test fun aWorkingFolderChosenAfterAContextFolderIsPublishedOnce() {
         val server = FakeServer()
-        val publisher = ProjectFolderPublisher(store, server, account) { emptyList() }
-        store.learned(account, project, 1)
+        val publisher = ProjectFolderPublisher(store, server, account, server.hostId) { emptyList() }
+        seen(1)
         choose(dir("docs"), FolderRole.CONTEXT)
         choose(dir("hovel-notes"), FolderRole.WORKING)
         publisher.publishPending()
@@ -121,22 +125,74 @@ class ProjectFoldersTest {
         assertEquals(listOf(FolderRole.WORKING, FolderRole.CONTEXT), server.folderSaves.single().second.folders.map { it.role })
     }
 
-    @Test fun aConflictWaitsAndARefusalMeansAnotherComputer() {
+    @Test fun aConflictReadsTheProjectAgainAndARefusalMeansAnotherComputer() {
         val server = FakeServer()
-        val publisher = ProjectFolderPublisher(store, server, account) { emptyList() }
-        store.learned(account, project, 5)
+        val publisher = ProjectFolderPublisher(store, server, account, server.hostId) { emptyList() }
+        seen(5)
         choose(dir("hovel-notes"), FolderRole.WORKING)
-        server.foldersStatus = 409
+        // Another device saved the project since this Mac last saw it.
+        server.projects[project] = CompanionProject(false, id(), server.hostId, emptyList(), project, "Hovel notes", 6)
         publisher.publish(project)
-        assertEquals(mapOf(project to 5L), store.unpublished(account))
+        assertEquals(emptyList(), server.folderSaves)
+        assertEquals(mapOf(project to 6L), store.unpublished(account), "the stale save read the project again")
+        publisher.publish(project)
+        assertEquals(6, server.folderSaves.single().second.expectedRevision)
+        choose(dir("docs"), FolderRole.CONTEXT)
         server.foldersStatus = 404
         publisher.publish(project)
         assertTrue(store.isForeign(account, project))
         assertEquals(emptyMap(), store.unpublished(account))
         picked = dir("again")
         assertFails { store.choose(account, project, FolderRole.WORKING) }
-        store.learned(account, project, 6)
+        seen(8)
         assertFalse(store.isForeign(account, project), "a claim of the project says it runs here")
+    }
+
+    @Test fun aProjectNeverClaimedHereIsReadForItsRevision() {
+        val server = FakeServer()
+        val publisher = ProjectFolderPublisher(store, server, account, server.hostId) { emptyList() }
+        choose(dir("hovel-notes"), FolderRole.WORKING)
+        server.projects[project] = CompanionProject(false, id(), server.hostId, emptyList(), project, "Hovel notes", 7)
+        publisher.publish(project)
+        assertEquals(7, server.folderSaves.single().second.expectedRevision, "read, then saved against the account's revision")
+        assertEquals(emptyMap(), store.unpublished(account))
+        // A project on another computer is never written to.
+        val elsewhere = id()
+        picked = dir("elsewhere")
+        store.choose(account, elsewhere, FolderRole.WORKING)
+        server.projects[elsewhere] = CompanionProject(false, id(), id(), emptyList(), elsewhere, "Theirs", 2)
+        publisher.publish(elsewhere)
+        assertEquals(1, server.folderSaves.size)
+        assertTrue(store.isForeign(account, elsewhere))
+    }
+
+    @Test fun projectChangedPublishesWhenTheAccountListsOtherFolders() {
+        val server = FakeServer()
+        val publisher = ProjectFolderPublisher(store, server, account, server.hostId) { emptyList() }
+        choose(dir("hovel-notes"), FolderRole.WORKING)
+        server.projects[project] = CompanionProject(false, id(), server.hostId, emptyList(), project, "Hovel notes", 2)
+        publisher.publish(project)
+        val published = server.folderSaves.single().second.folders
+        assertEquals(emptyMap(), store.unpublished(account))
+        publisher.refresh(project)
+        assertEquals(1, server.folderSaves.size, "the account already lists these folders")
+        // Another device cleared them: the account now lists none, so this Mac's are published again.
+        server.projects[project] = server.projects.getValue(project).copy(folders = emptyList(), revision = 9)
+        publisher.refresh(project)
+        assertEquals(2, server.folderSaves.size)
+        assertEquals(published, server.folderSaves.last().second.folders)
+        assertEquals(9, server.folderSaves.last().second.expectedRevision)
+    }
+
+    @Test fun aClaimWhoseFoldersDifferMarksTheProjectUnpublished() {
+        val working = choose(dir("hovel-notes"), FolderRole.WORKING).single()
+        seen(3, listOf(WireProjectFolder(working.id, working.name, emptyList(), FolderRole.WORKING)))
+        store.published(account, project, listOf(WireProjectFolder(working.id, working.name, emptyList(), FolderRole.WORKING)), 4)
+        assertEquals(emptyMap(), store.unpublished(account))
+        seen(4, listOf(WireProjectFolder(working.id, working.name, emptyList(), FolderRole.WORKING)))
+        assertEquals(emptyMap(), store.unpublished(account), "the same folders: nothing to publish")
+        seen(5)
+        assertEquals(mapOf(project to 5L), store.unpublished(account), "the account lost them")
     }
 
     @Test fun theBridgeAnswersStatusNeverAPath() = runBlocking<Unit> {

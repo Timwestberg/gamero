@@ -277,10 +277,6 @@ internal data class AgentApproval(
     val threadId: String?,
 )
 
-/** `approvalAnswer`: an answer against the approval's revision. */
-@Serializable
-internal data class ApprovalAnswer(val expectedRevision: Long, val option: ApprovalOption)
-
 /** `approvalOutcome`: how an approval ended on the Mac. */
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
@@ -379,21 +375,22 @@ internal data class ProviderDirectory(val observedAt: String, val runtimes: List
 internal data class RuntimeAllowance(val runtimeId: RuntimeId, val snapshot: JsonObject)
 
 /**
- * The heartbeat's body: `computerHeartbeat` (the provider directory and usage) beside the
- * computer's declared [features], which the memory lane still needs. The contract number travels
- * in the request header.
+ * The heartbeat's body: hovel-service's heartbeat (`providerState` and the declared [features]) plus
+ * `computerHeartbeat`'s provider directory and usage. The contract number travels in the request header.
  */
 @Serializable
-internal data class HostHeartbeat(val allowances: List<RuntimeAllowance>, val directory: ProviderDirectory, val features: List<String>)
+internal data class HostHeartbeat(
+    val allowances: List<RuntimeAllowance>,
+    val directory: ProviderDirectory,
+    val features: List<String>,
+    /** `ready`, `auth-required` or `unavailable`: the task lane's Codex, else the best of the directory. */
+    val providerState: String,
+)
 
 /** `projectFoldersSave`: the folders this Mac records for a project. */
 @Serializable
 internal data class ProjectFoldersSave(val expectedRevision: Long, val folders: List<WireProjectFolder>)
 
-/** `artifactInput`: a text input sent with a message. */
+/** `artifactTextPage`: one page of an artifact's text, from the requested cursor; [nextCursor] is null at the end. */
 @Serializable
-internal data class ArtifactInput(val id: String, val mediaType: String, val text: String, val title: String)
-
-/** `messageSend`: a message or thread reply; a heard voice turn is sent with it. */
-@Serializable
-internal data class MessageSend(val id: String, val inputs: List<ArtifactInput>, val text: String, val threadId: String?)
+internal data class ArtifactTextPage(val nextCursor: Int?, val text: String)

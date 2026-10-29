@@ -21,7 +21,8 @@ import org.formulagen.wrapper.logger.log
 /**
  * Where a working turn's approvals go besides the Mac's own dialog: the claimed message's [output]
  * (for `approval.opened` and `approval.closed`), its [conversationId] and [threadId], and the
- * project's [folders], which decide what the phone may be shown.
+ * project's [folders], which decide what the phone may be shown. [later] queues a checkpoint the
+ * server could not take now in the conversation's outbox.
  */
 internal class ApprovalScope(
     val output: ClaimOutput,
@@ -29,6 +30,7 @@ internal class ApprovalScope(
     val threadId: String?,
     val folders: List<LocalFolder>,
     val companionName: String,
+    val later: (MessageCheckpoint) -> Unit = {},
 )
 
 /** How one approval ended: the answer applied, and the surface it came from (none when nobody answered). */
@@ -38,8 +40,8 @@ internal data class ApprovalReceipt(val id: String, val kind: ApprovalKind, val 
  * The approval broker for conversations. A request from a lease with a registered [ApprovalScope] is
  * shown in the Mac's native dialog and relayed to the phone (`approval.opened`), and **the first
  * answer wins**:
- * - the person answers on the Mac: the answer is posted, and the approval as stored says which answer
- *   won (a phone answer that reached the server first is applied instead);
+ * - the person answers on the Mac: it is recorded as `approval.closed` (answered), fenced by the claim;
+ *   when that is refused because another answer won, the stored approval's answer applies instead;
  * - another surface answers first (`approval.answered` on the host stream, read back from the server):
  *   the dialog closes with `answered-elsewhere` and that answer applies;
  * - nobody answers, or the work stops: Deny (or the dialog's default) applies and the approval is
@@ -130,7 +132,7 @@ internal class RemoteApprovals(
             return when (val outcome = dialogs.answer(dialog, cancel, pending.elsewhere, shown)) {
                 is DialogOutcome.Chosen -> {
                     val mine = optionOf(outcome.value)
-                    val won = if (!relayed) mine else settleHere(scope, id, mine) ?: options.first { it.second == dialog.dismiss }.first
+                    val won = if (!relayed) mine else settleHere(scope, id, mine)
                     receipt(ApprovalReceipt(id, kind, won, if (won == mine) ApprovalSurface.MAC else ApprovalSurface.PHONE))
                     if (won == mine) outcome.value else options.first { it.first == won }.second
                 }
@@ -140,7 +142,8 @@ internal class RemoteApprovals(
                     options.firstOrNull { it.first == option }?.second ?: dialog.dismiss
                 }
                 DialogOutcome.Unanswered -> {
-                    if (relayed) scope.output.bestEffort(MessageCheckpoint.ApprovalClosed(id, ApprovalOutcome.Withdrawn))
+                    val withdrawn = MessageCheckpoint.ApprovalClosed(id, ApprovalOutcome.Withdrawn)
+                    if (relayed && !scope.output.bestEffort(withdrawn)) scope.later(withdrawn)
                     receipt(ApprovalReceipt(id, kind, null, null))
                     null
                 }
@@ -149,24 +152,23 @@ internal class RemoteApprovals(
     }
 
     /**
-     * Post the Mac's answer. Answers the option that won: the stored answer, which is the phone's
-     * when it reached the server first. A refusal for anything but another answer (the server let it
-     * expire) leaves the Mac's answer standing; null when the winner cannot be read, so the caller
-     * applies the dialog's default. Unreachable, the Mac's answer stands and is recorded as closed
-     * when the server takes it.
+     * Record the Mac's answer as `approval.closed`. Answers the option that won: the stored answer when the
+     * close was refused because another answer reached the server first, and otherwise the person's own,
+     * also when the winner cannot be read, so their answer is never replaced by the dialog's default.
+     * Unreachable, the person's answer stands and its close waits in the conversation's outbox.
      */
-    private fun settleHere(scope: ApprovalScope, id: String, option: ApprovalOption): ApprovalOption? = try {
-        api.answer(id, ApprovalAnswer(OPENED_REVISION, option)).answer?.option ?: option
-    } catch (_: HovelRejectedException) {
-        val stored = runCatching { api.approval(id) }.getOrNull()
-        when {
-            stored == null -> null
-            stored.state == ApprovalState.ANSWERED -> stored.answer?.option
-            else -> option
+    private fun settleHere(scope: ApprovalScope, id: String, option: ApprovalOption): ApprovalOption {
+        val closed = MessageCheckpoint.ApprovalClosed(id, ApprovalOutcome.Answered(option))
+        return try {
+            scope.output.once(closed)
+            option
+        } catch (_: HovelRejectedException) {
+            val stored = runCatching { api.approval(id) }.getOrNull()
+            stored?.answer?.takeIf { stored.state == ApprovalState.ANSWERED }?.option ?: option
+        } catch (_: Exception) {
+            scope.later(closed)
+            option
         }
-    } catch (_: Exception) {
-        scope.output.bestEffort(MessageCheckpoint.ApprovalClosed(id, ApprovalOutcome.Answered(option)))
-        option
     }
 
     private fun receipt(receipt: ApprovalReceipt) = synchronized(receipts) { receipts[receipt.id] = receipt }
@@ -178,7 +180,7 @@ internal class RemoteApprovals(
     private fun expiry() = clock.instant().plusMillis(EXPIRY_DIALOGS * APPROVAL_TIMEOUT.inWholeMilliseconds).truncatedTo(ChronoUnit.MILLIS).toString()
 
     companion object {
-        /** The revision an approval opens at; the Mac's answer is checked against it. */
+        /** The revision an approval opens at. */
         const val OPENED_REVISION = 0L
         private const val RECEIPTS = 256
         /** Dialog timeouts an approval's expiry allows for: its own, and dialogs shown before it. */
