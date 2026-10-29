@@ -13,8 +13,14 @@ internal class GrokWorkActivity(sessionId: String, folder: Path) {
     private val paths = WorkPaths(folder)
     private val log = ActivityLog(paths)
     private data class ToolSummary(val kind: ActivityKind = ActivityKind.OTHER, val path: String? = null)
-    private val calls = LinkedHashMap<String, ToolSummary>()
-    private val finished = HashSet<String>()
+    /** Calls still running; past [TOOL_CALL_MEMORY] the oldest is forgotten, and a later update for it reads as a new call. */
+    private val calls = object : LinkedHashMap<String, ToolSummary>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ToolSummary>) = size > TOOL_CALL_MEMORY
+    }
+    /** Recently finished calls, so a repeated final update adds no second step. Forgetting the oldest is never fatal. */
+    private val finished: MutableSet<String> = java.util.Collections.newSetFromMap(object : LinkedHashMap<String, Boolean>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>) = size > TOOL_CALL_MEMORY
+    })
 
     /** Merge sparse ACP tool updates without rendering reasoning, raw output, provider IDs or replay. */
     fun update(params: JsonObject): Activity? {
@@ -25,10 +31,9 @@ internal class GrokWorkActivity(sessionId: String, folder: Path) {
             state = state.update(params)
             return null
         }
+        // A long turn can run any number of tools: memory and the page's activity stay bounded instead.
         val id = (update?.get("toolCallId") as? JsonPrimitive)?.takeIf { it.isString && it.content.length in 1..256 }?.content
-        if (id == null || calls.size + finished.size >= 256 && id !in calls && id !in finished) {
-            state = state.copy(end = GrokTurnEnd.INVALID); return null
-        }
+        if (id == null) { state = state.copy(end = GrokTurnEnd.INVALID); return null }
         state = state.copy(accepted = true)
         if (id in finished) return null
         val previous = calls[id] ?: ToolSummary()
@@ -64,3 +69,6 @@ internal class GrokWorkActivity(sessionId: String, folder: Path) {
     /** Only the prompt response ends a turn. */
     fun finish(result: JsonObject): GrokTurnState = state.finish(result).also { state = it }
 }
+
+/** How many running and how many finished tool call ids one work turn remembers. */
+private const val TOOL_CALL_MEMORY = 256
