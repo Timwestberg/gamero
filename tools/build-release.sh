@@ -11,7 +11,7 @@
 # Environment (see docs/release.md):
 #   GAMERO_WEB_URL          page the apps open: HTTPS, or http on loopback for local desktop and
 #                           iOS simulator testing (default: game-platform's local edge,
-#                           http://127.0.0.1:8080/hovel.html). Android needs HTTPS.
+#                           http://127.0.0.1:8080/hovel). Android needs HTTPS.
 #   GAMERO_PRODUCT          product the apps present (default hovel)
 #   GAMERO_VERSION          version name, MAJOR.MINOR.PATCH (default 1.0.0)
 #   GAMERO_BUILD_NUMBER     integer build number (default 1)
@@ -43,8 +43,8 @@ out="$root/build/release"
 product="${GAMERO_PRODUCT:-hovel}"
 version="${GAMERO_VERSION:-1.0.0}"
 build_number="${GAMERO_BUILD_NUMBER:-1}"
-# game-platform serves the web build at /hovel.html on its edge, port 8080 (infra/edge/defaults.json).
-local_url="http://127.0.0.1:8080/hovel.html"
+# game-platform serves Hovel at /hovel on its edge, port 8080 (infra/edge/defaults.json).
+local_url="http://127.0.0.1:8080/hovel"
 url="${GAMERO_WEB_URL:-$local_url}"
 
 fail() { echo "build-release: FAIL: $*" >&2; exit 1; }

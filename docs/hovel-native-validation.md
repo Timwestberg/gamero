@@ -69,7 +69,7 @@ Use the server-platform Hovel service PR stack, tool-webkit ConnectionCard stack
 and game-platform Hovel/native-connection stack. Follow server-platform
 `docs/hovel/hovel.README.md` for PostgreSQL configuration, migration and explicit
 `pnpm start:hovel`; the service binds127.0.0.1:3007. Enable the existing optional
-edge Hovel proxy and serve the game host's `hovel.html` with its Godot export.
+edge Hovel proxy and serve the game host's `/hovel` page with its Godot export.
 Use the application's actual account sign-in; do not create substitute credentials.
 
 Set GAMERO_WEB_URL to that Hovel account UI and relaunch with the same native
