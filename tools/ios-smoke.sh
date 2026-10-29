@@ -5,7 +5,8 @@
 #
 # Environment:
 #   GAMERO_WEB_URL         page to load (default http://127.0.0.1:8080/hovel)
-#   GAMERO_EXPECTED_TITLE  document title that proves the page loaded (default Hovel)
+#   GAMERO_EXPECTED_TITLE  document title that proves the page loaded (default Hovel). Signed
+#                          out, /hovel moves to /auth?next=%2Fhovel, which keeps that title
 #   GAMERO_SMOKE_TIMEOUT   seconds to wait for the page (default 90)
 #   GAMERO_SIM_DEVICE      existing simulator name or UDID to reuse; it is left booted
 #   GAMERO_SMOKE_ROOT_CERT PEM certificate to trust in curl and the simulator, for an HTTPS

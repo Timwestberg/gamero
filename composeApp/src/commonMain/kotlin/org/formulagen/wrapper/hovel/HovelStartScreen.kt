@@ -386,7 +386,7 @@ private fun PixelProgress(cells: Int = 12) {
 // Previews
 // ---------------------------------------------------------------------------------------------
 
-private val previewReady = HovelStartState.Ready("http://localhost:5173/hovel")
+private val previewReady = HovelStartState.Ready("https://127.0.0.1:8123/hovel")
 private val previewFailed = HovelStartState.Failed("A verified JetBrains Runtime with JCEF is required")
 private const val previewFootnote = "Hovel runs in a verified JetBrains Runtime with JCEF. It never downloads or modifies browser binaries."
 

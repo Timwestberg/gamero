@@ -6,7 +6,9 @@ and `IosWebUrlTest` (URL rules in cases 3 and 4, product rule in case 3b).
 
 Common preconditions: an Apple Silicon Mac with Xcode 26 and an iOS simulator
 runtime. Unless a case says otherwise, Hovel is served at
-`http://127.0.0.1:8080/hovel` with `pnpm serve:edge`.
+`http://127.0.0.1:8080/hovel` with `pnpm serve:edge`. Signed out, `/hovel`
+moves to the app's one sign-in at `/auth?next=%2Fhovel`, which keeps the title
+**Hovel** and returns to `/hovel` after the PIN.
 Debug builds open on the Hovel start screen: tap "Open the door" first, or
 launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 
@@ -18,7 +20,8 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 - **Steps:** Run `tools/ios-smoke.sh`.
 - **Expected:** The script prints
   `PASS: GAMERO_PAGE_LOADED origin=http://127.0.0.1:8080 title=Hovel` and exits
-  0. `build/ios/smoke.png` shows the Hovel welcome screen, and no
+  0. `build/ios/smoke.png` shows the **Welcome** sign-in card at
+  `/auth?next=%2Fhovel`, because the throwaway simulator is signed out. No
   `gamero-smoke-*` simulator is left in `xcrun simctl list devices`.
 
 ### 1b. Smoke test over HTTPS
@@ -27,8 +30,9 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
   [docs/ios.md](docs/ios.md#sign-in-https).
 - **Steps:** Run
   `GAMERO_WEB_URL=https://localhost:8123/hovel GAMERO_SMOKE_ROOT_CERT=/tmp/vite-dev-cert.pem tools/ios-smoke.sh`.
-- **Expected:** `PASS: GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Hovel`.
-  Without `GAMERO_SMOKE_ROOT_CERT`, it fails at the reachability check.
+- **Expected:** `PASS: GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Hovel`,
+  from `/hovel` or the sign-in page it moves to. Without
+  `GAMERO_SMOKE_ROOT_CERT`, it fails at the reachability check.
 
 ### 2. Run from Xcode with the default URL
 
@@ -37,8 +41,9 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
   iPhone simulator, then Run.
 - **Expected:** The build succeeds without an Android SDK. The app plays the
   Hovel launch and settles on the start screen. After you tap "Open the door",
-  it opens full screen on Hovel's "Welcome" sign-in card. The Xcode console shows
-  `GAMERO_PAGE_LOADED origin=http://127.0.0.1:8080 title=Hovel`.
+  it opens `/hovel` full screen, which moves to the **Welcome** sign-in card at
+  `/auth?next=%2Fhovel`. The Xcode console shows
+  `GAMERO_PAGE_LOADED origin=http://127.0.0.1:8080 title=Hovel` for both pages.
 
 ### 3. Launch environment overrides Info.plist
 
@@ -68,7 +73,8 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 - **Steps:** Set `GAMERO_WEB_URL=https:/$()/<host>/hovel` in
   `iosApp/Configuration/Config.xcconfig`, build, and run without a launch
   override. Tap "Open the door" on the start screen.
-- **Expected:** Hovel loads from that origin, and the log shows
+- **Expected:** `/hovel` loads from that origin. Signed out, it moves to
+  `/auth?next=%2Fhovel` on the same origin. The log shows
   `origin=https://<host> title=Hovel`.
 
 ## Known Edge Cases
@@ -105,10 +111,11 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 - **Steps:** With server-platform's identity service running, sign in through
   `http://127.0.0.1:8080/hovel`.
 - **Expected:** Sign-in fails, as observed with identity on `main`. Verify
-  returns 200, but the next `/auth/refresh` fails with "Missing refresh token",
-  because WKWebView drops identity's `Secure` cookies over HTTP. The app
-  returns to the PIN screen, and retrying shows "No active PIN challenge for
-  this phone" because the PIN was already used. Use the HTTPS path in
+  returns 200 and the page returns to `/hovel`, but its `/auth/refresh` fails
+  with "Missing refresh token", because WKWebView drops identity's `Secure`
+  cookies over HTTP. Hovel then sends the app back to the sign-in card at
+  `/auth?next=%2Fhovel`, and retrying the same PIN shows "No active PIN
+  challenge for this phone" because the PIN was already used. Use the HTTPS path in
   [docs/ios.md](docs/ios.md#sign-in-https) for anything that needs sign-in.
 
 ### Sign-in over HTTPS
@@ -119,8 +126,9 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 - **Steps:** Launch with
   `SIMCTL_CHILD_GAMERO_PRODUCT=gamero SIMCTL_CHILD_GAMERO_WEB_URL=https://localhost:8123/hovel`, enter a phone
   number, then enter the PIN from the identity log once.
-- **Expected:** The log shows `GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Hovel`.
-  After the PIN, Hovel leaves the sign-in card and stays signed in. Identity
+- **Expected:** The log shows `GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Hovel`
+  for `/hovel` and for the sign-in page at `/auth?next=%2Fhovel`. After the PIN,
+  the app returns to `/hovel` and stays signed in. Identity
   logs `/auth/verify` and `/auth/refresh` with no errors. Without the trusted
   certificate, the page does not load and no `GAMERO_PAGE_LOADED` line appears.
 - **Status:** Verified on an iOS 26.2 simulator. Identity logged
@@ -161,7 +169,8 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 - **Steps:** Watch the console during any successful load.
 - **Expected:** `GAMERO_PAGE_LOADED` may appear first with `title=null` and then
   with `title=Hovel`, because WKWebView reports the title after load completes.
-  Only the line with the title counts as a pass.
+  Signed out, the lines repeat for `/auth?next=%2Fhovel`, which also has the
+  title Hovel. Only a line with the title counts as a pass.
 
 ### Intel Mac or x86_64 simulator
 
