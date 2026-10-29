@@ -11,6 +11,26 @@ All Kotlin paths below are under `composeApp/src/`. In them, `.../` stands for
 `kotlin/org/formulagen/wrapper/bridge/` unless another package directory
 follows it, such as `.../hovel/` for `kotlin/org/formulagen/wrapper/hovel/`.
 
+## Subscription usage
+
+Desktop `providers.usage({profile, runtimeId})` reads the runtime's shared
+subscription quotas. It returns `{runtimeId, checkedAt, session?, weekly?}`;
+each window has `usedPercent` (0..100) and optional `resetsAt`. Check time is Unix
+milliseconds; reset time is Unix seconds. An omitted window is unavailable,
+never zero. Mobile hosts do not offer this method.
+
+`providers/ProviderUsage.kt` normalizes both runtimes. Codex reads
+`account/rateLimits/read` from its account process, uses the `codex` bucket and
+classifies windows by duration (300/10080 minutes), not primary/secondary order.
+See the [Codex app-server protocol](https://learn.chatgpt.com/docs/app-server).
+`providers/ClaudeUsage.kt` isolates Claude Code's experimental `get_usage`
+control protocol, verified on 2.1.304. It sends initialize and get_usage with
+`skip_behaviors`, using safe mode, no tools and no session persistence. It never
+sends a user message or reads credentials. A timeout/cancel stops its child.
+Null or unsupported quota data produces omitted windows. The web overlay
+refreshes on open/focus and once a minute while visible; no background poll runs
+when it is closed. These calls never consume a reset or purchase credits.
+
 ## The parts
 
 | Part | Where | Job |
@@ -67,30 +87,40 @@ Code: `BridgeMethods.HOST_INFO` and `BridgeMethods.HOST_CAPABILITIES` in
 Follow these steps in order. You do not edit the router, the transports or any
 other capability. `Haptics.kt` is the smallest complete example of a method
 capability; `Lifecycle.kt` is the example of an event capability.
+`GameCapability.kt` is the example of a capability with both, and of a product
+event: `games.launch` opens a game and `games.closed` says the player is back.
 
 1. **Contract (server-platform).** Give the capability its own file,
    `event-contracts/src/host-bridge/<capability>.ts`, as `chat.ts` does: its
    zod schemas and one method map (`CHAT_METHODS`), each entry with `args` and
-   `result` (`z.strictObject`) and a `capability` name. Rules that several
-   capabilities share, such as the profile ID and companion name, live in
-   `shared.ts`. Spread the map into `HOST_BRIDGE_METHODS` in `capabilities.ts`
-   (events go in `HOST_BRIDGE_EVENTS`, with `capability` and `data`). Every existing entry has a
-   `capability` key, but the type does not require one, so check it yourself.
-   Use the same `capability` value as the `CapabilityBinder` name in step 2.
-   Two existing capabilities do not match yet and are a known gap: the
-   contract says `haptic` and `link`, the Kotlin binders say `haptics` and
-   `links`. Add a row for each
-   one to every platform column of `HOST_BRIDGE_PARITY`, and copy the table to
-   `fixtures/parity.json`. Add router fixtures under `fixtures/router/`: at
-   least one valid call, one call with bad arguments, and one call on a
-   platform that marks it `unsupported`. Run `pnpm --filter
+   `result` (`z.strictObject`) and a `capability` name. A capability with
+   events adds an event map to the same file, as `games.ts` does with
+   `GAME_EVENTS`: each entry has a `capability` name and a `data` schema. Rules
+   that several capabilities share, such as the profile ID and companion name,
+   live in `shared.ts`. Spread the method map into `HOST_BRIDGE_METHODS` and the
+   event map into `HOST_BRIDGE_EVENTS`, both in `capabilities.ts`. Every
+   existing entry has a `capability` key, but the type does not require one, so
+   check it yourself. Use the same `capability` value as the `CapabilityBinder`
+   name in step 2. Two existing capabilities do not match yet and are a known
+   gap: the contract says `haptic` and `link`, the Kotlin binders say `haptics`
+   and `links`. Add a row for each method and event to every platform column of
+   `HOST_BRIDGE_PARITY`, and copy the table to `fixtures/parity.json`. For each
+   method, add router fixtures under `fixtures/router/`: at least one valid
+   call, one call with bad arguments, and one call on a platform that marks it
+   `unsupported`. For each event, add an envelope fixture instead,
+   `fixtures/envelopes/event-<area>-<name>.json`, as `event-games-closed.json`
+   is; router fixtures are requests, and a page never sends an event. A valid
+   event fixture must also match the event's `data` schema. Run `pnpm --filter
    @formulagen/event-contracts test`. This is its own PR, and it merges first.
 
 2. **Interface (gamero `commonMain/.../bridge/`).** Add one file named after
    the capability. It holds:
    - a `fun interface` (or `interface`) whose bridge methods are `suspend`.
      Event-only capabilities instead have a non-suspending `observe` that
-     returns an `AutoCloseable`, as `Lifecycle` does;
+     returns an `AutoCloseable`, as `Lifecycle` does. A capability with both
+     keeps its `suspend` methods and adds `observe(...)`, so it is a plain
+     `interface`, as `GameCapability` is. Give `observe` one named handler per
+     event (`onPause`, `onResume`, `onClosed`);
    - `@Serializable` argument and result types whose field names match the zod
      schema. Use `NoArgs` and `NoResult` for `{}`;
    - an `object` with one `BridgeMethod` (or `BridgeEvent`) per wire name, and
@@ -100,11 +130,14 @@ capability; `Lifecycle.kt` is the example of an event capability.
      `METHOD.handle { capability: YourInterface, args -> ... }`. An event
      capability passes `handlers = emptyList()`, `events = listOf(...)` with
      every event it emits, and
-     `observe = { impl, sink -> impl.observe(...) }`, which emits through
-     `sink.emit(EVENT, data)` and returns the `AutoCloseable`. The router calls
-     `observe` once, when it is built, not once per context. An event the
-     binder did not list in `events` is dropped and reported to the router's
-     `onFailure`; the page never gets it.
+     `observe = { impl, sink -> impl.observe(onX = { ... }) }`, which binds each
+     handler with a named argument, emits through `sink.emit(EVENT, data)` and
+     returns the `AutoCloseable`. A capability with both passes its `handlers`
+     and also `events` and `observe`, as `GameMethods.binder` does. The router
+     calls `observe` once, when it is built, not once per context, and closes
+     the result in its own `close()`. An event the binder did not list in
+     `events` is dropped and reported to the router's `onFailure`; the page
+     never gets it.
 
    Put any rule a serializer cannot express in the method's `accepts`, as
    `LinkMethods.OPEN` does for HTTPS. The router checks it before your code
@@ -160,9 +193,18 @@ capability; `Lifecycle.kt` is the example of an event capability.
    `TransportContractTest`, `JcefTransportContractTest`), pass
    `Capability.Unsupported`.
 
-6. **Fixtures.** Run `tools/sync-host-bridge-fixtures.py ../server-platform`
+   For an event, the fake's `observe` stores the listener it gets and clears it
+   when the handle is closed, as `FakeGameCapability` does. A test opens a
+   context with `watchContext`, calls the stored listener, and asserts the
+   envelope the router posted (`aClosedGameIsSentAsGamesClosedOnDesktop`). Then
+   add the event to `envelopesMatchTheValidFixtures`, which checks that the
+   Kotlin encoding equals the envelope fixture from step 1.
+
+6. **Fixtures.** Run `tools/sync-server-fixtures.py ../server-platform`
    to regenerate `commonTest/.../HostBridgeFixtures.kt` from the merged
-   contract, then the router tests. `--check` fails when the copy is stale.
+   contract, then the router tests. `--check` fails when the copy is stale. The
+   `Source` line names the last server-platform commit that changed the
+   fixtures, not the contract's head.
 
 7. **Parity tests.** `DesktopParityTest`, `AndroidParityTest` and
    `IosParityTest` check each factory against its column of the parity table.
@@ -171,8 +213,11 @@ capability; `Lifecycle.kt` is the example of an event capability.
    it; the test fails if you forget.
 
 8. **Web.** Callers use `bridge.call('area.verb', args)` from
-   `@formulagen/host-bridge` and handle `unsupported`. The client takes its
-   method and event types from the contract, so its source needs no change.
+   `@formulagen/host-bridge` and handle `unsupported`. A page hears an event
+   with `bridge.on('area.event', handler)`, which returns a function that
+   unsubscribes; call it when the page no longer needs the event. The client
+   takes its method and event types from the contract, so its source needs no
+   change.
    The app still has to build against the merged contract: game-platform
    reads `@formulagen/event-contracts` from the sibling `../event-contracts`
    checkout through a `file:` dependency. Update that checkout, run
@@ -240,3 +285,26 @@ rest. The full table is in the spec under "Consistency rules".
    for Android or iOS yet (`tools/ios-smoke.sh` only checks that the web app
    loads), so on a mobile platform use a page built on
    `@formulagen/host-bridge`.
+
+### Runtime model catalogs
+
+`providers.models` reads Codex `model/list` and Claude Code's `initialize.models`.
+Claude discovery uses a bounded safe-mode child with no user message, tools or
+session persistence, sharing the read-only control exchange used by quota reads.
+Each catalog is cached for one minute; disconnected Claude returns no models.
+Model IDs remain exact, including Claude's optional `[1m]` suffix within the
+128-character limit. The native chat and work runtimes pass valid IDs and aliases
+through to Claude Code, which checks availability. The UI does not maintain a
+production model whitelist.
+
+Each model may include `effortLevels` and `defaultEffort`. An absent list means
+unknown capabilities; an empty list means no selectable effort. Codex supplies
+`supportedReasoningEfforts` and `defaultReasoningEffort`; Claude supplies
+`supportsEffort` and `supportedEffortLevels`, with no assumed default.
+
+`chat.send`, `chat.retry` and `chat.hearing` accept optional `effort`
+separately from member identity; `chat.hearing`'s applies to the talk turns it
+hears. Talk and Work forward it to Codex `turn/start.effort` or Claude
+`--effort`. The page resolves Auto to the advertised default, when known, so
+Codex does not retain an earlier turn's override. Claude Work includes effort
+in its process-reuse key and resumes the conversation after changing it.

@@ -32,10 +32,28 @@ export HOVEL_EMBED_LIBRARY="$GAMERO_ROOT/build/embedded-godot/libhovel_embed.dyl
 # The pinned engine for the embedded game; Godot's embedding is still a beta.
 EMBED_GODOT_VERSION='4.8.beta1.official.4d10419ca'
 
+# Claude as a companion team runtime, on the player's own Claude Code sign-in. Development only:
+# release builds ignore it until Anthropic confirms a companion persona is allowed.
+export HOVEL_CLAUDE_PROVIDER="${HOVEL_CLAUDE_PROVIDER:-1}"
+
 # Local voice for spoken chat replies. scripts/fetch-voice.sh downloads these.
+# Mac chat uses Kokoro. Pocket remains for a later "speak in my voice" clip.
 VOICE_ROOT="$GAMERO_ROOT/spikes/ember-voice/mac"
+export HOVEL_KOKORO_MODEL="${HOVEL_KOKORO_MODEL:-$VOICE_ROOT/models/kokoro-multi-lang-v1_0}"
+export HOVEL_VOICE_BACKEND="${HOVEL_VOICE_BACKEND:-kokoro}"
 export HOVEL_VOICE_MODEL="${HOVEL_VOICE_MODEL:-$VOICE_ROOT/models/sherpa-onnx-pocket-tts-int8-2026-01-26}"
 export HOVEL_VOICE_REFERENCE="${HOVEL_VOICE_REFERENCE:-$VOICE_ROOT/models/voices/0a67_enhanced-24k.wav}"
+export HOVEL_HEARING_MODEL="${HOVEL_HEARING_MODEL:-$VOICE_ROOT/models/hearing}"
+# Fillers default off. The Voice row saves the choice in ~/.gamero/voice-fillers.
+# HOVEL_VOICE_FILLERS=1 turns them on for this launch and overrides that file.
+# HOVEL_VOICE_FILLER_MS is the wait before a filler. Fillers stay off unless the Voice row
+# or HOVEL_VOICE_FILLERS turns them on. HOVEL_HEARING_SILENCE_MS (1000) and
+# HOVEL_HEARING_GUARD_MS (300) tune the endpoint and the half-duplex resume pause.
+# HOVEL_HEARING_DUPLEX is auto, full, or half. auto uses the Mac voice-processing graph
+# when libember_audio.dylib loads and ~/.gamero/hearing-self-check is not "fail".
+export HOVEL_VOICE_FILLER_MS="${HOVEL_VOICE_FILLER_MS:-450}"
+export HOVEL_HEARING_DUPLEX="${HOVEL_HEARING_DUPLEX:-auto}"
+export HOVEL_EMBER_AUDIO="${HOVEL_EMBER_AUDIO:-$VOICE_ROOT/deps/ember-audio/libember_audio.dylib}"
 
 # Stop unless the game project runs the pinned embedding engine.
 require_embed_godot() {
@@ -49,9 +67,22 @@ require_embed_godot() {
 
 # Say up front when spoken replies will be off. Text chat still works.
 warn_missing_voice() {
+  local name
+  local kokoro_ok=1
+  for name in model.onnx voices-blends.bin tokens.txt lexicon-us-en.txt; do
+    if [[ ! -f "$HOVEL_KOKORO_MODEL/$name" ]]; then
+      kokoro_ok=0
+    fi
+  done
   if ! compgen -G "$VOICE_ROOT/deps/sherpa/sherpa-onnx-jvm-*.jar" >/dev/null \
-    || [[ ! -d "$HOVEL_VOICE_MODEL" || ! -f "$HOVEL_VOICE_REFERENCE" ]]; then
-    echo 'Spoken replies are off: voice files are missing. Run scripts/fetch-voice.sh to enable them.' >&2
+    || [[ "$kokoro_ok" -eq 0 ]]; then
+    echo 'Spoken replies are off: Kokoro voice files are missing. Run scripts/fetch-voice.sh to enable them.' >&2
+  fi
+  if [[ ! -f "$HOVEL_HEARING_MODEL/silero_vad.onnx" || ! -f "$HOVEL_HEARING_MODEL/zipformer/tokens.txt" ]]; then
+    echo 'Talk with Ember is off: hearing models are missing. Run scripts/fetch-voice.sh to enable them.' >&2
+  fi
+  if [[ ! -f "$HOVEL_EMBER_AUDIO" ]]; then
+    echo 'Full duplex is off until scripts/build-ember-audio.sh writes libember_audio.dylib. Conversation stays half duplex.' >&2
   fi
 }
 

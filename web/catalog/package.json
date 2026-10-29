@@ -1,0 +1,12 @@
+{
+  "name": "@gamero/catalog-voice",
+  "private": true,
+  "type": "module",
+  "description": "Gamero Adventures catalog voice wiring. Intended for game-platform.",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "playwright-core": "1.58.2"
+  }
+}

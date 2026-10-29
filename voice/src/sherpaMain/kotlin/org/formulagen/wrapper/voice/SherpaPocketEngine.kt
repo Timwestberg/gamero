@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicLong
 class SherpaPocketEngine(private val config: VoiceConfig) : PieceEngine {
     private val tts: OfflineTts
     private val released = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val cancel = java.util.concurrent.atomic.AtomicBoolean(false)
     private val voiceSamples: FloatArray
     private val voiceRate: Int
     override val sampleRate: Int
@@ -63,11 +64,22 @@ class SherpaPocketEngine(private val config: VoiceConfig) : PieceEngine {
         sampleRate = tts.sampleRate
     }
 
+    override fun requestCancel() {
+        cancel.set(true)
+    }
+
+    override fun clearCancel() {
+        cancel.set(false)
+    }
+
+    override fun isCancelled(): Boolean = cancel.get()
+
     override fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio {
         if (released.get()) throw IllegalStateException("voice engine was released")
+        if (cancel.get()) throw SpeechCancelled()
         val extra = HashMap<String, String>()
         extra["temperature"] = config.temperature.toString()
-        extra["chunk_size"] = config.chunkSize.toString()
+        extra["chunk_size"] = config.decoderFramesPerCallback.toString()
         extra["max_char_in_sentence"] = maxOf(120, text.length).toString()
         extra["seed"] = seed.toString()
         extra["max_reference_audio_len"] = (voiceSamples.size / voiceRate.toDouble()).toString()
@@ -85,6 +97,7 @@ class SherpaPocketEngine(private val config: VoiceConfig) : PieceEngine {
             override fun invoke(samples: FloatArray): Int {
                 val n = callbackCount.incrementAndGet()
                 if (samples.isNotEmpty()) ttfaNs.compareAndSet(-1L, System.nanoTime() - start)
+                if (cancel.get()) return 0
                 val limit = if (maxFrames > 0) maxFrames * 8 else 8192
                 return if (n > limit) 0 else 1
             }
@@ -93,6 +106,7 @@ class SherpaPocketEngine(private val config: VoiceConfig) : PieceEngine {
         val totalMs = (System.nanoTime() - start) / 1_000_000.0
         val ttfaMs = if (ttfaNs.get() >= 0) ttfaNs.get() / 1_000_000.0 else totalMs
         if (audio.samples.isEmpty() || audio.sampleRate <= 0) {
+            if (cancel.get()) throw SpeechCancelled()
             throw IllegalStateException("no audio for \"$text\"")
         }
         return PieceAudio(audio.samples, audio.sampleRate, ttfaMs, totalMs)

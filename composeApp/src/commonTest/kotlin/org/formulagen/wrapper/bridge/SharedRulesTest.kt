@@ -9,7 +9,9 @@ class SharedRulesTest {
     private val lower = "40000000-0000-4000-8000-00000000000a"
     private fun scope(profile: String = "local", name: String = "Ember") =
         ChatScope(profile, "10000000-0000-4000-8000-000000000001", name, "20000000-0000-4000-8000-000000000002")
-    private fun send(text: String) = scope().let { ChatSend(it.profile, it.companionId, it.name, it.sessionId, "30000000-0000-4000-8000-000000000003", text, false) }
+    private fun send(text: String, model: String = "runtime-default") = scope().let {
+        ChatSend(it.profile, it.companionId, it.name, it.sessionId, TeamMember(RuntimeId.CODEX, model), "30000000-0000-4000-8000-000000000003", text, false)
+    }
 
     @Test fun profilesAreLocalOrLowerCaseUuids() {
         assertTrue(SharedRules.isProfileId("local"))
@@ -28,6 +30,19 @@ class SharedRulesTest {
         assertTrue(ChatMethods.SEND.accepts(send("\u001F")))
         assertTrue(ChatMethods.SEND.accepts(send(" ".repeat(10) + "x".repeat(4000) + "﻿")))
         assertFalse(ChatMethods.SEND.accepts(send("x".repeat(4001))))
+        assertTrue(ChatMethods.SEND.accepts(send("Hi", "gpt-6.1-sol")))
+        assertFalse(ChatMethods.SEND.accepts(send("Hi", "--dangerously-skip-permissions")))
+        assertFalse(ChatMethods.SEND.accepts(send("Hi", "Sonnet")))
+        assertTrue(ChatMethods.SEND.accepts(send("Hi", "x".repeat(128))))
+        assertFalse(ChatMethods.SEND.accepts(send("Hi", "x".repeat(129))))
+    }
+
+    @Test fun modelContextSuffixIsExactAndIncludedInTheLengthLimit() {
+        assertTrue(SharedRules.isModelId("claude-fable-5-1[1m]"))
+        assertTrue(SharedRules.isModelId("m".repeat(124) + "[1m]"))
+        for (model in listOf("m".repeat(125) + "[1m]", "sonnet[2m]", "sonnet[1m][1m]", "sonnet[]", "[1m]", "sonnet[1m]\n")) {
+            assertFalse(SharedRules.isModelId(model), model)
+        }
     }
 
     @Test fun companionNamesAreRejectedRatherThanTrimmed() {

@@ -108,7 +108,7 @@ require_url() {
 
 gradle() {
   "$root/gradlew" -p "$root" --console=plain \
-    -Pgamero.product="$product" -Pgamero.webUrl="$url" \
+    -Pgamero.product="$product" -Pgamero.webUrl="$url" -Pgamero.release=true \
     -Pgamero.version="$version" -Pgamero.buildNumber="$build_number" "$@"
 }
 

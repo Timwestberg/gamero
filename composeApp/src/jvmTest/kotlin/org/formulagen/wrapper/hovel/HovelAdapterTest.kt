@@ -12,11 +12,7 @@ class HovelAdapterTest {
     private val host = UUID.randomUUID().toString()
     private val owner = UUID.randomUUID().toString()
     private val taskId = UUID.randomUUID().toString()
-    private fun task(progress: JsonObject, revision: Int) = buildJsonObject {
-        put("ownerId", owner); put("characterMemory", "Ada remembers")
-        put("revision", revision); put("progress", progress)
-        put("request", buildJsonObject { put("id", taskId); put("hostId", host); put("mode", "local"); put("prompt", "Inspect") })
-    }
+    private fun task(progress: JsonObject, revision: Int) = HovelTestFixtures.task(host, owner, taskId, progress, revision)
     @Test fun taskPublicationRetriesWithoutLaunchingAgain() {
         var current = task(buildJsonObject { put("state", "queued") }, 0)
         var deliveries = 0
@@ -82,10 +78,125 @@ class HovelAdapterTest {
         assertFails { hovelExecutionRequest(followUp(JsonPrimitive("Earlier exchanges"), JsonPrimitive("c-1")), host) }
     }
 
-    @Test fun everyHeartbeatDeclaresProviderInput() {
+    @Test fun everyHeartbeatDeclaresProviderInputAndMemory() {
         val body = hovelHeartbeat("ready")
         assertEquals("ready", body.getValue("providerState").jsonPrimitive.content)
-        assertEquals(listOf("provider-input"), body.getValue("features").jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(listOf("provider-input", "memory-context", "memory-extraction"),
+            body.getValue("features").jsonArray.map { it.jsonPrimitive.content })
+    }
+
+    private fun withRecalled(value: JsonElement) = buildJsonObject {
+        task(buildJsonObject { put("state", "queued") }, 0).forEach { (key, item) -> put(key, item) }
+        put("recalledMemory", value)
+    }
+
+    @Test fun recalledMemoryTravelsInItsOwnField() {
+        val notes = "Recalled memory notes, generated from earlier tasks.\n- Uses pnpm"
+        val request = hovelExecutionRequest(withRecalled(JsonPrimitive(notes)), host)
+        assertEquals(notes, request.recalledMemory)
+        assertEquals("Inspect", request.prompt)
+        assertEquals("Ada remembers", request.context)
+        assertNull(hovelExecutionRequest(task(buildJsonObject { put("state", "queued") }, 0), host).recalledMemory)
+        // Malformed is refused, never run as the text "null" or "7".
+        assertFails { hovelExecutionRequest(withRecalled(JsonNull), host) }
+        assertFails { hovelExecutionRequest(withRecalled(JsonPrimitive(7)), host) }
+    }
+
+    private val jobId = UUID.randomUUID().toString()
+    private fun job(progress: JsonObject, revision: Int, model: String = "runtime-default", effort: String = "low", runtimeId: String = "codex") =
+        HovelTestFixtures.memoryJob(host, owner, jobId, progress, revision, model, effort, runtimeId)
+    private val queued = HovelTestFixtures.QUEUED
+
+    @Test fun aMemoryJobRunsItsInputAloneOnItsModelAndEffort() {
+        val request = hovelMemoryJobRequest(job(queued, 0, model = "gpt-5.1-codex-mini", effort = "high"), host)
+        assertEquals(jobId, request.id)
+        assertEquals(HovelTestFixtures.MEMORY_JOB_INPUT, request.prompt)
+        assertEquals("", request.context)
+        assertNull(request.recalledMemory)
+        assertTrue(request.rawPrompt)
+        assertEquals(ProviderChoice("gpt-5.1-codex-mini", "high"), request.choice)
+        assertEquals(HovelTestFixtures.MEMORY_JOB_INPUT, providerPrompt(request))
+    }
+
+    @Test fun aMemoryJobThisCompanionCannotRunIsRefused() {
+        assertFails { hovelMemoryJobRequest(job(queued, 0), UUID.randomUUID().toString()) }
+        // A model is one name, never a flag Codex would read.
+        assertFails { hovelMemoryJobRequest(job(queued, 0, model = "--config"), host) }
+        assertFails { hovelMemoryJobRequest(job(queued, 0, effort = "extreme"), host) }
+        assertFalse(isRunnableMemoryJob(job(queued, 0, runtimeId = "claude")))
+        assertFails { hovelMemoryJobRequest(job(queued, 0, runtimeId = "claude"), host) }
+        // A job missing its runtime, such as one from before a rename, is unreadable rather than someone else's.
+        val unnamed = buildJsonObject { job(queued, 0).forEach { (key, value) -> if (key != "runtimeId") put(key, value) } }
+        assertTrue(isRunnableMemoryJob(unnamed))
+        assertFails { hovelMemoryJobRequest(unnamed, host) }
+        // Refused here as the journal would refuse it, before the job is offered.
+        fun jobWith(key: String, value: String) = buildJsonObject { job(queued, 0).forEach { (k, v) -> put(k, v) }; put(key, value) }
+        assertFails { hovelMemoryJobRequest(jobWith("input", "x".repeat(ExecutionRequest.MAX_PROMPT_CHARS + 1)), host) }
+        assertFails { hovelMemoryJobRequest(jobWith("input", "  "), host) }
+        assertFails { hovelMemoryJobRequest(jobWith("id", jobId.uppercase()), host) }
+        assertEquals(ExecutionRequest.MAX_PROMPT_CHARS,
+            hovelMemoryJobRequest(jobWith("input", "x".repeat(ExecutionRequest.MAX_PROMPT_CHARS)), host).prompt.length)
+        assertTrue(isRunnableMemoryJob(job(queued, 0)))
+    }
+
+    /** A fake server for one memory job, checking each report's revision. */
+    private inner class JobServer(var reject: Boolean = false) : HovelTransport {
+        var current = job(queued, 0)
+        val routes = mutableListOf<String>()
+        override fun post(route: String, body: JsonObject): JsonObject {
+            routes += route
+            assertEquals(jobId, body.getValue("jobId").jsonPrimitive.content)
+            assertFalse(body.containsKey("taskId"))
+            if (reject) throw HovelRejectedException()
+            current = when (route) {
+                "memory/claim" -> job(buildJsonObject { put("state", "claimed"); put("claimId", body.getValue("claimId")) }, 1)
+                "memory/progress" -> {
+                    assertEquals(current.getValue("revision"), body.getValue("expectedRevision"))
+                    job(body.getValue("progress").jsonObject, current.getValue("revision").jsonPrimitive.int + 1)
+                }
+                else -> error("unexpected route $route")
+            }
+            return current
+        }
+        val progress get() = current.getValue("progress").jsonObject
+    }
+
+    private fun runJob(server: JobServer, output: String): ExecutionRecord =
+        ExecutionJournal(Files.createTempDirectory("memory-journal"), host).use { journal ->
+            val request = hovelMemoryJobRequest(server.current, host)
+            ExecutionCoordinator(journal, { ProviderResult(true, output) }, HovelMemoryJobRemote(server, server.current)).accept(request)
+        }
+
+    @Test fun aMemoryJobReportsOnTheMemoryRoutes() {
+        val server = JobServer()
+        runJob(server, "{\"notes\":[]}")
+        assertEquals(listOf("memory/claim", "memory/progress", "memory/progress"), server.routes)
+        assertEquals("succeeded", server.progress.getValue("state").jsonPrimitive.content)
+        assertEquals("{\"notes\":[]}", server.progress.getValue("result").jsonPrimitive.content)
+    }
+
+    @Test fun anOverlongExtractionIsReportedFailedNotCutShort() {
+        val atLimit = JobServer()
+        runJob(atLimit, "x".repeat(HOVEL_MEMORY_JOB_OUTPUT_CHARS))
+        assertEquals(HOVEL_MEMORY_JOB_OUTPUT_CHARS, atLimit.progress.getValue("result").jsonPrimitive.content.length)
+        val over = JobServer()
+        runJob(over, "x".repeat(HOVEL_MEMORY_JOB_OUTPUT_CHARS + 1))
+        assertEquals("failed", over.progress.getValue("state").jsonPrimitive.content)
+        assertEquals("Extraction output is 65537 characters; the limit is 65536.", over.progress.getValue("error").jsonPrimitive.content)
+    }
+
+    @Test fun aReplacedJobIsNeverLaunched() {
+        val server = JobServer()
+        ExecutionJournal(Files.createTempDirectory("memory-journal"), host).use { journal ->
+            val request = hovelMemoryJobRequest(server.current, host)
+            server.reject = true
+            var launches = 0
+            assertFailsWith<HovelRejectedException> {
+                ExecutionCoordinator(journal, { launches++; ProviderResult(true, "{}") }, HovelMemoryJobRemote(server, server.current)).accept(request)
+            }
+            assertEquals(0, launches)
+            assertEquals(ExecutionPhase.PREPARED, journal.read(jobId)?.phase)
+        }
     }
 
     @Test fun registrationReusesIdentityAndNeverPersistsBearerInMetadata() {
@@ -130,7 +241,9 @@ class HovelAdapterTest {
             if (close) companion.close() else companion.invalidatePending()
             release.countDown()
             assertTrue(activation.await().isFailure)
-            Files.list(directory).use { paths -> assertFalse(paths.anyMatch { it.fileName.toString().startsWith("journal-") }) }
+            Files.list(directory).use { paths ->
+                assertFalse(paths.anyMatch { it.fileName.toString().let { name -> name.startsWith("journal-") || name.startsWith("memory-journal-") } })
+            }
             companion.close()
         }
     }

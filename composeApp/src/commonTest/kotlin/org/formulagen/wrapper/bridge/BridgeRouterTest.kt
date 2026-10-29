@@ -21,11 +21,42 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class BridgeRouterTest {
+    @Test fun newerHistoryUsesAnExistingErrorCodeAndFixedUpdateGuidance() = runTest {
+        val chat = object : ChatCapability by FakeChatCapability() {
+            override suspend fun open(scope: ChatScope): ChatSnapshot = throw BridgeUpdateRequiredException()
+        }
+        val router = router(HostPlatform.DESKTOP, products = listOf(ChatMethods.pack(Capability.Supported(chat))))
+        call(router, watch)
+        val reply = call(router, request("chat.open", buildJsonObject {
+            put("profile", "local"); put("companionId", "10000000-0000-4000-8000-000000000001")
+            put("sessionId", "20000000-0000-4000-8000-000000000002"); put("name", "Ember")
+        })).single()
+        assertEquals("failed", reply.getValue("error").jsonObject.getValue("code").jsonPrimitive.content)
+        assertEquals(BridgeUpdateRequiredException().message, reply.getValue("error").jsonObject.getValue("message").jsonPrimitive.content)
+        router.close()
+    }
+
+    @Test fun aBrainThePageCannotDecodeAnswersTheSameUpdateGuidance() = runTest {
+        val brain = object : BrainCapability by FakeBrainCapability() {
+            override suspend fun read(args: BrainRead): BrainReadResult = throw BridgeUpdateRequiredException()
+        }
+        val router = router(HostPlatform.DESKTOP, products = listOf(BrainMethods.pack(Capability.Supported(brain))))
+        call(router, watch)
+        val reply = call(router, request("brain.read", buildJsonObject {
+            put("profile", "local"); put("companionId", "10000000-0000-4000-8000-000000000001")
+        })).single()
+        assertEquals("failed", reply.getValue("error").jsonObject.getValue("code").jsonPrimitive.content)
+        assertEquals(BridgeUpdateRequiredException().message, reply.getValue("error").jsonObject.getValue("message").jsonPrimitive.content)
+        router.close()
+    }
+
     private val parity = Json.parseToJsonElement(HostBridgeFixtures.PARITY).jsonObject
     private val trusted = FrameFacts(mainFrame = true, trustedOrigin = true, documentId = "document-1")
     private val watch = """{"version":2,"method":"watchContext","args":{}}"""
@@ -35,6 +66,7 @@ class BridgeRouterTest {
         val played = mutableListOf<HapticEffect>()
         var pause: () -> Unit = {}
         var resume: () -> Unit = {}
+        val games = FakeGameCapability()
         var prepare: suspend (String) -> CompanionRegistration = {
             CompanionRegistration("00000000-0000-4000-8000-000000000002", "Mac", "a".repeat(64))
         }
@@ -59,10 +91,15 @@ class BridgeRouterTest {
 
     /** Hovel's product set: the companion, supported only where the parity table says. */
     private fun hovelPacks(platform: HostPlatform, fakes: Fakes = Fakes()): List<CapabilityPack> = listOf(
+        BrainMethods.pack(supported(platform, "brain.open", FakeBrainCapability())),
         ChatMethods.pack(supported(platform, "chat.open", FakeChatCapability())),
         ProviderMethods.pack(supported(platform, "providers.status", FakeProviderCapability())),
         PetMethods.pack(supported(platform, "pet.status", FakePetCapability())),
-        GameMethods.pack(supported(platform, "games.launch", FakeGameCapability())),
+        GameMethods.pack(supported(platform, "games.launch", fakes.games)),
+        WorkspaceMethods.pack(supported(platform, "workspace.status", FakeWorkspaceCapability())),
+        ProjectMethods.pack(supported(platform, "project.folderStatus", FakeProjectCapability())),
+        ConversationVoiceMethods.pack(supported(platform, "conversationVoice.voiceStatus", FakeConversationVoiceCapability())),
+        ApprovalMethods.pack(supported(platform, "approvals.present", FakeApprovalsCapability())),
         CompanionMethods.pack(supported(platform, "companion.capabilities", object : CompanionCapability {
             override suspend fun prepareConnection(ownerId: String) = fakes.prepare(ownerId)
             override suspend fun activateConnection(ownerId: String, hostId: String) = JsonObject(emptyMap())
@@ -163,6 +200,10 @@ class BridgeRouterTest {
         val cut = Json.parseToJsonElement(BridgeEnvelopes.failure(BridgeErrorCode.FAILED, long)).jsonObject.getValue("error").jsonObject.getValue("message").jsonPrimitive.content
         assertEquals(long.take(BridgeProtocol.MAX_ERROR_MESSAGE_CHARS), cut)
         assertEquals(fixture("event-pause.json"), Json.parseToJsonElement(BridgeEnvelopes.event(LifecycleEvents.PAUSE.name, bridgeJson.encodeToJsonElement(NoData.serializer(), NoData))))
+        assertEquals(
+            fixture("event-games-closed.json"),
+            Json.parseToJsonElement(BridgeEnvelopes.event(GameMethods.CLOSED.name, bridgeJson.encodeToJsonElement(GameClosed.serializer(), GameClosed(GameId.HOVEL_COMPANIONS)))),
+        )
         assertEquals(fixture("watch-context-reply.json"), Json.parseToJsonElement(BridgeEnvelopes.watchContextReply(HostBridgeFixtures.CONTEXT_ID)))
     }
 
@@ -344,6 +385,37 @@ class BridgeRouterTest {
         settle()
         assertEquals(listOf("""{"version":2,"event":"lifecycle.resume","data":{}}"""), posted)
         router.close()
+    }
+
+    @Test
+    fun aClosedGameIsSentAsGamesClosedOnDesktop() = runTest {
+        val fakes = Fakes()
+        val posted = mutableListOf<String>()
+        val router = router(HostPlatform.DESKTOP, fakes, posted)
+        call(router, watch)
+        fakes.games.closed!!(GameId.HOVEL_COMPANIONS)
+        settle()
+        assertEquals(listOf("""{"version":2,"event":"games.closed","data":{"gameId":"hovel-companions"}}"""), posted)
+        router.close()
+    }
+
+    @Test
+    fun anUnsupportedGamesCapabilityNeverListensForClosedGames() = runTest {
+        val fakes = Fakes()
+        val router = router(HostPlatform.IOS, fakes)
+        call(router, watch)
+        assertNull(fakes.games.closed)
+        router.close()
+    }
+
+    /** Desktop builds a router per WebView while the game launcher outlives them, so a closed router must stop listening. */
+    @Test
+    fun closingTheRouterReleasesTheGamesSubscription() = runTest {
+        val fakes = Fakes()
+        val router = router(HostPlatform.DESKTOP, fakes)
+        assertNotNull(fakes.games.closed)
+        router.close()
+        assertNull(fakes.games.closed)
     }
 
     @Test

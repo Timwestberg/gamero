@@ -21,6 +21,8 @@ val iosTargets = mobileTargets || providers.gradleProperty("gamero.iosTargets").
 fun releaseSetting(name: String): String? = providers.gradleProperty(name).orNull?.takeIf { it.isNotBlank() }
 val releaseProduct = releaseSetting("gamero.product")
 val releaseWebUrl = releaseSetting("gamero.webUrl")
+// Release builds keep gated features off whatever the environment says (Claude: claudeProviderEnabled).
+val releaseBuild = releaseSetting("gamero.release") == "true"
 val releaseVersion = releaseSetting("gamero.version") ?: "1.0.0"
 val releaseBuildNumber = releaseSetting("gamero.buildNumber")?.toInt() ?: 1
 fun signingSetting(name: String): String? = providers.environmentVariable(name).orNull?.takeIf { it.isNotBlank() }
@@ -110,6 +112,7 @@ kotlin {
         }
         jvmMain.dependencies {
             implementation(project(":voice"))
+            implementation("org.tomlj:tomlj:1.1.1")
             // Upgrade the WebView's old 2.5.0 transitive dependencies to the stable Maven Central release.
             implementation("org.jogamp.gluegen:gluegen-rt:2.6.0")
             implementation("org.jogamp.jogl:jogl-all:2.6.0")
@@ -174,6 +177,7 @@ compose.desktop {
         // A packaged app gets no shell environment, so the release URL and product are baked in.
         releaseProduct?.let { jvmArgs += "-Dgamero.product=$it" }
         releaseWebUrl?.let { jvmArgs += "-Dgamero.webUrl=$it" }
+        if (releaseBuild) jvmArgs += "-Dgamero.release=true"
 
         buildTypes.release.proguard {
             // Shrink only, and keep names: KCEF, JCEF and the WebView bridge use reflection.
@@ -211,8 +215,12 @@ compose.desktop {
     }
 }
 
+// Development launches (Gradle run tasks and the local jpackage prototypes) are marked, so features gated to
+// development builds may turn on; release packaging uses compose.desktop's jvmArgs and is never marked.
+val developmentJvmOptions = listOf("-Dgamero.dev=true")
+
 // Required by the existing KCEF desktop WebView implementation.
-tasks.withType<JavaExec>().configureEach { jvmArgs(desktopAddOpens) }
+tasks.withType<JavaExec>().configureEach { jvmArgs(desktopAddOpens + developmentJvmOptions) }
 
 val jvmMainCompilation = kotlin.targets.getByName("jvm").compilations.getByName("main")
 
@@ -235,9 +243,10 @@ val runtimeJarNames = providers.provider { requireNotNull(jvmMainCompilation.run
     .filter { it.extension == "jar" }.sortedBy { it.absolutePath }
     .mapIndexed { index, file -> file to "$index-${file.name}" }.toMap() }
 
-// desktopAddOpens, one option per line, for the jpackage scripts (scripts/dev-env.sh reads it).
+// desktopAddOpens and the development marker, one option per line, for the local jpackage scripts
+// (scripts/dev-env.sh reads it). tools/build-release.sh packages through compose.desktop instead.
 val desktopJvmOptions = tasks.register("desktopJvmOptions") {
-    val options = desktopAddOpens
+    val options = desktopAddOpens + developmentJvmOptions
     val output = layout.buildDirectory.file("desktop-app/jvm-options.txt")
     inputs.property("options", options)
     outputs.file(output)

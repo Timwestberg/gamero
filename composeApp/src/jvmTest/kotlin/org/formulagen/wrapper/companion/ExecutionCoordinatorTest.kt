@@ -138,4 +138,45 @@ class ExecutionCoordinatorTest {
             assertEquals(record, journal.read(record.request.id))
         }
     }
+
+    @Test fun aRecordWithoutMemoryKeepsTheShapeAnOlderCompanionReads() {
+        val dir = Files.createTempDirectory("journal")
+        val task = request()
+        ExecutionJournal(dir, host).use { it.prepare(task) }
+        val text = Files.readString(dir.resolve("${task.id}.json"))
+        assertFalse(listOf("recalledMemory", "rawPrompt", "choice").any(text::contains))
+        // A record an older companion wrote reads back unchanged.
+        val older = """{"request":{"id":"${task.id}","hostId":"$host","prompt":"${task.prompt}","context":"Ada"},"claimId":"${UUID.randomUUID()}","phase":"PREPARED","result":null}"""
+        Files.writeString(dir.resolve("${task.id}.json"), older)
+        ExecutionJournal(dir, host).use { assertEquals(task, it.read(task.id)?.request) }
+    }
+
+    @Test fun recalledMemoryAndMemoryJobsStayWithinTheirLimits() {
+        ExecutionJournal(Files.createTempDirectory("journal"), host).use { journal ->
+            val low = ProviderChoice("runtime-default", "low")
+            fun request(recalled: String? = null, raw: Boolean = false, choice: ProviderChoice? = null, context: String = "") =
+                ExecutionRequest(UUID.randomUUID().toString(), host, "Extract", context, recalled, raw, choice)
+            val recalled = journal.prepare(request(recalled = "n".repeat(ExecutionRequest.MAX_RECALLED_MEMORY_CHARS)))
+            assertEquals(recalled, journal.read(recalled.request.id))
+            assertFails { journal.prepare(request(recalled = "n".repeat(ExecutionRequest.MAX_RECALLED_MEMORY_CHARS + 1))) }
+            assertFails { journal.prepare(request(recalled = "")) }
+            val job = journal.prepare(request(raw = true, choice = low))
+            assertEquals(job, journal.read(job.request.id))
+            assertFails { ProviderChoice("-c", "low") }
+            assertFails { ProviderChoice("runtime-default", "max") }
+            assertFails { ProviderChoice("m".repeat(ProviderChoice.MAX_MODEL_CHARS + 1), "low") }
+            assertEquals("m".repeat(ProviderChoice.MAX_MODEL_CHARS), ProviderChoice("m".repeat(ProviderChoice.MAX_MODEL_CHARS), "xhigh").model)
+            // A raw prompt, such as a memory job's input, runs alone.
+            assertFails { journal.prepare(request(raw = true, choice = low, context = "Ada")) }
+            assertFails { journal.prepare(request(raw = true, recalled = "notes")) }
+        }
+    }
+
+    @Test fun aRecordWithAnInvalidChoiceFailsClosed() {
+        val dir = Files.createTempDirectory("journal")
+        val id = UUID.randomUUID().toString()
+        val record = """{"request":{"id":"$id","hostId":"$host","prompt":"Extract","rawPrompt":true,"choice":{"model":"--config","effort":"low"}},"claimId":"${UUID.randomUUID()}","phase":"PREPARED","result":null}"""
+        Files.writeString(dir.resolve("$id.json"), record)
+        ExecutionJournal(dir, host).use { journal -> assertFails { journal.read(id) } }
+    }
 }

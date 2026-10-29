@@ -4,8 +4,8 @@ import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import kotlin.test.Test
 
 class IosParityTest {
-    /** Phase C of the host bridge plan ships these on iOS. */
-    private val pending = setOf("haptic.play", "lifecycle.pause", "lifecycle.resume")
+    /** Phase C of the host bridge plan ships the platform methods on iOS, and phone approvals ship `approvals.present`. */
+    private val pending = setOf("haptic.play", "lifecycle.pause", "lifecycle.resume", "approvals.present")
 
     @Test
     fun hovelOnIosMatchesTheParityTable() {

@@ -1,10 +1,74 @@
 package org.formulagen.wrapper.bridge
 
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+/** An AI runtime the host runs on the person's own subscription. The names are Hovel Brain's `runtimeId`. */
+@Serializable
+enum class RuntimeId(val providerId: RuntimeProviderId, val wireName: String) {
+    @SerialName("codex") CODEX(RuntimeProviderId.OPENAI, "codex"),
+    @SerialName("claude-code") CLAUDE_CODE(RuntimeProviderId.ANTHROPIC, "claude-code"),
+    @SerialName("grok-build") GROK_BUILD(RuntimeProviderId.XAI, "grok-build"),
+}
+
+/** Hovel Brain's provider: the company behind a runtime. [RuntimeId.providerId] is `RUNTIME_PROVIDERS`. */
+@Serializable
+enum class RuntimeProviderId {
+    @SerialName("openai") OPENAI,
+    @SerialName("anthropic") ANTHROPIC,
+    @SerialName("xai") XAI,
+}
+
+/** Reasoning levels advertised by installed runtimes; omitted effort uses the runtime default. */
+@Serializable
+enum class ModelEffort(val value: String) {
+    @SerialName("none") NONE("none"),
+    @SerialName("minimal") MINIMAL("minimal"),
+    @SerialName("low") LOW("low"),
+    @SerialName("medium") MEDIUM("medium"),
+    @SerialName("high") HIGH("high"),
+    @SerialName("xhigh") XHIGH("xhigh"),
+    @SerialName("max") MAX("max"),
+    @SerialName("ultra") ULTRA("ultra"),
+}
+
 /** Rules more than one capability uses. Mirrors event-contracts `host-bridge/shared.ts`. */
 object SharedRules {
+    /** The runtime vocabulary understood by legacy bridge calls. */
+    val LEGACY_RUNTIMES = setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE)
+    /** Most runtime names a page declares it can decode. Mirrors `CLIENT_RUNTIME_LIMIT`. */
+    const val CLIENT_RUNTIME_LIMIT = 8
+    /** One declared runtime name, known or a future one. Mirrors `CLIENT_RUNTIME_PATTERN`. */
+    const val CLIENT_RUNTIME_PATTERN = "^[a-z][a-z0-9-]{0,63}$"
+    private val CLIENT_RUNTIME = Regex(CLIENT_RUNTIME_PATTERN)
+    /** Client declarations allow bounded future names, never duplicate names. */
+    fun validClientRuntimes(names: List<String>): Boolean =
+        names.size <= CLIENT_RUNTIME_LIMIT && names.distinct().size == names.size && names.all(CLIENT_RUNTIME::matches)
+    /** Recognized names only; advertising a name does not offer its runtime. */
+    fun clientRuntimes(names: List<String>): Set<RuntimeId> = RuntimeId.entries.filter { it.wireName in names }.toSet()
+    /** The runtimes a page decodes: those it declared, or [LEGACY_RUNTIMES] for a page that predates declaring them. */
+    fun understood(names: List<String>?): Set<RuntimeId> {
+        if (names == null) return LEGACY_RUNTIMES
+        require(validClientRuntimes(names))
+        return clientRuntimes(names)
+    }
+
     /** The profile of a person who is not signed in. */
     const val LOCAL_PROFILE = "local"
     const val COMPANION_NAME_LIMIT = 40
+    /** Hovel Brain's sentinel model: the runtime's own default, or for Claude Code the profile's default Claude model. */
+    const val RUNTIME_DEFAULT_MODEL = "runtime-default"
+    /**
+     * A model as its runtime names it, or [RUNTIME_DEFAULT_MODEL]: one lower-case token of at most
+     * 128 characters. Native code hands it to Claude Code as a command-line argument, so it starts
+     * with a letter or digit and is never read as an option. Optional `[1m]` preserves Claude
+     * context selection. Mirrors `MODEL_ID_PATTERN`.
+     */
+    const val MODEL_ID_PATTERN = "^(?=.{1,128}$)[a-z0-9][a-z0-9._:/-]*(?:\\[1m\\])?$"
+    private val MODEL_ID = Regex(MODEL_ID_PATTERN)
+
+    /** Whether [value] is a model name by [MODEL_ID_PATTERN]. */
+    fun isModelId(value: String): Boolean = MODEL_ID.matches(value)
 
     /**
      * `local`, or a signed-in account's UUID in canonical lower case. Native code builds folder
