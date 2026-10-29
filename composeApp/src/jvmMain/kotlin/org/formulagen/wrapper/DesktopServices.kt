@@ -28,7 +28,10 @@ import org.formulagen.wrapper.bridge.ProjectMethods
 import org.formulagen.wrapper.bridge.DesktopHostContract
 import org.formulagen.wrapper.bridge.HostContractCapability
 import org.formulagen.wrapper.bridge.ProjectCapability
+import org.formulagen.wrapper.bridge.ConversationVoiceCapability
 import org.formulagen.wrapper.conversations.ConversationHost
+import org.formulagen.wrapper.conversations.ConversationVoiceSettings
+import org.formulagen.wrapper.conversations.DesktopConversationVoice
 import org.formulagen.wrapper.conversations.ConversationStore
 import org.formulagen.wrapper.conversations.ProjectFolderStore
 import org.formulagen.wrapper.approvals.ComposeDialogPresenter
@@ -51,6 +54,7 @@ import org.formulagen.wrapper.chat.DesktopChat
 import org.formulagen.wrapper.chat.DesktopSpeech
 import org.formulagen.wrapper.chat.DesktopHearing
 import org.formulagen.wrapper.chat.HearingRoute
+import org.formulagen.wrapper.chat.SharedHearing
 import org.formulagen.wrapper.chat.VoicePickerModel
 import java.nio.file.Files
 import org.formulagen.wrapper.voice.EmberAudio
@@ -111,25 +115,34 @@ internal class DesktopServices private constructor(
     val hostContract: DesktopHostContract,
     /** The embedded game; null without `HOVEL_GAME_PROJECT` or a window to host it. */
     val games: DesktopGameLauncher?,
+    /** Team chat's voice row. */
     val voicePicker: VoicePickerModel,
+    /** `conversationVoice.*`: voice in project conversations; null without conversations on this Mac. */
+    val conversationVoice: DesktopConversationVoice?,
+    /** The voice row of the conversation the voice serves. */
+    val conversationPicker: VoicePickerModel,
     private val owned: List<AutoCloseable>,
 ) : AutoCloseable {
     /** The product capability packs [product] registers with the bridge. */
     fun packs(product: String): List<CapabilityPack> =
         desktopProductPacks(product, companion?.let(::HovelCompanionCapability), chat, providers, pet, games, workspace, brain,
-            conversations?.projects, hostContract)
+            conversations?.projects, hostContract, conversationVoice)
 
     /**
-     * The page's document context ended: end its chat view, close its game and void a pending approval.
-     * Conversations keep running: they never belonged to the page.
+     * The page's document context ended: end its chat view, close its game, void a pending approval and let go of
+     * the microphone. Conversations keep running: they never belonged to the page.
      */
     fun invalidate() {
         hostContract.invalidate()
         companion?.invalidatePending()
         brain.invalidate()
         chat.invalidate()
+        conversationVoice?.pageEnded()
         games?.let { EventQueue.invokeLater(it::close) }
     }
+
+    /** Escape: interrupts or ends a voice conversation, a project conversation's first. False when none is on. */
+    fun endVoiceConversation(): Boolean = conversationVoice?.escape() == true || chat.endConversation()
 
     /** Close an open adventure before its window goes away; the game's layer belongs to that window. */
     fun closeGame() {
@@ -193,7 +206,8 @@ internal class DesktopServices private constructor(
                 val selfCheck = readSelfCheck(runCatching { Files.readString(selfCheckFile(environment)) }.getOrNull())
                 val choice = chooseDuplex(readDuplexRequest(environment), EmberAudio.tryLoad(environment), selfCheck)
                 val route = HearingRoute(choice, environment)
-                val hearing = DesktopHearing(openHearingEngine(environment["HOVEL_HEARING_MODEL"].orEmpty()), route::openMic)
+                // One microphone: team chat and conversations each hold a share, and only one captures at a time.
+                val hearing = own(SharedHearing(DesktopHearing(openHearingEngine(environment["HOVEL_HEARING_MODEL"].orEmpty()), route::openMic)))
                 val fillerFile = fillerChoiceFile(environment)
                 val chat = own(DesktopChat(
                     providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment), route::openLine), offered, work, voicePicker,
@@ -201,7 +215,7 @@ internal class DesktopServices private constructor(
                     fillerFile = fillerFile,
                     silenceMs = hearingSilenceMs(environment),
                     guardMs = hearingGuardMs(environment),
-                    hearing = hearing,
+                    hearing = hearing.user(),
                     route = route,
                     duplexChoice = choice,
                     bargeMs = hearingBargeMs(environment),
@@ -220,7 +234,16 @@ internal class DesktopServices private constructor(
                 // and every work approval races the phone through the runner's broker.
                 val grokRoot = ConversationHost.grokRoot(providerRoot)
                 val retained = { profile: String -> ConversationStore.bindingHandles(providerRoot, profile) }
-                val conversations = if (product == HOVEL_PRODUCT && System.getProperty("os.name").contains("Mac")) own(ConversationHost(
+                val conversationsHere = product == HOVEL_PRODUCT && System.getProperty("os.name").contains("Mac")
+                val conversationPicker = VoicePickerModel()
+                // Conversation voice has its own speaker; the microphone is the share team chat does not hold.
+                val conversationVoice = if (conversationsHere) own(DesktopConversationVoice(
+                    DesktopSpeech(desktopVoiceConfig(environment), route::openLine), hearing.user(), route,
+                    ConversationVoiceSettings(choice, readFillerSettings(environment, readSavedFillers(fillerFile)), fillerFile,
+                        hearingSilenceMs(environment), hearingGuardMs(environment), hearingBargeMs(environment)),
+                    conversationPicker, product,
+                )) else null
+                val conversations = if (conversationsHere) own(ConversationHost(
                     providerRoot, ProjectFolderStore(providerRoot, NativeFolderPicker { window }), providers, nativeDialogs, offered, working,
                     talk = {
                         listOfNotNull(codex?.let { CodexChatRuntime(providerRoot, it) }, claude?.let { ClaudeChatRuntime(it, checkNotNull(claudeSignIn)) },
@@ -233,6 +256,7 @@ internal class DesktopServices private constructor(
                                 GrokWorkRuntime(grokRoot, environment, it, approvals, NativeGrokWorkTrust(nativeDialogs), retained = retained)
                             })
                     },
+                    voice = conversationVoice,
                 )) else null
                 // Hovel tasks keep their read-only Codex workspace until step E removes them with the web task UI.
                 val taskWorkspace = environment["GAMERO_WORKSPACE"]?.let(Path::of)
@@ -244,7 +268,7 @@ internal class DesktopServices private constructor(
                     DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }
                 } else null
                 return DesktopServices(chat, brain, providers, pet, DesktopWorkspace(workspaces), dialogs, companion, conversations,
-                    DesktopHostContract(), games, voicePicker, owned.toList())
+                    DesktopHostContract(), games, voicePicker, conversationVoice, conversationPicker, owned.toList())
             } catch (error: Throwable) {
                 runCatching { closeInReverse(owned) }.exceptionOrNull()?.let(error::addSuppressed)
                 throw error
@@ -257,8 +281,7 @@ internal class DesktopServices private constructor(
  * The product packs a desktop host registers. Every desktop product has chat, providers, pet,
  * games and project folders; Hovel adds its companion and the companion projects capabilities:
  * `project` (a project's folders on this Mac), the `host.contract` handshake, `conversationVoice`
- * (`Unsupported` until voice moves to conversations) and phone `approvals`, which desktop never
- * supports. A missing implementation registers as `Unsupported`, so its methods answer
+ * (voice in conversations, on a Mac with them) and phone `approvals`, which desktop never supports. A missing implementation registers as `Unsupported`, so its methods answer
  * `unsupported` instead of `unknown-method`.
  */
 internal fun desktopProductPacks(
@@ -272,11 +295,12 @@ internal fun desktopProductPacks(
     brain: BrainCapability? = null,
     projects: ProjectCapability? = null,
     hostContract: HostContractCapability? = null,
+    conversationVoice: ConversationVoiceCapability? = null,
 ): List<CapabilityPack> = buildList {
     if (product == HOVEL_PRODUCT) {
         add(CompanionMethods.pack(supportedIfPresent(companion)))
         add(ProjectMethods.pack(supportedIfPresent(projects)))
-        add(ConversationVoiceMethods.pack(Capability.Unsupported))
+        add(ConversationVoiceMethods.pack(supportedIfPresent(conversationVoice)))
         add(ApprovalMethods.pack(Capability.Unsupported))
         add(HostContractMethods.pack(supportedIfPresent(hostContract)))
     }

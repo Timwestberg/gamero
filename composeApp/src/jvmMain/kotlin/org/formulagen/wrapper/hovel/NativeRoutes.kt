@@ -18,6 +18,9 @@ internal enum class NativeRoute(val method: String, val template: String) {
     /** `claimRequest` → `claimResponse`. */
     CONVERSATION_CLAIM("POST", "conversations/claim"),
 
+    /** `messageSend` → `conversationMessage`, queued: a heard voice turn, as the owner's message, in this Mac's projects only. */
+    MESSAGE_SEND("POST", "conversations/:conversationId/messages"),
+
     /** `messageCheckpointRequest` → the stored record. */
     MESSAGE_CHECKPOINT("POST", "messages/:messageId/checkpoints"),
 

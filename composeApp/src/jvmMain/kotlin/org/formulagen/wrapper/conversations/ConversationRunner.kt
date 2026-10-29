@@ -53,6 +53,8 @@ internal fun interface MessageEngine {
  *   while a claim is on its way applies once it lands; `approval.answered` closes the Mac's dialog when the phone
  *   answered first; `project.changed` publishes that project's folders. `mac-update-required` leaves the
  *   message queued on the server and says so in [status].
+ * - **Voice:** [wake] claims a conversation's next message at once, for a heard turn this Mac just sent, by the
+ *   same claim, journal and fencing as `work.available`; [replies] names who hears each claimed message's replies.
  */
 internal class ConversationRunner(
     private val api: ConversationApi,
@@ -75,6 +77,8 @@ internal class ConversationRunner(
     /** Waits between stream reconnects. */
     private val sleep: (Long) -> Unit = Thread::sleep,
     private val now: () -> Long = System::nanoTime,
+    /** Who hears each claimed message's replies on this Mac: voice, when it speaks them. */
+    private val replies: ReplyListeners = ReplyListeners.NONE,
 ) : AutoCloseable {
     private val sessions = ConcurrentHashMap<String, Session>()
     private val slots = Semaphore(maxRunning, true)
@@ -168,6 +172,14 @@ internal class ConversationRunner(
     }
 
     private fun later(task: () -> Unit) = runCatching { control.execute { runCatching(task) } }
+
+    /**
+     * Claim [conversationId]'s next message now, as `work.available` would, without waiting for the stream: a heard
+     * turn this Mac just sent runs at once. A lane already at work looks again when it is done.
+     */
+    fun wake(conversationId: String) {
+        if (!closed.get()) session(conversationId).poke()
+    }
 
     private fun session(conversationId: String): Session = sessions.computeIfAbsent(conversationId, ::Session)
 
@@ -326,6 +338,8 @@ internal class ConversationRunner(
             val cancel = CancelSignal()
             current = Running(messageId, cancel)
             val stoppedOnTheWay = stopPending.also { stopPending = false }
+            val listener = runCatching { replies.forClaim(claim, cancel::cancel) }
+                .onFailure { log(LogLevel.Warn, "conversations", "A claim's reply listener failed", it) }.getOrNull()
             try {
                 val claimed = claiming.copy(phase = ClaimPhase.CLAIMED, messageId = messageId, revision = claim.message.revision)
                 var entry = store.journal(claimed)
@@ -339,11 +353,12 @@ internal class ConversationRunner(
                     return
                 }
                 entry = store.journal(entry.copy(phase = ClaimPhase.LAUNCHING))
-                ClaimOutput(api, claim.claimId, messageId, onStopRequested = cancel::cancel).use { output ->
+                ClaimOutput(api, claim.claimId, messageId, onStopRequested = cancel::cancel, listener = listener).use { output ->
                     launch(entry, claim, output, cancel)
                 }
             } finally {
                 current = null
+                listener?.let { runCatching(it::ended) }
             }
         }
 

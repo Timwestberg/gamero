@@ -121,6 +121,7 @@ class ServerContractRunTest {
                     buildJsonObject {}
                 }
                 "messageDelta" -> { expect("replyDeltaRequest"); buildJsonObject { put("relayed", true) } }
+                "messageSend" -> { expect("messageSend"); value("message.queued") }
                 "artifactText" -> if (exchange.requestURI.query == "cursor=0") value("artifactText.page") else value("artifactText.last")
                 "projectRead" -> value("project")
                 "projectFolders" -> { expect("projectFoldersSave"); value("project") }
@@ -152,11 +153,17 @@ class ServerContractRunTest {
                 eventually("the message settled and the lane looked again") {
                     claims.get() >= 2 && seen.any { (route, body) -> route == "messageProgress" && body?.get("state")?.jsonPrimitive?.content == "answered" }
                 }
+                // A heard voice turn goes out on the server's own route, and its conversation is claimed again at once.
+                val heard = heardTurns(api, runner)
+                heard.send(conversationId, id(), "What time is it?")
+                val before = claims.get()
+                heard.claimNow(conversationId)
+                eventually("the heard turn's conversation was claimed at once") { claims.get() > before }
             }
             assertEquals(emptyList(), violations)
             val called = seen.map { it.first }.toSet()
             assertTrue(called.containsAll(setOf("heartbeat", "stream", "conversationClaim", "messageProgress", "messageCheckpoint",
-                "messageDelta", "artifactText", "projectFolders")), "routes called: $called")
+                "messageDelta", "artifactText", "projectFolders", "messageSend")), "routes called: $called")
             val reply = seen.mapNotNull { (route, body) -> body?.takeIf { route == "messageCheckpoint" }?.getValue("checkpoint")?.jsonObject }
                 .last { it.getValue("kind").jsonPrimitive.content == "message.appended" }
             assertEquals("Sign-in is on its way.", reply.getValue("message").jsonObject.getValue("text").jsonPrimitive.content)

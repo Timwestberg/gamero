@@ -369,6 +369,63 @@ The server expiry allows three dialog timeouts, since dialogs show one at a time
 and the Mac withdraws an approval itself when its dialog ends unanswered. Folder
 trust stays a Mac-only dialog.
 
+### Voice
+
+Mac voice runs in project conversations through `conversationVoice.*`
+(`DesktopConversationVoice`). The talk loop is the one team chat uses:
+`chat/TalkLoop.kt` holds the hands-free state machine, fillers, barge-in, the
+reply spoken sentence by sentence through `SentenceCursor`, dictation and the
+latency marks, and its host is the conversation. `DesktopChat` hosts the same
+loop for team chat until step E removes it.
+
+- **One conversation at a time.** `VoiceConversation` is bound to one
+  conversation id. A page's action moves the voice to the conversation it
+  names, unless Talk or dictation is on in another; the answer then names the
+  conversation the voice serves, and the page shows its own controls as idle.
+- **A heard turn** is decided as in team chat (empty text and noise under
+  240 ms send nothing; a reply in progress ignores it) and posted, off the
+  lock, as the owner's message through `POST conversations/:id/messages`
+  (`messageSend`, at most 16,000 characters, no inputs). An unreachable server
+  is tried twice more with the same id; a 403 or 404 says "Talk works in
+  conversations whose project runs on this Mac.". After the post the runner
+  claims the conversation's next message at once (`ConversationRunner.wake`),
+  with the same claim, journal and fencing as `work.available`. A turn not
+  claimed within 30 seconds (this Mac is busy) lets Talk listen again; it
+  still runs when it is claimed.
+- **The reply in progress** is the claimed message, from its claim to its end
+  (`ReplyListeners`, asked once the claim lands). Its main-conversation
+  coordinator replies are spoken as they stream (`ClaimOutput.delta` and
+  `ClaimOutput.wrote`, before either reaches the server) when the message was
+  heard, Talk is on, or the conversation's `speak` is on; never while the page
+  dictates. A non-streamed coordinator message (a question, a delegation's
+  announcement) is spoken whole. Threads are never spoken. A claimed message
+  of a conversation the voice does not serve is read aloud only when that
+  conversation's `speak` is on and nothing is in progress, and the voice then
+  serves it; the first reply keeps the speaker.
+- **Barge-in and ending Talk** flush the speaker and stop the message as the
+  person's Stop does (it settles `stopped`). A heard turn stopped before its
+  claim lands is stopped on arrival and never runs.
+- **The microphone** is one `SharedHearing`: team chat and conversations each
+  hold a share, and only one captures at a time. The other is refused with
+  "The microphone is in use. Try again in a moment.".
+- **Native controls:** Escape interrupts or ends the served conversation's
+  Talk first, then team chat's. The Kokoro voice row shows the served
+  conversation in Hovel too (its page has no voice choice or filler toggle),
+  with the Talk icon hidden once the page owns Talk. Conversation voice has its
+  own speaker. The voice and filler choices are saved under `~/.gamero`, so team
+  chat picks them up at the next launch.
+- **The page going away** lets go of the microphone and stops speaking; the
+  conversation's messages keep running.
+
+Latency, measured hermetically (`ConversationVoiceLatencyTest`, an instant
+provider and a fake server): endpoint to the first sentence at the speaker is
+about 1 ms in team chat and about 35 ms in a conversation. The difference is
+the claim journal's four durable writes before the provider turn (claiming,
+claimed, launching, running), each a file and folder sync. A real server adds
+three round trips (send, claim, running) before the provider's own first
+token. The log lines are `latency endpoint_to_posted_ms` and
+`latency endpoint_to_claimed_ms`, beside team chat's stage latencies.
+
 ### `host.contract`
 
 `DesktopHostContract` answers the page's contract with `HovelContract.CURRENT`
@@ -488,7 +545,12 @@ after quitting, final and update-required refusals, a refusal mid-run, expiry,
 reconnects and the idle watchdog, lane eviction), `CoordinatorEngineTest`
 (direct streaming, delegation and threads, workflow returns, `THREAD_REPLY` and
 the newer thread revision, Stop, quitting, retry review, the outbox, whole input
-text, crash recovery of threads, context folders), `RemoteApprovalsTest` (races,
+text, crash recovery of threads, context folders), `VoiceConversationTest`
+(a heard turn posted, claimed at once and spoken sentence by sentence, the
+mic held while thinking, barge-in and ending Talk stopping the message, a turn
+stopped before its claim, `speak`, threads never spoken, refusals and retries,
+dictation, one microphone and one conversation at a time, the voice row and
+the page going away), `ConversationVoiceLatencyTest`, `RemoteApprovalsTest` (races,
 refused closes and late answers), `PresentApprovalTest`, `ProjectFoldersTest`,
 `ContextFoldersTest`, `ConversationStoreTest` and the wire tests.
 `SharedCoordinatorRulesTest` pins the frozen brain's protocol and the shared

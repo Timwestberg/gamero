@@ -131,6 +131,10 @@ add('progress.reconciliation', 'messageProgress', c.messageProgress, {
   state: 'reconciliation-required'
 });
 
+// A heard voice turn the Mac sends as the owner's message, and the queued message the server answers.
+add('messageSend.heard', 'messageSend', c.messageSend, { id: ids.message, inputs: [], text: 'What time is it?', threadId: null });
+add('message.queued', 'conversationMessage', c.conversationMessage, s.sent);
+
 add('approval.answeredByPhone', 'agentApproval', c.agentApproval, {
   ...s.openApproval,
   answer: { by: 'phone', deviceId: ids.computer, option: 'deny' },

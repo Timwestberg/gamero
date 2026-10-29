@@ -42,10 +42,11 @@ class ConversationRunnerTest {
     private val engine = Engine()
     private val publisher = ProjectFolderPublisher(folders, server, account, server.hostId) { emptyList() }
 
-    /** A runner on this test's server, store and engine; [heartbeat] builds each beat. */
-    private fun runner(now: () -> Long = System::nanoTime, heartbeat: () -> HostHeartbeat = { beat }) = ConversationRunner(server, store, engine,
+    /** A runner on this test's server, store and engine; [heartbeat] builds each beat, and [replies] hears each claim. */
+    private fun runner(now: () -> Long = System::nanoTime, heartbeat: () -> HostHeartbeat = { beat },
+        replies: ReplyListeners = ReplyListeners.NONE) = ConversationRunner(server, store, engine,
         RemoteApprovals(NativeDialogs(Screen()), server, server.hostId), folders, publisher, heartbeat, { heartbeats += it }, { statuses += it },
-        heartbeatEvery = 50.milliseconds, firstBackoff = 10.milliseconds, maxBackoff = 40.milliseconds, now = now)
+        heartbeatEvery = 50.milliseconds, firstBackoff = 10.milliseconds, maxBackoff = 40.milliseconds, now = now, replies = replies)
 
     private val runner = runner()
 
@@ -71,6 +72,49 @@ class ConversationRunnerTest {
         assertEquals(listOf(2L, 3L), progress.map { it.expectedRevision }, "each report against the revision the last one made")
         eventually("a settled claim leaves nothing journaled") { store.pendingClaims().isEmpty() }
         eventually("it looks once more and finds nothing") { server.claimRequests.size >= 3 }
+    }
+
+    @Test fun wakeClaimsAConversationAtOnceWithoutWaitingForTheStream() {
+        server.streamFailures = Int.MAX_VALUE
+        runner.start()
+        val talk = TestConversation()
+        val first = queue(talk, "Heard")
+        runner.wake(talk.id)
+        eventually { server.settled(first) == MessageState.ANSWERED }
+        assertFalse(runner.connected, "no stream was ever open")
+        val progress = server.progress.filter { it.claimedMessageId == first }.map { it.state }
+        assertEquals(listOf(MessageState.RUNNING, MessageState.ANSWERED), progress, "the same claim, journal and fencing as work.available")
+        eventually("nothing journaled") { store.pendingClaims().isEmpty() }
+    }
+
+    @Test fun aClaimsListenerHearsItsMainRepliesAndCanStopItBeforeItRuns() {
+        val heard = CopyOnWriteArrayList<String>()
+        val replies = ReplyListeners { claim, stop ->
+            if (claim.message.text == "Stop me") { stop(); null } else object : ReplyListener {
+                override fun delta(replyId: String, text: String) { heard += "delta $replyId $text" }
+                override fun appended(replyId: String, text: String) { heard += "appended $replyId $text" }
+                override fun ended() { heard += "ended" }
+            }
+        }
+        val thread = id()
+        engine.behave = { _, output, _ ->
+            output.delta("main", null, "Hel")
+            output.delta("work", thread, "In the thread")
+            output.wrote(MessageCheckpoint.MessageAppended(MessageAppend(MessageAuthor.SPECIALIST, "work", null, "In the thread", thread)))
+            output.wrote(MessageCheckpoint.MessageAppended(MessageAppend(MessageAuthor.SYSTEM, id(), null, "Paused.", null)))
+            output.wrote(MessageCheckpoint.MessageAppended(MessageAppend(MessageAuthor.COORDINATOR, "main", null, "Hello.", null)))
+            MessageState.ANSWERED
+        }
+        runner(replies = replies).use { listening ->
+            listening.start()
+            val talk = TestConversation()
+            val stopped = queue(talk, "Stop me")
+            val ran = queue(talk, "Hi")
+            listening.wake(talk.id)
+            eventually { server.settled(stopped) == MessageState.STOPPED && server.settled(ran) == MessageState.ANSWERED }
+        }
+        assertEquals(listOf("Hi"), engine.runs.map { it.message.text }, "a message its listener stopped never ran")
+        assertEquals(listOf("delta main Hel", "appended main Hello.", "ended"), heard, "only the main conversation's coordinator is heard")
     }
 
     @Test fun conversationsRunInParallelUpToTheCap() {

@@ -48,7 +48,7 @@ private class DesktopResources : AutoCloseable {
     var services: DesktopServices? = null
     private var keyboardClient: CefClient? = null
     private val keyboard = BrowserEditKeyboard(browser::get, windowActive::get, onEscape = {
-        services?.chat?.endConversation() == true
+        services?.endVoiceConversation() == true
     })
 
     fun attachBrowser(target: org.cef.browser.CefBrowser) {
@@ -117,7 +117,7 @@ fun main(args: Array<String>) {
                     title = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME,
                     onPreviewKeyEvent = { event ->
                         if (event.key == Key.Escape && event.type == KeyEventType.KeyDown) {
-                            resources.services?.chat?.endConversation()
+                            resources.services?.endVoiceConversation()
                             true
                         } else false
                     },
@@ -253,12 +253,24 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                 Text("Companion conversations run on a Mac.", Modifier.padding(8.dp))
             }
             val picker by services.voicePicker.state
-            KokoroVoicePicker(
-                picker,
-                services.chat::chooseSpokenVoice,
-                services.chat::converseClick,
-                services.chat::toggleFillers,
-            )
+            val conversationPicker by services.conversationPicker.state
+            val conversationVoice = services.conversationVoice
+            // The served conversation's row first; team chat's shows only in the Gamero catalog.
+            if (conversationVoice != null && conversationPicker.visible) {
+                KokoroVoicePicker(
+                    conversationPicker,
+                    conversationVoice::chooseSpokenVoice,
+                    conversationVoice::converseClick,
+                    conversationVoice::toggleFillers,
+                )
+            } else {
+                KokoroVoicePicker(
+                    picker,
+                    services.chat::chooseSpokenVoice,
+                    services.chat::converseClick,
+                    services.chat::toggleFillers,
+                )
+            }
             App(url, enableLegacyBridge = false, webViewFactory = ::persistentDesktopBrowser, onWebViewCreated = { browser ->
                 resources.attachBrowser(browser)
                 resources.bridge?.close()

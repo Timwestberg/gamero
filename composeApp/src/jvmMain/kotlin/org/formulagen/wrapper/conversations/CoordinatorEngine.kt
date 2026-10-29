@@ -26,7 +26,8 @@ import org.formulagen.wrapper.storage.sha256
  *   the thread, or delegates a new task, and says which with a coordinator note.
  *
  * Every visible step is a checkpoint, kept in the record's outbox until the server stores it; [run] answers
- * the state that settles the message. Work dialogs (start of work, stages, the resume review, provider
+ * the state that settles the message. A coordinator reply in the main conversation also reaches the claim's
+ * listener as it streams and once written ([ClaimOutput.wrote]), so this Mac can speak it. Work dialogs (start of work, stages, the resume review, provider
  * permissions) race the phone through [approvals]. Provider turns go through [turns].
  */
 internal class CoordinatorEngine(
@@ -432,12 +433,13 @@ internal class CoordinatorEngine(
         fun change(rerunOf: String? = null, entries: Map<String, String> = emptyMap(), live: Boolean = true,
             adjust: (ConversationRecord) -> ConversationRecord = { it }, transform: (BrainRecord) -> BrainRecord) {
             if (live) call.live()
-            synchronized(this) {
+            val fresh = synchronized(this) {
                 val before = record
                 val revised = before.copy(brain = transform(before.brain).nextRevision()).withThreads(rerunOf, ::uuid)
                 val next = adjust(revised).withThreadStates()
-                save(next.copy(outbox = next.outbox + checkpoints(before, next, entries)))
+                checkpoints(before, next, entries).also { save(next.copy(outbox = next.outbox + it)) }
             }
+            fresh.forEach(out::wrote)
             flush(strict = true)
         }
 
@@ -484,6 +486,7 @@ internal class CoordinatorEngine(
         /** Keep [checkpoint] in the outbox and send what the outbox holds. */
         fun emit(checkpoint: MessageCheckpoint) {
             update { it.copy(outbox = it.outbox + checkpoint) }
+            out.wrote(checkpoint)
             flush(strict = true)
         }
 

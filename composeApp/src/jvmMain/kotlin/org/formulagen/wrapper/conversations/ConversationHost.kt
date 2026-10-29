@@ -14,10 +14,19 @@ import org.formulagen.wrapper.closeInReverse
 import org.formulagen.wrapper.hovel.HostConnection
 
 /**
+ * What this Mac's voice needs from the running account: where heard turns go ([connected], null once the
+ * runner stops), and who hears each claimed message's replies ([forClaim], as [ReplyListeners]).
+ */
+internal interface ConversationVoiceLink : ReplyListeners {
+    fun connected(turns: HeardTurns?)
+}
+
+/**
  * Builds this Mac's conversation side for a registered account ([start]) and owns what outlives it:
  * the project folders and the `project.*` capability ([projects]), which needs the account the runner
  * serves. The runner gets runtime instances of its own ([talk], [work]), so team chat ending a page's
- * work never ends a conversation's, and every work approval goes through [RemoteApprovals].
+ * work never ends a conversation's, and every work approval goes through [RemoteApprovals]. [voice], when
+ * this Mac has conversation voice, is linked to each runner it starts.
  */
 internal class ConversationHost(
     private val providerRoot: Path,
@@ -29,6 +38,7 @@ internal class ConversationHost(
     private val working: Set<RuntimeId>,
     private val talk: () -> List<ChatRuntime>,
     private val work: (ApprovalBroker) -> List<WorkRuntime>,
+    private val voice: ConversationVoiceLink? = null,
 ) : AutoCloseable {
     @Volatile private var running: Running? = null
     private val publishing = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-project-folders"))
@@ -56,12 +66,15 @@ internal class ConversationHost(
             val publisher = ProjectFolderPublisher(folders, api, registration.ownerId, registration.id, engine::readableBy)
             val directory = HostDirectory(providers, registration.ownerId, registration.id, offered,
                 working.intersect(workRuntimes.map { it.id }.toSet()), connection.features, connection.providerState)
-            val runner = ConversationRunner(api, store, engine, approvals, folders, publisher, directory::heartbeat, connection.heartbeat, connection.status)
+            val runner = ConversationRunner(api, store, engine, approvals, folders, publisher, directory::heartbeat, connection.heartbeat, connection.status,
+                replies = voice ?: ReplyListeners.NONE)
             owned += runner
             running = Running(registration.ownerId, publisher, engine::readableBy)
             runner.start()
+            voice?.connected(heardTurns(api, runner))
             return AutoCloseable {
                 running = null
+                voice?.connected(null)
                 closeInReverse(owned)
             }
         } catch (error: Throwable) {
