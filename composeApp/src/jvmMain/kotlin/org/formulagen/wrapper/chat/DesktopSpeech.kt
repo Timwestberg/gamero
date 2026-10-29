@@ -45,6 +45,13 @@ internal interface ChatSpeech : AutoCloseable {
     fun fillerPcm(voiceId: String, line: String): FillerPcm? = null
     /** Play a cached clip. [onDone] runs after the device finishes or is flushed, off the caller thread. */
     fun playClip(pcm: ByteArray, sampleRate: Int, onDone: () -> Unit = {}) {}
+    /**
+     * Append one sentence to the live reply. False when this speaker only speaks a finished reply.
+     * Does not flush and does not bump the playback generation.
+     */
+    fun enqueue(piece: String): Boolean = false
+    /** The live reply has no more sentences. Playback drains what is already queued. */
+    fun endStream() {}
 }
 
 /**
@@ -65,6 +72,11 @@ internal class DesktopSpeech(
     private var playQueue: LinkedBlockingQueue<PlayChunk>? = null
     private val playbackEnd = PlayChunk(ByteArray(0), 0)
     private var generation = 0
+    private var streamTicket = -1
+    private var streamIndex = 0
+    private var enqueueStartedNs = 0L
+    /** Milliseconds from the first [enqueue] of a reply to the speaker starting. -1 until then. */
+    @Volatile var enqueueToSpeakerMs: Long = -1
     private var closed = false
     private val fillerCache = HashMap<String, Map<String, FillerPcm>>()
     private var onVoice: (() -> Unit)? = null
@@ -286,6 +298,80 @@ internal class DesktopSpeech(
 
     /** Stop the device immediately, even while an earlier synthesis is finishing. */
     override fun stop() = synchronized(gate) { stopLocked() }
+
+    override fun enqueue(piece: String): Boolean {
+        return synchronized(gate) {
+            if (closed || piece.isBlank() || voiceConfig == null || unavailable != null) return@synchronized false
+            ensureStreamLocked()
+            val ticket = generation
+            val queue = playQueue ?: return@synchronized false
+            val settings = voiceConfig ?: return@synchronized false
+            val index = streamIndex
+            streamIndex += 1
+            if (index == 0) enqueueStartedNs = System.nanoTime()
+            worker.execute { streamPiece(piece, ticket, queue, settings, index) }
+            true
+        }
+    }
+
+    override fun endStream() {
+        synchronized(gate) {
+            val queue = playQueue ?: return
+            val ticket = generation
+            if (streamTicket != ticket) return
+            worker.execute {
+                if (synchronized(gate) { ticket == generation && playQueue === queue }) queue.offer(playbackEnd)
+            }
+        }
+    }
+
+    /** Caller holds [gate]. A stream already open for this generation is left alone. */
+    private fun ensureStreamLocked() {
+        if (playQueue != null && streamTicket == generation) return
+        val ticket = generation
+        streamTicket = ticket
+        streamIndex = 0
+        enqueueToSpeakerMs = -1
+        val queue = LinkedBlockingQueue<PlayChunk>()
+        playQueue = queue
+        val settings = voiceConfig ?: return
+        touchState(ChatVoice(VoiceState.PREPARING))
+        loggingDaemonThreads("hovel-voice-play").newThread {
+            playQueued(queue, ticket, settings, "")
+        }.also { it.start() }
+    }
+
+    private fun streamPiece(
+        piece: String,
+        ticket: Int,
+        queue: LinkedBlockingQueue<PlayChunk>,
+        settings: VoiceConfig,
+        index: Int,
+    ) {
+        val voice = synchronized(gate) {
+            if (closed || ticket != generation) return
+            val active = voiceConfig ?: return
+            engine ?: EmberVoice(openEngine(active), active).also { engine = it }
+        }
+        try {
+            voice.speakStreaming(piece) { samples, rate ->
+                if (synchronized(gate) { closed || ticket != generation }) return@speakStreaming false
+                if (index > 0 && settings.resolvedSentenceGapMs > 0 && rate > 0) {
+                    queue.put(PlayChunk(ByteArray(rate * settings.resolvedSentenceGapMs / 1000 * 2), rate))
+                }
+                queue.put(PlayChunk(pcm16(samples), rate))
+                true
+            }
+        } catch (error: Throwable) {
+            if (error is VirtualMachineError) throw error
+            val cancelled = error is SpeechCancelled
+            synchronized(gate) {
+                if (!cancelled && ticket == generation && !closed) {
+                    touchState(unavailable ?: ChatVoice(VoiceState.ERROR, "Voice playback failed. Your text reply is still available."))
+                }
+            }
+        }
+    }
     /** A voice file edited between sentences is picked up here. An env pin stays put. */
     private fun refreshKokoroChoiceLocked(): EmberVoice? {
         val current = voiceConfig ?: return null
@@ -338,6 +424,8 @@ internal class DesktopSpeech(
                         if (stopped()) break
                         current.start()
                         started = true
+                        val startedNs = enqueueStartedNs
+                        if (startedNs != 0L) enqueueToSpeakerMs = (System.nanoTime() - startedNs) / 1_000_000
                         synchronized(gate) {
                             if (ticket == generation) {
                                 touchState(ChatVoice(
@@ -365,7 +453,14 @@ internal class DesktopSpeech(
             if (live) runCatching { player?.drain() }
             runCatching { player?.stop() }
             runCatching { player?.close() }
-            synchronized(gate) { if (line === player) line = null }
+            synchronized(gate) {
+                if (line === player) line = null
+                if (ticket == generation && streamTicket == ticket && playQueue === queue && !closed) {
+                    playQueue = null
+                    streamTicket = -1
+                    touchState(unavailable ?: ChatVoice())
+                }
+            }
         }
     }
 
@@ -380,10 +475,34 @@ internal class DesktopSpeech(
 
 private const val MAX_SPOKEN_CHARS = 1200
 
-/** Keep code blocks and long machine output out of spoken replies. */
-internal fun speechText(text: String): String = text.replace(Regex("```[\\s\\S]*?```"), "Code is shown in the chat.")
-    .replace(Regex("\\[([^]]+)\\]\\([^)]+\\)"), "$1").replace("`", "").replace("**", "")
-    .take(MAX_SPOKEN_CHARS).trim()
+/** Keep code blocks, list markers, and long machine output out of spoken replies. */
+internal fun speechText(text: String): String = textBeforeUnclosedFence(text)
+    .replace(Regex("```[\\s\\S]*?```"), "Code is shown in the chat.")
+    .replace(Regex("\\[([^]]+)\\]\\([^)]+\\)"), "$1")
+    .replace(Regex("(?m)^[ \\t]{0,3}#{1,6}[ \\t]+"), "")
+    .replace(Regex("(?m)^[ \\t]{0,3}(?:[-*+]|\\d+[.)])[ \\t]+"), "")
+    .replace("`", "")
+    .replace("**", "")
+    .replace(Regex("[ \\t]*\\n+[ \\t]*"), " ")
+    .take(MAX_SPOKEN_CHARS)
+    .trim()
+
+/** An opening fence with no close is not spoken, so a half-written block stays in the bubble only. */
+internal fun textBeforeUnclosedFence(raw: String): String {
+    var fences = 0
+    var lastOpen = -1
+    var index = 0
+    while (index <= raw.length - 3) {
+        if (raw.startsWith("```", index)) {
+            fences += 1
+            if (fences % 2 == 1) lastOpen = index
+            index += 3
+        } else {
+            index += 1
+        }
+    }
+    return if (fences % 2 == 1 && lastOpen >= 0) raw.substring(0, lastOpen) else raw
+}
 
 /** Clamp invalid samples before writing little-endian signed PCM. */
 internal fun pcm16(samples: FloatArray): ByteArray = ByteArray(samples.size * 2).also { bytes ->

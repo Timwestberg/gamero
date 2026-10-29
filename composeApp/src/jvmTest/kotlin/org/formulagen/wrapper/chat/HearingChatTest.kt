@@ -6,6 +6,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
+import org.formulagen.wrapper.bridge.ChatEntry
 import org.formulagen.wrapper.bridge.ChatScope
 import org.formulagen.wrapper.bridge.ChatSend
 import org.formulagen.wrapper.bridge.ChatState
@@ -239,9 +240,10 @@ class ConverseSessionTest {
             desk.testingUtterance(HearingResult("again", speechMs = 500, decodeMs = 1.0))
             await { runtime.turns > turns }
             desk.converseClick()
-            assertEquals(TalkPhase.OFF, row.state.value.phase)
-            assertEquals(ChatState.CANCELLED, runBlocking { desk.snapshot(scope) }.state)
-            desk.endConversation()
+            assertEquals(TalkPhase.LISTENING, row.state.value.phase)
+            assertEquals(ChatState.READY, runBlocking { desk.snapshot(scope) }.state)
+            assertNull(runBlocking { desk.snapshot(scope) }.notice)
+            desk.converseClick()
             assertEquals(TalkPhase.OFF, row.state.value.phase)
         }
     }
@@ -412,6 +414,158 @@ class ConverseSessionTest {
     )
 }
 
+class StreamBargeTest {
+    private val scope = ChatScope("local", UUID.randomUUID().toString(), "Ember", UUID.randomUUID().toString())
+    private val member = TeamMember(RuntimeId.CODEX, SharedRules.RUNTIME_DEFAULT_MODEL)
+
+    @Test fun oddSplitsSpeakClosedSentencesBeforeTheReplyFinishes() = runBlocking {
+        val speech = StreamingSpeech()
+        val runtime = ScriptedRuntime()
+        val row = VoicePickerModel()
+        session(speech, runtime, row).use { desk ->
+            arm(desk, runtime, speech)
+            val turns = runtime.turns
+            desk.testingUtterance(HearingResult("go on", speechMs = 500, decodeMs = 1.0))
+            await { runtime.turns > turns }
+            runtime.partial("Hel")
+            runtime.partial("Hello. Wor")
+            assertEquals(listOf("Hello."), speech.pieces)
+            runtime.partial("Hello. World is here. And th")
+            assertEquals(listOf("Hello.", "World is here."), speech.pieces)
+            runtime.finish("Hello. World is here. And then some.")
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            assertEquals(listOf("Hello.", "World is here.", "And then some."), speech.pieces)
+            assertTrue(speech.ended)
+            val latency = checkNotNull(desk.stageLatency)
+            assertTrue(latency.endpointToSendMs in 0..80, "endpoint to send ${latency.endpointToSendMs}")
+            assertTrue(latency.sendToFirstTokenMs >= 0)
+            assertTrue(latency.firstTokenToFirstAudioMs >= 0)
+            println("STAGE endpoint_to_send_ms=${latency.endpointToSendMs} send_to_first_token_ms=${latency.sendToFirstTokenMs} first_token_to_first_audio_ms=${latency.firstTokenToFirstAudioMs}")
+        }
+    }
+
+    @Test fun anInterruptMidSentenceThenTheNextTurn() = runBlocking {
+        val speech = StreamingSpeech()
+        val runtime = ScriptedRuntime()
+        val row = VoicePickerModel()
+        val order = java.util.concurrent.CopyOnWriteArrayList<String>()
+        speech.onStop = { order += "flush" }
+        runtime.onStop = { order += "cancel" }
+        session(speech, runtime, row).use { desk ->
+            arm(desk, runtime, speech)
+            val turns = runtime.turns
+            desk.testingUtterance(HearingResult("interrupt me", speechMs = 500, decodeMs = 1.0))
+            await { runtime.turns > turns }
+            runtime.partial("Hello there friend. And more is still")
+            assertEquals(listOf("Hello there friend."), speech.pieces)
+            desk.converseClick()
+            await { order.size >= 2 && order.last() == "cancel" }
+            assertEquals("flush", order[order.lastIndex - 1])
+            assertEquals(TalkPhase.LISTENING, row.state.value.phase)
+            assertNull(runBlocking { desk.snapshot(scope) }.notice)
+            val reply = runBlocking { desk.snapshot(scope) }.messages.last() as ChatEntry.Assistant
+            assertEquals("Hello there friend. And more is still", reply.text)
+            val next = runtime.turns
+            desk.testingUtterance(HearingResult("next turn please", speechMs = 500, decodeMs = 1.0))
+            await { runtime.turns > next }
+            assertEquals("next turn please", runtime.lastText)
+        }
+    }
+
+    @Test fun escapeInterruptsAFillerAndListensAgain() = runBlocking {
+        val speech = StreamingSpeech()
+        val runtime = ScriptedRuntime()
+        val row = VoicePickerModel()
+        session(speech, runtime, row, fillers = FillerSettings(enabled = true, thresholdMs = 0)).use { desk ->
+            arm(desk, runtime, speech)
+            val turns = runtime.turns
+            desk.testingUtterance(HearingResult("think", speechMs = 500, decodeMs = 1.0))
+            await { runtime.turns > turns }
+            await { speech.fillerPlaying }
+            desk.endConversation()
+            assertFalse(speech.fillerPlaying)
+            assertTrue(speech.stopped)
+            assertEquals(TalkPhase.LISTENING, row.state.value.phase)
+            val next = runtime.turns
+            desk.testingUtterance(HearingResult("after the filler", speechMs = 400, decodeMs = 1.0))
+            await { runtime.turns > next }
+            assertEquals("after the filler", runtime.lastText)
+        }
+    }
+
+    @Test fun tenStreamingTurnsStayInOneSession() = runBlocking {
+        val speech = StreamingSpeech()
+        val runtime = ScriptedRuntime()
+        val row = VoicePickerModel()
+        session(speech, runtime, row).use { desk ->
+            arm(desk, runtime, speech)
+            repeat(10) { turn ->
+                val turns = runtime.turns
+                desk.testingUtterance(HearingResult("turn $turn", speechMs = 400, decodeMs = 1.0))
+                await { runtime.turns > turns }
+                runtime.partial("Yes $turn.")
+                runtime.finish("Yes $turn. Done.")
+                await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+                speech.settle()
+                await { row.state.value.phase == TalkPhase.LISTENING }
+            }
+            assertEquals(11, runtime.turns)
+            assertEquals(TalkPhase.LISTENING, row.state.value.phase)
+        }
+    }
+
+    @Test fun aProviderErrorMidStreamReturnsToListening() = runBlocking {
+        val speech = StreamingSpeech()
+        val runtime = ScriptedRuntime()
+        val row = VoicePickerModel()
+        session(speech, runtime, row).use { desk ->
+            arm(desk, runtime, speech)
+            val turns = runtime.turns
+            desk.testingUtterance(HearingResult("fail this", speechMs = 500, decodeMs = 1.0))
+            await { runtime.turns > turns }
+            runtime.partial("Hello. Still going")
+            runtime.fail(ChatFailure.Temporary)
+            await { row.state.value.phase == TalkPhase.LISTENING }
+            val reply = runBlocking { desk.snapshot(scope) }.messages.last() as ChatEntry.Assistant
+            assertTrue(reply.text.contains("Hello."))
+            val next = runtime.turns
+            desk.testingUtterance(HearingResult("recovered", speechMs = 500, decodeMs = 1.0))
+            await { runtime.turns > next }
+            assertEquals("recovered", runtime.lastText)
+            assertEquals(TalkPhase.THINKING, row.state.value.phase)
+        }
+    }
+
+    private fun arm(desk: DesktopChat, runtime: ScriptedRuntime, speech: StreamingSpeech) = runBlocking {
+        runtime.completeOnStart = true
+        desk.open(scope)
+        desk.send(send("Hello"))
+        await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+        speech.settle()
+        speech.pieces.clear()
+        speech.ended = false
+        desk.testingSession()
+        runtime.completeOnStart = false
+    }
+
+    private fun send(text: String) =
+        ChatSend(scope.profile, scope.companionId, scope.name, scope.sessionId, member, UUID.randomUUID().toString(), text, true)
+
+    private fun session(
+        speech: ChatSpeech,
+        runtime: ChatRuntime,
+        row: VoicePickerModel,
+        fillers: FillerSettings = FillerSettings(thresholdMs = 60_000),
+    ) = DesktopChat(
+        Files.createTempDirectory("stream-row"),
+        listOf(runtime),
+        speech,
+        voices = row,
+        fillers = fillers,
+        guardMs = 0,
+    )
+}
+
 class FillerWarmTest {
     @Test fun aCancelledWarmKeepsGoingForTheSelectedVoice() {
         var cancelled = false
@@ -472,6 +626,44 @@ private object IdleLine : PcmLine {
     override fun close() {}
 }
 
+private class StreamingSpeech : ChatSpeech {
+    val pieces = java.util.concurrent.CopyOnWriteArrayList<String>()
+    var ended = false
+    var stopped = false
+    var fillerPlaying = false
+    var onStop: () -> Unit = {}
+    private var voice = ChatVoice()
+    private var listener: (() -> Unit)? = null
+    override fun status() = voice
+    override fun onVoice(listener: () -> Unit) { this.listener = listener }
+    override fun speak(text: String) { voice = ChatVoice(VoiceState.SPEAKING) }
+    override fun stop() {
+        stopped = true
+        fillerPlaying = false
+        voice = ChatVoice()
+        onStop()
+    }
+    override fun close() {}
+    override fun kokoroActive() = true
+    override fun voiceChoices() = listOf(VoiceChoice("adam70-michael30", "Sam"))
+    override fun currentVoiceId() = "adam70-michael30"
+    override fun enqueue(piece: String): Boolean {
+        pieces += piece
+        voice = ChatVoice(VoiceState.SPEAKING)
+        return true
+    }
+    override fun endStream() { ended = true }
+    override fun fillerPcm(voiceId: String, line: String) = FillerPcm(line.encodeToByteArray(), 24000)
+    override fun playClip(pcm: ByteArray, sampleRate: Int, onDone: () -> Unit) {
+        fillerPlaying = true
+        voice = ChatVoice(VoiceState.SPEAKING)
+    }
+    fun settle() {
+        voice = ChatVoice()
+        listener?.invoke()
+    }
+}
+
 private class RowSpeech : ChatSpeech {
     private var voice = ChatVoice()
     private var listener: (() -> Unit)? = null
@@ -521,6 +713,8 @@ private class ScriptedRuntime(var completeOnStart: Boolean = false) : ChatRuntim
 
     override fun readiness(profile: String) = Readiness.Ready
 
+    var onStop: () -> Unit = {}
+
     override fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle {
         this.events = events
         lastText = turn.text
@@ -529,8 +723,15 @@ private class ScriptedRuntime(var completeOnStart: Boolean = false) : ChatRuntim
         events.accepted()
         if (completeOnStart) events.completed("Ready.", "conv")
         else started.countDown()
-        return TurnHandle { release.countDown() }
+        return TurnHandle {
+            onStop()
+            release.countDown()
+        }
     }
+
+    fun partial(text: String) { events?.partial(text) }
+
+    fun fail(failure: ChatFailure = ChatFailure.Temporary) { events?.failed(failure) }
 
     fun finish(text: String) {
         release.countDown()

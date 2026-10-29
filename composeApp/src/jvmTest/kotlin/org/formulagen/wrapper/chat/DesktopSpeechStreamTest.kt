@@ -93,6 +93,77 @@ class DesktopSpeechStreamTest {
     }
 
     @Test
+    fun anEnqueuedSentenceStartsBeforeTheNextOneIsSynthesized() {
+        val calls = AtomicInteger()
+        val secondEntered = CountDownLatch(1)
+        val releaseSecond = CountDownLatch(1)
+        val engine = object : PieceEngine {
+            override val sampleRate: Int = 24000
+            override fun usesFrameCeiling(): Boolean = false
+            override fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio {
+                val n = calls.incrementAndGet()
+                if (n >= 2) {
+                    secondEntered.countDown()
+                    assertTrue(releaseSecond.await(2, TimeUnit.SECONDS))
+                }
+                return PieceAudio(FloatArray(4800), 24000, 1.0, 1.0)
+            }
+            override fun release() {}
+        }
+        val started = CountDownLatch(1)
+        val line = object : PcmLine {
+            override fun start() { started.countDown() }
+            override fun write(pcm: ByteArray) {}
+            override fun drain() {}
+            override fun flush() {}
+            override fun stop() {}
+            override fun close() {}
+        }
+        DesktopSpeech(VoiceConfig(), { line }, { engine }).use { speech ->
+            assertTrue(speech.enqueue("Hello there."))
+            assertTrue(started.await(2, TimeUnit.SECONDS), "first sentence reached the speaker")
+            assertTrue(speech.enqueueToSpeakerMs in 0..280, "enqueue to speaker ${speech.enqueueToSpeakerMs}")
+            println("STAGE enqueue_to_speaker_ms=${speech.enqueueToSpeakerMs}")
+            speech.enqueue("This is the next sentence.")
+            assertTrue(secondEntered.await(2, TimeUnit.SECONDS), "the next sentence was synthesized while the first was playing")
+            releaseSecond.countDown()
+            speech.endStream()
+        }
+    }
+
+    @Test
+    fun stopFlushesWithinFiftyMilliseconds() {
+        val inWrite = CountDownLatch(1)
+        val flushed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val engine = object : PieceEngine {
+            override val sampleRate: Int = 24000
+            override fun usesFrameCeiling(): Boolean = false
+            override fun synthesize(text: String, maxFrames: Int, seed: Int) = PieceAudio(FloatArray(4800), 24000, 1.0, 1.0)
+            override fun release() {}
+        }
+        val line = object : PcmLine {
+            override fun start() {}
+            override fun write(pcm: ByteArray) {
+                inWrite.countDown()
+                while (!flushed.get()) Thread.sleep(5)
+            }
+            override fun drain() {}
+            override fun flush() { flushed.set(true) }
+            override fun stop() {}
+            override fun close() {}
+        }
+        DesktopSpeech(VoiceConfig(), { line }, { engine }).use { speech ->
+            speech.enqueue("Hello there friend.")
+            assertTrue(inWrite.await(2, TimeUnit.SECONDS))
+            val startedNs = System.nanoTime()
+            speech.stop()
+            val flushMs = (System.nanoTime() - startedNs) / 1_000_000
+            assertTrue(flushMs <= 50, "flush took ${flushMs}ms")
+            println("STAGE barge_flush_ms=$flushMs")
+        }
+    }
+
+    @Test
     fun stopDropsTheQueuedSentence() {
         val calls = AtomicInteger()
         val started = CountDownLatch(1)
