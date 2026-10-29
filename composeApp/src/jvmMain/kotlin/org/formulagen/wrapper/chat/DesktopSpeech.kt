@@ -336,9 +336,17 @@ internal class DesktopSpeech(
         playQueue = queue
         val settings = voiceConfig ?: return
         touchState(ChatVoice(VoiceState.PREPARING))
-        loggingDaemonThreads("hovel-voice-play").newThread {
+        val playback = loggingDaemonThreads("hovel-voice-play").newThread {
             playQueued(queue, ticket, settings, "")
-        }.also { it.start() }
+        }
+        try {
+            playback.start()
+        } catch (error: Throwable) {
+            playQueue = null
+            streamTicket = -1
+            touchState(ChatVoice())
+            if (error is VirtualMachineError) throw error
+        }
     }
 
     private fun streamPiece(
