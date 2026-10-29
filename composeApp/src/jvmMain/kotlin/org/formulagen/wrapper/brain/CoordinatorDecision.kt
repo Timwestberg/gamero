@@ -26,7 +26,7 @@ internal fun parseDecision(text: String, allowed: Set<String>): JsonObject {
         val limit = when (field) { "task" -> BrainLimits.STEP_INSTRUCTIONS; "reason", "explanation" -> BrainLimits.DESCRIPTION; else -> BrainLimits.OUTPUT }
         require(raw.isString && raw.content.isNotEmpty() && raw.content.length <= limit)
     }
-    if ("inputIds" in fields) require(value.getValue("inputIds").jsonArray.let { it.size <= BrainLimits.STEPS && it.all { item -> item.jsonPrimitive.isString && BrainRules.uuid(item.jsonPrimitive.content) } })
+    if ("inputIds" in fields) require(value.getValue("inputIds").jsonArray.let { it.size <= BrainLimits.INPUTS && it.all { item -> item.jsonPrimitive.isString && BrainRules.uuid(item.jsonPrimitive.content) } })
     if ("outcome" in fields) require(value.getValue("outcome").jsonPrimitive.content in setOf("ready", "changes-needed", "blocked"))
     if ("skipped" in fields) {
         val skipped = value.getValue("skipped").jsonArray

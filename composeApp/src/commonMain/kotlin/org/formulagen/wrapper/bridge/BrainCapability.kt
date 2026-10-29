@@ -1,28 +1,39 @@
 package org.formulagen.wrapper.bridge
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
+import kotlinx.serialization.SerializationStrategy
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.StructureKind
+import kotlinx.serialization.encoding.CompositeDecoder
 import kotlinx.serialization.json.*
+import kotlinx.serialization.serializer
 import kotlin.time.Duration.Companion.minutes
 
 /** Native companion coordination; web calls cannot answer a permission dialog. */
 interface BrainCapability { suspend fun call(method: String, args: JsonObject): JsonElement }
 
+/** Mirrors BRAIN_LIMITS in event-contracts, checked against `fixtures/limits.json`. [INPUTS] bounds the inputs one message attaches. */
 object BrainLimits {
-    const val SPECIALISTS = 20
-    const val STEPS = 30
+    const val CONDITION = 240
     const val CONFIGURATION = 48 * 1024
-    const val ROLE_INSTRUCTIONS = 4096
-    const val STEP_INSTRUCTIONS = 2048
+    const val CURSOR = 80
     const val DESCRIPTION = 512
-    const val LABEL = 80
-    const val RETURNS = 3
     const val DISPATCHES = 60
+    const val HISTORY = 40
     const val INPUT = 32000
+    const val INPUTS = 30
+    const val LABEL = 80
     const val OUTPUT = 16000
+    const val PREVIEW = 512
+    const val RETURNS = 3
+    const val ROLE_INSTRUCTIONS = 4096
+    const val SPECIALISTS = 20
+    const val STEP_INSTRUCTIONS = 2048
+    const val STEPS = 30
 }
 
-/** Explicit nulls are significant in the new protocol. */
+/** Records keep every null; [brainWire] decides which nulls the contract sends. */
 val brainJson = Json { encodeDefaults = true; explicitNulls = true; ignoreUnknownKeys = false }
 @Serializable data class BrainBinding(val runtimeId: RuntimeId, val modelId: String, val effort: ModelEffort? = null) {
     fun member() = TeamMember(runtimeId, modelId)
@@ -50,13 +61,28 @@ val brainJson = Json { encodeDefaults = true; explicitNulls = true; ignoreUnknow
 @Serializable data class BrainSnapshot(val configurationRevision: Long, val coordinator: BrainRoleSnapshot?, val messages: List<BrainEntry>, val run: BrainRun?,
     val attempts: List<BrainAttempt>, val artifacts: List<BrainArtifact>, val waiting: BrainWaiting?, val voice: ChatVoice, val cursor: String, val notice: String? = null)
 
-/** Drop optional nulls while retaining required nullable fields. */
-fun brainWire(element: JsonElement): JsonElement = when (element) {
-    is JsonObject -> JsonObject(element.filterNot { (key, value) -> value == JsonNull && key in setOf("effort", "roleId", "stepId", "messageId", "attemptId", "approvalId", "outcome", "role", "activity", "notice") && !(key == "stepId" && "runId" in element) }.mapValues { brainWire(it.value) })
-    is JsonArray -> JsonArray(element.map(::brainWire))
+/**
+ * [value] as the contract's JSON. The Kotlin declaration says which nulls travel: a nullable
+ * property with a default is `.optional()` in event-contracts and is left out when null; one
+ * without a default is `.nullable()` and is always sent, as `null` when empty.
+ */
+fun <T> brainWire(serializer: SerializationStrategy<T>, value: T): JsonElement =
+    withoutOptionalNulls(brainJson.encodeToJsonElement(serializer, value), serializer.descriptor)
+inline fun <reified T> brainWire(value: T): JsonElement = brainWire(serializer<T>(), value)
+
+@OptIn(ExperimentalSerializationApi::class)
+private fun withoutOptionalNulls(element: JsonElement, descriptor: SerialDescriptor): JsonElement = when {
+    element is JsonObject && descriptor.kind == StructureKind.CLASS -> JsonObject(buildMap {
+        for ((key, value) in element) {
+            val index = descriptor.getElementIndex(key)
+            if (index == CompositeDecoder.UNKNOWN_NAME) put(key, value)
+            else if (value != JsonNull || !descriptor.isElementOptional(index)) put(key, withoutOptionalNulls(value, descriptor.getElementDescriptor(index)))
+        }
+    })
+    element is JsonObject && descriptor.kind == StructureKind.MAP -> JsonObject(element.mapValues { withoutOptionalNulls(it.value, descriptor.getElementDescriptor(1)) })
+    element is JsonArray && descriptor.kind == StructureKind.LIST -> JsonArray(element.map { withoutOptionalNulls(it, descriptor.getElementDescriptor(0)) })
     else -> element
 }
-inline fun <reified T> brainWire(value: T): JsonElement = brainWire(brainJson.encodeToJsonElement(value))
 
 /** Strict structure checks shared by bridge input and persisted records. */
 object BrainRules {
@@ -78,7 +104,7 @@ object BrainRules {
             for (step in workflow.steps) {
                 if (!uuid(step.id) || step.id in steps || !label(step.name) || step.instructions.length > BrainLimits.STEP_INSTRUCTIONS || step.inputDescription.length > BrainLimits.DESCRIPTION || step.outputDescription.length > BrainLimits.DESCRIPTION) return false
                 if (step.specialistId != null && value.specialists.none { it.id == step.specialistId }) return false
-                if (step.returnTo != null && (step.returnTo.stepId !in steps || !label(step.returnTo.condition, 240))) return false
+                if (step.returnTo != null && (step.returnTo.stepId !in steps || !label(step.returnTo.condition, BrainLimits.CONDITION))) return false
                 if (step.sectionId != null && step.sectionId !in sections) return false
                 if (step.sectionId != previous) {
                     previous?.let(closed::add)
@@ -126,11 +152,13 @@ object BrainRules {
             // Optional fields may be omitted, never sent as explicit null.
             require(raw == brainWire(decoded))
         }
-        if (method == "send" || method == "addInput") require(string("text").let { it.isNotEmpty() && it.length <= (if (method == "send") ChatLimits.MESSAGE else BrainLimits.INPUT) && (method != "send" || it == it.trimEcma()) })
-        if ("title" in args) require(label(string("title")))
+        // Like chat.send, a message and a title are trimmed before their bounds apply; input text is kept as given.
+        if (method == "send") require(string("text").trimEcma().length in 1..ChatLimits.MESSAGE)
+        if (method == "addInput") require(string("text").length in 1..BrainLimits.INPUT)
+        if ("title" in args) require(label(string("title").trimEcma()))
         if ("speak" in args) require(!args.getValue("speak").jsonPrimitive.isString && args.getValue("speak").jsonPrimitive.booleanOrNull != null)
-        if ("inputIds" in args) require(args.getValue("inputIds").jsonArray.let { it.size <= BrainLimits.STEPS && it.all { value -> value.jsonPrimitive.isString && uuid(value.jsonPrimitive.content) } })
-        if (method == "snapshot" && "cursor" in args) require(string("cursor").length <= 80)
+        if ("inputIds" in args) require(args.getValue("inputIds").jsonArray.let { it.size <= BrainLimits.INPUTS && it.all { value -> value.jsonPrimitive.isString && uuid(value.jsonPrimitive.content) } })
+        if (method == "snapshot" && "cursor" in args) require(string("cursor").length <= BrainLimits.CURSOR)
         if (method == "readOutput") require(args.getValue("cursor").jsonPrimitive.let { !it.isString && it.int >= 0 })
         true
     }.getOrDefault(false)
