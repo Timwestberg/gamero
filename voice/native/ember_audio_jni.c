@@ -12,6 +12,7 @@ JNIEXPORT jint JNICALL Java_org_formulagen_wrapper_voice_EmberAudio_nativeRead(J
     if (!dst) return -1;
     jsize capacity = (*env)->GetArrayLength(env, dst);
     jfloat *data = (*env)->GetFloatArrayElements(env, dst, NULL);
+    if (!data) return -1;
     int n = ember_audio_read(data, capacity);
     (*env)->ReleaseFloatArrayElements(env, dst, data, 0);
     return n;
@@ -22,6 +23,7 @@ JNIEXPORT jint JNICALL Java_org_formulagen_wrapper_voice_EmberAudio_nativePlay(J
     if (!pcm) return -1;
     jsize samples = (*env)->GetArrayLength(env, pcm);
     jshort *data = (*env)->GetShortArrayElements(env, pcm, NULL);
+    if (!data) return -1;
     int code = ember_audio_play(data, samples, sampleRate);
     (*env)->ReleaseShortArrayElements(env, pcm, data, JNI_ABORT);
     return code;

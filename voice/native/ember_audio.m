@@ -165,6 +165,8 @@ static OSStatus emberRender(void *ref, AudioUnitRenderActionFlags *flags, const 
 }
 
 - (void)dealloc {
+    /* Stop the unit and the engine before the rings disappear. A tap must not outlive them. */
+    [self stopGraph];
     free(_ring);
     free(_playRing);
     free(_micScratch);
