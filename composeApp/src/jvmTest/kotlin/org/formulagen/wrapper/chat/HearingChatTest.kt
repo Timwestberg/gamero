@@ -1022,9 +1022,8 @@ class CatalogControlTest {
             assertTrue(row.state.value.visible)
             assertTrue(row.state.value.showTalk)
             assertEquals("Half duplex · default", row.state.value.duplexLabel)
-            val before = desk.snapshot(scope).hearing
-            assertEquals(HearingState.OFF, before?.state)
-            assertEquals(org.formulagen.wrapper.voice.VoiceConversation.PERMISSION_COPY, before?.notice)
+            assertNull(desk.snapshot(scope).hearing, "A v2 page has not asked for hearing")
+            assertEquals(org.formulagen.wrapper.voice.VoiceConversation.PERMISSION_COPY, row.state.value.hearingNotice)
             desk.hearing(request(HearingAction.PRESS))
             await { opens == 1 }
             assertFalse(row.state.value.showTalk, "The page press hides the native chat icon")

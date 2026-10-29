@@ -31,7 +31,21 @@ interface ChatCapability {
 }
 
 @Serializable
-data class ChatScope(val profile: String, val companionId: String, val name: String, val sessionId: String)
+data class ChatScope(
+    val profile: String,
+    val companionId: String,
+    val name: String,
+    val sessionId: String,
+    /**
+     * Handshake for a page that can read [ChatSnapshot.hearing]. Host-bridge v2 pages omit it.
+     * The host then omits `hearing` on every chat result, which a strict v2 decoder requires.
+     */
+    val hearing: Boolean? = null,
+)
+
+/** The lease is the four ids. [ChatScope.hearing] is a handshake, not a different chat. */
+internal fun ChatScope.sameChat(other: ChatScope) =
+    profile == other.profile && companionId == other.companionId && name == other.name && sessionId == other.sessionId
 
 /**
  * A companion team member as the chat sees it: a runtime and one of its models, or
@@ -346,7 +360,10 @@ data class ChatHearingRequest(
     fun scope() = ChatScope(profile, companionId, name, sessionId)
 }
 
-/** [failure] is why the last turn failed, absent once a turn succeeds. [waiting] is present only while `awaiting-you`. [hearing] is absent when this build has no hearing. */
+/**
+ * [failure] is why the last turn failed, absent once a turn succeeds. [waiting] is present only while `awaiting-you`.
+ * [hearing] is omitted for host-bridge v2. It is sent only after the page sets [ChatScope.hearing] or calls `chat.hearing`.
+ */
 @Serializable
 data class ChatSnapshot(val state: ChatState = ChatState.READY, val messages: List<ChatEntry> = emptyList(),
     val notice: String? = null, val voice: ChatVoice = ChatVoice(), val failure: ChatFailureReport? = null,

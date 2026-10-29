@@ -10,7 +10,6 @@ import org.formulagen.wrapper.voice.HearingStates
 import org.formulagen.wrapper.voice.LatencyMetric
 import org.formulagen.wrapper.voice.VoiceConversation
 import org.formulagen.wrapper.voice.catalogHearingState
-import org.formulagen.wrapper.voice.catalogOwnsConversationControls
 import org.formulagen.wrapper.voice.HEARING_ENDPOINT_SILENCE_MS
 import org.formulagen.wrapper.voice.HEARING_MIN_SPEECH_MS
 import org.formulagen.wrapper.voice.HEARING_RESUME_GUARD_MS
@@ -92,6 +91,8 @@ internal class DesktopChat(
     private var hearingNotice: String? = null
     /** The catalog page sent press. The native icon stays hidden so only one capture can arm. */
     private var pageOwnsCapture = false
+    /** The page asked for [ChatSnapshot.hearing]. Until then the result stays host-bridge v2. */
+    private var pageHears = false
     /** The member the page named on press. The native row leaves this null and uses the active member. */
     private var hearingMember: TeamMember? = null
     /** The page's effort. Chat send on this host still uses the runtime default when the field is absent. */
@@ -158,12 +159,14 @@ internal class DesktopChat(
     override suspend fun open(scope: ChatScope): ChatSnapshot = synchronized(gate) {
         check(!closed)
         val old = active
-        if (old?.scope == scope && old.state !in setOf(ChatState.ERROR, ChatState.DISCONNECTED)) {
+        if (old != null && old.scope.sameChat(scope) && old.state !in setOf(ChatState.ERROR, ChatState.DISCONNECTED)) {
+            notePage(scope)
             publishPicker()
             return@synchronized view(old)
         }
         invalidateLocked(keepEnded = false)
         ended = null
+        notePage(scope)
         val history = companionChatHistory(providerRoot, scope.profile, scope.companionId)
         val snapshot = view(Session(scope, Persona.companion(scope.name), history, history.read()).also { active = it })
         publishPicker()
@@ -173,8 +176,9 @@ internal class DesktopChat(
 
     /** Polling cannot reopen an expired lease, but a view the host ended keeps reading its final state. */
     override suspend fun snapshot(scope: ChatScope): ChatSnapshot = synchronized(gate) {
+        notePage(scope)
         publishPicker()
-        ended?.takeIf { !closed && it.first == scope }?.second?.copy(voice = speech.status()) ?: view(current(scope))
+        ended?.takeIf { !closed && it.first.sameChat(scope) }?.second?.copy(voice = speech.status()) ?: view(current(scope))
     }
 
     /**
@@ -347,6 +351,7 @@ internal class DesktopChat(
      * or cancels a handover being prepared. With neither in progress it changes nothing.
      */
     override suspend fun stop(scope: ChatScope): ChatSnapshot = synchronized(gate) {
+        notePage(scope)
         val session = current(scope)
         if (talkOn) {
             endConversationLocked()
@@ -370,13 +375,14 @@ internal class DesktopChat(
 
     /** Audio can stop independently while text generation continues. */
     override suspend fun stopSpeaking(scope: ChatScope): ChatSnapshot = synchronized(gate) {
+        notePage(scope)
         val session = current(scope); session.speak = false; speech.stop(); publishPicker(); view(session)
     }
 
     /** An old view cannot close the newly opened companion. */
     override suspend fun closeSession(scope: ChatScope) = synchronized(gate) {
-        if (active?.scope == scope) invalidateLocked(keepEnded = false)
-        if (ended?.first == scope) ended = null
+        if (active?.scope?.sameChat(scope) == true) invalidateLocked(keepEnded = false)
+        if (ended?.first?.sameChat(scope) == true) ended = null
         // The conversation's start-of-work confirmations end with its lease.
         work?.startOfWork?.forget(scope.sessionId)
         publishPicker()
@@ -394,12 +400,17 @@ internal class DesktopChat(
     /** Why a member's runtime cannot answer here: this build does not offer it, or Hovel did not find it. */
     private fun missing(runtime: RuntimeId) = if (runtime in offered) runtime.copy.notInstalled else runtime.copy.notOffered
 
-    private fun current(scope: ChatScope): Session = checkNotNull(active?.takeIf { !closed && it.scope == scope }) { "Chat view expired" }
+    private fun current(scope: ChatScope): Session = checkNotNull(active?.takeIf { !closed && it.scope.sameChat(scope) }) { "Chat view expired" }
+
+    /** A v2 page leaves [ChatScope.hearing] unset. A later page sets it, or calls [hearing]. */
+    private fun notePage(scope: ChatScope) {
+        if (scope.hearing == true) pageHears = true
+    }
     private fun live(session: Session, generation: Int = session.generation) = !closed && active === session && generation == session.generation
     private fun view(session: Session) = ChatSnapshot(session.state, session.record.entries,
         session.refusal?.takeIf { it.first == session.state }?.second ?: session.notice, speech.status(), session.failure,
         session.waiting?.takeIf { session.state == ChatState.AWAITING_YOU },
-        if (catalogOwnsConversationControls(product)) hearingField() else null)
+        if (pageHears) hearingField() else null)
 
     /** Present on this build. An older snapshot that omitted [ChatSnapshot.hearing] still decodes. */
     private fun hearingField(): ChatHearing {
@@ -751,6 +762,7 @@ internal class DesktopChat(
                 return@synchronized HearingArm.Ready(refuse(session, ANSWER_FIRST))
             }
             pageOwnsCapture = true
+            pageHears = true
             when (args.action) {
                 HearingAction.PRESS, HearingAction.HANDS_FREE -> {
                     hearingMember = args.member
@@ -1181,6 +1193,7 @@ internal class DesktopChat(
             talkOn = false
             playbackNoted = false
             pageOwnsCapture = false
+            pageHears = false
             hearingMember = null
             hearingEffort = null
             userMuted = false
