@@ -12,7 +12,7 @@
 
 ## What the draft stack shipped
 
-Mac only, still drafts, stacked on #56 (`5911aaf`). Milestones 5–7 are not started.
+Phases 1–4 are on `main`. Milestone 5, the browser loop, is a draft in this repo under `web/` because tool-webkit and game-platform were not readable from the agent that wrote it. Milestones 6–7 are not started.
 
 - **#59** Click the chat icon to start a session. Another click, Escape, or Stop ends it. Fillers stay in the product and default off (`~/.gamero/voice-fillers`, `HOVEL_VOICE_FILLERS` overrides one launch). One second of quiet after speech sends. Empty text and speech under 240 ms do not. Half duplex until echo cancellation is actually up: the mic is paused while Ember speaks, then about 300 ms.
 - **#60** The reply is spoken sentence by sentence. A click or Escape during playback flushes first, cancels the provider turn, keeps the partial text, and leaves the session listening.
@@ -587,12 +587,12 @@ Each milestone is one PR series, based on #56 for gamero. Ship them in order. A 
 
 **Size:** large (WASM, model download, a TypeScript port of the state machine). It does not block the phones. It does not add a server ASR route.
 
-**Files:** game-platform only, plus the JSON transition fixture exported from `HearingTurnTest`.
+**Files:** `web/hearing` and `web/catalog` in gamero (the tool-webkit and game-platform split; those repos were not readable here), plus `web/hearing/fixtures/hearing-transitions.json` from `HearingTransitionFixtureTest`.
 
-- [ ] The fixture covers every transition the Kotlin test covers. A mismatch fails the web test.
-- [ ] `getUserMedia` uses the browser's echo cancellation, and Kokoro plays in that same page.
-- [ ] With a host, the final transcript still goes through `chat.hearing` / `chat.send`. Without a host, the loop stays local and the chat controls stay in their existing unavailable state.
-- [ ] Model bytes are hash-checked and are not posted to the Hovel service.
+- [x] The fixture covers every transition the Kotlin test covers. A mismatch fails the web test.
+- [x] `getUserMedia` uses the browser's echo cancellation, and Kokoro plays in that same page.
+- [x] With a host, the final transcript still goes through `chat.hearing` / `chat.send`. Without a host, the loop stays local and the chat controls stay in their existing unavailable state.
+- [x] Model bytes are hash-checked and are not posted to the Hovel service.
 
 **Done when:** a desktop browser shows a partial transcript and plays a Kokoro line with no host, and sends a real turn when the host is present.
 

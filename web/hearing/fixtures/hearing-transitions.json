@@ -1,0 +1,6685 @@
+{
+    "schema": "ember-hearing-transitions.v1",
+    "policy": {
+        "silenceMs": 1000,
+        "minSpeechMs": 240,
+        "guardMs": 300,
+        "bargeSustainMs": 250,
+        "bargeMinProbability": 0.5,
+        "bargeGapResetMs": 240,
+        "echoOverlapPercent": 60,
+        "shortWordLimit": 2,
+        "sentenceGapMs": 160,
+        "fillersDefault": false,
+        "sampleRate": 16000,
+        "vadWindow": 512
+    },
+    "defaultVoiceId": "adam70-michael30",
+    "voices": [
+        {
+            "id": "adam70-michael30",
+            "name": "Sam",
+            "speed": "1.00"
+        },
+        {
+            "id": "adam60-george40",
+            "name": "Jamie",
+            "speed": "0.95"
+        },
+        {
+            "id": "adam55-bella45",
+            "name": "Riley",
+            "speed": "0.95"
+        },
+        {
+            "id": "heart60-adam40",
+            "name": "Harper",
+            "speed": "0.97"
+        }
+    ],
+    "checksums": {
+        "modelOnnxSha256": "b40f62b166ac8164b0627ef48a0b358eda0985e272fb03ef5252e7206305da11",
+        "tokensSha256": "6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425",
+        "lexiconSha256": "7daaab53a181be9885b853a8582bf1838186317e5dadacbcef9c426d6fa0da14",
+        "upstreamVoicesSha256": "1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29",
+        "derivedVoicesSha256": "35cce6c473585fd74244f31c2623d6f2f835283918dad6fa2e2a79d60639b26f",
+        "sileroVadSha256": "6b99cbfd39246b6706f98ec13c7c50c6b299181f2474fa05cbc8046acc274396",
+        "zipformerArchiveSha256": "639e25b578e9e997131402199419c13a941f8e4e198e2da1ce57dbf5cf401282",
+        "zipformerEncoderSha256": "5022b2eca5b19d1bc104fcf33e26bc32604b7df553cd2e1f62e31dc7b05e9c87",
+        "zipformerDecoderSha256": "85914f840b71110487ece7a30ebd0bd4b8fb5c2623215bba3aa5ab4c138fc591",
+        "zipformerJoinerSha256": "abd5e30f3f16fc510605c6029dba33f10e4386bd75c5bdc30cf94076864db10d",
+        "zipformerTokensSha256": "49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb"
+    },
+    "permissionCopy": "Ember hears you on this Mac to turn what you say into a chat message. The recording is not saved.",
+    "noHostNotice": "Open Hovel on your Mac to connect…",
+    "reduceHearing": [
+        {
+            "state": "off",
+            "action": "press",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "press",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "press",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": true
+        },
+        {
+            "state": "off",
+            "action": "press",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "release",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "release",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "release",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "release",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "handsFree",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "handsFree",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "handsFree",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": true
+        },
+        {
+            "state": "off",
+            "action": "handsFree",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "mute",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "mute",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "mute",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "mute",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "unmute",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "unmute",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "unmute",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "unmute",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "off",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "off",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "off",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "off",
+            "action": "off",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "press",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "press",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "press",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": true
+        },
+        {
+            "state": "requesting",
+            "action": "press",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "release",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "release",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "release",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "release",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "handsFree",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "handsFree",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "handsFree",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": true
+        },
+        {
+            "state": "requesting",
+            "action": "handsFree",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "mute",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "mute",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "mute",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "mute",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "requesting",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "unmute",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "unmute",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "unmute",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "unmute",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "requesting",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "off",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "off",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "off",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "requesting",
+            "action": "off",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "press",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "press",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "press",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": true
+        },
+        {
+            "state": "listening",
+            "action": "press",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "release",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "release",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "release",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "release",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "handsFree",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "handsFree",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "handsFree",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": true
+        },
+        {
+            "state": "listening",
+            "action": "handsFree",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "mute",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "mute",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "mute",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "muted",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "mute",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "muted",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "unmute",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "unmute",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "unmute",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "unmute",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "off",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "off",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "off",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "listening",
+            "action": "off",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "press",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "press",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "press",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": true
+        },
+        {
+            "state": "hearing",
+            "action": "press",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "release",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "release",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "release",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "release",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "handsFree",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "handsFree",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "handsFree",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": true
+        },
+        {
+            "state": "hearing",
+            "action": "handsFree",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "mute",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "mute",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "mute",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "muted",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "mute",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "muted",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "unmute",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "unmute",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "unmute",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "hearing",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "unmute",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "hearing",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "off",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "off",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "off",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "hearing",
+            "action": "off",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "press",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "press",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "press",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": true
+        },
+        {
+            "state": "thinking",
+            "action": "press",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "release",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "release",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "release",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "release",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "handsFree",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "handsFree",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "handsFree",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": true
+        },
+        {
+            "state": "thinking",
+            "action": "handsFree",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "mute",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "mute",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "mute",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "muted",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "mute",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "muted",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "unmute",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "unmute",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "unmute",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "thinking",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "unmute",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "thinking",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "off",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "off",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "off",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "thinking",
+            "action": "off",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "press",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "press",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "press",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": true
+        },
+        {
+            "state": "muted",
+            "action": "press",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "release",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "release",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "release",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "release",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "handsFree",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "handsFree",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "handsFree",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": true
+        },
+        {
+            "state": "muted",
+            "action": "handsFree",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "mute",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "mute",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "mute",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "muted",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "mute",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "muted",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "unmute",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "unmute",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "unmute",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "unmute",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "off",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "off",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "off",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "muted",
+            "action": "off",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "press",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "press",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "press",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": true
+        },
+        {
+            "state": "unavailable",
+            "action": "press",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "release",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "release",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "release",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "release",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "handsFree",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "handsFree",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "handsFree",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "requesting",
+            "requestMicrophone": true
+        },
+        {
+            "state": "unavailable",
+            "action": "handsFree",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "listening",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "mute",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "mute",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "mute",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "mute",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "unmute",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "unmute",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "unmute",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "unmute",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "off",
+            "hostPresent": false,
+            "permissionGranted": false,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "off",
+            "hostPresent": false,
+            "permissionGranted": true,
+            "next": "unavailable",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "off",
+            "hostPresent": true,
+            "permissionGranted": false,
+            "next": "off",
+            "requestMicrophone": false
+        },
+        {
+            "state": "unavailable",
+            "action": "off",
+            "hostPresent": true,
+            "permissionGranted": true,
+            "next": "off",
+            "requestMicrophone": false
+        }
+    ],
+    "catalogHearing": [
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": false,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "hello",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "hello",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": false,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "hello",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "hello",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": false,
+            "muted": true,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "hello",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "",
+            "state": "listening"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "hearing"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "",
+            "state": "thinking"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "thinking"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "",
+            "state": "listening"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "hearing"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "hello",
+            "state": "off"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": false,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "",
+            "state": "muted"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "off",
+            "partial": "hello",
+            "state": "muted"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "",
+            "state": "muted"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "muted"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "",
+            "state": "muted"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "muted"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "",
+            "state": "muted"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "muted"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "",
+            "state": "muted"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": false,
+            "phase": "other",
+            "partial": "hello",
+            "state": "muted"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "off",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "listening",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "thinking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "speaking",
+            "partial": "hello",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "",
+            "state": "unavailable"
+        },
+        {
+            "hostPresent": true,
+            "armed": true,
+            "muted": true,
+            "unavailable": true,
+            "phase": "other",
+            "partial": "hello",
+            "state": "unavailable"
+        }
+    ],
+    "screenHeard": [
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "I",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "too_short"
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hi",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "self_echo"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "self_echo"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "self_echo"
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "hello there friend",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "self_echo"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 0,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 100,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 239,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 240,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 400,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.2,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.49,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": "no_vad_speech"
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.5,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": false,
+            "emberText": "hello there friend",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "",
+            "discard": null
+        },
+        {
+            "text": "turn please now",
+            "vadSpeechMs": 1000,
+            "maxProb": 0.9,
+            "emberHot": true,
+            "emberText": "hello there friend",
+            "discard": null
+        }
+    ]
+}

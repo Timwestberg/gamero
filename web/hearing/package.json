@@ -1,0 +1,9 @@
+{
+  "name": "@gamero/hearing",
+  "private": true,
+  "type": "module",
+  "description": "Reusable browser hearing loop. Intended for tool-webkit. No catalog copy and no chat.send.",
+  "scripts": {
+    "test": "node --test"
+  }
+}
