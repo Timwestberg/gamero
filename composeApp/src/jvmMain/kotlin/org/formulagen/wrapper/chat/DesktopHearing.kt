@@ -25,22 +25,24 @@ internal class DesktopHearing(
     private val stop = AtomicBoolean(false)
     private val delivered = AtomicBoolean(true)
     private var thread: Thread? = null
+    private var mic: MicCapture? = null
     private var failed: String? = null
 
-    fun down(onPartial: (String) -> Unit, onFailed: (String) -> Unit) {
+    fun down(onPartial: (String) -> Unit, onFailed: (String) -> Unit): Boolean {
         synchronized(gate) {
-            if (thread != null) return
+            if (thread != null) return false
             stop.set(false)
             failed = null
             delivered.set(false)
             val worker = Thread({
-                var mic: MicCapture? = null
+                var capture: MicCapture? = null
                 try {
                     engine.startUtterance()
-                    mic = openMic()
+                    capture = openMic()
+                    synchronized(gate) { mic = capture }
                     val buf = FloatArray(1600)
                     while (!stop.get()) {
-                        val n = mic.read(buf)
+                        val n = capture.read(buf)
                         if (n < 0) break
                         if (n == 0) continue
                         val chunk = if (n == buf.size) buf.copyOf() else buf.copyOf(n)
@@ -52,27 +54,34 @@ internal class DesktopHearing(
                     failed = error.message ?: "The microphone did not open."
                     onFailed(failed!!)
                 } finally {
-                    runCatching { mic?.close() }
-                    synchronized(gate) { if (thread === Thread.currentThread()) thread = null }
+                    runCatching { capture?.close() }
+                    synchronized(gate) {
+                        if (mic === capture) mic = null
+                        if (thread === Thread.currentThread()) thread = null
+                    }
                 }
             }, "hovel-hearing")
             worker.isDaemon = true
             thread = worker
             worker.start()
+            return true
         }
     }
 
-    fun up(onResult: (HearingResult) -> Unit) {
-        if (!delivered.compareAndSet(false, true)) return
+    /** @return false when this release had already been delivered, so the caller must still clear its hold. */
+    fun up(onResult: (HearingResult) -> Unit): Boolean {
+        if (!delivered.compareAndSet(false, true)) return false
         val running = synchronized(gate) {
             stop.set(true)
+            runCatching { mic?.close() }
             thread
         }
         running?.join(3_000)
         val error = synchronized(gate) { failed }
-        if (error != null) return
+        if (error != null) return true
         val result = runCatching { engine.finish() }.getOrElse { HearingResult("", 0, 0.0) }
         onResult(result)
+        return true
     }
 
     /** Stop the microphone without a transcript. Safe to call while holding another lock: it does not join. */
@@ -82,7 +91,10 @@ internal class DesktopHearing(
 
     override fun close() {
         stop.set(true)
-        val running = synchronized(gate) { thread.also { thread = null } }
+        val running = synchronized(gate) {
+            runCatching { mic?.close() }
+            thread.also { thread = null }
+        }
         running?.join(1_000)
         runCatching { engine.close() }
     }

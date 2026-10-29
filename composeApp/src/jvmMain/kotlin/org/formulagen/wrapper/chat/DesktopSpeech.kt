@@ -13,9 +13,11 @@ import org.formulagen.wrapper.bridge.VoiceState
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.voice.EmberVoice
+import org.formulagen.wrapper.voice.FILLER_LINES
 import org.formulagen.wrapper.voice.FillerPcm
 import org.formulagen.wrapper.voice.KokoroVoice
 import org.formulagen.wrapper.voice.PieceEngine
+import org.formulagen.wrapper.voice.SpeechCancelled
 import org.formulagen.wrapper.voice.VoiceConfig
 import org.formulagen.wrapper.voice.kokoroCatalog
 import org.formulagen.wrapper.voice.kokoroVoice
@@ -33,6 +35,8 @@ internal interface ChatSpeech : AutoCloseable {
     fun voiceChoices(): List<VoiceChoice> = emptyList()
     fun currentVoiceId(): String = ""
     fun previewVoice(id: String) {}
+    /** Called after the spoken state changes, and never while this speech object holds its own lock. */
+    fun onVoice(listener: () -> Unit) {}
     /** Synthesize [lines] for every Kokoro blend and keep the PCM. A later play does not call the model. */
     fun warmFillers(lines: List<String>) {}
     fun fillerPcm(voiceId: String, line: String): FillerPcm? = null
@@ -60,12 +64,25 @@ internal class DesktopSpeech(
     private var generation = 0
     private var closed = false
     private val fillerCache = HashMap<String, Map<String, FillerPcm>>()
+    private var onVoice: (() -> Unit)? = null
     private val notInstalled = ChatVoice(VoiceState.UNAVAILABLE, "Local voice is not installed. Text chat is available.")
     /** Set once the native runtime fails to link; a later attempt would only fail again. */
     private var unavailable: ChatVoice? = if (voiceConfig == null) notInstalled else null
     private var state = unavailable ?: ChatVoice()
 
     override fun status(): ChatVoice = synchronized(gate) { state }
+
+    override fun onVoice(listener: () -> Unit) {
+        synchronized(gate) { onVoice = listener }
+    }
+
+    /** Caller holds [gate]. The listener runs later, so it can take the chat lock safely. */
+    private fun touchState(next: ChatVoice) {
+        if (state == next) return
+        state = next
+        val listener = onVoice ?: return
+        runCatching { worker.execute { listener() } }
+    }
 
     /** Kokoro voices a person can pick. The id is what gets stored. */
     internal fun voices(): List<KokoroVoice> = kokoroVoices()
@@ -104,7 +121,7 @@ internal class DesktopSpeech(
         }
         stopLocked()
         val ticket = generation
-        state = ChatVoice(VoiceState.SPEAKING)
+        touchState(ChatVoice(VoiceState.SPEAKING))
         worker.execute {
             var player: PcmLine? = null
             try {
@@ -128,7 +145,7 @@ internal class DesktopSpeech(
                 runCatching { player?.close() }
                 synchronized(gate) {
                     if (line === player) line = null
-                    if (ticket == generation && !closed) state = unavailable ?: ChatVoice()
+                    if (ticket == generation && !closed) touchState(unavailable ?: ChatVoice())
                 }
                 onDone()
             }
@@ -141,17 +158,27 @@ internal class DesktopSpeech(
             val active = voiceConfig ?: return
             engine ?: EmberVoice(openEngine(active), active).also { engine = it }
         }
-        val warmed = HashMap<String, Map<String, FillerPcm>>()
-        for (id in kokoroVoices().map { it.id }) {
-            val clips = LinkedHashMap<String, FillerPcm>()
-            for (line in lines) {
-                val audio = voice.synthesizeLine(line, id)
-                if (audio.samples.isNotEmpty()) clips[line] = FillerPcm(pcm16(audio.samples), audio.sampleRate)
-            }
-            warmed[id] = clips
+        val selected = synchronized(gate) {
+            voiceConfig?.kokoroVoiceId?.ifEmpty { null } ?: kokoroCatalog().defaultId
         }
-        synchronized(gate) {
-            for ((id, clips) in warmed) fillerCache[id] = clips
+        val ids = listOf(selected) + kokoroVoices().map { it.id }.filter { it != selected }
+        for (id in ids) {
+            if (synchronized(gate) { closed || fillerCache[id]?.keys?.containsAll(lines) == true }) continue
+            val clips = LinkedHashMap<String, FillerPcm>()
+            try {
+                for (line in lines) {
+                    val audio = voice.synthesizeLine(line, id)
+                    if (audio.samples.isNotEmpty()) clips[line] = FillerPcm(pcm16(audio.samples), audio.sampleRate)
+                }
+            } catch (cancelled: SpeechCancelled) {
+                if (clips.isNotEmpty()) synchronized(gate) { fillerCache[id] = (fillerCache[id] ?: emptyMap()) + clips }
+                return
+            } catch (error: Throwable) {
+                if (error is VirtualMachineError) throw error
+                log(LogLevel.Warn, "hearing", "filler warm failed voice=$id ${error.javaClass.simpleName}")
+                return
+            }
+            synchronized(gate) { fillerCache[id] = clips }
         }
     }
 
@@ -172,6 +199,7 @@ internal class DesktopSpeech(
         val previous = engine
         engine = null
         worker.execute { runCatching { previous?.release() } }
+        warmFillers(FILLER_LINES)
     }
 
     /** Synthesize on the voice worker; cancelled audio is never submitted to the speaker. */
@@ -182,7 +210,7 @@ internal class DesktopSpeech(
         val spoken = speechText(text)
         if (spoken.isBlank()) return@synchronized
         val ticket = generation
-        state = ChatVoice(VoiceState.PREPARING)
+        touchState(ChatVoice(VoiceState.PREPARING))
         worker.execute {
             var stale: EmberVoice? = null
             val settings = synchronized(gate) {
@@ -225,15 +253,21 @@ internal class DesktopSpeech(
                     if (playerStarted) playbackFinished.await() else playbackFinished.countDown()
                     synchronized(gate) { if (playQueue === queue) playQueue = null }
                 }
-                synchronized(gate) { if (ticket == generation) { line = null; state = ChatVoice() } }
+                synchronized(gate) { if (ticket == generation) { line = null; touchState(ChatVoice()) } }
             } catch (error: Throwable) {
-                // UnsatisfiedLinkError or ExceptionInInitializerError: the native runtime cannot load on this Mac.
+                // A cancel bumps the generation and has already returned the button to idle.
+                // Any other failure must not leave the row on Preparing or Speaking.
                 val linkage = error is LinkageError
+                val cancelled = error is SpeechCancelled
                 synchronized(gate) {
                     if (linkage) unavailable = ChatVoice(VoiceState.UNAVAILABLE, "Local voice could not start on this Mac. Text chat is available.")
                     if (ticket == generation) line = null
-                    if (!closed && (linkage || ticket == generation)) {
-                        state = unavailable ?: ChatVoice(VoiceState.ERROR, "Voice playback failed. Your text reply is still available.")
+                    if (!closed && ticket == generation) {
+                        touchState(when {
+                            linkage -> unavailable ?: ChatVoice()
+                            cancelled -> ChatVoice()
+                            else -> unavailable ?: ChatVoice(VoiceState.ERROR, "Voice playback failed. Your text reply is still available.")
+                        })
                     }
                 }
                 if (error is VirtualMachineError) throw error
@@ -262,7 +296,7 @@ internal class DesktopSpeech(
         playQueue?.offer(playbackEnd)
         line?.let { runCatching { it.flush(); it.stop(); it.close() } }
         line = null
-        state = unavailable ?: ChatVoice()
+        touchState(unavailable ?: ChatVoice())
     }
 
     /**
@@ -297,14 +331,14 @@ internal class DesktopSpeech(
                         started = true
                         synchronized(gate) {
                             if (ticket == generation) {
-                                state = ChatVoice(
+                                touchState(ChatVoice(
                                     VoiceState.SPEAKING,
                                     if (text.length > MAX_SPOKEN_CHARS) {
                                         "Reading the beginning of this reply. The full reply is shown above."
                                     } else {
                                         null
                                     },
-                                )
+                                ))
                             }
                         }
                         if (stopped()) break

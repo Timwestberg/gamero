@@ -55,10 +55,16 @@ internal class DesktopChat(
     private var hearingHolding = false
     private var hearingPartial = ""
     private var hearingNotice: String? = null
+    private var shownHold: Boolean? = null
+    private var shownHolding: Boolean? = null
     private var active: Session? = null
     /** The last view the host ended on its own, so that view's polls keep showing why. */
     private var ended: Pair<ChatScope, ChatSnapshot>? = null
     private var closed = false
+
+    init {
+        speech.onVoice { synchronized(gate) { if (!closed) publishPicker() } }
+    }
 
     private class Session(val scope: ChatScope, val persona: Persona, val history: ChatHistory, var record: ChatRecord) {
         var state = ChatState.READY
@@ -119,6 +125,7 @@ internal class DesktopChat(
 
     /** Polling cannot reopen an expired lease, but a view the host ended keeps reading its final state. */
     override suspend fun snapshot(scope: ChatScope): ChatSnapshot = synchronized(gate) {
+        publishPicker()
         ended?.takeIf { !closed && it.first == scope }?.second?.copy(voice = speech.status()) ?: view(current(scope))
     }
 
@@ -305,12 +312,13 @@ internal class DesktopChat(
         val turn = session.turn
         end(session, ChatState.CANCELLED, "Reply stopped.", release = turn == null)
         turn?.stop()
+        publishPicker()
         view(session)
     }
 
     /** Audio can stop independently while text generation continues. */
     override suspend fun stopSpeaking(scope: ChatScope): ChatSnapshot = synchronized(gate) {
-        val session = current(scope); session.speak = false; speech.stop(); view(session)
+        val session = current(scope); session.speak = false; speech.stop(); publishPicker(); view(session)
     }
 
     /** An old view cannot close the newly opened companion. */
@@ -491,6 +499,7 @@ internal class DesktopChat(
                 fillerTurn.replyArrived()
                 speech.speak(it.text)
             }
+            publishPicker()
         }
 
         /** Errors keep the person's text and never send it again, except once into a new conversation when the runtime lost its own. */
@@ -575,18 +584,26 @@ internal class DesktopChat(
         if (release) session.used.forEach { runtimes[it]?.release(); workers[it]?.release() }
         speech.stop()
         runCatching { session.history.write(session.record) }
+        publishPicker()
     }
 
     private fun publishPicker() {
         val model = voices ?: return
         val session = active
+        val voice = speech.status().state
+        val enabled = session != null && hearingHoldAllowed(session.state, voice, fillerTurn.playing)
+        if (enabled != shownHold || hearingHolding != shownHolding) {
+            log(LogLevel.Info, "hearing", "button enabled=$enabled holding=$hearingHolding chat=${session?.state ?: "none"} voice=$voice")
+            shownHold = enabled
+            shownHolding = hearingHolding
+        }
         model.update(
             voicePickerState(
                 chatOpen = !closed && session != null,
                 kokoro = speech.kokoroActive(),
                 voices = speech.voiceChoices(),
                 selectedId = speech.currentVoiceId(),
-                holdEnabled = session != null && hearingHoldAllowed(session.state, speech.status().state, fillerTurn.playing),
+                holdEnabled = enabled,
                 holding = hearingHolding,
                 partial = hearingPartial,
                 hearingNotice = hearingNotice,
@@ -606,25 +623,37 @@ internal class DesktopChat(
         }
         val start = synchronized(gate) {
             val session = active ?: return
-            if (!hearingHoldAllowed(session.state, speech.status().state, fillerTurn.playing)) return
+            if (!hearingHoldAllowed(session.state, speech.status().state, fillerTurn.playing)) {
+                log(LogLevel.Info, "hearing", "button ignored chat=${session.state} voice=${speech.status().state}")
+                return
+            }
             if (fillerTurn.playing) interruptFillerLocked()
-            hearingHolding = true
-            hearingPartial = ""
-            hearingNotice = null
-            publishPicker()
             true
         }
         if (start != true) return
-        ear.down(
+        synchronized(gate) {
+            hearingHolding = true
+            hearingPartial = ""
+            hearingNotice = null
+            log(LogLevel.Info, "hearing", "button down")
+            publishPicker()
+        }
+        val started = ear.down(
             onPartial = { text -> synchronized(gate) { if (hearingHolding) { hearingPartial = text; publishPicker() } } },
             onFailed = { message -> synchronized(gate) { hearingHolding = false; hearingNotice = message; publishPicker() } },
         )
+        if (!started) synchronized(gate) {
+            hearingHolding = false
+            log(LogLevel.Info, "hearing", "button busy")
+            publishPicker()
+        }
     }
 
     /** Release on the voice row. The last decode runs here, then the transcript is a normal talk send. */
     internal fun hearingUp() {
         val ear = hearing ?: return
-        ear.up { result ->
+        log(LogLevel.Info, "hearing", "button up")
+        val delivered = ear.up { result ->
             synchronized(gate) {
                 hearingHolding = false
                 hearingPartial = ""
@@ -632,6 +661,10 @@ internal class DesktopChat(
                 commitHearingLocked(result)
                 publishPicker()
             }
+        }
+        if (!delivered) synchronized(gate) {
+            hearingHolding = false
+            publishPicker()
         }
     }
 

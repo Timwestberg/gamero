@@ -14,10 +14,15 @@ import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.bridge.TeamMember
 import org.formulagen.wrapper.bridge.VoiceState
+import org.formulagen.wrapper.voice.FILLER_LINES
 import org.formulagen.wrapper.voice.FillerPcm
 import org.formulagen.wrapper.voice.FillerSettings
 import org.formulagen.wrapper.voice.HearingEngine
 import org.formulagen.wrapper.voice.HearingResult
+import org.formulagen.wrapper.voice.PieceAudio
+import org.formulagen.wrapper.voice.PieceEngine
+import org.formulagen.wrapper.voice.SpeechCancelled
+import org.formulagen.wrapper.voice.VoiceConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -156,6 +161,188 @@ class FillerPlaybackTest {
             assertTrue(flushed.await(2, TimeUnit.SECONDS), "stop flushed the filler")
         }
     }
+}
+
+class HoldRecoveryTest {
+    private val scope = ChatScope("local", UUID.randomUUID().toString(), "Ember", UUID.randomUUID().toString())
+    private val member = TeamMember(RuntimeId.CODEX, SharedRules.RUNTIME_DEFAULT_MODEL)
+
+    @Test fun tenEmptyHoldsLeaveTheButtonEnabled() = runBlocking {
+        val speech = RowSpeech()
+        val runtime = ScriptedRuntime(completeOnStart = true)
+        val row = VoicePickerModel()
+        chatRow(speech, runtime, row).use { desk ->
+            desk.open(scope)
+            desk.send(send("Hello"))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            speech.settle()
+            repeat(10) {
+                desk.commitHeard(HearingResult("", speechMs = 0, decodeMs = 0.0))
+                assertTrue(row.state.value.holdEnabled, "hold $it")
+                assertFalse(row.state.value.holding)
+            }
+        }
+    }
+
+    @Test fun tenSendsDisableTheButtonUntilTheReplyAndTheVoiceFinish() = runBlocking {
+        val speech = RowSpeech()
+        val runtime = ScriptedRuntime()
+        val row = VoicePickerModel()
+        chatRow(speech, runtime, row).use { desk ->
+            desk.open(scope)
+            runtime.completeOnStart = true
+            desk.send(send("Hello"))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            speech.settle()
+            repeat(10) { hold ->
+                runtime.completeOnStart = false
+                val turns = runtime.turns
+                desk.commitHeard(HearingResult("turn $hold", speechMs = 500, decodeMs = 1.0))
+                assertFalse(row.state.value.holdEnabled, "expected disabled while responding, hold $hold")
+                await { runtime.turns > turns }
+                runtime.finish("ok $hold")
+                await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+                assertFalse(row.state.value.holdEnabled, "still speaking after hold $hold")
+                speech.settle()
+                assertTrue(row.state.value.holdEnabled, "hold $hold did not recover")
+            }
+        }
+    }
+
+    @Test fun cancelledSpeechAndAFailedWorkerReenableTheButton() = runBlocking {
+        val speech = RowSpeech()
+        val runtime = ScriptedRuntime(completeOnStart = true)
+        val row = VoicePickerModel()
+        chatRow(speech, runtime, row).use { desk ->
+            desk.open(scope)
+            desk.send(send("Hello"))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            speech.settle()
+            repeat(10) {
+                speech.become(VoiceState.SPEAKING)
+                assertFalse(row.state.value.holdEnabled)
+                speech.become(VoiceState.IDLE)
+                assertTrue(row.state.value.holdEnabled, "cancel $it")
+                speech.become(VoiceState.PREPARING)
+                assertFalse(row.state.value.holdEnabled)
+                speech.become(VoiceState.ERROR)
+                assertTrue(row.state.value.holdEnabled, "worker failure $it")
+                desk.commitHeard(HearingResult("", 0, 0.0))
+                assertTrue(row.state.value.holdEnabled)
+            }
+        }
+    }
+
+    @Test fun switchingVoicesBetweenHoldsDoesNotStickTheButton() = runBlocking {
+        val speech = RowSpeech()
+        val runtime = ScriptedRuntime(completeOnStart = true)
+        val row = VoicePickerModel()
+        chatRow(speech, runtime, row).use { desk ->
+            desk.open(scope)
+            desk.send(send("Hello"))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            speech.settle()
+            val ids = listOf("adam70-michael30", "adam60-george40", "adam55-bella45", "heart60-adam40")
+            repeat(10) { hold ->
+                desk.chooseSpokenVoice(ids[hold % ids.size])
+                speech.settle()
+                desk.commitHeard(HearingResult("", 0, 0.0))
+                assertTrue(row.state.value.holdEnabled, "voice ${ids[hold % ids.size]}")
+                assertEquals(ids[hold % ids.size], row.state.value.selectedId)
+            }
+        }
+    }
+
+    private fun send(text: String) =
+        ChatSend(scope.profile, scope.companionId, scope.name, scope.sessionId, member, UUID.randomUUID().toString(), text, true)
+
+    private fun chatRow(speech: ChatSpeech, runtime: ChatRuntime, row: VoicePickerModel) =
+        DesktopChat(Files.createTempDirectory("hold-row"), listOf(runtime), speech, voices = row, fillers = FillerSettings(thresholdMs = 60_000))
+}
+
+class FillerWarmTest {
+    @Test fun aCancelledWarmKeepsGoingForTheSelectedVoice() {
+        var cancelled = false
+        val engine = object : PieceEngine {
+            override val sampleRate = 24000
+            override fun synthesize(text: String, maxFrames: Int, seed: Int) = PieceAudio(floatArrayOf(0.2f), 24000, 1.0, 1.0)
+            override fun synthesizeLine(text: String, voiceId: String): PieceAudio {
+                if (!cancelled && voiceId == "heart60-adam40") {
+                    cancelled = true
+                    throw SpeechCancelled()
+                }
+                return PieceAudio(floatArrayOf(0.2f), 24000, 1.0, 1.0)
+            }
+            override fun release() {}
+        }
+        val config = VoiceConfig(backend = VoiceConfig.KOKORO, kokoroVoiceId = "heart60-adam40", fillersEnabled = true)
+        DesktopSpeech(config, { IdleLine }, { engine }).use { speech ->
+            speech.warmFillers(FILLER_LINES)
+            await { cancelled }
+            speech.warmFillers(FILLER_LINES)
+            await { speech.fillerPcm("heart60-adam40", "Hmm,") != null }
+            assertTrue(speech.fillerPcm("heart60-adam40", "Let me think,") != null)
+            assertTrue(speech.fillerPcm("heart60-adam40", "Okay, so") != null)
+        }
+    }
+
+    @Test fun tenSpeaksThatAreCancelledReturnTheVoiceToIdle() {
+        val engine = object : PieceEngine {
+            override val sampleRate = 24000
+            override fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio {
+                if (text.startsWith("fail")) throw SpeechCancelled()
+                return PieceAudio(FloatArray(400), 24000, 1.0, 1.0)
+            }
+            override fun release() {}
+        }
+        val updates = CopyOnWriteArrayList<VoiceState>()
+        DesktopSpeech(VoiceConfig(backend = VoiceConfig.KOKORO, fillersEnabled = false), { IdleLine }, { engine }).use { speech ->
+            speech.onVoice { updates += speech.status().state }
+            repeat(10) {
+                speech.speak("Hello there.")
+                await { speech.status().state == VoiceState.IDLE }
+                speech.speak("fail this take")
+                await { speech.status().state == VoiceState.IDLE }
+                speech.stop()
+                assertEquals(VoiceState.IDLE, speech.status().state)
+            }
+        }
+        assertTrue(updates.isNotEmpty())
+    }
+}
+
+private object IdleLine : PcmLine {
+    override fun start() {}
+    override fun write(pcm: ByteArray) {}
+    override fun drain() {}
+    override fun flush() {}
+    override fun stop() {}
+    override fun close() {}
+}
+
+private class RowSpeech : ChatSpeech {
+    private var voice = ChatVoice()
+    private var listener: (() -> Unit)? = null
+    var selected = "adam70-michael30"
+    override fun status() = voice
+    override fun onVoice(listener: () -> Unit) { this.listener = listener }
+    override fun speak(text: String) { voice = ChatVoice(VoiceState.SPEAKING) }
+    override fun stop() { voice = ChatVoice() }
+    override fun close() {}
+    override fun kokoroActive() = true
+    override fun voiceChoices() = listOf(
+        VoiceChoice("adam70-michael30", "Sam"),
+        VoiceChoice("adam60-george40", "Jamie"),
+        VoiceChoice("adam55-bella45", "Riley"),
+        VoiceChoice("heart60-adam40", "Harper"),
+    )
+    override fun currentVoiceId() = selected
+    override fun previewVoice(id: String) { selected = id; voice = ChatVoice(VoiceState.SPEAKING) }
+    fun become(next: VoiceState) {
+        voice = ChatVoice(next)
+        listener?.invoke()
+    }
+    fun settle() = become(VoiceState.IDLE)
 }
 
 private class RememberingSpeech : ChatSpeech {
