@@ -12,7 +12,10 @@ import kotlin.test.assertFails
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
-/** The host-bridge mirror of ember-hearing.v1. An older snapshot still decodes, and the method takes no path or token. */
+/**
+ * The host-bridge mirror of ember-hearing.v1. An older snapshot still decodes, and the method takes no path or token.
+ * Its member and effort follow `chat.send`: a model id is a name, never read as a path.
+ */
 class HearingContractTest {
     @Test fun anOlderSnapshotWithoutHearingStillDecodes() {
         val wire = """{"state":"ready","messages":[],"voice":{"state":"idle"}}"""
@@ -42,8 +45,9 @@ class HearingContractTest {
         assertNull(ChatMethods.HEARING.decodeArgs(request(extra = "modelFile" to "encoder.onnx")))
         assertNull(ChatMethods.HEARING.decodeArgs(request(effort = "/Users/tim/models/kokoro")))
         assertNull(ChatMethods.HEARING.decodeArgs(request(effort = "sk-token")))
-        assertNull(ChatMethods.HEARING.decodeArgs(request(modelId = "silero_vad.onnx")))
-        assertNull(ChatMethods.HEARING.decodeArgs(request(modelId = "models/encoder.onnx")))
+        assertNull(ChatMethods.HEARING.decodeArgs(request(effort = "fast")), "an effort chat.send does not take")
+        assertNull(ChatMethods.HEARING.decodeArgs(request(modelId = "--model=encoder.onnx")))
+        assertNotNull(ChatMethods.HEARING.decodeArgs(request(modelId = "org/model")), "the member chat.send takes")
         assertNull(ChatMethods.HEARING.decodeArgs(request(extra = "pcm" to "AAAA")))
     }
 

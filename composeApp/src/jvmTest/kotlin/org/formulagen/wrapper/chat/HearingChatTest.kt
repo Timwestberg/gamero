@@ -9,10 +9,12 @@ import kotlinx.coroutines.runBlocking
 import org.formulagen.wrapper.bridge.HearingAction
 import org.formulagen.wrapper.bridge.HearingState
 import org.formulagen.wrapper.bridge.ChatEntry
+import org.formulagen.wrapper.bridge.ChatHearingRequest
 import org.formulagen.wrapper.bridge.ChatScope
 import org.formulagen.wrapper.bridge.ChatSend
 import org.formulagen.wrapper.bridge.ChatState
 import org.formulagen.wrapper.bridge.ChatVoice
+import org.formulagen.wrapper.bridge.ModelEffort
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.bridge.TeamMember
@@ -67,6 +69,18 @@ class HearingChatTest {
             assertEquals(HEARING_NEEDS_MEMBER, desk.snapshot(scope).notice)
             assertTrue(desk.snapshot(scope).messages.isEmpty())
             assertTrue(speech.clips.isEmpty())
+        }
+    }
+
+    /** The heard turn runs with the effort the page pressed with, as a `chat.send` would. */
+    @Test fun aHeardTurnUsesTheEffortThePagePressedWith() = runBlocking {
+        val runtime = ScriptedRuntime(completeOnStart = true)
+        chat(RememberingSpeech(), runtime, FillerSettings(thresholdMs = 60_000)).use { desk ->
+            desk.open(scope)
+            desk.hearing(ChatHearingRequest(scope.profile, scope.companionId, scope.name, scope.sessionId,
+                HearingAction.PRESS, member, ModelEffort.HIGH))
+            desk.commitHeard(HearingResult("what time is it", 900, 8.0))
+            await { runtime.lastText == "what time is it" && runtime.lastEffort == ModelEffort.HIGH }
         }
     }
 
@@ -967,6 +981,7 @@ private class ScriptedRuntime(var completeOnStart: Boolean = false) : ChatRuntim
     val started = CountDownLatch(1)
     private val release = CountDownLatch(1)
     var lastText = ""
+    var lastEffort: ModelEffort? = null
     var turns = 0
     private var events: TurnEvents? = null
 
@@ -976,6 +991,7 @@ private class ScriptedRuntime(var completeOnStart: Boolean = false) : ChatRuntim
 
     override fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle {
         this.events = events
+        lastEffort = turn.effort
         lastText = turn.text
         turns += 1
         events.opened(CONVERSATION)
@@ -1056,7 +1072,7 @@ class CatalogControlTest {
         }
     }
 
-    private fun request(action: HearingAction) = org.formulagen.wrapper.bridge.ChatHearingRequest(
+    private fun request(action: HearingAction) = ChatHearingRequest(
         scope.profile, scope.companionId, scope.name, scope.sessionId, action, member,
     )
 }

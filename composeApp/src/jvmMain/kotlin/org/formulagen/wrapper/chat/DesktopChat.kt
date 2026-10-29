@@ -98,8 +98,8 @@ internal class DesktopChat(
     private var pageHears = false
     /** The member the page named on press. The native row leaves this null and uses the active member. */
     private var hearingMember: TeamMember? = null
-    /** The page's effort. Chat send on this host still uses the runtime default when the field is absent. */
-    private var hearingEffort: String? = null
+    /** The page's effort for a heard turn. Null, as when the native row armed hearing, is the runtime default. */
+    private var hearingEffort: ModelEffort? = null
     private var userMuted = false
     private var hearingUnavailable = false
     /** The permission sentence is shown until the first arm, then the row stays quiet. */
@@ -1197,7 +1197,7 @@ internal class DesktopChat(
                 hearingNotice = null
                 submitLocked(ChatSend(
                     session.scope.profile, session.scope.companionId, session.scope.name, session.scope.sessionId,
-                    member, UUID.randomUUID().toString(), decision.text, speak = true, mode = MemberMode.TALK,
+                    member, UUID.randomUUID().toString(), decision.text, speak = true, mode = MemberMode.TALK, effort = hearingEffort,
                 ))
                 fillerTurn.begin()
                 if (session.state == ChatState.RESPONDING && session.speak && fillerTurn.arm(System.nanoTime())) {

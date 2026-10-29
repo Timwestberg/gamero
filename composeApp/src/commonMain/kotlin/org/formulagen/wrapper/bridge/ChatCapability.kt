@@ -352,8 +352,8 @@ enum class HearingAction {
 }
 
 /**
- * [member] is who answers the heard turn. [effort] is the page's model effort when the page
- * armed the microphone, and null when the native row did. No path, model file, or token.
+ * [member] answers the heard turn, as it would a [ChatSend]. [effort] is the page's effort for that
+ * turn, as [ChatSend.effort]: null for the runtime default. No path, model file, or token.
  */
 @Serializable
 data class ChatHearingRequest(
@@ -363,7 +363,7 @@ data class ChatHearingRequest(
     val sessionId: String,
     val action: HearingAction,
     val member: TeamMember,
-    val effort: String? = null,
+    val effort: ModelEffort? = null,
 ) {
     fun scope() = ChatScope(profile, companionId, name, sessionId)
 }
@@ -436,7 +436,7 @@ object ChatMethods {
         valid(it.scope()) && valid(it.member) && BridgeProtocol.UUID_PATTERN.matches(it.entryId) && BridgeProtocol.UUID_PATTERN.matches(it.requestId)
     }
     val HEARING = BridgeMethod("chat.hearing", ChatHearingRequest.serializer(), ChatSnapshot.serializer()) {
-        valid(it.scope()) && hearingMemberAllowed(it.member) && acceptableHearingEffort(it.effort)
+        valid(it.scope()) && valid(it.member)
     }
     fun pack(chat: Capability<ChatCapability>): CapabilityPack = binder.pack(chat)
     internal val binder = CapabilityBinder("chat", listOf<CapabilityHandler<ChatCapability>>(
@@ -452,20 +452,3 @@ object ChatMethods {
         CLOSE.handle { chat, args -> chat.closeSession(args); NoResult },
     ))
 }
-
-/** A page effort is a short word. A path, a model file, or a token is not an effort. Null is the runtime default. */
-internal fun acceptableHearingEffort(effort: String?): Boolean {
-    if (effort == null) return true
-    if (!HEARING_EFFORT.matches(effort)) return false
-    return HEARING_BLOCKED.none { effort.contains(it) }
-}
-
-/** The member names a runtime model. It is not a filesystem path or a weight file. */
-internal fun hearingMemberAllowed(member: TeamMember): Boolean {
-    if (!SharedRules.isModelId(member.modelId)) return false
-    val id = member.modelId
-    return !id.contains('/') && !id.contains('\\') && HEARING_BLOCKED.none { id.contains(it) }
-}
-
-private val HEARING_EFFORT = Regex("^[a-z][a-z0-9-]{0,31}$")
-private val HEARING_BLOCKED = listOf("token", "onnx", "secret", "path")
