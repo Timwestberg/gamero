@@ -21,3 +21,6 @@ captures
 .build-timings.csv
 
 node_modules/
+
+# Ember browser voice files (web/hearing/scripts/fetch-web-voice.mjs)
+web/voice-assets/
