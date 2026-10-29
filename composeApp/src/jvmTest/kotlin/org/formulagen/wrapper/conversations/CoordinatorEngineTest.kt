@@ -50,7 +50,8 @@ class CoordinatorEngineTest {
 
         /** Run [claim] here, as the runner does once it is claimed. */
         fun run(claim: ClaimResult, cancel: CancelSignal = CancelSignal(), closing: () -> Boolean = { false }): MessageState =
-            ClaimOutput(server, claim.claimId, claim.message.id, attempts = 1).use { engine.run(claim, it, cancel, closing) }
+            ClaimOutput(server, claim.claimId, claim.message.id, attempts = 1, onStopRequested = cancel::cancel)
+                .use { engine.run(claim, it, cancel, closing) }
 
         fun claim(text: String, threadId: String? = null, messageId: String = id(), history: List<ConversationMessage> = emptyList(),
             memory: String? = null, inputs: List<ArtifactRef> = emptyList(),
@@ -486,6 +487,17 @@ class CoordinatorEngineTest {
         assertEquals(BrainAttemptState.INTERRUPTED, recovered.state)
         assertEquals(crashed.threads.getValue(threadId).revision + 1, recovered.revision)
         assertEquals(BrainAttemptState.INTERRUPTED, fixture.record().threads.getValue(threadId).state)
+    }
+
+    @Test fun aStopTheServerReportsMidRunStopsTheRunAsThePersonsStopDoes() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        fixture.delegateThenAnswer()
+        val messageId = id()
+        // The stop.requested event was lost: the server refuses the next step with `stop-requested` instead.
+        fixture.worker.reply = { fixture.server.stopRequested += messageId; "Implemented sign-in." }
+        assertEquals(MessageState.STOPPED, fixture.send("Add sign-in", messageId = messageId))
+        assertEquals(BrainRunState.CANCELLED, fixture.record().brain.run?.summary?.state, "cancelled, not left for review")
+        assertEquals(emptyList(), fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.ArtifactStored>(), "nothing new is stored")
     }
 
     @Test fun aSignedOutRuntimeFailsWithItsProvidersReason() {

@@ -13,6 +13,10 @@ import org.formulagen.wrapper.logger.log
  * retried with backoff until stored, and a refusal (409) means the claim is gone, so it is thrown.
  * A [delta] is best effort: pieces of one reply are numbered from 0, cut to the contract's size,
  * sent in order on one thread, and coalesced while a send is in flight.
+ *
+ * Once the person asked to stop the message, the server refuses every new step with `stop-requested`
+ * (a lost `stop.requested` event included); any such refusal calls [onStopRequested] first, so the
+ * message stops as the person's Stop does and settles `stopped`.
  */
 internal class ClaimOutput(
     private val api: ConversationApi,
@@ -21,6 +25,7 @@ internal class ClaimOutput(
     private val attempts: Int = 6,
     private val backoffMillis: Long = 500,
     private val sleep: (Long) -> Unit = Thread::sleep,
+    private val onStopRequested: () -> Unit = {},
 ) : AutoCloseable {
     private val sender = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-conversation-deltas"))
     private val pending = LinkedHashMap<Pair<String, String?>, StringBuilder>()
@@ -32,7 +37,7 @@ internal class ClaimOutput(
         var wait = backoffMillis
         repeat(attempts) { attempt ->
             try {
-                api.checkpoint(messageId, MessageCheckpointRequest(checkpoint, claimId, messageId))
+                once(checkpoint)
                 return
             } catch (refused: HovelRejectedException) {
                 throw refused
@@ -45,7 +50,8 @@ internal class ClaimOutput(
     }
 
     /** Store [checkpoint] with one try: a refusal or a failure is thrown. */
-    fun once(checkpoint: MessageCheckpoint) = api.checkpoint(messageId, MessageCheckpointRequest(checkpoint, claimId, messageId))
+    fun once(checkpoint: MessageCheckpoint) =
+        stopAware { api.checkpoint(messageId, MessageCheckpointRequest(checkpoint, claimId, messageId)) }
 
     /**
      * Store [checkpoint] with one try; a failure or refusal is only logged. Approvals use this, so an
@@ -80,7 +86,8 @@ internal class ClaimOutput(
             }
             for ((key, text) in batch) for (piece in pieces(text)) {
                 val seq = sequence.merge(key.first, 1, Int::plus)!! - 1
-                runCatching { api.delta(messageId, ReplyDeltaRequest(claimId, messageId, ReplyDelta(key.first, seq, piece, key.second))) }
+                val delta = ReplyDeltaRequest(claimId, messageId, ReplyDelta(key.first, seq, piece, key.second))
+                runCatching { stopAware { api.delta(messageId, delta) } }
             }
         }
     }
@@ -90,8 +97,17 @@ internal class ClaimOutput(
         sender.shutdownNow()
     }
 
+    /** [call], telling [onStopRequested] when the server refuses it because the person asked to stop. */
+    private fun <T> stopAware(call: () -> T): T = try { call() } catch (refused: HovelRejectedException) {
+        if (refused.code == STOP_REQUESTED) onStopRequested()
+        throw refused
+    }
+
     companion object {
         private const val MAX_BACKOFF_MILLIS = 8_000L
+
+        /** The contract's refusal of a step on a message the person asked to stop. */
+        const val STOP_REQUESTED = "stop-requested"
 
         /** [text] in pieces of at most `COMPANION_LIMITS.delta` characters, never splitting a surrogate pair. */
         fun pieces(text: String): List<String> {

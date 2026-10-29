@@ -88,6 +88,11 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     @Volatile var onClaim: () -> Unit = {}
     /** Streams opened so far. */
     val streamsOpened = java.util.concurrent.atomic.AtomicInteger()
+    /**
+     * Messages the person asked to stop. As in hovel-service, a claim replay, a new checkpoint, a delta and `running`
+     * progress answer `stop-requested`; `approval.closed` and the settling progress still land.
+     */
+    val stopRequested: MutableSet<String> = ConcurrentHashMap.newKeySet()
     @Volatile var progressStatus: Int? = null
     /** Refuses every checkpoint, as a server that took the claim back. */
     @Volatile var refuseCheckpoints = false
@@ -150,7 +155,10 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
 
     @Synchronized private fun answer(request: ClaimRequest): ClaimResponse {
         claimStatus?.let { if (it == 409) throw HovelRejectedException(claimCode) else throw HovelStatusException(it) }
-        claims[request.claimId]?.let { return ClaimResponse.Claimed(it) }
+        claims[request.claimId]?.let {
+            if (it.message.id in stopRequested) throw HovelRejectedException(ClaimOutput.STOP_REQUESTED)
+            return ClaimResponse.Claimed(it)
+        }
         if (request.conversationId in macUpdateRequired) return ClaimResponse.MacUpdateRequired(HovelContract.CURRENT + 1)
         val next = queues[request.conversationId]?.removeFirstOrNull() ?: return ClaimResponse.Empty
         val claim = next.build(request.claimId, next.message)
@@ -163,6 +171,9 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
         if (offline) throw java.io.IOException("offline")
         check(claims[request.claimId]?.message?.id == messageId && request.claimedMessageId == messageId) { "Not this claim" }
         if (refuseCheckpoints) throw HovelRejectedException()
+        if (messageId in stopRequested && request.checkpoint !is MessageCheckpoint.ApprovalClosed) {
+            throw HovelRejectedException(ClaimOutput.STOP_REQUESTED)
+        }
         when (val checkpoint = request.checkpoint) {
             is MessageCheckpoint.ApprovalOpened -> approvals[checkpoint.approval.id] = checkpoint.approval
             is MessageCheckpoint.ApprovalClosed -> {
@@ -183,11 +194,15 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
         checkpoints += request.checkpoint
     }
 
-    override fun delta(messageId: String, request: ReplyDeltaRequest) { deltas += request.delta }
+    override fun delta(messageId: String, request: ReplyDeltaRequest) {
+        if (messageId in stopRequested) throw HovelRejectedException(ClaimOutput.STOP_REQUESTED)
+        deltas += request.delta
+    }
 
     @Synchronized override fun progress(messageId: String, progress: MessageProgress): Long? {
         if (offline) throw java.io.IOException("offline")
         if (progress.state == MessageState.RUNNING && refuseRunning) throw HovelRejectedException()
+        if (progress.state == MessageState.RUNNING && messageId in stopRequested) throw HovelRejectedException(ClaimOutput.STOP_REQUESTED)
         progressStatus?.let { throw HovelStatusException(it) }
         if (revisions[messageId] != progress.expectedRevision) throw HovelRejectedException()
         this.progress += progress

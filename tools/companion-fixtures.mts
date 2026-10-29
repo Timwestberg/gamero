@@ -217,4 +217,8 @@ fixtures.usage = {
   value: JSON.parse(canonical({ computerId: ids.computer, snapshot: usage }))
 };
 
+// The native route table, so the Mac's own table is checked against the routes the server serves.
+if (!c.HOVEL_COMPANION_ROUTES) throw new Error('This server-platform predates HOVEL_COMPANION_ROUTES; update it first');
+fixtures['routes.native'] = { schema: 'routeTable', value: JSON.parse(canonical(c.HOVEL_COMPANION_ROUTES.native)) };
+
 process.stdout.write(JSON.stringify(fixtures));

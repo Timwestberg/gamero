@@ -272,8 +272,9 @@ internal class ConversationRunner(
             val response = try {
                 api.claim(ClaimRequest(entry.claimId, conversationId))
             } catch (refused: HovelRejectedException) {
-                store.forget(entry)
                 stopPending = false
+                if (refused.code == ClaimOutput.STOP_REQUESTED) return stopReplayed(entry)
+                store.forget(entry)
                 if (refused.code == UPDATE_REQUIRED_CODE) status(UPDATE_REQUIRED)
                 return false
             } catch (final: HovelStatusException) {
@@ -300,6 +301,20 @@ internal class ConversationRunner(
             }
         }
 
+        /**
+         * The replay of a journaled claim was refused because the person asked to stop its message: a claim that
+         * landed before (journaled `claimed`) settles `stopped`, and the lane looks for more once it is delivered.
+         * A claim journaled only as `claiming` never learned its message, so it cannot be settled from here.
+         */
+        private fun stopReplayed(entry: ClaimEntry): Boolean {
+            if (entry.phase == ClaimPhase.CLAIMED && entry.messageId != null && entry.revision != null) {
+                return settle(entry, MessageState.STOPPED)
+            }
+            log(LogLevel.Warn, "conversations", "A stopped message's claim never reached this Mac's journal; it is dropped")
+            store.forget(entry)
+            return false
+        }
+
         /** Journal the claim, cross the launch boundary, run it, and settle it. */
         private fun run(claiming: ClaimEntry, claim: ClaimResult) {
             val ours = claim.claimId == claiming.claimId && claim.conversation.id == conversationId
@@ -324,7 +339,9 @@ internal class ConversationRunner(
                     return
                 }
                 entry = store.journal(entry.copy(phase = ClaimPhase.LAUNCHING))
-                ClaimOutput(api, claim.claimId, messageId).use { output -> launch(entry, claim, output, cancel) }
+                ClaimOutput(api, claim.claimId, messageId, onStopRequested = cancel::cancel).use { output ->
+                    launch(entry, claim, output, cancel)
+                }
             } finally {
                 current = null
             }
@@ -340,9 +357,11 @@ internal class ConversationRunner(
                 val state = engine.run(claim, output, cancel) { closed.get() }
                 output.drain()
                 settle(entry, state)
-            } catch (_: HovelRejectedException) {
-                // The server refused the claim's work: it never stays claimed, and is settled as what it is.
-                settle(entry, if (cancel.isCancelled) MessageState.STOPPED else MessageState.RECONCILIATION_REQUIRED)
+            } catch (refused: HovelRejectedException) {
+                // The server refused the claim's work: it never stays claimed, and is settled as what it is. After the
+                // person's Stop (or the server's `stop-requested`) that is `stopped`, which the server still takes.
+                val stopped = refused.code == ClaimOutput.STOP_REQUESTED || (cancel.isCancelled && !closed.get())
+                settle(entry, if (stopped) MessageState.STOPPED else MessageState.RECONCILIATION_REQUIRED)
             } catch (final: HovelStatusException) {
                 if (!final.final) settle(entry, MessageState.RECONCILIATION_REQUIRED)
                 else {

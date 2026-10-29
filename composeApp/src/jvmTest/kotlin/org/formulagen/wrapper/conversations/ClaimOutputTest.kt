@@ -39,13 +39,14 @@ class ClaimOutputTest {
 
     @Test fun aCheckpointIsRetriedUntilStoredAndARefusalIsThrown() {
         server.offline = true
-        val output = ClaimOutput(server, claim.claimId, claim.message.id, attempts = 3, backoffMillis = 10) { waits += it; server.offline = waits.size < 2 }
+        val output = ClaimOutput(server, claim.claimId, claim.message.id, attempts = 3, backoffMillis = 10,
+            sleep = { waits += it; server.offline = waits.size < 2 })
         val run = MessageCheckpoint.RunChanged(ConversationRun(4, null, 0, id(), 0, 1, emptyList(), org.formulagen.wrapper.bridge.BrainRunState.PLANNING, null))
         output.checkpoint(run)
         assertEquals(listOf(10L, 20L), waits)
         assertEquals(listOf<MessageCheckpoint>(run), server.checkpoints)
         server.offline = true
-        assertFails { ClaimOutput(server, claim.claimId, claim.message.id, attempts = 2, backoffMillis = 1) {}.checkpoint(run) }
+        assertFails { ClaimOutput(server, claim.claimId, claim.message.id, attempts = 2, backoffMillis = 1, sleep = {}).checkpoint(run) }
         server.offline = false
         val closed = MessageCheckpoint.ApprovalClosed(id(), ApprovalOutcome.Withdrawn)
         server.approvals[closed.approvalId] = AgentApproval(ApprovalAnswerRecord(ApprovalSurface.PHONE, id(), ApprovalOption.DENY), id(), talk.id, AT,
@@ -53,5 +54,24 @@ class ClaimOutputTest {
             ApprovalState.ANSWERED, null)
         assertFailsWith<HovelRejectedException> { output.checkpoint(closed) }
         assertFalse(output.bestEffort(closed), "an approval's close is best effort")
+    }
+
+    @Test fun aStopTheServerReportsStopsTheMessage() {
+        val stops = java.util.concurrent.atomic.AtomicInteger()
+        val output = ClaimOutput(server, claim.claimId, claim.message.id, attempts = 1, onStopRequested = { stops.incrementAndGet() })
+        val run = MessageCheckpoint.RunChanged(ConversationRun(4, null, 0, id(), 0, 1, emptyList(), org.formulagen.wrapper.bridge.BrainRunState.PLANNING, null))
+        output.checkpoint(run)
+        assertEquals(0, stops.get())
+        server.stopRequested += claim.message.id
+        assertEquals(ClaimOutput.STOP_REQUESTED, assertFailsWith<HovelRejectedException> { output.checkpoint(run) }.code)
+        assertEquals(1, stops.get())
+        assertFalse(output.bestEffort(run))
+        output.delta(id(), null, "Hel")
+        output.drain()
+        assertEquals(3, stops.get(), "a checkpoint, a best-effort step and a delta each say so")
+        server.refuseCheckpoints = true
+        assertFailsWith<HovelRejectedException> { output.checkpoint(run) }
+        assertEquals(3, stops.get(), "any other refusal is not a Stop")
+        output.close()
     }
 }

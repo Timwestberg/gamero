@@ -388,4 +388,48 @@ class ConversationRunnerTest {
             assertEquals(ConversationRunner.OFFLINE, statuses.last())
         }
     }
+
+    @Test fun aStopTheServerReportsInsteadOfTheEventSettlesStopped() {
+        // Mid-run: the next step is refused with `stop-requested`, which stops the message.
+        engine.behave = { claim, output, _ ->
+            server.stopRequested += claim.message.id
+            output.checkpoint(MessageCheckpoint.MessageAppended(MessageAppend(MessageAuthor.COORDINATOR, id(), null, "Hi", null)))
+            MessageState.ANSWERED
+        }
+        runner.start(); waitConnected()
+        val talk = TestConversation()
+        val first = queue(talk)
+        server.emit(HostStreamEvent.WorkAvailable(talk.id))
+        eventually { server.settled(first) == MessageState.STOPPED }
+        assertTrue(engine.cancels.getValue(first).isCancelled)
+        // Before launch: `running` is refused, so the message settles stopped with no provider turn.
+        engine.behave = { _, _, _ -> MessageState.ANSWERED }
+        val second = id()
+        server.stopRequested += second
+        queue(talk, messageId = second)
+        server.emit(HostStreamEvent.WorkAvailable(talk.id))
+        eventually { server.settled(second) == MessageState.STOPPED }
+        assertEquals(1, engine.runs.size)
+    }
+
+    @Test fun aJournaledClaimWhoseMessageWasStoppedSettlesStoppedOnReplay() {
+        val talk = TestConversation()
+        val message = queue(talk)
+        val claimId = id()
+        server.claim(ClaimRequest(claimId, talk.id))
+        store.journal(ClaimEntry(claimId, talk.id, ClaimPhase.CLAIMED, message, 2))
+        server.stopRequested += message
+        // One journaled only as `claiming`, in another conversation, never learned its message.
+        val other = TestConversation()
+        val unnamed = queue(other)
+        val lost = id()
+        server.claim(ClaimRequest(lost, other.id))
+        store.journal(ClaimEntry(lost, other.id, ClaimPhase.CLAIMING))
+        server.stopRequested += unnamed
+        runner.start()
+        eventually { server.settled(message) == MessageState.STOPPED }
+        eventually { store.pendingClaims().isEmpty() }
+        assertNull(server.settled(unnamed), "a claim this Mac cannot name is dropped, not settled")
+        assertEquals(emptyList(), engine.runs)
+    }
 }

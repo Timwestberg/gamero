@@ -8,7 +8,7 @@ import org.formulagen.wrapper.bridge.SharedRules
  * and builder, which also decides what the transport allows. Conversation routes mirror event-contracts
  * `HOVEL_COMPANION_ROUTES.native`; each payload is named by its `hovel/companions` schema.
  */
-internal enum class NativeRoute(val method: String, private val template: String) {
+internal enum class NativeRoute(val method: String, val template: String) {
     /** The hovel heartbeat body (`providerState`, `features`) plus `computerHeartbeat`'s directory and usage. */
     HEARTBEAT("POST", "heartbeat"),
 

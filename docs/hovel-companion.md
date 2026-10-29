@@ -241,7 +241,12 @@ The task lane and the memory lane ride its heartbeat.
   settles `stopped`. A Stop that arrives while a claim is on its way applies
   once it lands: the message settles `stopped` before any provider turn. The
   server keeps stop requests and announces them again when the stream
-  connects. `approval.answered` closes the Mac's dialog when the phone answered
+  connects; until the message settles it also refuses each new step (a claim
+  replay, a checkpoint, a delta, `running`) with 409 `stop-requested`. Any such
+  refusal stops the message as the person's Stop does, and it settles
+  `stopped`. A replayed claim journaled `claimed` settles `stopped` from the
+  journal; one journaled only `claiming` never learned its message and is
+  dropped. `approval.answered` closes the Mac's dialog when the phone answered
   first. `project.changed` reads the project and publishes its folders when the
   account's differ.
 - `mac-update-required`, a 409 `update-required` and a claim this build cannot
@@ -492,7 +497,11 @@ readiness and stage rules.
 `CompanionContractFixtures.kt`, which `tools/sync-server-fixtures.py` builds
 from the server's samples with `tools/companion-fixtures.mts` and checks against
 its zod schemas (it needs the server's `event-contracts` dependencies
-installed). `ContextFolderProbeTest` holds the live context-folder probes; they
+installed), and checks `NativeRoute` against the server's
+`HOVEL_COMPANION_ROUTES.native`. `ServerContractRunTest` runs the runner, the
+engine and the real transport against a local server that answers only that
+route table, with those payloads, and checks every body the Mac sends has the
+shape of an accepted payload. `ContextFolderProbeTest` holds the live context-folder probes; they
 run only with `HOVEL_CONTEXT_FOLDERS_CLAUDE_PROBE` or
 `HOVEL_CONTEXT_FOLDERS_CODEX_PROBE` set.
 Live JCEF,

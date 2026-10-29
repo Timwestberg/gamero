@@ -67,7 +67,10 @@ internal class CoordinatorEngine(
                 }
             } catch (_: StoppedException) { stopped() }
             catch (_: InterruptedException) { stopped() }
-            catch (refused: HovelRejectedException) { throw refused }
+            catch (refused: HovelRejectedException) {
+                // `stop-requested` cancelled the message as it was refused: the run stops as the person's Stop does.
+                if (cancel.isCancelled) stopped() else throw refused
+            }
             catch (failure: ProviderFailure) {
                 // The next message starts the coordinator's conversation fresh.
                 if (failure.coordinator && failure.failure == ChatFailure.ConversationLost) {

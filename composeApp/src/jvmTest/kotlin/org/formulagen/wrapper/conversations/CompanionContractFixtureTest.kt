@@ -6,6 +6,7 @@ import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.ProviderUsage
 import org.formulagen.wrapper.bridge.ProviderUsageWindow
 import org.formulagen.wrapper.bridge.RuntimeId
+import org.formulagen.wrapper.hovel.NativeRoute
 import org.formulagen.wrapper.hovel.hovelHostFeatures
 
 /**
@@ -42,7 +43,21 @@ class CompanionContractFixtureTest {
             assertEquals(numbers(value), numbers(roundTrip(serializer, value)), name)
             checked += name
         }
-        assertEquals(fixtures.keys - "usage", checked.toSet(), "every payload has a Mac type")
+        assertEquals(fixtures.keys - "usage" - "routes.native", checked.toSet(), "every payload has a Mac type")
+    }
+
+    @Test fun everyConversationRouteIsOneTheServerServes() {
+        fun spelled(method: String, path: String) = "$method ${path.removePrefix("/").replace(Regex(":[A-Za-z]+"), ":id")}"
+        val served = fixtures.getValue("routes.native").getValue("value").jsonObject.mapValues { (_, route) ->
+            spelled(route.jsonObject.getValue("method").jsonPrimitive.content, route.jsonObject.getValue("path").jsonPrimitive.content)
+        }
+        // Tasks and memory jobs are hovel-service's own native routes, outside the companion table.
+        val outside = setOf(NativeRoute.TASK_CLAIM, NativeRoute.TASK_PROGRESS, NativeRoute.MEMORY_CLAIM, NativeRoute.MEMORY_PROGRESS,
+            NativeRoute.MEMORY_CONSOLIDATE)
+        val mac = (NativeRoute.entries - outside).map { spelled(it.method, it.template) }.toSet()
+        // The Mac does not send heard voice turns yet.
+        assertEquals(served.filterKeys { it != "messageSend" }.values.toSet(), mac)
+        assertFalse(served.values.any { it.endsWith("/answer") }, "an answer travels only as approval.closed")
     }
 
     @Test fun theServerSendsWhatTheRunnerActsOn() {
