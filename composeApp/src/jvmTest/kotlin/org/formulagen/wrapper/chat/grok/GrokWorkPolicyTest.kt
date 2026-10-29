@@ -38,6 +38,26 @@ class GrokWorkPolicyTest {
         assertFails { verifyGrokWorkInspection(report, Path.of("/different/config.toml")) }
     }
 
+    @Test fun theWorkingEnvironmentIsThePlayersWithTheirLoginPathAndOnlyHovelsGrokSettings() {
+        val finder = mapOf("HOME" to "/Users/player", "USER" to "player", "LOGNAME" to "player", "SHELL" to "/bin/zsh",
+            "TMPDIR" to "/var/folders/xy/T/", "LANG" to "en_US.UTF-8", "PATH" to "/usr/bin:/bin:/usr/sbin:/sbin",
+            "__CFBundleIdentifier" to "com.formulagen.hovel", "XAI_API_KEY" to "secret", "XAI_BASE_URL" to "https://example.test",
+            "GROK_API_KEY" to "secret", "GROK_AGENT_METADATA" to "secret", "GROK_SUBAGENTS" to "1", "GROK_HOME" to "/Users/player/.grok-work")
+        val grok = Path.of("/Users/player/.grok/bin/grok")
+        val env = grokWorkEnvironment(finder, "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Users/player/.cargo/bin", grok)
+        assertEquals("/Users/player/.grok/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Users/player/.cargo/bin:/usr/sbin:/sbin", env["PATH"])
+        for (key in listOf("HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "__CFBundleIdentifier")) assertEquals(finder[key], env[key], key)
+        assertEquals("/Users/player/.grok-work", env["GROK_HOME"])
+        assertEquals("/Users/player/.grok-work/auth.json", env["GROK_AUTH_PATH"])
+        assertEquals(mapOf("GROK_HOME" to "/Users/player/.grok-work", "GROK_AUTH_PATH" to "/Users/player/.grok-work/auth.json",
+            "GROK_DISABLE_AUTOUPDATER" to "1", "GROK_SUBAGENTS" to "0", "GROK_GOAL" to "0", "GROK_WORKFLOWS" to "0"),
+            env.filterKeys { it.startsWith("GROK_") })
+        assertTrue(env.keys.none { it.startsWith("XAI_") })
+        assertEquals("/usr/bin/false", env["BROWSER"])
+        // Without a readable login shell, the app's own PATH stays, still with Grok's folder first.
+        assertEquals("/Users/player/.grok/bin:/usr/bin:/bin:/usr/sbin:/sbin", grokWorkEnvironment(finder, null, grok)["PATH"])
+    }
+
     @Test fun workRequiresBothOptInsAndNeverRunsInRelease() {
         val enabled = mapOf("HOVEL_GROK_PROVIDER" to "1", "HOVEL_GROK_WORK" to "1")
         assertTrue(grokWorkEnabled(enabled, false, true))

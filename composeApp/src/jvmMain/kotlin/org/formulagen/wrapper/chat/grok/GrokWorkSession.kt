@@ -46,9 +46,9 @@ internal class GrokWorkSession private constructor(
         /** No prompt or permission can run during startup. The caller supplies only the active turn's router. */
         fun open(executable: Path, environment: Map<String, String>, workspace: Path, instructions: String,
             model: String, expectedAccount: String, resume: String?, onUpdate: (JsonObject) -> Unit,
-            confirmTrust: (selected: Path, root: Path) -> Boolean,
+            confirmTrust: (selected: Path, root: Path) -> Boolean, loginPath: String? = null,
             onPermission: (JsonObject, (JsonObject?) -> Unit) -> Unit): GrokWorkSession {
-            val launch = GrokWorkLaunch.create(executable, environment, workspace, instructions)
+            val launch = GrokWorkLaunch.create(executable, environment, workspace, instructions, loginPath)
             var rpc: GrokAcp? = null
             try {
                 if (!launch.verify(20.seconds)) {

@@ -1,5 +1,6 @@
 package org.formulagen.wrapper.chat.grok
 
+import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
@@ -65,7 +66,7 @@ internal class GrokWorkLaunch private constructor(
     fun agentBuilder() = builder(listOf("--no-auto-update", "--no-subagents", "--disable-web-search",
         "agent", "--no-leader", "--agent-profile", profile.toString(), "stdio"))
 
-    /** Deliberately omit inherited credential, endpoint, overlay and auto-approval variables. */
+    /** The player's environment without inherited credential, endpoint, overlay and auto-approval variables. */
     private fun builder(args: List<String>) = ProcessBuilder(listOf(executable.toString()) + args)
         .directory(workspace.toFile()).apply { environment().clear(); environment().putAll(environment) }
 
@@ -73,20 +74,19 @@ internal class GrokWorkLaunch private constructor(
     override fun close() { Files.deleteIfExists(profile) }
 
     companion object {
-        /** Create only Hovel's temporary profile; never copy credentials or alter provider settings. */
-        fun create(executable: Path, parent: Map<String, String>, workspace: Path, instructions: String): GrokWorkLaunch {
-            val home = Path.of(parent["HOME"] ?: System.getProperty("user.home"))
-            val provider = Path.of(parent["GROK_HOME"] ?: home.resolve(".grok").toString())
-            val auth = Path.of(parent["GROK_AUTH_PATH"] ?: provider.resolve("auth.json").toString())
+        /**
+         * Create only Hovel's temporary profile; never copy credentials or alter provider settings.
+         * [loginPath] is the player's login-shell `PATH` ([grokWorkEnvironment]).
+         */
+        fun create(executable: Path, parent: Map<String, String>, workspace: Path, instructions: String,
+            loginPath: String? = null): GrokWorkLaunch {
+            val env = grokWorkEnvironment(parent, loginPath, executable)
+            val home = Path.of(env.getValue("HOME"))
+            val provider = Path.of(env.getValue("GROK_HOME"))
+            val auth = Path.of(env.getValue("GROK_AUTH_PATH"))
             require(listOf(executable, home, provider, auth, workspace).all { it.isAbsolute })
             val config = provider.resolve("config.toml")
             verifyGrokWorkConfig(readGrokWorkConfig(config))
-            val env = buildMap {
-                put("HOME", home.toString()); put("GROK_HOME", provider.toString()); put("GROK_AUTH_PATH", auth.toString())
-                put("PATH", parent["PATH"] ?: "/usr/bin:/bin:/usr/sbin:/sbin")
-                put("BROWSER", "/usr/bin/false"); put("GROK_DISABLE_AUTOUPDATER", "1")
-                put("GROK_SUBAGENTS", "0"); put("GROK_GOAL", "0"); put("GROK_WORKFLOWS", "0")
-            }
             val profile = Files.createTempFile("hovel-grok-work-", ".md",
                 PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))
             try {
@@ -96,6 +96,25 @@ internal class GrokWorkLaunch private constructor(
             } catch (error: Exception) { Files.deleteIfExists(profile); throw error }
         }
     }
+}
+
+/**
+ * A working child's whole environment: the player's own ([parent]), so their tools, locale, shell and
+ * temporary folder work as in Terminal, with their login shell's `PATH` ([loginPath]: a Mac app started
+ * from Finder has only the system folders), the Grok executable's folder first and the system folders
+ * last. Removed: every `XAI_*` (an API key or another endpoint instead of the subscription) and every
+ * inherited `GROK_*` (credentials, endpoints, overlays, auto-approval). The player's own `GROK_HOME`
+ * and `GROK_AUTH_PATH` still choose where their setup and login are; Hovel then sets its own `GROK_*`.
+ */
+internal fun grokWorkEnvironment(parent: Map<String, String>, loginPath: String?, executable: Path): Map<String, String> {
+    val home = parent["HOME"] ?: System.getProperty("user.home")
+    val provider = parent["GROK_HOME"] ?: Path.of(home).resolve(".grok").toString()
+    val auth = parent["GROK_AUTH_PATH"] ?: Path.of(provider).resolve("auth.json").toString()
+    val kept = parent.filterKeys { !it.startsWith("XAI_") && !it.startsWith("GROK_") }
+    val path = (listOfNotNull(executable.parent?.toString()) + (loginPath ?: parent["PATH"]).orEmpty().split(File.pathSeparator) +
+        listOf("/usr/bin", "/bin", "/usr/sbin", "/sbin")).filter { it.isNotBlank() }.distinct()
+    return kept + mapOf("HOME" to home, "PATH" to path.joinToString(File.pathSeparator), "GROK_HOME" to provider, "GROK_AUTH_PATH" to auth,
+        "BROWSER" to "/usr/bin/false", "GROK_DISABLE_AUTOUPDATER" to "1", "GROK_SUBAGENTS" to "0", "GROK_GOAL" to "0", "GROK_WORKFLOWS" to "0")
 }
 
 /** Configuration contents stay local and are never included in errors or diagnostics. */

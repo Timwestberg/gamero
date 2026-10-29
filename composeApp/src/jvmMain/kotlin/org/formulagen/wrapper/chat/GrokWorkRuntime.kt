@@ -18,6 +18,7 @@ import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.providers.GrokConnection
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
+import org.formulagen.wrapper.process.readLoginShellPath
 
 /** Grok project work through the existing native folder, lease, history, activity and approval seams. */
 internal class GrokWorkRuntime(
@@ -26,6 +27,8 @@ internal class GrokWorkRuntime(
     private val connection: GrokConnection,
     private val broker: ApprovalBroker,
     private val trust: GrokWorkTrust = GrokWorkTrust { _, _, _ -> false },
+    /** The player's login-shell `PATH` for the working child ([grokWorkEnvironment]); null keeps [environment]'s. */
+    private val loginPath: () -> String? = { loginShellPath.value },
 ) : WorkRuntime {
     override val id = RuntimeId.GROK_BUILD
     private val bindings = GrokSessions(root.resolve("grok-work-bindings"))
@@ -149,7 +152,7 @@ internal class GrokWorkRuntime(
                 GrokWorkSession.open(executable, environment, folder, request.persona.instructions, model,
                     account.fingerprint, previous?.providerSessionId, ::update, confirmTrust = { selected, root ->
                         active() && trust.ask(selected, root, startupCancel) && active()
-                    }) { params, respond ->
+                    }, loginPath = loginPath()) { params, respond ->
                     val relay = approvals
                     if (active() && relay != null) relay.receive(params, respond)
                     else respond(cancelledGrokPermission())
@@ -225,5 +228,10 @@ internal class GrokWorkRuntime(
 
         /** DesktopChat independently rejects callbacks that were already in flight when Stop was pressed. */
         private inline fun deliver(event: () -> Unit) { if (active()) event() }
+    }
+
+    private companion object {
+        /** The player's login-shell `PATH`, read once: a Mac app started from Finder has only the system folders. */
+        val loginShellPath = lazy { readLoginShellPath(System.getenv()) }
     }
 }

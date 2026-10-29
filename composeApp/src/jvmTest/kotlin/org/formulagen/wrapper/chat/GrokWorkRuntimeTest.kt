@@ -245,6 +245,30 @@ class GrokWorkRuntimeTest {
         }
     }
 
+    @Test fun workRunsInThePlayersEnvironmentWithTheirLoginPathAndNoInheritedGrokOrXaiSettings() {
+        FakeGrokRuntime().use { fake ->
+            // A Mac app started from Finder: system folders only, plus whatever the player's session exported.
+            val parent = fake.env + mapOf("PATH" to "/usr/bin:/bin:/usr/sbin:/sbin", "LANG" to "en_US.UTF-8", "SHELL" to "/bin/zsh",
+                "TMPDIR" to fake.root.toString(), "XAI_API_KEY" to "fixture-secret", "GROK_API_KEY" to "fixture-secret",
+                "GROK_ENDPOINT" to "https://example.invalid")
+            val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
+            GrokWorkRuntime(fake.root.resolve("providers"), parent, GrokConnection(parent), broker,
+                loginPath = { "/opt/homebrew/bin:/usr/bin:/bin" }).use { runtime ->
+                val events = WorkFixtureEvents()
+                runtime.startTurn(workRequest(fake), events); events.done.get(10, TimeUnit.SECONDS)
+                assertNull(events.failure)
+            }
+            val child = kotlinx.serialization.json.Json.parseToJsonElement(Files.readString(fake.root.resolve("agent-environment.json")))
+                .let { it as kotlinx.serialization.json.JsonObject }.mapValues { (it.value as kotlinx.serialization.json.JsonPrimitive).content }
+            assertEquals("${fake.root}:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", child["PATH"])
+            assertEquals("en_US.UTF-8", child["LANG"]); assertEquals("/bin/zsh", child["SHELL"]); assertEquals(fake.root.toString(), child["TMPDIR"])
+            assertEquals(fake.root.resolve(".grok").toString(), child["GROK_HOME"])
+            assertEquals("1", child["GROK_DISABLE_AUTOUPDATER"])
+            assertFalse(child.values.any { it == "fixture-secret" })
+            assertFalse("GROK_ENDPOINT" in child)
+        }
+    }
+
     @Test fun workBindingsCannotResumeInAnotherWorkspaceOrReplayAnAmbiguousPrompt() {
         FakeGrokRuntime().use { fake ->
             val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }

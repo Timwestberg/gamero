@@ -260,6 +260,7 @@ internal class FakeGrokRuntime : AutoCloseable {
             sid='provider/opaque-id'
             waiting=None
             with (root/'pids').open('a') as f: f.write(str(os.getpid())+'\n')
+            (root/'agent-environment.json').write_text(json.dumps(dict(os.environ)))
             for line in sys.stdin:
                 req=json.loads(line); method=req.get('method'); rid=req.get('id')
                 if method is None:
