@@ -5,7 +5,6 @@ import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.TimeUnit
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.SourceDataLine
@@ -134,8 +133,10 @@ internal class DesktopSpeech(
                         playbackFinished.countDown()
                     }
                 }
-                playback.start()
+                var playerStarted = false
                 try {
+                    playback.start()
+                    playerStarted = true
                     voice.speakStreaming(spoken) { samples, rate ->
                         if (synchronized(gate) { closed || ticket != generation }) return@speakStreaming false
                         queue.put(PlayChunk(pcm16(samples), rate))
@@ -143,7 +144,8 @@ internal class DesktopSpeech(
                     }
                 } finally {
                     queue.offer(playbackEnd)
-                    playbackFinished.await(2, TimeUnit.MINUTES)
+                    // Stop closes the line, which unblocks a drain. Waiting out a long reply is correct.
+                    if (playerStarted) playbackFinished.await() else playbackFinished.countDown()
                     synchronized(gate) { if (playQueue === queue) playQueue = null }
                 }
                 synchronized(gate) { if (ticket == generation) { line = null; state = ChatVoice() } }
