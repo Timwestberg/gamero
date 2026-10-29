@@ -33,10 +33,18 @@ import org.formulagen.wrapper.chat.CodexChatRuntime
 import org.formulagen.wrapper.chat.DesktopChat
 import org.formulagen.wrapper.chat.DesktopSpeech
 import org.formulagen.wrapper.chat.DesktopHearing
+import org.formulagen.wrapper.chat.HearingRoute
 import org.formulagen.wrapper.chat.VoicePickerModel
 import org.formulagen.wrapper.chat.openTargetMic
+import java.nio.file.Files
+import org.formulagen.wrapper.voice.EmberAudio
+import org.formulagen.wrapper.voice.chooseDuplex
+import org.formulagen.wrapper.voice.hearingBargeMs
 import org.formulagen.wrapper.voice.openHearingEngine
+import org.formulagen.wrapper.voice.readDuplexRequest
 import org.formulagen.wrapper.voice.readFillerSettings
+import org.formulagen.wrapper.voice.readSelfCheck
+import org.formulagen.wrapper.voice.selfCheckFile
 import org.formulagen.wrapper.chat.desktopVoiceConfig
 import org.formulagen.wrapper.chat.fillerChoiceFile
 import org.formulagen.wrapper.chat.hearingGuardMs
@@ -139,15 +147,21 @@ internal class DesktopServices private constructor(
                     codex?.takeIf { RuntimeId.CODEX in working }?.let { CodexWorkRuntime(providerRoot, it, broker) })
                 val work = ChatWork(workspaces, StartOfWork(nativeDialogs), workers)
                 val voicePicker = VoicePickerModel()
-                val hearing = DesktopHearing(openHearingEngine(environment["HOVEL_HEARING_MODEL"].orEmpty()), ::openTargetMic)
+                val selfCheck = readSelfCheck(runCatching { Files.readString(selfCheckFile(environment)) }.getOrNull())
+                val choice = chooseDuplex(readDuplexRequest(environment), EmberAudio.tryLoad(environment), selfCheck)
+                val route = HearingRoute(choice, environment)
+                val hearing = DesktopHearing(openHearingEngine(environment["HOVEL_HEARING_MODEL"].orEmpty()), route::openMic)
                 val fillerFile = fillerChoiceFile(environment)
                 val chat = own(DesktopChat(
-                    providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment)), offered, work, voicePicker,
+                    providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment), route::openLine), offered, work, voicePicker,
                     fillers = readFillerSettings(environment, readSavedFillers(fillerFile)),
                     fillerFile = fillerFile,
                     silenceMs = hearingSilenceMs(environment),
                     guardMs = hearingGuardMs(environment),
                     hearing = hearing,
+                    route = route,
+                    duplexChoice = choice,
+                    bargeMs = hearingBargeMs(environment),
                 ))
                 // Both runtimes sign in outside Hovel, on the player's own install, so a status check never signs a chat out.
                 val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),

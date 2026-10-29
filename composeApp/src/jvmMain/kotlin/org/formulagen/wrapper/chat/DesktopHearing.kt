@@ -8,13 +8,16 @@ import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.TargetDataLine
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
+import org.formulagen.wrapper.voice.DuplexChoice
+import org.formulagen.wrapper.voice.EmberAudio
 import org.formulagen.wrapper.voice.EndpointDecision
 import org.formulagen.wrapper.voice.HEARING_MIN_SPEECH_MS
 import org.formulagen.wrapper.voice.HEARING_SAMPLE_RATE
-import org.formulagen.wrapper.voice.HearingEngine
-import org.formulagen.wrapper.voice.HearingResult
 import org.formulagen.wrapper.voice.TurnCommitter
 import org.formulagen.wrapper.voice.chunkRms
+import org.formulagen.wrapper.voice.HearingDuplex
+import org.formulagen.wrapper.voice.HearingEngine
+import org.formulagen.wrapper.voice.HearingResult
 
 internal interface MicCapture : AutoCloseable {
     /** Samples written into [into]. `0` means wait and try again. Negative means the microphone closed. */
@@ -94,6 +97,7 @@ internal class DesktopHearing(
 
     private val paused = AtomicBoolean(false)
     private val restart = AtomicBoolean(false)
+    private val feedPreRoll = AtomicBoolean(false)
     private val emberSpeaking = AtomicBoolean(false)
     private val emberHotUntilNs = AtomicLong(0)
     private val emberWords = AtomicReference("")
@@ -108,6 +112,7 @@ internal class DesktopHearing(
         onPartial: (String) -> Unit,
         onUtterance: (HearingResult) -> Unit,
         onFailed: (String) -> Unit,
+        onFrame: (voicedMs: Int, chunkMs: Int, vadProb: Float) -> Unit = { _, _, _ -> },
     ): Boolean {
         synchronized(gate) {
             if (thread != null) return false
@@ -117,6 +122,7 @@ internal class DesktopHearing(
             paused.set(false)
             restart.set(true)
             committer = TurnCommitter(silenceMs = silenceMs)
+            val preRoll = PreRoll(HEARING_SAMPLE_RATE * 300 / 1000)
             val debugLevels = System.getenv("HOVEL_HEARING_DEBUG")?.trim()?.lowercase() in setOf("1", "true", "yes")
             val worker = Thread({
                 var capture: MicCapture? = null
@@ -134,17 +140,26 @@ internal class DesktopHearing(
                         val n = capture.read(buf)
                         if (n < 0) break
                         if (n == 0) continue
+                        val chunk = if (n == buf.size) buf.copyOf() else buf.copyOf(n)
                         if (paused.get()) continue
+                        preRoll.add(chunk)
                         if (restart.compareAndSet(true, false)) {
                             runCatching { engine.startUtterance() }
                             committer.resetUtterance()
+                            if (feedPreRoll.compareAndSet(true, false)) {
+                                val prior = preRoll.copy()
+                                if (prior.isNotEmpty()) engine.accept(prior)
+                            } else {
+                                engine.accept(chunk)
+                            }
+                        } else {
+                            engine.accept(chunk)
                         }
-                        val chunk = if (n == buf.size) buf.copyOf() else buf.copyOf(n)
-                        engine.accept(chunk)
                         val voicedMs = engine.voicedMillisOfLastAccept()
                         val chunkMs = n * 1000 / HEARING_SAMPLE_RATE
                         val rms = chunkRms(chunk)
                         val prob = engine.lastVadProbability()
+                        onFrame(voicedMs, chunkMs, prob)
                         val text = engine.partial()
                         val hot = emberSpeaking.get() || System.nanoTime() < emberHotUntilNs.get()
                         val event = committer.observe(voicedMs > 0, chunkMs, rms, text, prob, hot, emberWords.get())
@@ -206,22 +221,34 @@ internal class DesktopHearing(
         }
     }
 
+    fun setPaused(value: Boolean) {
+        paused.set(value)
+        if (!value) restart.set(true)
+    }
+
+    /** Drop the in-progress transcript and start again from the last 300 ms. */
+    fun restartUtterance() {
+        feedPreRoll.set(true)
+        restart.set(true)
+    }
+
+    /** Clear the recognizer without replaying the last audio. Used when Ember starts or stops. */
+    fun dropUtterance() {
+        feedPreRoll.set(false)
+        restart.set(true)
+    }
+
     fun noteEmberSpeaking(text: String) {
         emberSpeaking.set(true)
         if (text.isNotBlank()) emberWords.set(text)
-        restart.set(true)
+        dropUtterance()
     }
 
     fun noteEmberSilent(text: String) {
         emberSpeaking.set(false)
         if (text.isNotBlank()) emberWords.set(text)
         emberHotUntilNs.set(System.nanoTime() + 500_000_000L)
-        restart.set(true)
-    }
-
-    fun setPaused(value: Boolean) {
-        paused.set(value)
-        if (!value) restart.set(true)
+        dropUtterance()
     }
 
     fun isPaused(): Boolean = paused.get()
@@ -247,6 +274,92 @@ internal class DesktopHearing(
         running?.join(1_000)
         runCatching { engine.close() }
     }
+}
+
+private class PreRoll(private val capacity: Int) {
+    private val buf = FloatArray(capacity.coerceAtLeast(1))
+    private var count = 0
+    private var at = 0
+
+    fun add(samples: FloatArray) {
+        for (sample in samples) {
+            buf[at] = sample
+            at = (at + 1) % buf.size
+            if (count < buf.size) count++
+        }
+    }
+
+    fun copy(): FloatArray {
+        val out = FloatArray(count)
+        val start = (at - count + buf.size) % buf.size
+        for (index in 0 until count) out[index] = buf[(start + index) % buf.size]
+        return out
+    }
+}
+
+/**
+ * Picks the voice-processing graph when [choice] is full duplex and the helper starts.
+ * A failure rewrites [choice] to half duplex before the microphone opens.
+ */
+internal class HearingRoute(
+    var choice: DuplexChoice,
+    private val environment: Map<String, String>,
+) {
+    @Volatile private var graphUp = false
+
+    fun arm(): DuplexChoice {
+        if (choice.mode != HearingDuplex.FULL || graphUp) return choice
+        if (!EmberAudio.tryLoad(environment)) {
+            choice = DuplexChoice(HearingDuplex.HALF, "aec-unavailable")
+            log(LogLevel.Info, "hearing", "duplex=half reason=aec-unavailable")
+            return choice
+        }
+        val code = EmberAudio.startCode(HEARING_SAMPLE_RATE)
+        if (code != EmberAudio.START_OK) {
+            choice = DuplexChoice(HearingDuplex.HALF, "graph-failed")
+            log(LogLevel.Info, "hearing", "duplex=half reason=graph-failed code=$code detail=${EmberAudio.lastError()}")
+            return choice
+        }
+        graphUp = true
+        return choice
+    }
+
+    fun openMic(): MicCapture = if (graphUp) GraphMic(::release) else openTargetMic()
+
+    fun openLine(rate: Int): PcmLine = if (graphUp) GraphLine(rate) else openSpeaker(rate)
+
+    fun release() {
+        if (!graphUp) return
+        graphUp = false
+        EmberAudio.stop()
+    }
+}
+
+private class GraphMic(private val onClose: () -> Unit) : MicCapture {
+    override fun read(into: FloatArray): Int {
+        val n = EmberAudio.read(into)
+        if (n == 0) Thread.sleep(5)
+        return n
+    }
+    override fun close() = onClose()
+}
+
+private class GraphLine(private val rate: Int) : PcmLine {
+    override fun start() {}
+    override fun write(pcm: ByteArray) {
+        if (pcm.size < 2) return
+        val shorts = ShortArray(pcm.size / 2)
+        for (index in shorts.indices) {
+            val lo = pcm[index * 2].toInt() and 0xff
+            val hi = pcm[index * 2 + 1].toInt()
+            shorts[index] = ((hi shl 8) or lo).toShort()
+        }
+        EmberAudio.play(shorts, rate)
+    }
+    override fun drain() {}
+    override fun flush() = EmberAudio.flush()
+    override fun stop() {}
+    override fun close() {}
 }
 
 internal fun openTargetMic(): MicCapture {

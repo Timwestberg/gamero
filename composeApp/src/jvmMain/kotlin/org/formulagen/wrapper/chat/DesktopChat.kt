@@ -1,9 +1,14 @@
 package org.formulagen.wrapper.chat
 
 import java.nio.file.Path
+import org.formulagen.wrapper.voice.BargeInGuard
+import org.formulagen.wrapper.voice.DuplexChoice
+import org.formulagen.wrapper.voice.HEARING_BARGE_SUSTAIN_MS
+import org.formulagen.wrapper.voice.HEARING_BARGE_TALK_GAP_MS
 import org.formulagen.wrapper.voice.HEARING_ENDPOINT_SILENCE_MS
 import org.formulagen.wrapper.voice.HEARING_MIN_SPEECH_MS
 import org.formulagen.wrapper.voice.HEARING_RESUME_GUARD_MS
+import org.formulagen.wrapper.voice.HearingDuplex
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -52,12 +57,19 @@ internal class DesktopChat(
     private val silenceMs: Int = HEARING_ENDPOINT_SILENCE_MS,
     private val guardMs: Int = HEARING_RESUME_GUARD_MS,
     private val hearing: DesktopHearing? = null,
+    private val route: HearingRoute? = null,
+    duplexChoice: DuplexChoice = DuplexChoice(HearingDuplex.HALF, "default"),
+    private val bargeMs: Int = HEARING_BARGE_SUSTAIN_MS,
 ) : ChatCapability, AutoCloseable {
     private val runtimes = runtimes.associateBy { it.id }
     private val workers: Map<RuntimeId, WorkRuntime> = work?.runtimes.orEmpty()
     private val gate = Any()
     private val worker = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-chat"))
     private val timer = Executors.newSingleThreadScheduledExecutor(loggingDaemonThreads("hovel-chat-timeout"))
+    private var duplexChoice = duplexChoice
+    private val bargeGuard = BargeInGuard(sustainMs = bargeMs, gapResetMs = HEARING_BARGE_TALK_GAP_MS)
+    /** Last playback state told to the hearing session. Preparing counts: Kokoro is audible before the device reports speaking. */
+    private var playbackNoted = false
     private val fillerRotation = FillerRotation()
     private var fillerTurn = FillerTurn(fillers, fillerRotation)
     private var liveFillers = fillers
@@ -662,17 +674,20 @@ internal class DesktopChat(
         val ear = synchronized(gate) {
             if (closed || active == null) return
             if (talkOn && replyLiveLocked()) {
-                bargeInLocked()
+                bargeInLocked("press")
                 return
             }
             if (talkOn) {
                 endConversationLocked()
                 return
             }
+            route?.arm()?.let { duplexChoice = it }
             talkOn = true
             hearingPartial = ""
             hearingNotice = null
+            bargeGuard.reset()
             setPhase(TalkPhase.LISTENING)
+            log(LogLevel.Info, "hearing", "duplex=${duplexChoice.mode.name.lowercase()} reason=${duplexChoice.reason}")
             publishPicker()
             hearing
         }
@@ -702,6 +717,7 @@ internal class DesktopChat(
                     if (talkOn) endConversationLocked() else publishPicker()
                 }
             },
+            onFrame = { voicedMs, chunkMs, prob -> synchronized(gate) { onHearingFrame(voicedMs, chunkMs, prob) } },
         )
         if (!started) synchronized(gate) {
             talkOn = false
@@ -717,7 +733,7 @@ internal class DesktopChat(
      */
     internal fun endConversation() = synchronized(gate) {
         if (!talkOn) return@synchronized
-        if (replyLiveLocked()) bargeInLocked() else endConversationLocked()
+        if (replyLiveLocked()) bargeInLocked("press") else endConversationLocked()
     }
 
     /** The Voice row toggle. The env var wins at the next launch; this choice is what the file remembers. */
@@ -752,6 +768,7 @@ internal class DesktopChat(
         guardGeneration++
         hearingPartial = ""
         setPhase(TalkPhase.OFF)
+        speech.stop()
         hearing?.endSession()
         if (session != null && (session.state == ChatState.RESPONDING || session.state == ChatState.AWAITING_YOU)) {
             val turn = session.turn
@@ -764,7 +781,18 @@ internal class DesktopChat(
     }
 
     private fun onUtteranceLocked(result: HearingResult) {
-        if (!talkOn || talkPhase != TalkPhase.LISTENING) return
+        if (!talkOn) return
+        if (duplexChoice.mode == HearingDuplex.FULL && playbackAudible()) {
+            bargeInLocked("vad")
+            if (result.text.isNotBlank() && result.speechMs >= HEARING_MIN_SPEECH_MS) {
+                noteEndpoint()
+                commitHearingLocked(result)
+                if (talkOn && active?.state == ChatState.RESPONDING) noteSend()
+            }
+            publishPicker()
+            return
+        }
+        if (talkPhase != TalkPhase.LISTENING) return
         noteEndpoint()
         log(LogLevel.Info, "hearing", "asr_final decodeMs=${result.decodeMs.toInt()} speechMs=${result.speechMs} chars=${result.text.length}")
         val text = result.text.trim()
@@ -798,12 +826,12 @@ internal class DesktopChat(
      * Flush playback before the provider is cancelled, keep the partial bubble, and listen again.
      * The microphone stays paused for [guardMs] so the speaker tail is not transcribed.
      */
-    private fun bargeInLocked() {
+    private fun bargeInLocked(kind: String) {
         val session = active ?: return
         val started = System.nanoTime()
         speech.stop()
         val flushMs = (System.nanoTime() - started) / 1_000_000
-        log(LogLevel.Info, "hearing", "barge-in flush_ms=$flushMs")
+        log(LogLevel.Info, "hearing", "barge-in $kind flush_ms=$flushMs")
         fillerTurn.cancel()
         if (session.state == ChatState.RESPONDING || session.state == ChatState.AWAITING_YOU) {
             val turn = session.turn
@@ -819,11 +847,37 @@ internal class DesktopChat(
             turn?.stop()
         }
         hearingPartial = ""
+        bargeGuard.reset()
         setPhase(TalkPhase.LISTENING)
-        hearing?.setPaused(true)
-        resumePending = false
-        scheduleResumeLocked()
+        if (duplexChoice.mode == HearingDuplex.FULL) {
+            hearing?.setPaused(false)
+            hearing?.restartUtterance()
+        } else {
+            hearing?.setPaused(true)
+            resumePending = false
+            scheduleResumeLocked()
+        }
         publishPicker()
+    }
+
+    /**
+     * Full duplex: 250 ms of frames at or above probability 0.5 while she is preparing or playing
+     * flushes playback. A single quiet mic chunk must not wipe that run. Half duplex ignores the mic here.
+     */
+    private fun onHearingFrame(voicedMs: Int, chunkMs: Int, prob: Float) {
+        if (!talkOn || duplexChoice.mode != HearingDuplex.FULL) return
+        syncPlaybackToHearing()
+        if (!playbackAudible()) {
+            bargeGuard.reset()
+            return
+        }
+        val minProb = 0.5f
+        val span = when {
+            prob >= minProb -> maxOf(chunkMs, voicedMs)
+            voicedMs > 0 -> voicedMs
+            else -> 0
+        }
+        if (bargeGuard.frame(span > 0, if (span > 0) span else chunkMs)) bargeInLocked("vad")
     }
 
     private fun noteEndpoint() {
@@ -863,9 +917,24 @@ internal class DesktopChat(
         )
     }
 
+    /** Preparing is already playback: Kokoro is producing audio before the device reports speaking. */
+    private fun playbackAudible(): Boolean {
+        val voice = speech.status().state
+        return voice == VoiceState.PREPARING || voice == VoiceState.SPEAKING || fillerTurn.playing
+    }
+
+    /** Tell the hearing session when playback starts and stops, including the preparing state. */
+    private fun syncPlaybackToHearing() {
+        val audible = playbackAudible()
+        if (audible == playbackNoted) return
+        playbackNoted = audible
+        if (audible) hearing?.noteEmberSpeaking(emberLine()) else hearing?.noteEmberSilent(emberLine())
+    }
+
     /** Half-duplex: the mic stays closed while Ember is speaking or a reply is still in flight. */
     private fun notePlaybackLocked() {
         if (!talkOn) return
+        syncPlaybackToHearing()
         val voice = speech.status().state
         val chat = active?.state
         val emberBusy = voice == VoiceState.PREPARING || voice == VoiceState.SPEAKING
@@ -877,7 +946,7 @@ internal class DesktopChat(
                     resumePending = false
                     guardGeneration++
                     setPhase(TalkPhase.THINKING)
-                    hearing?.setPaused(true)
+                    coverMicLocked()
                 }
             talkPhase != TalkPhase.LISTENING && talkPhase != TalkPhase.OFF -> scheduleResumeLocked()
         }
@@ -887,7 +956,12 @@ internal class DesktopChat(
         resumePending = false
         guardGeneration++
         setPhase(phase)
-        hearing?.setPaused(true)
+        coverMicLocked()
+    }
+
+    /** Half duplex closes the mic while Ember speaks. Full duplex leaves it open for the canceller. */
+    private fun coverMicLocked() {
+        if (duplexChoice.mode == HearingDuplex.HALF) hearing?.setPaused(true)
     }
 
     private fun scheduleResumeLocked() {
@@ -921,9 +995,7 @@ internal class DesktopChat(
         val enteringSpeech = next == TalkPhase.SPEAKING
         talkPhase = next
         log(LogLevel.Info, "hearing", "session=${next.name.lowercase()} chat=${active?.state ?: "none"} voice=${speech.status().state}")
-        val line = emberLine()
-        if (enteringSpeech) hearing?.noteEmberSpeaking(line)
-        if (leavingSpeech) hearing?.noteEmberSilent(line)
+        if (enteringSpeech || leavingSpeech) syncPlaybackToHearing()
     }
 
     private fun emberLine(): String {
@@ -982,6 +1054,7 @@ internal class DesktopChat(
             // The conversation's start-of-work confirmations end with its view (a closed chat, another companion).
             work?.startOfWork?.forget(it.scope.sessionId)
             talkOn = false
+            playbackNoted = false
             resumePending = false
             guardGeneration++
             setPhase(TalkPhase.OFF)

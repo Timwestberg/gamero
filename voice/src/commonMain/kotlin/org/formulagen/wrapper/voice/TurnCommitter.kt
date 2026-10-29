@@ -126,7 +126,7 @@ fun screenHeardTurn(
 ): String? {
     val words = speechTokens(text)
     if (emberHot) {
-        val strong = vadSpeechMs >= 250 && maxProb >= 0.5f
+        val strong = vadSpeechMs >= HEARING_BARGE_SUSTAIN_MS && maxProb >= 0.5f
         if (words.size in 1..2 && !strong) return "too_short"
         if (!strong) return "no_vad_speech"
         if (mostlyEcho(words, emberText)) return "self_echo"
