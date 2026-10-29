@@ -93,6 +93,17 @@ class ChatWireTest {
         assertEquals(snapshot, bridgeJson.decodeFromJsonElement(ChatSnapshot.serializer(), fixture.jsonObject.getValue("result")))
     }
 
+    /** A page that opted in to hearing reads the host microphone's state and the live partial transcript. */
+    @Test fun theHearingSnapshotEnvelopeMatchesTheContractFixture() {
+        val fixture = Json.parseToJsonElement(HostBridgeFixtures.ENVELOPES.getValue("success-chat-hearing.json")).jsonObject.getValue("value")
+        val snapshot = ChatSnapshot(ChatState.READY, listOf(
+            ChatEntry.User("60000000-0000-4000-8000-000000000001", "Hello"),
+            ChatEntry.Assistant("60000000-0000-4000-8000-000000000002", codex, "Hi! What are we doing today?"),
+        ), hearing = ChatHearing(HearingState.HEARING, partial = "what time is it"))
+        assertEquals(fixture, Json.parseToJsonElement(BridgeEnvelopes.success(bridgeJson.encodeToJsonElement(ChatSnapshot.serializer(), snapshot))))
+        assertEquals(snapshot, bridgeJson.decodeFromJsonElement(ChatSnapshot.serializer(), fixture.jsonObject.getValue("result")))
+    }
+
     /** A folder's name and whether it exists, and `"folder": null` (never a missing key) when none is chosen. */
     @Test fun workspaceStatusesMatchTheContract() {
         val fixture = Json.parseToJsonElement(HostBridgeFixtures.ENVELOPES.getValue("success-workspace-status.json")).jsonObject.getValue("value")

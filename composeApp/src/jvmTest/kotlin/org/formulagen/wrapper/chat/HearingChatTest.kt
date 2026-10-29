@@ -6,17 +6,23 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
+import org.formulagen.wrapper.bridge.BridgeUpdateRequiredException
+import org.formulagen.wrapper.bridge.HandoverReason
 import org.formulagen.wrapper.bridge.HearingAction
 import org.formulagen.wrapper.bridge.HearingState
 import org.formulagen.wrapper.bridge.ChatEntry
+import org.formulagen.wrapper.bridge.ChatHandover
+import org.formulagen.wrapper.bridge.ChatHearingRequest
 import org.formulagen.wrapper.bridge.ChatScope
 import org.formulagen.wrapper.bridge.ChatSend
 import org.formulagen.wrapper.bridge.ChatState
 import org.formulagen.wrapper.bridge.ChatVoice
+import org.formulagen.wrapper.bridge.ModelEffort
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.bridge.TeamMember
 import org.formulagen.wrapper.bridge.VoiceState
+import org.formulagen.wrapper.providers.copy
 import org.formulagen.wrapper.voice.DuplexChoice
 import org.formulagen.wrapper.voice.FILLER_LINES
 import org.formulagen.wrapper.voice.HearingDuplex
@@ -33,6 +39,7 @@ import org.formulagen.wrapper.voice.VoiceConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -69,6 +76,68 @@ class HearingChatTest {
             assertTrue(speech.clips.isEmpty())
         }
     }
+
+    /** The heard turn runs with the effort the page pressed with, as a `chat.send` would. */
+    @Test fun aHeardTurnUsesTheEffortThePagePressedWith() = runBlocking {
+        val runtime = ScriptedRuntime(completeOnStart = true)
+        chat(RememberingSpeech(), runtime, FillerSettings(thresholdMs = 60_000)).use { desk ->
+            desk.open(scope)
+            desk.hearing(request(HearingAction.PRESS, effort = ModelEffort.HIGH))
+            desk.commitHeard(HearingResult("what time is it", 900, 8.0))
+            await { runtime.lastText == "what time is it" && runtime.lastEffort == ModelEffort.HIGH }
+        }
+    }
+
+    /** A switch hands heard turns to the new member, at its default effort, until the next press. */
+    @Test fun aHandoverHandsHeardTurnsToTheNewMember() = runBlocking {
+        val runtime = ScriptedRuntime(completeOnStart = true)
+        val sol = TeamMember(RuntimeId.CODEX, "gpt-6.1-sol")
+        chat(RememberingSpeech(), runtime, FillerSettings(thresholdMs = 60_000)).use { desk ->
+            desk.open(scope)
+            desk.send(ChatSend(scope.profile, scope.companionId, scope.name, scope.sessionId, member, UUID.randomUUID().toString(), "Hello", false))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            desk.hearing(request(HearingAction.PRESS, effort = ModelEffort.HIGH))
+            desk.handover(ChatHandover(scope.profile, scope.companionId, scope.name, scope.sessionId, member, HandoverReason.MANUAL,
+                UUID.randomUUID().toString(), sol))
+            await { runBlocking { desk.snapshot(scope) }.state == ChatState.READY }
+            desk.commitHeard(HearingResult("what time is it", 900, 8.0))
+            await { runtime.lastText == "what time is it" && runtime.lastModel == sol.modelId && runtime.lastEffort == null }
+        }
+    }
+
+    /** Arming checks what a send of the heard text would, so a turn is not lost after capture. */
+    @Test fun aPressIsRefusedUpFrontWhenItsTurnCouldNotBeSent() = runBlocking<Unit> {
+        var converted = false
+        DesktopChat(Files.createTempDirectory("hearing-chat"), listOf(ScriptedRuntime(completeOnStart = true)), RememberingSpeech(),
+            offered = setOf(RuntimeId.CODEX), fillers = FillerSettings(thresholdMs = 60_000), isConverted = { _, _ -> converted }).use { desk ->
+            desk.open(scope)
+            val grok = TeamMember(RuntimeId.GROK_BUILD, SharedRules.RUNTIME_DEFAULT_MODEL)
+            assertTrue(runCatching { desk.hearing(request(HearingAction.PRESS, grok)) }.exceptionOrNull() is BridgeUpdateRequiredException,
+                "a member on a runtime this page cannot read")
+            val sonnet = TeamMember(RuntimeId.CLAUDE_CODE, "sonnet")
+            assertEquals(RuntimeId.CLAUDE_CODE.copy.notOffered, desk.hearing(request(HearingAction.PRESS, sonnet)).notice)
+            converted = true
+            assertTrue(runCatching { desk.hearing(request(HearingAction.HANDS_FREE)) }.exceptionOrNull() is IllegalArgumentException,
+                "a companion converted to a coordinator")
+            assertNotNull(desk.hearing(request(HearingAction.OFF)).hearing, "off still answers")
+        }
+    }
+
+    /** A stale view's handshake cannot opt in the page that holds the lease now. */
+    @Test fun aStaleViewCannotOptInTheActiveLease() = runBlocking<Unit> {
+        chat(RememberingSpeech(), ScriptedRuntime(completeOnStart = true), FillerSettings(thresholdMs = 60_000)).use { desk ->
+            desk.open(scope)
+            val stale = scope.copy(sessionId = UUID.randomUUID().toString(), hearing = true)
+            assertTrue(runCatching { desk.snapshot(stale) }.isFailure)
+            assertTrue(runCatching { desk.stop(stale) }.isFailure)
+            assertTrue(runCatching { desk.stopSpeaking(stale) }.isFailure)
+            assertNull(desk.snapshot(scope).hearing)
+            assertNotNull(desk.snapshot(scope.copy(hearing = true)).hearing, "the page that holds the lease opts in")
+        }
+    }
+
+    private fun request(action: HearingAction, who: TeamMember = member, effort: ModelEffort? = null) =
+        ChatHearingRequest(scope.profile, scope.companionId, scope.name, scope.sessionId, action, who, effort)
 
     @Test fun aTranscriptBecomesOneTalkTurnAndOneFiller() = runBlocking {
         val speech = RememberingSpeech()
@@ -967,6 +1036,8 @@ private class ScriptedRuntime(var completeOnStart: Boolean = false) : ChatRuntim
     val started = CountDownLatch(1)
     private val release = CountDownLatch(1)
     var lastText = ""
+    var lastEffort: ModelEffort? = null
+    var lastModel: String? = null
     var turns = 0
     private var events: TurnEvents? = null
 
@@ -976,6 +1047,8 @@ private class ScriptedRuntime(var completeOnStart: Boolean = false) : ChatRuntim
 
     override fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle {
         this.events = events
+        lastEffort = turn.effort
+        lastModel = turn.model
         lastText = turn.text
         turns += 1
         events.opened(CONVERSATION)
@@ -1056,7 +1129,7 @@ class CatalogControlTest {
         }
     }
 
-    private fun request(action: HearingAction) = org.formulagen.wrapper.bridge.ChatHearingRequest(
+    private fun request(action: HearingAction) = ChatHearingRequest(
         scope.profile, scope.companionId, scope.name, scope.sessionId, action, member,
     )
 }
