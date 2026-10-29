@@ -22,7 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.formulagen.wrapper.voice.HearingDuplex
 import org.formulagen.wrapper.voice.VoiceConversation
-import org.formulagen.wrapper.voice.catalogControls
+import org.formulagen.wrapper.voice.duplexStatusLabel
 import org.formulagen.wrapper.voice.catalogOwnsConversationControls
 import org.jetbrains.compose.resources.painterResource
 import westbergwrapper.composeapp.generated.resources.Res
@@ -65,26 +65,24 @@ internal fun voicePickerState(
     pageOwnsTalk: Boolean = false,
     duplexMode: HearingDuplex = HearingDuplex.HALF,
     duplexReason: String = "default",
+    /**
+     * Whether this row is the conversation's voice control. Team chat's is the Gamero catalog's only; a
+     * project conversation's shows in every product, since its page has no voice choice or filler toggle.
+     */
+    owned: Boolean = catalogOwnsConversationControls(product),
 ): VoicePickerState {
-    if (!catalogOwnsConversationControls(product) || !chatOpen || !kokoro || voices.isEmpty()) return VoicePickerState.Hidden
+    if (!owned || !chatOpen || !kokoro || voices.isEmpty()) return VoicePickerState.Hidden
     val selected = if (voices.any { it.id == selectedId }) selectedId else voices.first().id
-    val controls = catalogControls(
-        product,
-        chatOpen = true,
-        kokoro = true,
-        pageOwnsTalk = pageOwnsTalk,
-        duplex = org.formulagen.wrapper.voice.DuplexChoice(duplexMode, duplexReason),
-    )
     return VoicePickerState(
-        visible = controls.showVoicePicker,
+        visible = true,
         voices = voices,
         selectedId = selected,
         phase = phase,
         fillersOn = fillersOn,
         partial = partial,
         hearingNotice = hearingNotice,
-        showTalk = controls.showTalk,
-        duplexLabel = controls.duplexLabel,
+        showTalk = !pageOwnsTalk,
+        duplexLabel = duplexStatusLabel(duplexMode, duplexReason),
     )
 }
 
