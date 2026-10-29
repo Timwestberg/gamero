@@ -503,6 +503,10 @@ internal class CoordinatorEngine(
                 } catch (refused: HovelRejectedException) {
                     log(LogLevel.Warn, "conversations", "The server refused a ${next::class.simpleName} checkpoint; it is dropped")
                     sent(next)
+                    // a close queued while offline lost to another answer: say which one this Mac ran
+                    (next as? MessageCheckpoint.ApprovalClosed)?.let(approvals::conflict)?.let { conflict ->
+                        later(MessageCheckpoint.MessageAppended(MessageAppend(MessageAuthor.SYSTEM, uuid(), null, conflict.text, conflict.threadId)))
+                    }
                     if (strict) throw refused else continue
                 } catch (_: Exception) {
                     return

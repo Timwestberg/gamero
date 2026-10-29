@@ -11,14 +11,61 @@ import org.formulagen.wrapper.conversations.ApprovalOption
  * code reads and sends, one Kotlin type per schema, named after it, and the device routes it calls.
  */
 
-/** `deviceApproval`: an approval with the names of where it comes from, for the phone's dialog. */
+/**
+ * `deviceApproval`: an approval with the names of where it comes from, for the phone's dialog, and whether this phone
+ * may answer it ([paired]: its Mac confirmed this phone).
+ */
 @Serializable
 internal data class DeviceApproval(
     val approval: AgentApproval,
     val companionName: String,
     val computerName: String,
+    val paired: Boolean,
     val projectName: String,
 )
+
+/** `APPROVAL_DEVICE_STATES`: `pending` until a Mac confirms the phone, then `paired`. */
+@Serializable
+internal enum class ApprovalDeviceState {
+    @SerialName("pending") PENDING,
+    @SerialName("paired") PAIRED,
+}
+
+/** `approvalDevicePairing`: one Mac that confirmed the phone. */
+@Serializable
+internal data class ApprovalDevicePairing(val computerId: String, val name: String, val pairedAt: String)
+
+/** `approvalDevice`: a phone as the owner, the phone itself and its Macs see it. */
+@Serializable
+internal data class ApprovalDevice(
+    val id: String,
+    val name: String,
+    val pairedWith: List<ApprovalDevicePairing>,
+    val pendingUntil: String?,
+    val platform: String,
+    val registeredAt: String,
+    val revokedAt: String?,
+    val state: ApprovalDeviceState,
+)
+
+/** `approvalDeviceList`. */
+@Serializable
+internal data class ApprovalDeviceList(val devices: List<ApprovalDevice>)
+
+/** `devicePairingCode`: the phone's six-digit code, which only its own token fetches. */
+@Serializable
+internal data class DevicePairingCode(val code: String, val expiresAt: String)
+
+/** `devicePairRequest`: what the person typed into a Mac's "Pair a phone…" dialog. */
+@Serializable
+internal data class DevicePairRequest(val code: String) {
+    init { require(PAIRING_CODE.matches(code)) { "A pairing code is six digits" } }
+
+    companion object {
+        /** `PAIRING_CODE_PATTERN`. */
+        val PAIRING_CODE = Regex("[0-9]{6}")
+    }
+}
 
 /** `deviceApprovalList`: the owner's open approvals, newest first. */
 @Serializable
@@ -51,7 +98,16 @@ internal enum class DeviceRoute(val method: String, val template: String) {
     APPROVAL_READ("GET", "/approvals/:approvalId"),
 
     /** `approvalAnswer` → `approvalAnswerResult`. */
-    APPROVAL_ANSWER("POST", "/approvals/:approvalId/answer");
+    APPROVAL_ANSWER("POST", "/approvals/:approvalId/answer"),
+
+    /** → `devicePairingCode`, a new code for the native pairing screen. */
+    PAIRING_CODE("POST", "/pairing-code"),
+
+    /** → `approvalDevice`, revoked: the phone forgets itself. */
+    REVOKE("POST", "/revoke"),
+
+    /** → `approvalDevice`: the one read a pending device has. */
+    STATUS("GET", "/status");
 
     /** The full path for one device, with [approvalId] filled in where the route names one. */
     fun path(ownerId: String, deviceId: String, approvalId: String? = null): String {

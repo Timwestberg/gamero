@@ -14,11 +14,10 @@ internal data class DeviceCredential(val id: String, val ownerId: String, val na
     /** True when every part has the form the server checks, so a damaged item reads as no device. */
     val valid: Boolean
         get() = SharedRules.isRecordId(id) && SharedRules.isRecordId(ownerId) && TOKEN.matches(token) &&
-            name.isNotEmpty() && name.length <= DEVICE_NAME_LIMIT && platform in PLATFORMS
+            name.length in 1..DEVICE_NAME_LIMIT && SharedRules.isDisplayText(name) && platform in APPROVAL_DEVICE_PLATFORMS
 
     companion object {
         private val TOKEN = Regex("[0-9a-f]{64}")
-        private val PLATFORMS = setOf("ios", "android")
         private val json = Json { ignoreUnknownKeys = false }
 
         /** The stored item [text] as a credential, or null when it is missing or damaged. */
@@ -31,6 +30,9 @@ internal data class DeviceCredential(val id: String, val ownerId: String, val na
 
 /** `COMPANION_LIMITS.deviceName`. */
 internal const val DEVICE_NAME_LIMIT = 80
+
+/** `APPROVAL_DEVICE_PLATFORMS`. */
+internal val APPROVAL_DEVICE_PLATFORMS = setOf("ios", "android")
 
 /**
  * Where the platform keeps the credential: one Keychain item on iOS, one Keystore-encrypted preference on Android.
@@ -64,16 +66,17 @@ internal fun DeviceCrypto.newId(): String {
 }
 
 /**
- * The name a device registers under: the platform's own name for it, as one line without control characters,
- * trimmed and cut to the limit, or [fallback] when nothing is left.
+ * The name a device registers under: the platform's own name for it as event-contracts `displayText` takes it (one
+ * line, no control, format or separator characters, trimmed), cut to the limit without splitting a character, or
+ * [fallback] when nothing is left.
  */
 internal fun deviceName(raw: String?, fallback: String): String {
-    val line = raw.orEmpty().filterNot { it.isISOControl() || it in BIDI_CONTROLS }.trim()
-    return line.take(DEVICE_NAME_LIMIT).trim().ifEmpty { fallback }
+    val line = SharedRules.displayable(raw.orEmpty(), fallback)
+    val cut = if (line.length > DEVICE_NAME_LIMIT && line[DEVICE_NAME_LIMIT - 1].isHighSurrogate()) DEVICE_NAME_LIMIT - 1 else DEVICE_NAME_LIMIT
+    return SharedRules.displayable(line.take(cut), fallback)
 }
 
 private const val TOKEN_BYTES = 32
 private const val UUID_BYTES = 16
-private val BIDI_CONTROLS = setOf('؜', '‎', '‏') + ('‪'..'‮') + ('⁦'..'⁩')
 
 private fun ByteArray.toHex(): String = joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }

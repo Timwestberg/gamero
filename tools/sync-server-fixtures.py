@@ -10,8 +10,8 @@ contract fixture changes:
 `--check` fails when any output is stale. Outputs, one entry each in OUTPUTS:
 
 - bridge/HostBridgeFixtures.kt from event-contracts/src/host-bridge/fixtures (the
-  router and envelope fixtures, the parity table and the shared limits), for the
-  host-bridge tests.
+  router and envelope fixtures, the parity table, the shared limits and the text
+  rules' cases), for the host-bridge tests.
 - hovel/HovelProviderPromptFixture.kt from
   event-contracts/src/hovel/fixtures/provider-prompt.json, for HovelProviderPromptTest.
 - bridge/EmberHearingFixture.kt from
@@ -77,6 +77,8 @@ internal object HostBridgeFixtures {{
     const val PARITY = {kotlin_string(compact(fixtures / "parity.json"))}
 
     const val LIMITS = {kotlin_string(compact(fixtures / "limits.json"))}
+
+    const val TEXT = {kotlin_string(compact(fixtures / "text.json"))}
 }}
 """
 

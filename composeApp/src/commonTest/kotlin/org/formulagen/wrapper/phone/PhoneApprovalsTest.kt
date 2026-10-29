@@ -7,11 +7,13 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.formulagen.wrapper.bridge.ApprovalDevicePairOutcome
 import org.formulagen.wrapper.bridge.ApprovalDeviceRef
 import org.formulagen.wrapper.bridge.ApprovalPresentOutcome
 import org.formulagen.wrapper.bridge.BridgeBusyException
 import org.formulagen.wrapper.bridge.BridgeDeclinedException
 import org.formulagen.wrapper.bridge.HovelContract
+import org.formulagen.wrapper.bridge.PRESENT_DIALOG_LIMIT
 import org.formulagen.wrapper.bridge.brainJson
 import org.formulagen.wrapper.conversations.ApprovalKind
 import org.formulagen.wrapper.conversations.ApprovalOption
@@ -67,8 +69,9 @@ class PhoneApprovalsTest {
         // the check used the new token, with the contract header
         val check = phone.server.requests.last()
         assertEquals(token, check.headers[DeviceRoute.TOKEN_HEADER])
-        assertEquals("1", check.headers[HovelContract.HEADER])
-        assertEquals("https://hovel.example/api/hovel/v1/hovel/devices/$OWNER/${registration.id}/approvals", check.url)
+        assertEquals(HovelContract.CURRENT.toString(), check.headers[HovelContract.HEADER])
+        // a pending device has one read, its status; its approval routes answer 401 until a Mac confirms it
+        assertEquals("https://hovel.example/api/hovel/v1/hovel/devices/$OWNER/${registration.id}/status", check.url)
     }
 
     @Test
@@ -110,8 +113,9 @@ class PhoneApprovalsTest {
         val shown = async { phone.approvals.present(approvalId) }
         runCurrent()
         val prompt = phone.dialogs.asked.single()
-        assertEquals("Permission request", prompt.title)
-        assertEquals("Ember · Hovel notes on Studio Mac\n\nRun ./deploy.sh\nEdit [design-docs]/plan.md", prompt.message)
+        // where it comes from is the title; the message is only the server's lines
+        assertEquals("Permission request · Ember · Hovel notes on Studio Mac", prompt.title)
+        assertEquals("Run ./deploy.sh\nEdit [design-docs]/plan.md", prompt.message)
         assertEquals(listOf("Allow once" to false, "Deny" to true), prompt.choices.map { it.label to it.destructive })
         assertEquals("Later", prompt.dismiss)
         phone.dialogs.answer.complete(ApprovalOption.DENY)
@@ -129,9 +133,9 @@ class PhoneApprovalsTest {
     fun everyKindOffersItsOwnAnswers() = runTest {
         val phone = activePhone()
         val kinds = mapOf(
-            ApprovalKind.START_OF_WORK to (listOf(ApprovalOption.CONTINUE, ApprovalOption.NOT_NOW) to "Start work?"),
+            ApprovalKind.START_OF_WORK to (listOf(ApprovalOption.CONTINUE, ApprovalOption.NOT_NOW) to "Start of work"),
             ApprovalKind.STAGE to (listOf(ApprovalOption.CONTINUE, ApprovalOption.REQUEST_CHANGES, ApprovalOption.NOT_NOW, ApprovalOption.STOP) to "Workflow stage"),
-            ApprovalKind.RESUME_REVIEW to (listOf(ApprovalOption.CONTINUE, ApprovalOption.NOT_NOW, ApprovalOption.STOP) to "Resume or retry?"),
+            ApprovalKind.RESUME_REVIEW to (listOf(ApprovalOption.CONTINUE, ApprovalOption.NOT_NOW, ApprovalOption.STOP) to "Resume or retry"),
         )
         for ((kind, expected) in kinds) {
             val (options, title) = expected
@@ -140,7 +144,7 @@ class PhoneApprovalsTest {
             phone.dialogs.answer = CompletableDeferred()
             val shown = async { phone.approvals.present(approvalId) }
             runCurrent()
-            assertEquals(title, phone.dialogs.asked.last().title)
+            assertEquals("$title · Ember · Hovel notes on Studio Mac", phone.dialogs.asked.last().title)
             assertEquals(options, phone.dialogs.asked.last().choices.map { it.option })
             phone.dialogs.answer.complete(options.last())
             assertEquals(ApprovalPresentOutcome.ANSWERED, shown.await().outcome, kind.name)
@@ -217,8 +221,9 @@ class PhoneApprovalsTest {
         phone.server.approvals[approvalId] = openApproval(approvalId, ApprovalPresentation.MacOnly("Run a command outside the project folders"))
         assertEquals(ApprovalPresentOutcome.MAC_ONLY, phone.approvals.present(approvalId).outcome)
         val notice = phone.dialogs.told.single()
-        assertEquals("Answer on Studio Mac", notice.title)
-        assertTrue(notice.message.startsWith("Ember · Hovel notes on Studio Mac\n\nRun a command outside the project folders"))
+        assertEquals("Ember · Hovel notes: answer on Studio Mac", notice.title)
+        assertEquals("Run a command outside the project folders\n\nThis request names something outside the project's folders, " +
+            "so only that Mac can answer it.", notice.message)
         assertEquals("OK", notice.button)
         assertTrue(phone.dialogs.asked.isEmpty())
         assertTrue(phone.server.answers.isEmpty())
@@ -281,11 +286,254 @@ class PhoneApprovalsTest {
         assertEquals(ApprovalState.ANSWERED, phone.server.approvals.getValue(approvalId).approval.state)
     }
 
-    /** A phone whose credential the server knows, without going through the dialogs. */
-    private fun TestScope.activePhone(): Phone {
-        val credential = DeviceCredential("79a0000b-0000-4000-8000-000000000001", OWNER, "iPhone", "ios", "e".repeat(64))
+    @Test
+    fun aPendingPhoneAnswersNothingUntilAMacConfirmsIt() = runTest {
+        val phone = activePhone(paired = false)
+        phone.server.approvals[approvalId] = openApproval(approvalId)
+        assertEquals(ApprovalPresentOutcome.UNPAIRED, phone.approvals.present(approvalId).outcome)
+        // still registered: it pairs next, it does not register again
+        assertEquals(ApprovalDeviceRef(credential.id, OWNER), phone.approvals.status())
+        assertTrue(phone.dialogs.asked.isEmpty())
+        assertTrue(phone.server.answers.isEmpty())
+    }
+
+    @Test
+    fun anApprovalOfAMacThatDidNotConfirmThePhoneSaysToAnswerOrPairThere() = runTest {
+        val phone = activePhone()
+        phone.server.approvals[approvalId] = openApproval(approvalId, computer = OTHER_COMPUTER)
+        assertEquals(ApprovalPresentOutcome.UNPAIRED, phone.approvals.present(approvalId).outcome)
+        val notice = phone.dialogs.told.single()
+        assertEquals("Ember · Hovel notes: answer on Studio Mac", notice.title)
+        assertTrue("Pair a phone…" in notice.message)
+        assertTrue(phone.dialogs.asked.isEmpty())
+        assertTrue(phone.server.answers.isEmpty())
+    }
+
+    @Test
+    fun unpairingTheMacClosesItsDialogAndRefusesARacingAnswer() = runTest {
+        val phone = activePhone()
+        phone.server.confirm(credential.id, OTHER_COMPUTER)
+        phone.server.approvals[approvalId] = openApproval(approvalId)
+        val shown = async { phone.approvals.present(approvalId) }
+        runCurrent()
+        phone.server.grants.getValue(credential.id) -= COMPUTER
+        advanceTimeBy(PhoneApprovals.POLL_INTERVAL + 1.seconds)
+        assertEquals(ApprovalPresentOutcome.UNPAIRED, shown.await().outcome)
+        assertEquals(1, phone.dialogs.closedUnanswered)
+        // an answer racing the unpairing: the unpairing lands first, and the answer does not count
+        phone.server.confirm(credential.id)
+        phone.dialogs.answer = CompletableDeferred()
+        phone.server.beforeAnswer = { phone.server.grants.getValue(credential.id) -= COMPUTER }
+        val raced = async { phone.approvals.present(approvalId) }
+        runCurrent()
+        phone.dialogs.answer.complete(ApprovalOption.ALLOW_ONCE)
+        assertEquals(ApprovalPresentOutcome.UNPAIRED, raced.await().outcome)
+        assertEquals(PhoneApprovalCopy.NOT_USED, phone.dialogs.told.last())
+        assertEquals(ApprovalState.OPEN, phone.server.approvals.getValue(approvalId).approval.state)
+    }
+
+    @Test
+    fun aRevocationWhileTheDialogShowsForgetsThePhone() = runTest {
+        val phone = activePhone()
+        phone.server.approvals[approvalId] = openApproval(approvalId)
+        val shown = async { phone.approvals.present(approvalId) }
+        runCurrent()
+        phone.server.devices.clear()
+        advanceTimeBy(PhoneApprovals.POLL_INTERVAL + 1.seconds)
+        assertEquals(ApprovalPresentOutcome.UNREGISTERED, shown.await().outcome)
+        assertNull(phone.vault.item)
+    }
+
+    @Test
+    fun nothingStaysUpPastTenMinutes() = runTest {
+        val phone = activePhone()
+        // the approval lasts an hour; its dialog does not
+        phone.server.approvals[approvalId] = openApproval(approvalId, expiresAt = "2026-10-29T13:00:00.000Z")
+        val shown = async { phone.approvals.present(approvalId) }
+        runCurrent()
+        advanceTimeBy(PRESENT_DIALOG_LIMIT - 1.seconds)
+        assertEquals(0, phone.dialogs.closedUnanswered)
+        advanceTimeBy(2.seconds)
+        assertEquals(ApprovalPresentOutcome.ENDED, shown.await().outcome)
+        assertEquals(1, phone.dialogs.closedUnanswered)
+
+        // a notice after a late answer closes at the same ten minutes
+        phone.dialogs.answer = CompletableDeferred()
+        phone.dialogs.noticeClosed = CompletableDeferred()
+        phone.server.beforeAnswer = { phone.server.answerElsewhere(approvalId, ApprovalOption.ALLOW_ONCE) }
+        val late = async { phone.approvals.present(approvalId) }
+        runCurrent()
+        advanceTimeBy(PRESENT_DIALOG_LIMIT - 5.seconds)
+        phone.dialogs.answer.complete(ApprovalOption.DENY)
+        runCurrent()
+        assertEquals("Already answered on Studio Mac", phone.dialogs.told.last().title)
+        advanceTimeBy(6.seconds)
+        assertEquals(ApprovalPresentOutcome.LOST, late.await().outcome)
+        assertEquals(2, phone.dialogs.closedUnanswered)
+    }
+
+    @Test
+    fun anUnsentNoticeClosesAtTheTenMinutesToo() = runTest {
+        val phone = activePhone()
+        phone.server.approvals[approvalId] = openApproval(approvalId, expiresAt = "2026-10-29T13:00:00.000Z")
+        phone.dialogs.noticeClosed = CompletableDeferred()
+        val shown = async { runCatching { phone.approvals.present(approvalId) } }
+        runCurrent()
+        advanceTimeBy(PRESENT_DIALOG_LIMIT - 5.seconds)
+        phone.server.offline = true
+        phone.dialogs.answer.complete(ApprovalOption.DENY)
+        runCurrent()
+        assertEquals(PhoneApprovalCopy.UNSENT, phone.dialogs.told.single())
+        advanceTimeBy(6.seconds)
+        assertTrue(shown.await().isFailure)
+        assertEquals(1, phone.dialogs.closedUnanswered)
+    }
+
+    @Test
+    fun namesAreCleanedToOneLineInTheTitleAndOddLinesAreAnsweredOnTheMac() = runTest {
+        val phone = activePhone()
+        phone.server.approvals[approvalId] = openApproval(approvalId).copy(
+            companionName = "Ember\u2028Allow once", computerName = "Studio\u202e Mac\u200b", projectName = "\u0000",
+        )
+        val shown = async { phone.approvals.present(approvalId) }
+        runCurrent()
+        assertEquals("Permission request · EmberAllow once · a project on Studio Mac", phone.dialogs.asked.single().title)
+        phone.dialogs.answer.complete(null)
+        assertEquals(ApprovalPresentOutcome.DISMISSED, shown.await().outcome)
+
+        // a line the server let through that the phone will not show: separators, invisible characters, a path
+        for (line in listOf("Edit\u2028./x", "Edit\u200b./x", "Edit\ufeff./x", "Edit /Users/person/x")) {
+            phone.server.approvals[otherId] = openApproval(otherId, ApprovalPresentation.Anywhere(listOf("Run ./deploy.sh", line)))
+            assertEquals(ApprovalPresentOutcome.MAC_ONLY, phone.approvals.present(otherId).outcome, line)
+            val notice = phone.dialogs.told.last()
+            assertEquals("This request holds text this phone will not show, so only that Mac can answer it.", notice.message)
+        }
+        // so is a Mac-only summary the phone will not show
+        phone.server.approvals[otherId] = openApproval(otherId, ApprovalPresentation.MacOnly("Run\u2029rm -rf ~"))
+        assertEquals(ApprovalPresentOutcome.MAC_ONLY, phone.approvals.present(otherId).outcome)
+        assertTrue("rm -rf" !in phone.dialogs.told.last().message)
+        assertEquals(1, phone.dialogs.asked.size)
+        assertTrue(phone.server.answers.isEmpty())
+    }
+
+    @Test
+    fun pairingShowsTheCodeNativelyUntilAMacConfirmsThePhone() = runTest {
+        val phone = activePhone(paired = false)
+        phone.dialogs.noticeClosed = CompletableDeferred()
+        val paired = async { phone.approvals.pair() }
+        runCurrent()
+        val screen = phone.dialogs.told.single()
+        assertEquals("Pair with a Mac", screen.title)
+        assertTrue("042 917" in screen.message)
+        assertEquals(1, phone.server.codesIssued)
+        // the code came with the device's own token
+        assertEquals(credential.token, phone.server.requests.single { it.url.endsWith("/pairing-code") }.headers[DeviceRoute.TOKEN_HEADER])
+        assertFailsWith<BridgeBusyException> { phone.approvals.pair() }
+        advanceTimeBy(PhoneApprovals.POLL_INTERVAL + 1.seconds)
+        assertEquals(0, phone.dialogs.closedUnanswered)
+        phone.server.confirm(credential.id)
+        advanceTimeBy(PhoneApprovals.POLL_INTERVAL + 1.seconds)
+        assertEquals(ApprovalDevicePairOutcome.PAIRED, paired.await().outcome)
+        assertEquals(1, phone.dialogs.closedUnanswered)
+        // now it answers the studio Mac's approvals
+        phone.server.approvals[approvalId] = openApproval(approvalId)
+        phone.dialogs.answer = CompletableDeferred(ApprovalOption.ALLOW_ONCE)
+        assertEquals(ApprovalPresentOutcome.ANSWERED, phone.approvals.present(approvalId).outcome)
+    }
+
+    @Test
+    fun pairingAnotherMacClosingTheScreenOrRunningOut() = runTest {
+        val phone = activePhone()
+        // closing the screen right after typing the code on a second Mac still pairs
+        phone.dialogs.noticeClosed = CompletableDeferred()
+        val second = async { phone.approvals.pair() }
+        runCurrent()
+        phone.server.confirm(credential.id, OTHER_COMPUTER)
+        phone.dialogs.noticeClosed!!.complete(Unit)
+        assertEquals(ApprovalDevicePairOutcome.PAIRED, second.await().outcome)
+        // closing it otherwise is dismissed
+        phone.dialogs.noticeClosed = CompletableDeferred<Unit>().apply { complete(Unit) }
+        assertEquals(ApprovalDevicePairOutcome.DISMISSED, phone.approvals.pair().outcome)
+        // the code runs out
+        phone.dialogs.noticeClosed = CompletableDeferred()
+        phone.server.codeExpiresAt = "2026-10-29T12:00:20.000Z"
+        val expired = async { phone.approvals.pair() }
+        runCurrent()
+        advanceTimeBy(21.seconds)
+        assertEquals(ApprovalDevicePairOutcome.EXPIRED, expired.await().outcome)
+    }
+
+    @Test
+    fun pairingAPhoneThatIsGone() = runTest {
+        assertEquals(ApprovalDevicePairOutcome.UNREGISTERED, phone().approvals.pair().outcome)
+        val revoked = activePhone(paired = false)
+        revoked.server.devices.clear()
+        assertEquals(ApprovalDevicePairOutcome.UNREGISTERED, revoked.approvals.pair().outcome)
+        assertNull(revoked.vault.item)
+        // revoked while the screen shows
+        val phone = activePhone(paired = false)
+        phone.dialogs.noticeClosed = CompletableDeferred()
+        val paired = async { phone.approvals.pair() }
+        runCurrent()
+        phone.server.devices.clear()
+        advanceTimeBy(PhoneApprovals.POLL_INTERVAL + 1.seconds)
+        assertEquals(ApprovalDevicePairOutcome.UNREGISTERED, paired.await().outcome)
+        assertNull(phone.vault.item)
+    }
+
+    @Test
+    fun forgettingRevokesWithTheDevicesOwnTokenThenClearsIt() = runTest {
+        val phone = activePhone()
+        phone.server.approvals[approvalId] = openApproval(approvalId)
+        val shown = async { phone.approvals.present(approvalId) }
+        runCurrent()
+        assertEquals(true, phone.approvals.forget().forgotten)
+        val revoke = phone.server.requests.single { it.url.endsWith("/revoke") }
+        assertEquals("POST", revoke.method)
+        assertEquals(credential.token, revoke.headers[DeviceRoute.TOKEN_HEADER])
+        assertEquals(listOf(credential.id), phone.server.revoked)
+        assertNull(phone.vault.item)
+        assertNull(phone.approvals.status())
+        // its dialog closed with it
+        runCurrent()
+        assertTrue(shown.isCancelled)
+        assertEquals(1, phone.dialogs.closedUnanswered)
+        assertEquals(false, phone.approvals.forget().forgotten)
+        assertEquals(ApprovalPresentOutcome.UNREGISTERED, phone.approvals.present(approvalId).outcome)
+    }
+
+    @Test
+    fun forgettingWithoutAnAnswerStillClearsThePhone() = runTest {
+        val phone = activePhone()
+        phone.server.offline = true
+        assertEquals(true, phone.approvals.forget().forgotten)
+        assertNull(phone.vault.item)
+        // a registration only prepared is dropped too
+        val prepared = phone()
+        val registration = prepared.approvals.prepare(OWNER)
+        prepared.server.devices[registration.id] = FakeCrypto().let { it.newId(); it.newToken() }
+        assertEquals(false, prepared.approvals.forget().forgotten)
+        assertFailsWith<IllegalStateException> { prepared.approvals.activate(OWNER, registration.id) }
+        assertNull(prepared.vault.item)
+    }
+
+    @Test
+    fun aPageAttachedLaterCannotFinishAnEarlierPagesRegistration() = runTest {
+        val phone = phone()
+        val registration = phone.approvals.prepare(OWNER)
+        phone.server.devices[registration.id] = FakeCrypto().let { it.newId(); it.newToken() }
+        phone.approvals.invalidatePending()
+        assertFailsWith<IllegalStateException> { phone.approvals.activate(OWNER, registration.id) }
+        assertNull(phone.vault.item)
+    }
+
+    /** A phone whose credential the server knows, without going through the dialogs, confirmed by the studio Mac when [paired]. */
+    private fun TestScope.activePhone(paired: Boolean = true): Phone {
         val phone = phone(vault = FakeVault(DeviceCredential.write(credential)))
         phone.server.devices[credential.id] = credential.token
+        if (paired) phone.server.confirm(credential.id)
         return phone
     }
+
+    private val credential = DeviceCredential("79a0000b-0000-4000-8000-000000000001", OWNER, "iPhone", "ios", "e".repeat(64))
 }

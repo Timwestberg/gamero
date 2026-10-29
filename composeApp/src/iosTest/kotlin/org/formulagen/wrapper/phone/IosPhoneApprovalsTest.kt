@@ -3,6 +3,7 @@ package org.formulagen.wrapper.phone
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.test.Ignore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -30,16 +31,16 @@ class IosPhoneApprovalsTest {
         assertNotEquals(id, IosDeviceCrypto.newId())
     }
 
+    /**
+     * Skipped: the simulator test binary is a bare command-line executable outside any app bundle, so the Keychain
+     * answers errSecNotAvailable (-25291) to every call and this could only pass by returning early. The vault's callers
+     * run in commonTest through [DeviceVault]; run this by hand inside the signed app.
+     */
+    @Ignore
     @Test
     fun theKeychainKeepsOneItemAndForgetsIt() {
         val vault = IosDeviceVault(service = "org.formulagen.gamero.approval-device.test", account = "test")
-        try {
-            vault.clear()
-        } catch (unavailable: IllegalStateException) {
-            // a test binary without a keychain entitlement cannot reach the Keychain; the app can
-            println("Keychain unavailable to this test binary: ${unavailable.message}")
-            return
-        }
+        vault.clear()
         assertNull(vault.read())
         vault.write("first")
         vault.write("second")

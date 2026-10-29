@@ -240,6 +240,7 @@ if (c.deviceApproval) {
   add('device.registration', 'approvalDeviceRegistration', c.approvalDeviceRegistration, s.phone);
   add('device.approval', 'deviceApproval', c.deviceApproval, s.phoneApproval);
   add('device.approvalMacOnly', 'deviceApproval', c.deviceApproval, macOnly);
+  add('device.approvalUnpaired', 'deviceApproval', c.deviceApproval, { ...s.phoneApproval, paired: false });
   add('device.list', 'deviceApprovalList', c.deviceApprovalList, { approvals: [s.phoneApproval, macOnly] });
   add('device.answer', 'approvalAnswer', c.approvalAnswer, { expectedRevision: 1, option: 'deny' });
   add('device.answered', 'approvalAnswerResult', c.approvalAnswerResult, { approval: answeredOnPhone, status: 'answered' });
@@ -248,6 +249,17 @@ if (c.deviceApproval) {
     approval: { ...s.openApproval, revision: 2, state: 'expired' },
     status: 'lost'
   });
+  const pending = {
+    ...s.pairedPhone,
+    pairedWith: [],
+    pendingUntil: new Date(Date.parse(at) + c.COMPANION_LIMITS.pairingMs).toISOString(),
+    state: 'pending'
+  };
+  add('device.pending', 'approvalDevice', c.approvalDevice, pending);
+  add('device.paired', 'approvalDevice', c.approvalDevice, s.pairedPhone);
+  add('device.devices', 'approvalDeviceList', c.approvalDeviceList, { devices: [s.pairedPhone] });
+  add('device.pairingCode', 'devicePairingCode', c.devicePairingCode, { code: '042917', expiresAt: pending.pendingUntil });
+  add('device.pairRequest', 'devicePairRequest', c.devicePairRequest, { code: '042917' });
   fixtures['routes.device'] = { schema: 'routeTable', value: JSON.parse(canonical(c.HOVEL_COMPANION_ROUTES.device)) };
   fixtures['routes.deviceBase'] = { schema: 'routeBase', value: { base: c.HOVEL_DEVICE_BASE, tokenHeader: c.HOVEL_DEVICE_TOKEN_HEADER } };
 } else {

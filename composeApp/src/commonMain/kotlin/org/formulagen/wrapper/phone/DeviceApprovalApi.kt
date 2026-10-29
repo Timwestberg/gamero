@@ -34,6 +34,9 @@ internal class DeviceNotFoundException : DeviceCallException(404)
 /** 409: the answer can never apply (Mac-only, not offered, or another revision). */
 internal class DeviceRefusedException : DeviceCallException(409)
 
+/** 403: the approval's Mac has not confirmed this phone. */
+internal class DeviceNotPairedException : DeviceCallException(403)
+
 /**
  * The device routes over [http], for the web app at [appUrl]: hovel-service under its origin's `/api/hovel`, as the
  * Mac reaches it. Every request carries the device token and the contract header; every answer's `data` is read
@@ -41,6 +44,18 @@ internal class DeviceRefusedException : DeviceCallException(409)
  */
 internal class DeviceApprovalApi(private val http: DeviceHttp, appUrl: String) {
     private val base = TrustedOrigin(appUrl).rule + DeviceRoute.API_PREFIX
+
+    /** The device as the server keeps it: pending or paired, and the Macs that confirmed it. */
+    suspend fun status(device: DeviceCredential): ApprovalDevice =
+        send(DeviceRoute.STATUS, device, null, null, ApprovalDevice.serializer())
+
+    /** A new pairing code, for this phone's own native screen. */
+    suspend fun pairingCode(device: DeviceCredential): DevicePairingCode =
+        send(DeviceRoute.PAIRING_CODE, device, null, "{}", DevicePairingCode.serializer())
+
+    /** Revoke this phone's device with its own token. */
+    suspend fun revoke(device: DeviceCredential): ApprovalDevice =
+        send(DeviceRoute.REVOKE, device, null, "{}", ApprovalDevice.serializer())
 
     suspend fun list(device: DeviceCredential): DeviceApprovalList =
         send(DeviceRoute.APPROVAL_LIST, device, null, null, DeviceApprovalList.serializer())
@@ -64,6 +79,7 @@ internal class DeviceApprovalApi(private val http: DeviceHttp, appUrl: String) {
         when (response.status) {
             in 200..299 -> {}
             401 -> throw DeviceUnauthorizedException()
+            403 -> throw DeviceNotPairedException()
             404 -> throw DeviceNotFoundException()
             409 -> throw DeviceRefusedException()
             else -> throw DeviceCallException(response.status)

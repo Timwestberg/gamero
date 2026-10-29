@@ -16,6 +16,7 @@ import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.approvalDialog
 import org.formulagen.wrapper.hovel.HovelRejectedException
 import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.phone.PhoneApprovalCopy
 import org.formulagen.wrapper.logger.log
 
 /**
@@ -33,6 +34,9 @@ internal class ApprovalScope(
     val later: (MessageCheckpoint) -> Unit = {},
 )
 
+/** A conflict to show in the conversation ([threadId] null: the main conversation): the Mac ran one answer, the record shows another. */
+internal data class ApprovalConflict(val threadId: String?, val text: String)
+
 /** How one approval ended: the answer applied, and the surface it came from (none when nobody answered). */
 internal data class ApprovalReceipt(val id: String, val kind: ApprovalKind, val option: ApprovalOption?, val by: ApprovalSurface?)
 
@@ -44,8 +48,14 @@ internal data class ApprovalReceipt(val id: String, val kind: ApprovalKind, val 
  *   when that is refused because another answer won, the stored approval's answer applies instead;
  * - another surface answers first (`approval.answered` on the host stream, read back from the server):
  *   the dialog closes with `answered-elsewhere` and that answer applies;
- * - nobody answers, or the work stops: Deny (or the dialog's default) applies and the approval is
- *   withdrawn (`approval.closed`).
+ * - nobody answers, or the work stops: the approval is withdrawn (`approval.closed`) and Deny (or the
+ *   dialog's default) applies; when that close is refused because another answer reached the server
+ *   first, that answer applies instead;
+ * - the Mac was not listening (its host stream was down): on every reconnect it reads each approval still
+ *   open here ([catchUp]), so an answer it missed closes the dialog then;
+ * - a close this Mac could only queue (the server was unreachable) and the server later refused means
+ *   the Mac already applied its own answer while another won on the server: [conflict] says so in the
+ *   conversation, so the person sees which one ran.
  *
  * Every approval has an id and a [receipt]; a late or repeated answer finds no open approval and
  * changes nothing. A request from any other lease is the native dialog alone, as before. Folder
@@ -105,6 +115,25 @@ internal class RemoteApprovals(
         if (pending.remote.compareAndSet(null, answer.option)) pending.elsewhere.cancel()
     }
 
+    /** Read every approval still open here: on a host-stream reconnect, an answer given meanwhile closes its dialog. */
+    fun catchUp() = openIds.forEach(::answered)
+
+    /**
+     * What the conversation says when the server refused [closed], a close this Mac queued while it could not reach
+     * Hovel, because another answer reached it first: the Mac already applied its own (its receipt) and the record
+     * shows the other. Null when they agree, or the winner cannot be read.
+     */
+    fun conflict(closed: MessageCheckpoint.ApprovalClosed): ApprovalConflict? {
+        val stored = runCatching { api.approval(closed.approvalId) }.getOrNull() ?: return null
+        val winner = stored.answer?.takeIf { stored.state == ApprovalState.ANSWERED && it.by != ApprovalSurface.MAC } ?: return null
+        val applied = receipt(closed.approvalId)?.option
+        if (applied == winner.option) return null
+        val mine = applied?.let { "“${PhoneApprovalCopy.label(it)}”" } ?: "no answer"
+        return ApprovalConflict(stored.threadId,
+            "This Mac could not reach Hovel and applied $mine to a request, but your phone answered " +
+                "“${PhoneApprovalCopy.label(winner.option)}” first. Hovel shows the phone's answer; this Mac went on with its own.")
+    }
+
     /** How approval [id] ended, while it is among the most recent. */
     fun receipt(id: String): ApprovalReceipt? = synchronized(receipts) { receipts[id] }
 
@@ -142,10 +171,9 @@ internal class RemoteApprovals(
                     options.firstOrNull { it.first == option }?.second ?: dialog.dismiss
                 }
                 DialogOutcome.Unanswered -> {
-                    val withdrawn = MessageCheckpoint.ApprovalClosed(id, ApprovalOutcome.Withdrawn)
-                    if (relayed && !scope.output.bestEffort(withdrawn)) scope.later(withdrawn)
-                    receipt(ApprovalReceipt(id, kind, null, null))
-                    null
+                    val winner = if (relayed) withdrawHere(scope, id) else null
+                    receipt(ApprovalReceipt(id, kind, winner, winner?.let { ApprovalSurface.PHONE }))
+                    winner?.let { option -> options.firstOrNull { it.first == option }?.second }
                 }
             }
         } finally { open.remove(id) }
@@ -168,6 +196,24 @@ internal class RemoteApprovals(
         } catch (_: Exception) {
             scope.later(closed)
             option
+        }
+    }
+
+    /**
+     * Withdraw approval [id] because nobody answered here. Answers the option that won when the close is refused because
+     * another answer reached the server first; queues the close when the server cannot be reached.
+     */
+    private fun withdrawHere(scope: ApprovalScope, id: String): ApprovalOption? {
+        val withdrawn = MessageCheckpoint.ApprovalClosed(id, ApprovalOutcome.Withdrawn)
+        return try {
+            scope.output.once(withdrawn)
+            null
+        } catch (_: HovelRejectedException) {
+            val stored = runCatching { api.approval(id) }.getOrNull()
+            stored?.answer?.takeIf { stored.state == ApprovalState.ANSWERED && it.by != ApprovalSurface.MAC }?.option
+        } catch (_: Exception) {
+            scope.later(withdrawn)
+            null
         }
     }
 

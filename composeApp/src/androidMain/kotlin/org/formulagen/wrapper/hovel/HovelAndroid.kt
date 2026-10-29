@@ -102,6 +102,8 @@ fun HovelAndroidApp(url: String, onPageLoaded: (url: String, title: String?) -> 
     // Like the desktop host, Hovel talks to the host bridge, not the legacy native bridge.
     App(url, enableLegacyBridge = false, onPageLoaded = onPageLoaded, onWebViewCreated = { webView ->
         attached[0]?.close()
+        // a registration an earlier page prepared is never finished by this one
+        approvals?.invalidatePending()
         val packs = hovelBridgePacks(approvals, approvals)
         attached[0] = AndroidHostBridge.attach(webView, HostBridge(HOVEL_PRODUCT, url, androidHostCapabilities(appVersion), packs))
     })

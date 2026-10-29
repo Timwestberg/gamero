@@ -12,7 +12,7 @@ Host bridge (`host-bridge.v2`) on desktop, Android and iOS, and the recipe to ad
 
 iOS (simulator): [build and run guide](docs/ios.md). Smoke test: `tools/ios-smoke.sh` builds the app, loads Hovel on a throwaway simulator, and fails unless the page loads. Android remains outside the current verification scope.
 
-Phone approvals (Hovel on iOS and Android): the phone registers as an approval device and answers approvals in a native dialog with its own device token; see [docs/ios.md](docs/ios.md#phone-approvals). Android uses the same `phone/PhoneApprovals` with a Keystore-sealed credential and `AlertDialog` (`androidMain/.../phone/AndroidPhoneApprovals.kt`); it compiles and assembles, and is not yet run on a device or emulator.
+Phone approvals (Hovel on iOS and Android): the phone registers as an approval device, each Mac confirms it in Hovel → Pair a phone… by the code the phone shows natively, and the phone then answers that Mac's approvals in a native dialog with its own device token; see [docs/ios.md](docs/ios.md#phone-approvals). The Mac side is `jvmMain/.../hovel/PhonePairing.kt` and `PhonePairingWindow.kt`. Android uses the same `phone/PhoneApprovals` with a Keystore-sealed credential and `AlertDialog` (`androidMain/.../phone/AndroidPhoneApprovals.kt`); it compiles and assembles, and is not yet run on a device or emulator.
 
 Android: build with `./gradlew -Pgamero.mobileTargets=true :composeApp:assembleDebug`
 (Gradle 9.3.1, AGP 9.1.1, compileSdk 37; Compose 1.12 requires them). Launch the Hovel

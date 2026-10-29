@@ -56,7 +56,7 @@ import platform.Security.SecRandomCopyBytes
 import platform.Security.errSecItemNotFound
 import platform.Security.errSecSuccess
 import platform.Security.kSecAttrAccessible
-import platform.Security.kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+import platform.Security.kSecAttrAccessibleWhenUnlockedThisDeviceOnly
 import platform.Security.kSecAttrAccount
 import platform.Security.kSecAttrService
 import platform.Security.kSecClass
@@ -96,8 +96,8 @@ internal fun iosPhoneApprovals(appUrl: String): PhoneApprovals = PhoneApprovals(
 )
 
 /**
- * The credential as one generic-password Keychain item, readable after the first unlock on this device only, so it
- * never moves to another device in a backup.
+ * The credential as one generic-password Keychain item, readable only while this device is unlocked and on this device
+ * only, so a locked phone answers nothing and the item never moves to another device in a backup.
  */
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
 internal class IosDeviceVault(
@@ -116,7 +116,7 @@ internal class IosDeviceVault(
     override fun write(value: String) {
         clear()
         val data = NSString.create(string = value).dataUsingEncoding(NSUTF8StringEncoding)
-        val status = query(kSecValueData to data, kSecAttrAccessible to kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly) { SecItemAdd(it, null) }
+        val status = query(kSecValueData to data, kSecAttrAccessible to kSecAttrAccessibleWhenUnlockedThisDeviceOnly) { SecItemAdd(it, null) }
         check(status == errSecSuccess) { "Keychain write failed ($status)" }
     }
 

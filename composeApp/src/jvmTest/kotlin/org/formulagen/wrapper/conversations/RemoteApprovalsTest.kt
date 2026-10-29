@@ -86,6 +86,58 @@ class RemoteApprovalsTest {
         }
     }
 
+    @Test fun aPhoneAnswerTheMacMissedWhileReconnectingClosesItsDialogOnReconnect() {
+        approvals.register(thread, scope).use {
+            val decision = asking()
+            val approval = opened()
+            // the stream is down: the server holds the phone's answer, and no approval.answered reaches the Mac
+            assertTrue(server.phoneAnswers(approval.id, ApprovalOption.DENY))
+            assertFalse(decision.isDone)
+            approvals.catchUp()
+            assertEquals(ApprovalDecision.DENY, decision.get(5, TimeUnit.SECONDS))
+            eventually("the dialog closed") { screen.dismissed.isNotEmpty() }
+            assertEquals(ApprovalSurface.PHONE, approvals.receipt(approval.id)?.by)
+            assertEquals(emptyList(), server.answers)
+        }
+    }
+
+    @Test fun aWithdrawalRefusedBecauseThePhoneAnsweredAppliesThePhonesAnswer() {
+        approvals.register(thread, scope).use {
+            val cancel = CancelSignal()
+            val decision = CompletableFuture.supplyAsync { approvals.ask(request(), cancel) {} }
+            val approval = opened()
+            server.phoneAnswers(approval.id, ApprovalOption.ALLOW_ONCE)
+            // the work stops before the Mac heard of it: its withdrawal is refused, and the stored answer applies
+            cancel.cancel()
+            assertEquals(ApprovalDecision.ALLOW_ONCE, decision.get(5, TimeUnit.SECONDS))
+            assertEquals(ApprovalReceipt(approval.id, ApprovalKind.PERMISSION, ApprovalOption.ALLOW_ONCE, ApprovalSurface.PHONE), approvals.receipt(approval.id))
+            assertEquals(emptyList(), queued, "nothing waits to be sent")
+        }
+    }
+
+    @Test fun aMacAllowGivenOfflineThatLosesToThePhonesDenyIsRecordedAsAConflict() {
+        approvals.register(thread, scope).use {
+            val decision = asking()
+            val approval = opened()
+            server.offline = true
+            screen.open.single()(0)
+            assertEquals(ApprovalDecision.ALLOW_ONCE, decision.get(5, TimeUnit.SECONDS), "the person's own answer runs")
+            val waiting = queued.single() as MessageCheckpoint.ApprovalClosed
+            assertEquals(ApprovalOutcome.Answered(ApprovalOption.ALLOW_ONCE), waiting.outcome)
+            // the phone's Deny reached the server first; the queued close is then refused
+            server.offline = false
+            server.phoneAnswers(approval.id, ApprovalOption.DENY)
+            assertFailsWith<org.formulagen.wrapper.hovel.HovelRejectedException> { output.once(waiting) }
+            val conflict = assertNotNull(approvals.conflict(waiting))
+            assertEquals(thread, conflict.threadId)
+            assertTrue("“Allow once”" in conflict.text && "“Deny”" in conflict.text, conflict.text)
+            // when the record agrees with what ran, there is nothing to say
+            server.approvals[approval.id] = server.approvals.getValue(approval.id).copy(
+                answer = ApprovalAnswerRecord(ApprovalSurface.PHONE, id(), ApprovalOption.ALLOW_ONCE))
+            assertNull(approvals.conflict(waiting))
+        }
+    }
+
     @Test fun aMacAnswerToAnApprovalTheServerLetExpireStillStands() {
         approvals.register(thread, scope).use {
             val decision = asking()

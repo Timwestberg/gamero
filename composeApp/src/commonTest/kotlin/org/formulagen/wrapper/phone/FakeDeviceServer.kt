@@ -17,53 +17,90 @@ import org.formulagen.wrapper.conversations.ApprovalSurface
 
 internal const val OWNER = "7fa0000b-0000-4000-8000-000000000001"
 internal const val COMPUTER = "75a0000b-0000-4000-8000-000000000001"
+/** A second Mac of [OWNER]'s. */
+internal const val OTHER_COMPUTER = "75a0000b-0000-4000-8000-000000000002"
 internal const val APP_URL = "https://hovel.example/hovel"
 
-/** An open approval of [OWNER]'s, on the studio Mac, expiring at [expiresAt]. */
+/** An open approval of [OWNER]'s, on the studio Mac unless [computer] says otherwise, expiring at [expiresAt]. */
 internal fun openApproval(
     id: String,
     presentation: ApprovalPresentation = ApprovalPresentation.Anywhere(listOf("Run ./deploy.sh", "Edit [design-docs]/plan.md")),
     expiresAt: String = "2026-10-29T12:30:00.000Z",
     kind: ApprovalKind = ApprovalKind.PERMISSION,
     options: List<ApprovalOption> = listOf(ApprovalOption.ALLOW_ONCE, ApprovalOption.DENY),
+    computer: String = COMPUTER,
 ) = DeviceApproval(
-    AgentApproval(null, COMPUTER, "71a0000b-0000-4000-8000-000000000001", expiresAt, id, kind, options, presentation, 0,
+    AgentApproval(null, computer, "71a0000b-0000-4000-8000-000000000001", expiresAt, id, kind, options, presentation, 0,
         ApprovalState.OPEN, null),
-    companionName = "Ember", computerName = "Studio Mac", projectName = "Hovel notes",
+    companionName = "Ember", computerName = "Studio Mac", paired = true, projectName = "Hovel notes",
 )
 
 /**
  * hovel-service's device routes, in memory, with the server's rules: the device token must be one the owner
- * registered, an answer is first-answer-wins against the stored revision, and a Mac-only approval is refused.
+ * registered and not revoked; a device no Mac confirmed ([grants]) reads only its status and pairing code, and gets a
+ * 401 from every approval route; an approval of a Mac that did not confirm the device reads `paired: false` and its
+ * answer is a 403; an answer is first-answer-wins against the stored revision, and a Mac-only approval is refused.
  * [beforeAnswer] runs just before an answer lands, so a test can let another surface win the race.
  */
 internal class FakeDeviceServer : DeviceHttp {
-    /** Device id to the token the account registered for it. */
+    /** Device id to the token the account registered for it; a revoked device is removed. */
     val devices = mutableMapOf<String, String>()
+    /** Device id to the Macs that confirmed it. */
+    val grants = mutableMapOf<String, MutableSet<String>>()
+    /** Approvals as stored, whatever device asks; `paired` is filled in per device. */
     val approvals = mutableMapOf<String, DeviceApproval>()
     val requests = mutableListOf<DeviceRequest>()
+    val revoked = mutableListOf<String>()
     var beforeAnswer: () -> Unit = {}
     /** When set, every call fails as if the network were down. */
     var offline = false
+    /** When the next pairing code runs out. */
+    var codeExpiresAt = "2026-10-29T12:10:00.000Z"
+    var codesIssued = 0
+
+    /** [computer] confirms [device], as its "Pair a phone…" dialog does. */
+    fun confirm(device: String, computer: String = COMPUTER) {
+        grants.getOrPut(device) { mutableSetOf() } += computer
+    }
 
     override suspend fun send(request: DeviceRequest): DeviceResponse {
         requests += request
         if (offline) throw IllegalStateException("offline")
         val path = request.url.removePrefix("https://hovel.example/api/hovel/v1/hovel/devices/").split('/')
         val (owner, device) = path[0] to path[1]
-        if (request.headers[HovelContract.HEADER] != "1") return DeviceResponse(400, "{}")
+        if (request.headers[HovelContract.HEADER] != HovelContract.CURRENT.toString()) return DeviceResponse(400, "{}")
         if (owner != OWNER || devices[device] == null || devices[device] != request.headers[DeviceRoute.TOKEN_HEADER]) {
             return DeviceResponse(401, "{}")
         }
         val rest = path.drop(2)
+        val granted = grants[device].orEmpty()
         return when {
-            request.method == "GET" && rest == listOf("approvals") ->
-                ok(DeviceApprovalList.serializer(), DeviceApprovalList(approvals.values.filter { it.approval.state == ApprovalState.OPEN }))
+            request.method == "GET" && rest == listOf("status") -> ok(ApprovalDevice.serializer(), deviceOf(device, null))
+            request.method == "POST" && rest == listOf("pairing-code") -> {
+                codesIssued++
+                ok(DevicePairingCode.serializer(), DevicePairingCode("042917", codeExpiresAt))
+            }
+            request.method == "POST" && rest == listOf("revoke") -> {
+                devices.remove(device)
+                revoked += device
+                ok(ApprovalDevice.serializer(), deviceOf(device, "2026-10-29T12:00:00.000Z"))
+            }
+            // a device no Mac confirmed reads and answers nothing
+            granted.isEmpty() -> DeviceResponse(401, "{}")
+            request.method == "GET" && rest == listOf("approvals") -> ok(DeviceApprovalList.serializer(), DeviceApprovalList(
+                approvals.values.filter { it.approval.state == ApprovalState.OPEN && it.approval.computerId in granted }))
             request.method == "GET" && rest.size == 2 && rest[0] == "approvals" ->
-                approvals[rest[1]]?.let { ok(DeviceApproval.serializer(), it) } ?: DeviceResponse(404, "{}")
+                approvals[rest[1]]?.let { ok(DeviceApproval.serializer(), it.copy(paired = it.approval.computerId in granted)) }
+                    ?: DeviceResponse(404, "{}")
             request.method == "POST" && rest.size == 3 && rest[2] == "answer" -> answer(device, rest[1], request.body!!)
             else -> DeviceResponse(404, "{}")
         }
+    }
+
+    private fun deviceOf(device: String, revokedAt: String?): ApprovalDevice {
+        val pairings = grants[device].orEmpty().sorted().map { ApprovalDevicePairing(it, "Studio Mac", "2026-10-29T12:00:00.000Z") }
+        return ApprovalDevice(device, "iPhone", pairings, if (pairings.isEmpty()) "2026-10-29T12:10:00.000Z" else null, "ios",
+            "2026-10-29T11:59:00.000Z", revokedAt, if (pairings.isEmpty()) ApprovalDeviceState.PENDING else ApprovalDeviceState.PAIRED)
     }
 
     /** Another surface answers [id] first: the Mac, or another phone. */
@@ -77,6 +114,8 @@ internal class FakeDeviceServer : DeviceHttp {
     private fun answer(device: String, id: String, body: String): DeviceResponse {
         beforeAnswer()
         val shown = approvals[id] ?: return DeviceResponse(404, "{}")
+        // an unpairing that landed first: the server holds the grant while an answer lands
+        if (shown.approval.computerId !in grants[device].orEmpty()) return DeviceResponse(403, "{}")
         val answer = brainJson.decodeFromString(ApprovalAnswer.serializer(), body)
         val stored = shown.approval
         if (stored.state != ApprovalState.OPEN) {
@@ -97,7 +136,7 @@ internal class FakeDeviceServer : DeviceHttp {
         return DeviceResponse(200, buildJsonObject { put("data", data) }.toString())
     }
 
-    val answers: List<DeviceRequest> get() = requests.filter { it.method == "POST" }
+    val answers: List<DeviceRequest> get() = requests.filter { it.method == "POST" && it.url.endsWith("/answer") }
 }
 
 /** The platform store, in memory. */

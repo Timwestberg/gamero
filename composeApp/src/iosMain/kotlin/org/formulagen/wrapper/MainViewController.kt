@@ -45,6 +45,8 @@ fun MainViewController() = ComposeUIViewController {
         }
         val attach = { webView: NativeWebView ->
             attached[0]?.close()
+            // a registration an earlier page prepared is never finished by this one
+            approvals?.invalidatePending()
             // Only Hovel adds its packs, so another product's host answers unknown-method for companion.*.
             val products = approvals?.let { iosHovelBridgePacks(it, it) } ?: emptyList()
             attached[0] = IosHostBridge(webView, HostBridge(if (hovel) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME, url, iosHostCapabilities(appVersion()), products))

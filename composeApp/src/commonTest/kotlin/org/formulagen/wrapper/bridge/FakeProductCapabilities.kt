@@ -66,6 +66,8 @@ class FakeApprovalDeviceCapability : ApprovalDeviceCapability {
     override suspend fun prepare(ownerId: String) =
         ApprovalDeviceRegistration("79a0000b-0000-4000-8000-000000000001", "iPhone", "ios", "0f".repeat(32))
     override suspend fun activate(ownerId: String, deviceId: String) = ApprovalDeviceActivated(deviceId)
+    override suspend fun pair() = ApprovalDevicePaired(ApprovalDevicePairOutcome.DISMISSED)
+    override suspend fun forget() = ApprovalDeviceForgotten(true)
     override suspend fun status(): ApprovalDeviceRef? = null
 }
 

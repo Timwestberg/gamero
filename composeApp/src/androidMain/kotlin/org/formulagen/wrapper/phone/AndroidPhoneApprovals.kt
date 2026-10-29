@@ -5,6 +5,7 @@ import android.app.AlertDialog
 import android.content.Context
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.UserNotAuthenticatedException
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.widget.Button
@@ -40,19 +41,24 @@ internal fun androidPhoneApprovals(activity: Activity, appUrl: String): PhoneApp
 
 /**
  * The credential as one private preference, sealed with AES-GCM under a key the Android Keystore holds and never
- * exports. A value the key cannot open (the key went with a reinstall) reads as no device.
+ * exports, usable only while the phone is unlocked (API 28 and later). A value the key cannot open (the key went with
+ * a reinstall) reads as no device; a locked phone fails the call instead, so it never reads as unregistered.
  */
 internal class AndroidDeviceVault(context: Context) : DeviceVault {
     private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
     override fun read(): String? {
         val stored = preferences.getString(ITEM, null) ?: return null
-        return runCatching {
+        return try {
             val sealed = Base64.decode(stored, Base64.NO_WRAP)
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BITS, sealed, 0, IV_BYTES))
             String(cipher.doFinal(sealed, IV_BYTES, sealed.size - IV_BYTES), Charsets.UTF_8)
-        }.getOrNull()
+        } catch (locked: UserNotAuthenticatedException) {
+            throw IllegalStateException("Unlock the phone to answer approvals", locked)
+        } catch (_: Exception) {
+            null
+        }
     }
 
     override fun write(value: String) {
@@ -76,6 +82,7 @@ internal class AndroidDeviceVault(context: Context) : DeviceVault {
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                 .setKeySize(KEY_BITS)
+                .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) setUnlockedDeviceRequired(true) }
                 .build(),
         )
         return generator.generateKey()
