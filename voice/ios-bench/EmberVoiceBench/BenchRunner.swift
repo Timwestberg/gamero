@@ -12,10 +12,13 @@ public struct BenchLine: Decodable {
 }
 
 public struct BenchCatalog: Decodable {
-    let silence_ms: Int
-    let num_steps: Int
+    let silenceBetweenPiecesMs: Int
+    let numSteps: Int
+    let fallbackNumSteps: Int
     let temperature: Double
     let seed: Int
+    let decoderFramesPerCallback: Int
+    let longSentenceMaxChars: Int
     let lines: [BenchLine]
 }
 
@@ -75,28 +78,31 @@ public func runBench(catalog: BenchCatalog, synth: BenchSynthesizer) -> [BenchLi
                 text: piece.text,
                 maxFrames: piece.max_frames,
                 seed: catalog.seed,
-                steps: catalog.num_steps,
+                steps: catalog.numSteps,
                 temperature: Float(catalog.temperature)
             )
             var spent = take.synthMs
             var retried = false
-            if piece.max_frames > 0 && pieceRanLong(chars: piece.text.count, samples: take.samples, sampleRate: take.sampleRate) {
+            let frame = 1920
+            let capped = piece.max_frames > 0 && take.samples >= piece.max_frames * frame - frame
+            if capped {
+                let raised = min(piece.max_frames * 2, 500)
                 let second = synth.speak(
                     text: piece.text,
-                    maxFrames: piece.max_frames,
-                    seed: catalog.seed + 1,
-                    steps: catalog.num_steps,
+                    maxFrames: raised,
+                    seed: catalog.seed,
+                    steps: catalog.numSteps,
                     temperature: Float(catalog.temperature)
                 )
                 retried = true
                 spent += second.synthMs
-                if second.samples <= take.samples { take = second }
+                take = second
             }
             if index == 0 { ttfa = firstAudibleMs(callbackMs: take.ttfaMs, retried: retried, spentMs: spent) }
             samples += take.samples
             rate = take.sampleRate
             if index + 1 < line.pieces.count {
-                samples += rate * catalog.silence_ms / 1000
+                samples += rate * catalog.silenceBetweenPiecesMs / 1000
             }
         }
         let totalMs = Date().timeIntervalSince(started) * 1000.0

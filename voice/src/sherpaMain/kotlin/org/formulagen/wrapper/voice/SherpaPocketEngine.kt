@@ -67,7 +67,7 @@ class SherpaPocketEngine(private val config: VoiceConfig) : PieceEngine {
         if (released.get()) throw IllegalStateException("voice engine was released")
         val extra = HashMap<String, String>()
         extra["temperature"] = config.temperature.toString()
-        extra["chunk_size"] = config.chunkSize.toString()
+        extra["chunk_size"] = config.decoderFramesPerCallback.toString()
         extra["max_char_in_sentence"] = maxOf(120, text.length).toString()
         extra["seed"] = seed.toString()
         extra["max_reference_audio_len"] = (voiceSamples.size / voiceRate.toDouble()).toString()

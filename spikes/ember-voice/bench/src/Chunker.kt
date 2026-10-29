@@ -1,35 +1,45 @@
 package ember.voice.bench
 
 /**
- * Splits a line into the pieces we send to PocketTTS.
- *
- * The first piece is the first sentence when that sentence is at most
- * [firstTargetChars], so a short "Done!" stays its own piece. A longer opening
- * is cut inside the window from 30 characters to [firstTargetChars], on a clause
- * boundary when there is one. Later pieces pack up to [laterMaxChars].
- * Spoken numbers stay in one piece.
+ * Pieces are sentences. A sentence longer than [longSentenceMaxChars] is split
+ * at a word boundary. Keep this in step with voice SpeechText.kt.
  */
 fun speechPieces(
     text: String,
-    firstTargetChars: Int,
-    laterMaxChars: Int,
+    longSentenceMaxChars: Int = SENTENCE_SAFETY_CHARS,
 ): List<String> {
     val spoken = normalizeForSpeech(text)
-    val sentences = splitSentences(spoken)
-    if (sentences.isEmpty()) return emptyList()
     val pieces = ArrayList<String>()
-    val opening = sentences[0]
-    val rest = if (opening.length <= firstTargetChars) {
-        pieces.add(opening)
-        sentences.drop(1)
-    } else {
-        val cut = cutAt(opening, firstWindowMin(firstTargetChars), firstTargetChars)
-        pieces.add(opening.substring(0, cut).trim())
-        val tail = opening.substring(cut).trim()
-        if (tail.isEmpty()) sentences.drop(1) else listOf(tail) + sentences.drop(1)
+    for (sentence in splitSentences(spoken)) {
+        pieces.addAll(splitLongSentence(sentence, longSentenceMaxChars))
     }
-    packSentences(rest, laterMaxChars, pieces)
     return pieces.filter { it.isNotEmpty() }
+}
+
+const val SENTENCE_SAFETY_CHARS = 400
+
+internal fun splitLongSentence(sentence: String, maxChars: Int): List<String> {
+    if (maxChars < 1 || sentence.length <= maxChars) return listOf(sentence)
+    val pieces = ArrayList<String>()
+    var rest = sentence
+    while (rest.length > maxChars) {
+        val cut = wordBoundary(rest, maxChars)
+        if (cut <= 0 || cut >= rest.length) {
+            pieces.add(rest)
+            return pieces
+        }
+        pieces.add(rest.substring(0, cut).trim())
+        rest = rest.substring(cut).trim()
+        if (rest.isEmpty()) return pieces
+    }
+    pieces.add(rest)
+    return pieces
+}
+
+private fun wordBoundary(text: String, maxChars: Int): Int {
+    val limit = minOf(maxChars, text.length)
+    val space = text.lastIndexOf(' ', limit)
+    return if (space >= 1) space else limit
 }
 
 fun normalizeForSpeech(text: String): String {

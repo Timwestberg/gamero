@@ -1,14 +1,14 @@
 # :voice
 
-On-device PocketTTS for the Ember pet. The Mac companion uses the JVM backend. iOS and Android are in this module so the same speak path can move onto the phone later. The app modules are not wired to it yet.
+On-device PocketTTS for the Ember pet. The Mac companion uses the JVM backend through `DesktopSpeech`. iOS and Android stay in this module for the same speak path.
 
 ## What it does
 
-`EmberVoice.speak` splits the line the same way the benchmark chunker does. Later pieces pack to 140 characters. Each piece is capped with `ceil(max(12, 4 + 0.8 * chars))`, so `4 + 0.8 * 28` is 27 frames, and a piece of 24 characters or fewer gets at least 36 frames. `max_char_in_sentence` is at least the piece length, so sherpa-onnx's own splitter does not cut the piece again and does not replace that ceiling. Expected audio is `max(0.8 s, normalized chars / 15)`, using the piece text after number, time, and filename normalization. A take longer than twice that is generated once more with the next seed, and the shorter one is kept. The first piece stays buffered until a retry returns, so TTFA on that path is the sum of both takes. 40 ms of silence between pieces is part of the measured audio. A second `speak` or `release` while a speak is running throws. The listener events are `speech_start`, one `speech_level` per committed piece (RMS), and `speech_end`.
+`EmberVoice.speak` sends one piece per sentence. A sentence longer than 400 characters is split at a word boundary. Each piece is capped with `ceil(max(12, 4 + 0.8 * chars))`, so `4 + 0.8 * 28` is 27 frames, and a piece of 24 characters or fewer gets at least 36 frames. `max_char_in_sentence` is at least the piece length, so sherpa-onnx's own splitter does not cut the piece again. Expected audio is `max(0.8 s, normalized chars / 15)`. A take is generated again only when it fills that frame cap, with the same seed and twice the cap. There is no inserted silence. A join whose edge is at least 0.02 is crossfaded for 10 ms. Five flow steps are the default. If a Mac cannot stay in real time, the fallback is 3. A second `speak` or `release` while a speak is running throws. The listener events are `speech_start`, one `speech_level` per committed piece (RMS), and `speech_end`.
 
 sherpa-onnx 2.0.0 finishes the language model for a piece before the first audio callback. This module does not pretend that callback is a frame streamed while the model is still generating. The first callback is still the TTFA the benchmark records.
 
-Defaults, from the Linux VM confirmation: `numSteps` 1, temperature 0.3, seed 1, `firstPieceTargetChars` 40, `maxDurationRatio` 2, 2 threads. Tier names are local. A cached route is reused when the config version matches. A tier the host marks as below the floor goes to the server without a benchmark. Anything else speaks `task_finished` once and stays on device only if TTFA is at most 500 ms and RTF is at least 1.5.
+Defaults follow ember-voice.v2: `numSteps` 5, `fallbackNumSteps` 3, temperature 0.3, seed 1, `silenceBetweenPiecesMs` 0, `decoderFramesPerCallback` 2, `longSentenceMaxChars` 400, `crossfadeMs` 10, `startAfterMs` 200, `maxDurationRatio` 2. Tier names are local. A cached route is reused when the config version matches. A tier the host marks as below the floor goes to the server without a benchmark. Anything else speaks `task_finished` once and stays on device only if TTFA is at most 500 ms and RTF is at least 1.5. `./fluency.sh` speaks a fixed 3-turn conversation and prints the acceptance metrics.
 
 ## JVM
 
