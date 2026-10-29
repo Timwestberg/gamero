@@ -11,6 +11,19 @@ import org.formulagen.wrapper.bridge.*
 import kotlin.test.*
 
 class ProviderConnectionsTest {
+    @Test fun discoversUserInstallationWithoutDependingOnTheGuiAppsPath() {
+        val home = Files.createTempDirectory("codex-install")
+        try {
+            val executable = home.resolve(".local/bin/codex")
+            Files.createDirectories(executable.parent)
+            Files.writeString(executable, "#!/bin/sh\nexit 0\n")
+            executable.toFile().setExecutable(true)
+            val environment = mapOf("HOME" to home.toString(), "PATH" to "")
+            assertEquals(executable, findCodexExecutable(environment))
+            assertNull(findCodexExecutable(environment + ("GAMERO_CODEX_PATH" to "/missing/codex")))
+        } finally { home.toFile().deleteRecursively() }
+    }
+
     private open class Rpc : CodexAppServer {
         val calls = mutableListOf<String>()
         var account: JsonElement = JsonNull

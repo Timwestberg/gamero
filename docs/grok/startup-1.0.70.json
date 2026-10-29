@@ -1,0 +1,11 @@
+{
+  "version": "1.0.70",
+  "inspectedMcpServerCount": 1,
+  "initializeSucceeded": true,
+  "authMethodIds": ["grok.com"],
+  "sessionNewSucceeded": false,
+  "sessionNewErrorCode": -32000,
+  "configuredMcpStartedWithoutPrompt": false,
+  "authenticationAttempted": false,
+  "promptSent": false
+}

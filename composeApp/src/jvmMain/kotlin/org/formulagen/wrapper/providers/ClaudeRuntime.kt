@@ -47,8 +47,8 @@ private val CLAUDE_SETTINGS = mapOf("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" t
 
 /**
  * The player's installed Claude Code, run unmodified on its own sign-in. [workspaceRoot] is the
- * providers root; each profile's chats run in an empty folder under it. Hovel never runs sign-in
- * or sign-out, and never reads Claude Code's credentials.
+ * providers root; each profile's chats run in an empty folder under it. This runtime never runs sign-in
+ * or sign-out, and never reads Claude Code's credentials. Explicit setup uses ProviderInstallation.
  */
 internal class ClaudeRuntime(
     val executable: Path,

@@ -22,6 +22,11 @@ internal class Persona private constructor(val instructions: String) {
     override fun toString() = "Persona($hash)"
 
     companion object {
+        /** Role instructions are scoped to a native execution identity. */
+        fun role(name: String, role: String, instructions: String, working: Boolean): Persona =
+            Persona((if (working) working(name).instructions else "You are the AI companion ${JsonPrimitive(name)}, acting as ${JsonPrimitive(role)}. Be honest about what you have observed. ") +
+                "\nRole instructions:\n" + instructions)
+
         /**
          * The persona for a companion named [name]. The name is untrusted page text, so it appears
          * only as a JSON string literal; tool access stays controlled by each runtime's configuration.

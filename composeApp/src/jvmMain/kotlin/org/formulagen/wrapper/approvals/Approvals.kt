@@ -129,20 +129,36 @@ internal class DialogApprovalBroker(private val dialogs: NativeDialogs) : Approv
 
 /**
  * The dialog for [request]: what is asked, exactly, by which member of which companion, in which
- * folder. Deny is the default button and what closing the dialog means.
+ * folder. Deny is the default button and what closing the dialog means. Every provider's text goes
+ * through [visibleText], so a format character cannot reorder or hide what the player approves.
  */
 internal fun approvalDialog(request: ApprovalRequest): NativeDialog<ApprovalDecision> = NativeDialog(
-    title = "${request.companionName} wants to ${verb(request.kind)}",
+    title = visibleText("${request.companionName} wants to ${verb(request.kind)}"),
     lines = listOfNotNull(
         request.title,
         request.detail.takeIf { it.isNotBlank() },
         "Member: ${memberLabel(request.member)}",
         "Project folder: ${displayPath(request.folder)}",
-    ),
+    ).map(::visibleText),
     buttons = listOfNotNull("Allow once" to ApprovalDecision.ALLOW_ONCE,
-        request.sessionLabel?.let { it to ApprovalDecision.ALLOW_FOR_CONVERSATION }, "Deny" to ApprovalDecision.DENY),
+        request.sessionLabel?.let { visibleText(it) to ApprovalDecision.ALLOW_FOR_CONVERSATION }, "Deny" to ApprovalDecision.DENY),
     dismiss = ApprovalDecision.DENY,
 )
+
+/**
+ * [text] with every Unicode format character (category Cf: bidi overrides and isolates, zero-width
+ * characters, the byte-order mark) written as its code point, such as `‮`. Shown as is, such a
+ * character can reorder or hide the text around it in a native dialog.
+ */
+internal fun visibleText(text: String): String {
+    if (text.codePoints().noneMatch(::isFormatCharacter)) return text
+    return buildString {
+        text.codePoints().forEach { if (isFormatCharacter(it)) append("\\u%04X".format(it)) else appendCodePoint(it) }
+    }
+}
+
+/** Whether [codePoint] is a Unicode format character (general category Cf). */
+internal fun isFormatCharacter(codePoint: Int): Boolean = Character.getType(codePoint) == Character.FORMAT.toInt()
 
 /** "Claude · Opus", "Codex · gpt-6-luna", "Codex · default model": how a member is named to the player. */
 internal fun memberLabel(member: TeamMember): String = "${member.runtimeId.copy.product} · ${member.runtimeId.copy.modelName(member.modelId)}"
