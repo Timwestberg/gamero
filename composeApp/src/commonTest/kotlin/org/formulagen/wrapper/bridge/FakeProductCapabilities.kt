@@ -38,3 +38,23 @@ class FakeWorkspaceCapability : WorkspaceCapability {
     override suspend fun clear(scope: WorkspaceScope) = WorkspaceStatus(null)
     override suspend fun status(scope: WorkspaceScope) = WorkspaceStatus(WorkspaceFolder(true, "hovel-notes"))
 }
+
+class FakeProjectCapability : ProjectCapability {
+    private val working = ProjectFolderStatus(true, "70000000-0000-4000-8000-000000000002", "hovel-notes", emptyList(), FolderRole.WORKING)
+    override suspend fun chooseFolder(args: ProjectChooseFolderArgs) = ProjectFoldersStatus(listOf(working))
+    override suspend fun forgetFolder(args: ProjectForgetFolderArgs) = ProjectFoldersStatus(emptyList())
+    override suspend fun folderStatus(scope: ProjectScope) = ProjectFoldersStatus(listOf(working))
+}
+
+class FakeConversationVoiceCapability : ConversationVoiceCapability {
+    override suspend fun dictation(args: ConversationDictationArgs) =
+        ConversationVoiceStatus(args.conversationId, dictation = ChatDictation(DictationState.LISTENING))
+    override suspend fun hearing(args: ConversationHearingArgs) =
+        ConversationVoiceStatus(args.conversationId, hearing = ChatHearing(HearingState.LISTENING))
+    override suspend fun voiceStatus() = ConversationVoiceStatus(null)
+}
+
+class FakeApprovalsCapability : ApprovalsCapability {
+    val presented = mutableListOf<String>()
+    override suspend fun present(approvalId: String) { presented += approvalId }
+}

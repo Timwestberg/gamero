@@ -22,6 +22,9 @@ import org.formulagen.wrapper.bridge.ProviderCapability
 import org.formulagen.wrapper.bridge.ProviderMethods
 import org.formulagen.wrapper.bridge.WorkspaceCapability
 import org.formulagen.wrapper.bridge.WorkspaceMethods
+import org.formulagen.wrapper.bridge.ApprovalMethods
+import org.formulagen.wrapper.bridge.ConversationVoiceMethods
+import org.formulagen.wrapper.bridge.ProjectMethods
 import org.formulagen.wrapper.approvals.ComposeDialogPresenter
 import org.formulagen.wrapper.approvals.DialogApprovalBroker
 import org.formulagen.wrapper.approvals.NativeDialogs
@@ -216,7 +219,9 @@ internal class DesktopServices private constructor(
 
 /**
  * The product packs a desktop host registers. Every desktop product has chat, providers, pet,
- * games and project folders; Hovel adds its companion. A missing implementation registers as
+ * games and project folders; Hovel adds its companion and the companion projects capabilities:
+ * `project` and `conversationVoice` (`Unsupported` until the conversation runner implements them)
+ * and phone `approvals`, which desktop never supports. A missing implementation registers as
  * `Unsupported`, so its methods answer `unsupported` instead of `unknown-method`.
  */
 internal fun desktopProductPacks(
@@ -229,7 +234,12 @@ internal fun desktopProductPacks(
     workspace: WorkspaceCapability?,
     brain: BrainCapability? = null,
 ): List<CapabilityPack> = buildList {
-    if (product == HOVEL_PRODUCT) add(CompanionMethods.pack(supportedIfPresent(companion)))
+    if (product == HOVEL_PRODUCT) {
+        add(CompanionMethods.pack(supportedIfPresent(companion)))
+        add(ProjectMethods.pack(Capability.Unsupported))
+        add(ConversationVoiceMethods.pack(Capability.Unsupported))
+        add(ApprovalMethods.pack(Capability.Unsupported))
+    }
     add(BrainMethods.pack(supportedIfPresent(brain)))
     add(ChatMethods.pack(supportedIfPresent(chat)))
     add(ProviderMethods.pack(supportedIfPresent(providers)))
