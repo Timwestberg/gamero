@@ -1,49 +1,10 @@
-import http from "node:http";
-import path from "node:path";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chromium } from "playwright-core";
+import { launch, serve } from "./support.js";
 
-const root = path.resolve(import.meta.dirname, "../..");
-
-function contentType(file) {
-  if (file.endsWith(".html")) return "text/html";
-  if (file.endsWith(".js")) return "text/javascript";
-  if (file.endsWith(".json")) return "application/json";
-  return "text/plain";
-}
-
-async function serve() {
-  const server = http.createServer(async (request, response) => {
-    const url = new URL(request.url, "http://127.0.0.1");
-    if (request.method !== "GET") {
-      response.writeHead(405);
-      response.end("model bytes are not posted");
-      return;
-    }
-    const file = path.normalize(path.join(root, decodeURIComponent(url.pathname)));
-    if (!file.startsWith(root)) {
-      response.writeHead(403);
-      response.end();
-      return;
-    }
-    try {
-      const body = await readFile(file);
-      response.writeHead(200, { "content-type": contentType(file) });
-      response.end(body);
-    } catch {
-      response.writeHead(404);
-      response.end();
-    }
-  });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  return { server, port: address.port };
-}
-
+// voice=stub keeps these on the recorder; voice.browser.test.js covers the real voice.
 async function openPage(port, query) {
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await launch();
   const page = await browser.newPage();
   const posts = [];
   page.on("request", (request) => {
@@ -59,13 +20,14 @@ async function openPage(port, query) {
       return { getAudioTracks: () => [track], getTracks: () => [track] };
     };
   });
-  await page.goto(`http://127.0.0.1:${port}/catalog/index.html?${query}`);
+  await page.goto(`http://127.0.0.1:${port}/catalog/index.html?voice=stub&${query}`);
   await page.waitForFunction(() => window.__app);
   return { browser, page, posts };
 }
 
 test("a headless browser shows a partial, plays the local line, and can send through the host", async () => {
-  const { server, port } = await serve();
+  const server = await serve();
+  const { port } = server;
   try {
     const local = await openPage(port, "scripted=1");
     const permission = await local.page.locator("#notice").textContent();
@@ -104,14 +66,15 @@ test("a headless browser shows a partial, plays the local line, and can send thr
     assert.deepEqual(calls.at(-1), ["send", "hello there"]);
     await hosted.browser.close();
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    await server.close();
   }
 });
 
 test("getUserMedia is asked for echo cancellation", async () => {
-  const { server, port } = await serve();
+  const server = await serve();
+  const { port } = server;
   try {
-    const browser = await chromium.launch({ channel: "chrome", headless: true });
+    const browser = await launch();
     const page = await browser.newPage();
     await page.addInitScript(() => {
       navigator.mediaDevices.getUserMedia = async (constraints) => {
@@ -120,13 +83,13 @@ test("getUserMedia is asked for echo cancellation", async () => {
         return { getAudioTracks: () => [track], getTracks: () => [track] };
       };
     });
-    await page.goto(`http://127.0.0.1:${port}/catalog/index.html`);
+    await page.goto(`http://127.0.0.1:${port}/catalog/index.html?voice=stub`);
     await page.waitForFunction(() => window.__constraints);
     const constraints = await page.evaluate(() => window.__constraints);
     assert.equal(constraints.audio.echoCancellation, true);
     assert.equal(constraints.audio.noiseSuppression, true);
     await browser.close();
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    await server.close();
   }
 });

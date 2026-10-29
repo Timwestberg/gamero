@@ -1,11 +1,13 @@
 /**
  * Web engines. Silero v5 runs in onnxruntime-web (the same 512-sample window the
- * sherpa file expects). Streaming Zipformer and Kokoro run through sherpa-onnx
- * WASM, which owns the Zipformer cache and the Kokoro graph. This file does not
- * fetch weights and does not talk to Hovel.
+ * sherpa file expects). Streaming Zipformer runs through sherpa-onnx WASM, which
+ * owns the Zipformer cache. This file does not fetch weights and does not talk
+ * to Hovel.
  *
  * Silero inputs, checked against silero_vad_v5.onnx: input [1, 512], state [2, 1, 128], sr int64.
  */
+
+import { KOKORO_VOICE_LIST } from "./kokoro-voices.js";
 
 export const SILERO_WINDOW = 512;
 export const HEARING_SAMPLE_RATE = 16000;
@@ -67,39 +69,11 @@ export function createZipformerAsr(sherpa, files) {
 }
 
 /**
- * Kokoro through the same WASM build. Playback is PCM into an AudioContext so the
- * browser's echo canceller hears the far end. Fillers stay off.
+ * Kokoro speaks through kokoro-worker.js (onnxruntime-web on WebGPU, WASM
+ * fallback) and speaker.js. These are the voices a person can pick, in
+ * recipe order, with Sam first and the default.
  */
-export function createKokoroSpeaker(sherpa, files, audio) {
-  const tts = sherpa.createOfflineTts({
-    model: files.model,
-    voices: files.voices,
-    tokens: files.tokens,
-    lexicon: files.lexicon,
-    lengthScale: files.lengthScale,
-  });
-  return {
-    state: "idle",
-    async speak(text) {
-      this.state = "preparing";
-      const audioData = tts.generate({ text, sid: files.sid });
-      this.state = "speaking";
-      await audio.play(audioData.samples, audioData.sampleRate);
-      if (this.state === "speaking") this.state = "idle";
-    },
-    stop() {
-      audio.stop();
-      this.state = "idle";
-    },
-  };
-}
-
-export const KOKORO_VOICES = [
-  { id: "adam70-michael30", name: "Sam", speed: 1, sid: 50 },
-  { id: "adam60-george40", name: "Jamie", speed: 0.95, sid: 51 },
-  { id: "adam55-bella45", name: "Riley", speed: 0.95, sid: 52 },
-  { id: "heart60-adam40", name: "Harper", speed: 0.97, sid: 53 },
-];
+export const KOKORO_VOICES = KOKORO_VOICE_LIST.map(({ id, name, speed, sid }) => ({ id, name, speed, sid }));
 
 export const SENTENCE_GAP_MS = 160;
 export const FILLERS_DEFAULT = false;

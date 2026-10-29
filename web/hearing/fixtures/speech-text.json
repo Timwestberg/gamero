@@ -1,0 +1,377 @@
+{
+  "schema": "ember-speech-text.v1",
+  "sentenceSafetyChars": 400,
+  "normalize": [
+    {
+      "input": "Hi, I'm Sam.",
+      "normalized": "Hi, I'm Sam.",
+      "pieces": [
+        "Hi, I'm Sam."
+      ]
+    },
+    {
+      "input": "Hi, I'm Ember. Sonnet 5.5 answered in 160 ms. What should we build next?",
+      "normalized": "Hi, I'm Ember. Sonnet five point five answered in one hundred sixty milliseconds. What should we build next?",
+      "pieces": [
+        "Hi, I'm Ember.",
+        "Sonnet five point five answered in one hundred sixty milliseconds.",
+        "What should we build next?"
+      ]
+    },
+    {
+      "input": "Ember answered in 160 ms, about 1.5s faster.",
+      "normalized": "Ember answered in one hundred sixty milliseconds, about one point five seconds faster.",
+      "pieces": [
+        "Ember answered in one hundred sixty milliseconds, about one point five seconds faster."
+      ]
+    },
+    {
+      "input": "Open https://github.com/Timwestberg/gamero/pull/63 to see it.",
+      "normalized": "Open github dot com slash Timwestberg slash gamero slash pull slash sixty-three to see it.",
+      "pieces": [
+        "Open github dot com slash Timwestberg slash gamero slash pull slash sixty-three to see it."
+      ]
+    },
+    {
+      "input": "See http://www.example.com/a-b_c?x=1&y=v2.0#top, then https://x.io.",
+      "normalized": "See example dot com slash a dash b underscore c question x equals one and y equals vee two dot zero hash top, then x dot io.",
+      "pieces": [
+        "See example dot com slash a dash b underscore c question x equals one and y equals vee two dot zero hash top, then x dot io."
+      ]
+    },
+    {
+      "input": "Meet me at 3:05 PM or 10:30am, not 12:30.",
+      "normalized": "Meet me at three oh five PM or ten thirty AM, not twelve: thirty.",
+      "pieces": [
+        "Meet me at three oh five PM or ten thirty AM, not twelve: thirty."
+      ]
+    },
+    {
+      "input": "Edit DesktopSpeech.kt and voices-blends.json, then run v2.0.1-rc2.",
+      "normalized": "Edit Desktop Speech dot kt and voices- blends dot json, then run vee two point zero point one release candidate two.",
+      "pieces": [
+        "Edit Desktop Speech dot kt and voices- blends dot json, then run vee two point zero point one release candidate two."
+      ]
+    },
+    {
+      "input": "The GPU runs at 1.2 GHz with 16 GB, 48 kHz audio and 1920px; that's 100% better.",
+      "normalized": "The GPU runs at one point two gigahertz with sixteen gigabytes, forty-eight kilohertz audio and one thousand nine hundred twenty pixels; that's one hundred percent better.",
+      "pieces": [
+        "The GPU runs at one point two gigahertz with sixteen gigabytes, forty-eight kilohertz audio and one thousand nine hundred twenty pixels; that's one hundred percent better."
+      ]
+    },
+    {
+      "input": "Use gpt-4o or mp3 files like track_01 on x86_64 with C3PO and R2-D2.",
+      "normalized": "Use gee pee tee dash four oh or em pee three files like tee ar ay see kay underscore zero one on ex eighty-six underscore sixty-four with see three pee oh and ar two dash dee two.",
+      "pieces": [
+        "Use gee pee tee dash four oh or em pee three files like tee ar ay see kay underscore zero one on ex eighty-six underscore sixty-four with see three pee oh and ar two dash dee two."
+      ]
+    },
+    {
+      "input": "It costs $5 & ships in 2026!",
+      "normalized": "It costs dollar five and ships in two thousand twenty-six!",
+      "pieces": [
+        "It costs dollar five and ships in two thousand twenty-six!"
+      ]
+    },
+    {
+      "input": "Version 1.13.8-beta? Or 007? Or 3.14159?",
+      "normalized": "Version one point thirteen point eight beta? Or zero zero seven? Or three point fourteen thousand one hundred fifty-nine?",
+      "pieces": [
+        "Version one point thirteen point eight beta?",
+        "Or zero zero seven?",
+        "Or three point fourteen thousand one hundred fifty-nine?"
+      ]
+    },
+    {
+      "input": "Phone 5551234567 has 10 digits and 1000000 is big.",
+      "normalized": "Phone five five five one two three four five six seven has ten digits and one zero zero zero zero zero zero is big.",
+      "pieces": [
+        "Phone five five five one two three four five six seven has ten digits and one zero zero zero zero zero zero is big."
+      ]
+    },
+    {
+      "input": "Emoji \ud83c\udf89 and \u201cquotes\u201d \u2014 dashes\u2026",
+      "normalized": "Emoji symbol symbol and symbolquotes symbol symbol dashes symbol",
+      "pieces": [
+        "Emoji symbol symbol and symbolquotes symbol symbol dashes symbol"
+      ]
+    },
+    {
+      "input": "\u00dcn\u00efc\u00f6d\u00e9 caf\u00e9 na\u00efve \u0130stanbul \u0663 apples.",
+      "normalized": "\u00dcn\u00efc\u00f6d\u00e9 caf\u00e9 na\u00efve \u0130stanbul three apples.",
+      "pieces": [
+        "\u00dcn\u00efc\u00f6d\u00e9 caf\u00e9 na\u00efve \u0130stanbul three apples."
+      ]
+    },
+    {
+      "input": "Tabs\tand\nnew lines   stay.",
+      "normalized": "Tabs\tand\nnew lines   stay.",
+      "pieces": [
+        "Tabs\tand\nnew lines   stay."
+      ]
+    },
+    {
+      "input": "a/b\\c = d_e ^ f ~ g | h < i > j @ k # l * m + n",
+      "normalized": "a slashb backslashc equals d underscoree caret f tilde g bar h less than i greater than j at k hash l star m plus n",
+      "pieces": [
+        "a slashb backslashc equals d underscoree caret f tilde g bar h less than i greater than j at k hash l star m plus n"
+      ]
+    },
+    {
+      "input": "Wait... what?! Really?",
+      "normalized": "Wait... what?! Really?",
+      "pieces": [
+        "Wait.",
+        ".",
+        ".",
+        "what?",
+        "!",
+        "Really?"
+      ]
+    },
+    {
+      "input": "ID-42-b and 0.5% and 5msec.",
+      "normalized": "eye dee dash forty-two dash bee and zero point five percent and five millisecondsec.",
+      "pieces": [
+        "eye dee dash forty-two dash bee and zero point five percent and five millisecondsec."
+      ]
+    },
+    {
+      "input": "Questions about the boxes, cities, and plays.",
+      "normalized": "Questions about the boxes, cities, and plays.",
+      "pieces": [
+        "Questions about the boxes, cities, and plays."
+      ]
+    },
+    {
+      "input": "",
+      "normalized": "",
+      "pieces": []
+    },
+    {
+      "input": "   ",
+      "normalized": "   ",
+      "pieces": []
+    },
+    {
+      "input": "No punctuation at the end",
+      "normalized": "No punctuation at the end",
+      "pieces": [
+        "No punctuation at the end"
+      ]
+    },
+    {
+      "input": "Long sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence ends here.",
+      "normalized": "Long sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence ends here.",
+      "pieces": [
+        "Long sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence",
+        "sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence ends here."
+      ]
+    }
+  ],
+  "longSentence": [
+    {
+      "input": "one two three four five six seven eight nine ten eleven twelve",
+      "max": 20,
+      "pieces": [
+        "one two three four",
+        "five six seven eight",
+        "nine ten eleven",
+        "twelve"
+      ]
+    },
+    {
+      "input": "nospaceatallinthistextsoitcannotbesplitonaword",
+      "max": 10,
+      "pieces": [
+        "nospaceata",
+        "llinthiste",
+        "xtsoitcann",
+        "otbesplito",
+        "naword"
+      ]
+    },
+    {
+      "input": "short",
+      "max": 0,
+      "pieces": [
+        "short"
+      ]
+    },
+    {
+      "input": "a b c d e f g h i j k l m n o p",
+      "max": 5,
+      "pieces": [
+        "a b c",
+        "d e f",
+        "g h i",
+        "j k l",
+        "m n o",
+        "p"
+      ]
+    }
+  ],
+  "lexicon": {
+    "text": "# comment line\nquestion k w \u02c8 \u025b s \u02a7 \u1d4a n\ntry t \u0279 \u02c8 I\ncity s \u02c8 \u026a \u027e i\ndog d \u02c8 \u0254 \u0261\nbox b \u02c8 \u0251 k s\nwant w \u02c8 \u0251 n t\nask \u02c8 \u00e6 s k\nplay p l \u02c8 A\nhope h \u02c8 O p\nneed n \u02c8 i d\nrun \u0279 \u02c8 \u028c n\nstop s t \u02c8 \u0251 p\ngo \u0261 \u02c8 O\nchurch \u02a7 \u02c8 \u025c \u0279 \u02a7\nwish w \u02c8 \u026a \u0283\nbuzz b \u02c8 \u028c z\ntie t \u02c8 I\nfree f \u0279 \u02c8 i\nDog d \u02c8 \u0254 \u0261 \u0261\ndon't d \u02c8 O n t\na \u02c8 A\nx \u02c8 \u025b k s\nthe \u00f0 \u0259\nabout \u0259 b \u02c8 W t\nand \u02c8 \u00e6 n d\n\nbare\n",
+    "parsed": [
+      ["question", "k w \u02c8 \u025b s \u02a7 \u1d4a n"],
+      ["try", "t \u0279 \u02c8 I"],
+      ["city", "s \u02c8 \u026a \u027e i"],
+      ["dog", "d \u02c8 \u0254 \u0261"],
+      ["box", "b \u02c8 \u0251 k s"],
+      ["want", "w \u02c8 \u0251 n t"],
+      ["ask", "\u02c8 \u00e6 s k"],
+      ["play", "p l \u02c8 A"],
+      ["hope", "h \u02c8 O p"],
+      ["need", "n \u02c8 i d"],
+      ["run", "\u0279 \u02c8 \u028c n"],
+      ["stop", "s t \u02c8 \u0251 p"],
+      ["go", "\u0261 \u02c8 O"],
+      ["church", "\u02a7 \u02c8 \u025c \u0279 \u02a7"],
+      ["wish", "w \u02c8 \u026a \u0283"],
+      ["buzz", "b \u02c8 \u028c z"],
+      ["tie", "t \u02c8 I"],
+      ["free", "f \u0279 \u02c8 i"],
+      ["don't", "d \u02c8 O n t"],
+      ["a", "\u02c8 A"],
+      ["x", "\u02c8 \u025b k s"],
+      ["the", "\u00f0 \u0259"],
+      ["about", "\u0259 b \u02c8 W t"],
+      ["and", "\u02c8 \u00e6 n d"]
+    ],
+    "additions": [
+      ["questions", "k w \u02c8 \u025b s \u02a7 \u1d4a n z"],
+      ["questioned", "k w \u02c8 \u025b s \u02a7 \u1d4a n d"],
+      ["questioning", "k w \u02c8 \u025b s \u02a7 \u1d4a n \u026a \u014b"],
+      ["tries", "t \u0279 \u02c8 I z"],
+      ["tried", "t \u0279 \u02c8 I d"],
+      ["trying", "t \u0279 \u02c8 I \u026a \u014b"],
+      ["cities", "s \u02c8 \u026a \u027e i z"],
+      ["citied", "s \u02c8 \u026a \u027e i d"],
+      ["citying", "s \u02c8 \u026a \u027e i \u026a \u014b"],
+      ["dogs", "d \u02c8 \u0254 \u0261 z"],
+      ["doged", "d \u02c8 \u0254 \u0261 d"],
+      ["dogging", "d \u02c8 \u0254 \u0261 \u026a \u014b"],
+      ["boxes", "b \u02c8 \u0251 k s \u1d7b z"],
+      ["boxed", "b \u02c8 \u0251 k s t"],
+      ["boxing", "b \u02c8 \u0251 k s \u026a \u014b"],
+      ["wants", "w \u02c8 \u0251 n t s"],
+      ["wanted", "w \u02c8 \u0251 n t \u1d7b d"],
+      ["wanting", "w \u02c8 \u0251 n t \u026a \u014b"],
+      ["asks", "\u02c8 \u00e6 s k s"],
+      ["asked", "\u02c8 \u00e6 s k t"],
+      ["asking", "\u02c8 \u00e6 s k \u026a \u014b"],
+      ["plays", "p l \u02c8 A z"],
+      ["played", "p l \u02c8 A d"],
+      ["playing", "p l \u02c8 A \u026a \u014b"],
+      ["hopes", "h \u02c8 O p s"],
+      ["hoped", "h \u02c8 O p t"],
+      ["hoping", "h \u02c8 O p \u026a \u014b"],
+      ["needs", "n \u02c8 i d z"],
+      ["needed", "n \u02c8 i d \u1d7b d"],
+      ["needing", "n \u02c8 i d \u026a \u014b"],
+      ["runs", "\u0279 \u02c8 \u028c n z"],
+      ["runed", "\u0279 \u02c8 \u028c n d"],
+      ["running", "\u0279 \u02c8 \u028c n \u026a \u014b"],
+      ["stops", "s t \u02c8 \u0251 p s"],
+      ["stoped", "s t \u02c8 \u0251 p t"],
+      ["stopping", "s t \u02c8 \u0251 p \u026a \u014b"],
+      ["gos", "\u0261 \u02c8 O z"],
+      ["goed", "\u0261 \u02c8 O d"],
+      ["going", "\u0261 \u02c8 O \u026a \u014b"],
+      ["churches", "\u02a7 \u02c8 \u025c \u0279 \u02a7 \u1d7b z"],
+      ["churched", "\u02a7 \u02c8 \u025c \u0279 \u02a7 t"],
+      ["churching", "\u02a7 \u02c8 \u025c \u0279 \u02a7 \u026a \u014b"],
+      ["wishes", "w \u02c8 \u026a \u0283 \u1d7b z"],
+      ["wished", "w \u02c8 \u026a \u0283 t"],
+      ["wishing", "w \u02c8 \u026a \u0283 \u026a \u014b"],
+      ["buzzes", "b \u02c8 \u028c z \u1d7b z"],
+      ["buzzed", "b \u02c8 \u028c z d"],
+      ["buzzing", "b \u02c8 \u028c z \u026a \u014b"],
+      ["ties", "t \u02c8 I z"],
+      ["tied", "t \u02c8 I d"],
+      ["tying", "t \u02c8 I \u026a \u014b"],
+      ["frees", "f \u0279 \u02c8 i z"],
+      ["freed", "f \u0279 \u02c8 i d"],
+      ["freeing", "f \u0279 \u02c8 i \u026a \u014b"],
+      ["thes", "\u00f0 \u0259 z"],
+      ["thed", "\u00f0 \u0259 d"],
+      ["thing", "\u00f0 \u0259 \u026a \u014b"],
+      ["abouts", "\u0259 b \u02c8 W t s"],
+      ["abouted", "\u0259 b \u02c8 W t \u1d7b d"],
+      ["abouting", "\u0259 b \u02c8 W t \u026a \u014b"],
+      ["ands", "\u02c8 \u00e6 n d z"],
+      ["anded", "\u02c8 \u00e6 n d \u1d7b d"],
+      ["anding", "\u02c8 \u00e6 n d \u026a \u014b"]
+    ],
+    "cover": [
+      {
+        "text": "Questions about the boxes",
+        "out": "Questions about the boxes"
+      },
+      {
+        "text": "The cities' dogs ran and stopped",
+        "out": "The cities' dogs r a n and s t o p p e d"
+      },
+      {
+        "text": "Xyzzy plays wishes",
+        "out": "x y z z y plays wishes"
+      },
+      {
+        "text": "don't stop hoping",
+        "out": "don't stop hoping"
+      },
+      {
+        "text": "O'Neil tried, tying, tries",
+        "out": "o n e i l tried, tying, tries"
+      },
+      {
+        "text": "hello-world ABC123 buzzes",
+        "out": "h e l l o-w o r l d a b c123 buzzes"
+      }
+    ]
+  },
+  "shape": [
+    {
+      "input": [0.001, 0.0, 0.5, -0.3, 0.2, 0.01, 0.0],
+      "threshold": 0.02,
+      "fade": 2,
+      "fadeHead": false,
+      "fadeTail": true,
+      "out": [0.5, -0.3, 0.0]
+    },
+    {
+      "input": [0.001, 0.0, 0.5, -0.3, 0.2, 0.4, 0.01],
+      "threshold": 0.02,
+      "fade": 3,
+      "fadeHead": true,
+      "fadeTail": true,
+      "out": [0.0, -0.15, 0.1, 0.0]
+    },
+    {
+      "input": [0.001, 0.002, 0.003],
+      "threshold": 0.02,
+      "fade": 2,
+      "fadeHead": true,
+      "fadeTail": true,
+      "out": [0.0, 0.002, 0.0]
+    },
+    {
+      "input": [0.3, 0.6, -0.9, 0.7, -0.2, 0.1, 0.05, 0.25],
+      "threshold": 0.02,
+      "fade": 240,
+      "fadeHead": true,
+      "fadeTail": true,
+      "out": [0.0, 0.15, -0.45, 0.525, -0.15, 0.05, 0.0125, 0.0]
+    },
+    {
+      "input": [0.019999, 0.02, 0.5, 0.02, 0.0199],
+      "threshold": 0.02,
+      "fade": 1,
+      "fadeHead": true,
+      "fadeTail": false,
+      "out": [0.0, 0.5, 0.02]
+    }
+  ]
+}

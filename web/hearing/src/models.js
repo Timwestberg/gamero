@@ -23,6 +23,40 @@ export const MODEL_URLS = {
   kokoroArchive: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
 };
 
+/**
+ * Ember's browser voice: the files the Kokoro worker loads, served from one
+ * base URL (web/voice-assets/ in development, written by
+ * scripts/fetch-web-voice.mjs). Each is GET-only, sha256-checked, and kept
+ * in Cache Storage after the first check.
+ *
+ * - model: sherpa's Kokoro v1.0 model.onnx (MODEL_PINS.modelOnnxSha256) with
+ *   its float32 weights stored as float16 and cast back to float32 in the
+ *   graph (voice/kokoro/fp16-weights.py, onnx 1.19.1, numpy 2.0.2). Compute
+ *   stays float32. Half the download of the 325,560,556-byte original.
+ * - styles: the four chat blends cut from desktop's voices-blends.bin
+ *   (MODEL_PINS.derivedVoicesSha256), in recipe order.
+ * - tokens, lexicon: unchanged upstream files.
+ * - ortWasm: onnxruntime-web 1.30.0 (MIT), the build behind ort.webgpu.min.mjs.
+ */
+export const KOKORO_WEB = {
+  sampleRate: 24000,
+  ortVersion: "1.30.0",
+  files: {
+    model: { name: "kokoro-v1_0-fp16w.onnx", bytes: 163422642, sha256: "5d03aeca73c1a6c9b1327e67a17565fac5994837e6751fce4124cd2c19408ef7" },
+    styles: { name: "voices-ember.bin", bytes: 2088960, sha256: "3b1b659af3765b38108ac15c0524652b8001d2e4c40c161f5c9ce2d5e4d40172" },
+    tokens: { name: "tokens.txt", bytes: 687, sha256: MODEL_PINS.tokensSha256 },
+    lexicon: { name: "lexicon-us-en.txt", bytes: 5956885, sha256: MODEL_PINS.lexiconSha256 },
+    ortWasm: { name: "ort-wasm-simd-threaded.asyncify.wasm", bytes: 26781914, sha256: "39f9f0894d478800487ed9f7dbe92618498db320cf55c8e3d89adff8dce658da" },
+  },
+  /** Where the fetch script gets the upstream bytes. Revisions are immutable. */
+  upstream: {
+    modelFp32: "https://huggingface.co/csukuangfj/kokoro-multi-lang-v1_0/resolve/f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b/model.onnx",
+    voices: "https://huggingface.co/csukuangfj/kokoro-multi-lang-v1_0/resolve/f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b/voices.bin",
+    tokens: "https://huggingface.co/csukuangfj/kokoro-multi-lang-v1_0/resolve/f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b/tokens.txt",
+    lexicon: "https://huggingface.co/csukuangfj/kokoro-multi-lang-v1_0/resolve/f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b/lexicon-us-en.txt",
+  },
+};
+
 const REFUSED = [/kroko/i, /cc-by-nc/i, /non-commercial/i, /expresso/i, /test_wavs/i];
 
 export function refuseNonCommercial(label) {

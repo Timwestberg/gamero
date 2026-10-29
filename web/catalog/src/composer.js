@@ -1,6 +1,7 @@
 /**
  * Catalog wiring. With a host, a finished turn is chat.hearing / chat.send.
  * Without a host, chat stays unavailable and Kokoro reads one fixed line.
+ * Ember's replies go through the session's speech slot (hearing/src/speaker.js).
  */
 
 import { createSession } from "../../hearing/src/session.js";
@@ -22,7 +23,11 @@ export const POLICY = {
   shortWordLimit: 2,
 };
 
-export function createComposer({ host, player, aecAvailable, selfCheck, now }) {
+/**
+ * speaker: { speak(text, { onStart }) -> Promise<"ended" | "cancelled">, stop(), prepare?() }.
+ * prepare() runs on the talk click, so the audio output starts inside a user gesture.
+ */
+export function createComposer({ host, speaker, aecAvailable, selfCheck, now, onChange }) {
   const session = createSession({
     policy: POLICY,
     now,
@@ -30,12 +35,14 @@ export function createComposer({ host, player, aecAvailable, selfCheck, now }) {
     selfCheck,
     hostPresent: host != null,
     chatState: host?.chatState,
+    speech: speaker,
+    onChange,
     sink: {
       arm() {
+        speaker?.prepare?.();
         if (host) host.hearing("press");
       },
       stop() {
-        player.stop();
         if (host) host.stop();
       },
       commit(text) {
@@ -43,13 +50,17 @@ export function createComposer({ host, player, aecAvailable, selfCheck, now }) {
           host.send(text);
           return "thinking";
         }
-        player.speak(LOCAL_KOKORO_LINE);
-        return "speaking";
+        session.say(LOCAL_KOKORO_LINE);
+        return "thinking";
       },
     },
   });
   return {
     session,
+    /** Ember's reply from the host (or the test page): spoken through the slot. */
+    reply(text) {
+      return session.say(text);
+    },
     permission: PERMISSION_COPY,
     chatNotice: host ? null : NO_HOST_NOTICE,
     micConstraints: WEB_MIC_CONSTRAINTS,

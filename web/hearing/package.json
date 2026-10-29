@@ -4,6 +4,14 @@
   "type": "module",
   "description": "Reusable browser hearing loop. Intended for tool-webkit. No catalog copy and no chat.send.",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "fetch-voice": "node scripts/fetch-web-voice.mjs",
+    "token-fixture": "node scripts/kokoro-token-fixture.mjs"
+  },
+  "dependencies": {
+    "onnxruntime-web": "1.30.0"
+  },
+  "devDependencies": {
+    "sherpa-onnx": "2.0.0"
   }
 }

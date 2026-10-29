@@ -1,0 +1,8 @@
+{
+  "schema": "ember-kokoro-lexicon-chat.v1",
+  "lexiconSha256": "7daaab53a181be9885b853a8582bf1838186317e5dadacbcef9c426d6fa0da14",
+  "additions": 483365,
+  "known": 661766,
+  "lexiconChatSha256": "6197913db0a98d186c369b0cdc5883ef434c49c514a3c7f390dd658405645175",
+  "oov": "OOV base 4/16 (25.0%), after inflections 1/16 (6.3%), after spelling 0/16 (0.0%)"
+}
