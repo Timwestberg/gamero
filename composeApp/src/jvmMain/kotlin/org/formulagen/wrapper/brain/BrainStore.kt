@@ -14,7 +14,8 @@ import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.chat.NativeConversation
 
-@Serializable internal data class SaveReceipt(val id: String, val digest: String, val document: BrainDocument)
+/** A committed save: replaying [id] with the same [digest] rebuilds its document at [revision] from the replayed request. */
+@Serializable internal data class SaveReceipt(val id: String, val digest: String, val revision: Long)
 @Serializable internal data class ConfigRecord(val version: Int = 1, val document: BrainDocument, val receipts: List<SaveReceipt>)
 @Serializable internal data class RunRecord(val summary: BrainRun, val configuration: BrainConfiguration, val workspace: String?, val request: String,
     val inputs: List<String>, val attempts: List<BrainAttempt> = emptyList(), val artifacts: List<BrainArtifact> = emptyList(), val nextStep: Int = 0,
@@ -31,14 +32,16 @@ internal class BrainStore(private val root: Path) {
         return root.resolve(profile).resolve("companion-brains").resolve(UUID.fromString(companionId).toString())
     }
     fun read(profile: String, companionId: String): BrainDocument? = locked(profile, companionId) { readConfig(it)?.document }
-    fun converted(profile: String, companionId: String) = read(profile, companionId) != null
+    /** Whether the companion has a saved brain, readable or not: a corrupt one still keeps the legacy chat closed. */
+    fun converted(profile: String, companionId: String) = Files.exists(directory(profile, companionId).resolve(CONFIGURATION))
     private fun readConfig(directory: Path): ConfigRecord? {
-        val file = directory.resolve("configuration.json")
+        val file = directory.resolve(CONFIGURATION)
         if (!Files.exists(file)) return null
         require(Files.size(file) <= CONFIG_RECORD_BYTES)
-        return brainJson.decodeFromString<ConfigRecord>(Files.readString(file)).also { record ->
+        val json = brainJson.parseToJsonElement(Files.readString(file)).jsonObject
+        return brainJson.decodeFromJsonElement<ConfigRecord>(withSlimReceipts(json)).also { record ->
             require(record.version == 1 && record.document.revision > 0 && BrainRules.configuration(record.document.configuration))
-            require(record.receipts.size <= 32)
+            require(record.receipts.size <= RECEIPTS)
         }
     }
     /** Compare, commit and receipt are protected by one cross-window/process lock. */
@@ -48,29 +51,30 @@ internal class BrainStore(private val root: Path) {
         val digest = digest("$revision:${brainWire(configuration)}".toByteArray())
         val prior = current?.receipts?.find { it.id == mutationId }
         if (prior != null) {
+            // The digest covers the expected revision and configuration, so the replayed request is the saved document.
             require(prior.digest == digest) { "Mutation ID reused with different content" }
-            return@locked saved(prior.document)
+            return@locked saved(BrainDocument(prior.revision, configuration))
         }
         if ((current?.document?.revision ?: 0) != revision) return@locked buildJsonObject { put("status", "conflict"); put("currentRevision", current?.document?.revision ?: 0) }
         require(revision < 9_007_199_254_740_991L)
         val document = BrainDocument(revision + 1, configuration)
-        val record = ConfigRecord(document = document, receipts = ((current?.receipts ?: emptyList()) + SaveReceipt(mutationId, digest, document)).takeLast(32))
+        val record = ConfigRecord(document = document, receipts = ((current?.receipts ?: emptyList()) + SaveReceipt(mutationId, digest, document.revision)).takeLast(RECEIPTS))
         val content = brainJson.encodeToString(ConfigRecord.serializer(), record)
         require(content.toByteArray().size <= CONFIG_RECORD_BYTES)
-        atomic(directory.resolve("configuration.json"), content)
+        atomic(directory.resolve(CONFIGURATION), content)
         saved(document)
     }
     private fun saved(document: BrainDocument) = buildJsonObject { put("status", "saved"); put("document", brainWire(document)); put("issues", JsonArray(emptyList())) }
     fun readRecord(profile: String, companionId: String): BrainRecord = locked(profile, companionId) { directory ->
         val file = directory.resolve("conversation.json")
         if (!Files.exists(file)) BrainRecord() else {
-            require(Files.size(file) <= 16_000_000)
+            require(Files.size(file) <= RECORD_BYTES)
             brainJson.decodeFromString<BrainRecord>(Files.readString(file)).also { require(it.version == 1); it.run?.let { run -> require(BrainRules.configuration(run.configuration)) } }
         }
     }
     fun writeRecord(profile: String, companionId: String, record: BrainRecord) = locked(profile, companionId) { directory ->
         val content = brainJson.encodeToString(BrainRecord.serializer(), record)
-        require(content.toByteArray().size <= 16_000_000) { "Conversation storage limit reached" }
+        require(content.toByteArray().size <= RECORD_BYTES) { "Conversation storage limit reached" }
         atomic(directory.resolve("conversation.json"), content)
     }
     fun archive(profile: String, companionId: String, run: RunRecord) = locked(profile, companionId) { directory ->
@@ -80,11 +84,11 @@ internal class BrainStore(private val root: Path) {
     fun archived(profile: String, companionId: String, runId: String): RunRecord? = locked(profile, companionId) { directory ->
         require(BrainRules.uuid(runId))
         val file = directory.resolve("run-$runId.json")
-        if (Files.exists(file)) { require(Files.size(file) <= 16_000_000); brainJson.decodeFromString<RunRecord>(Files.readString(file)) } else null
+        if (Files.exists(file)) { require(Files.size(file) <= RECORD_BYTES); brainJson.decodeFromString<RunRecord>(Files.readString(file)) } else null
     }
     /** An immutable blob is durable before its reference is published. */
     fun artifact(profile: String, companionId: String, title: String, source: BrainSource, bytes: ByteArray, mediaType: String): BrainArtifact = locked(profile, companionId) { directory ->
-        require(bytes.size <= 8 * 1024 * 1024)
+        require(bytes.size <= ARTIFACT_BYTES)
         val id = UUID.randomUUID().toString()
         val folder = directory.resolve("artifacts"); privateDirectory(folder)
         val file = folder.resolve(id)
@@ -96,12 +100,12 @@ internal class BrainStore(private val root: Path) {
         }
         FileChannel.open(folder, READ).use { it.force(true) }
         val label = title.trimEcma().take(BrainLimits.LABEL).trimEcma().ifEmpty { "Attached file" }
-        BrainArtifact(id, label, digest(bytes), source, mediaType, if (mediaType == "application/octet-stream") "Attached file" else bytes.toString(Charsets.UTF_8).take(512))
+        BrainArtifact(id, label, digest(bytes), source, mediaType, if (mediaType == BINARY) "Attached file" else bytes.toString(Charsets.UTF_8).take(BrainLimits.PREVIEW))
     }
     fun bytes(profile: String, companionId: String, artifact: BrainArtifact): ByteArray {
         require(BrainRules.uuid(artifact.id))
         val file = directory(profile, companionId).resolve("artifacts").resolve(artifact.id)
-        require(Files.size(file) <= 8 * 1024 * 1024)
+        require(Files.size(file) <= ARTIFACT_BYTES)
         return Files.readAllBytes(file).also { require(digest(it) == artifact.digest) }
     }
     fun artifactPath(profile: String, companionId: String, artifact: BrainArtifact): Path {
@@ -120,9 +124,26 @@ internal class BrainStore(private val root: Path) {
         }
     }
     companion object {
-        // Thirty-two replay receipts plus the current config, including UTF-8 expansion.
+        /** The largest input file or output an artifact holds. */
+        const val ARTIFACT_BYTES = 8 * 1024 * 1024
+        /** The media type of an artifact that is not UTF-8 text. */
+        const val BINARY = "application/octet-stream"
+        private const val CONFIGURATION = "configuration.json"
+        private const val RECEIPTS = 32
+        /** The conversation record, and each archived run. */
+        private const val RECORD_BYTES = 16_000_000
+        // Earlier records kept a whole document in each of their thirty-two receipts; they must still load.
         private const val CONFIG_RECORD_BYTES = 8_000_000
         private val locks = ConcurrentHashMap<Path, Any>()
+        /** Receipts once held the whole saved document; only its revision is kept. */
+        private fun withSlimReceipts(record: JsonObject): JsonObject {
+            val receipts = record["receipts"]?.jsonArray ?: return record
+            return JsonObject(record + ("receipts" to JsonArray(receipts.map { receipt ->
+                val fields = receipt.jsonObject
+                val document = fields["document"]?.jsonObject ?: return@map fields
+                JsonObject(fields - "document" + ("revision" to document.getValue("revision")))
+            })))
+        }
         fun digest(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
         private fun privateDirectory(path: Path) { Files.createDirectories(path); Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rwx------")) }
         private fun atomic(file: Path, content: String) {

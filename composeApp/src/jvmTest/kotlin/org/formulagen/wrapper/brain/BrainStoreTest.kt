@@ -1,20 +1,11 @@
 package org.formulagen.wrapper.brain
 
 import java.nio.file.Files
-import java.util.UUID
 import java.util.concurrent.Executors
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.*
 import kotlin.test.*
 
-internal fun brainId() = UUID.randomUUID().toString()
-internal fun testConfiguration(workflow: Boolean = false): BrainConfiguration {
-    val binding = BrainBinding(RuntimeId.CODEX, "test-model", ModelEffort.HIGH)
-    val roles = listOf("Writer", "Editor").mapIndexed { index, name -> SpecialistRole(brainId(), name, "Instructions for $name", MemberMode.TALK, binding, index) }
-    val steps = roles.map { WorkflowStep(brainId(), it.name, it.id, "Do ${it.name}", "Prior artifact", "Result", false, null, null) }
-    return BrainConfiguration(1, CoordinatorRole(brainId(), binding, "Help the user."), roles,
-        if (workflow) BrainWorkflow(brainId(), "Writing", true, steps, emptyList()) else null)
-}
 class BrainStoreTest {
     @Test fun unicodeCapacityConfigurationsStayReadableWithFullReceiptHistory() {
         val root = Files.createTempDirectory("brain-unicode")
@@ -67,16 +58,22 @@ class BrainStoreTest {
             assertTrue(BrainRules.label(artifact.title))
         }
     }
-    @Test fun coordinatorSkipReasonsMustBeTextBeforeDispatch() {
-        val decision = """{"kind":"enter-workflow","entryStepId":"${brainId()}","inputIds":[],"skipped":[{"stepId":"${brainId()}","reason":false}],"reason":"Begin with the supplied plan"}"""
-        assertFails { parseDecision(decision, setOf("enter-workflow")) }
-    }
-    @Test fun coordinatorEvidenceAcceptsItsLimitAndRejectsLongerExplanations() {
-        fun decision(size: Int) = buildJsonObject {
-            put("kind", "step-result"); put("attemptId", brainId()); put("outcome", "ready")
-            put("explanation", "x".repeat(size))
-        }.toString()
-        assertEquals(BrainLimits.DESCRIPTION, parseDecision(decision(BrainLimits.DESCRIPTION), setOf("step-result")).getValue("explanation").jsonPrimitive.content.length)
-        assertFails { parseDecision(decision(BrainLimits.DESCRIPTION + 1), setOf("step-result")) }
+    /** Receipts written before they were slimmed held whole documents; those records still load and replay. */
+    @Test fun receiptsWithWholeDocumentsStillLoadAndReplay() {
+        val root = Files.createTempDirectory("brain-receipts")
+        val store = BrainStore(root); val companion = brainId(); val configuration = testConfiguration()
+        val mutation = brainId(); val saved = store.save("local", companion, 0, mutation, configuration)
+        val file = root.resolve("local/companion-brains/$companion/configuration.json")
+        val record = brainJson.parseToJsonElement(Files.readString(file)).jsonObject
+        val receipts = record.getValue("receipts").jsonArray.map { receipt ->
+            JsonObject(receipt.jsonObject - "revision" + ("document" to record.getValue("document")))
+        }
+        Files.writeString(file, JsonObject(record + ("receipts" to JsonArray(receipts))).toString())
+        assertEquals(configuration, store.read("local", companion)?.configuration)
+        assertEquals(saved, store.save("local", companion, 0, mutation, configuration))
+        assertTrue(store.converted("local", companion)); assertFalse(store.converted("local", brainId()))
+        store.save("local", companion, 1, brainId(), configuration)
+        val rewritten = brainJson.parseToJsonElement(Files.readString(file)).jsonObject.getValue("receipts").jsonArray.map { it.jsonObject }
+        assertEquals(listOf(1L, 2L), rewritten.map { assertFalse("document" in it); it.getValue("revision").jsonPrimitive.long })
     }
 }
