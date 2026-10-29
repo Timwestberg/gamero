@@ -18,7 +18,6 @@ import org.formulagen.wrapper.chat.TurnEvents
 import org.formulagen.wrapper.chat.TurnHandle
 import org.formulagen.wrapper.chat.TurnRequest
 import org.formulagen.wrapper.chat.boundSummary
-import org.formulagen.wrapper.chat.companionConversationIds
 import org.formulagen.wrapper.chat.loggingDaemonThreads
 import org.formulagen.wrapper.chat.summaryInstruction
 import org.formulagen.wrapper.hovel.HovelCompanion
@@ -35,6 +34,8 @@ internal class GrokChatRuntime(
     private val root: Path,
     private val environment: Map<String, String>,
     private val connection: GrokConnection,
+    /** Handles of a profile's talk bindings kept outside team chat, such as a conversation's coordinator; see [GrokWorkRuntime]. */
+    private val retained: (profile: String) -> Set<String>? = { emptySet() },
 ) : ChatRuntime {
     override val id = RuntimeId.GROK_BUILD
     private val bindings = GrokSessions(root.resolve("grok-bindings"))
@@ -148,8 +149,8 @@ internal class GrokChatRuntime(
                 // during the read is kept, since its history may have been written after the read passed it.
                 synchronized(bindingLock) { saved?.id?.let { activate(it); activeHandle = it }; scans++; touched += activeHandles }
                 try {
-                    val retained = companionConversationIds(root, request.profile, RuntimeId.GROK_BUILD)
-                    synchronized(bindingLock) { retained?.let { bindings.prune(request.profile, it + activeHandles + touched) } }
+                    val kept = retainedGrokHandles(root, request.profile, retained)
+                    synchronized(bindingLock) { kept?.let { bindings.prune(request.profile, it + activeHandles + touched) } }
                 } finally { synchronized(bindingLock) { if (--scans == 0) touched.clear() } }
             })) {
                 is GrokTurnStart.Failed -> { fail(resolved.failure); return }

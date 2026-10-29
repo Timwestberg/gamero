@@ -47,7 +47,8 @@ internal sealed interface ApprovalSubject {
  * [companionName] is the companion's name, [folder] its project folder. [sessionLabel] is the "for
  * this conversation" button exactly as the provider means the grant ("Allow all edits in game for
  * this conversation"), or null when the provider offers no such grant, and then the dialog has no
- * such button.
+ * such button. [lease] is the working turn's lease (a conversation thread's id), so a broker can
+ * relay the request to the phone; null when no lease asked.
  */
 internal data class ApprovalRequest(
     val companionName: String,
@@ -55,6 +56,7 @@ internal data class ApprovalRequest(
     val folder: Path,
     val subject: ApprovalSubject,
     val sessionLabel: String?,
+    val lease: String? = null,
 ) {
     val kind: ApprovalKind get() = subject.kind
 
