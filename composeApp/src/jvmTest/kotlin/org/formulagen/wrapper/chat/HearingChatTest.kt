@@ -6,6 +6,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
+import org.formulagen.wrapper.bridge.HearingAction
+import org.formulagen.wrapper.bridge.HearingState
 import org.formulagen.wrapper.bridge.ChatEntry
 import org.formulagen.wrapper.bridge.ChatScope
 import org.formulagen.wrapper.bridge.ChatSend
@@ -995,6 +997,66 @@ private class ScriptedRuntime(var completeOnStart: Boolean = false) : ChatRuntim
     override fun summarize(request: SummaryRequest) = "summary"
     override fun release() {}
     override fun close() {}
+}
+
+class CatalogControlTest {
+    private val scope = ChatScope("local", UUID.randomUUID().toString(), "Ember", UUID.randomUUID().toString())
+    private val member = TeamMember(RuntimeId.CODEX, SharedRules.RUNTIME_DEFAULT_MODEL)
+
+    @Test fun theCatalogPageArmsTheHostMicrophoneAndTheNativeIconStepsAside() = runBlocking {
+        var opens = 0
+        val hearing = DesktopHearing(LevelEngine(), {
+            opens++
+            ScriptedMic(FloatArray(0))
+        })
+        val row = VoicePickerModel()
+        DesktopChat(
+            Files.createTempDirectory("catalog-row"),
+            listOf(ScriptedRuntime(completeOnStart = true)),
+            RowSpeech(),
+            voices = row,
+            fillers = FillerSettings(thresholdMs = 60_000),
+            hearing = hearing,
+        ).use { desk ->
+            desk.open(scope)
+            assertTrue(row.state.value.visible)
+            assertTrue(row.state.value.showTalk)
+            assertEquals("Half duplex · default", row.state.value.duplexLabel)
+            val before = desk.snapshot(scope).hearing
+            assertEquals(HearingState.OFF, before?.state)
+            assertEquals(org.formulagen.wrapper.voice.VoiceConversation.PERMISSION_COPY, before?.notice)
+            desk.hearing(request(HearingAction.PRESS))
+            await { opens == 1 }
+            assertFalse(row.state.value.showTalk, "The page press hides the native chat icon")
+            assertEquals(HearingState.LISTENING, desk.snapshot(scope).hearing?.state)
+            desk.converseClick()
+            desk.hearing(request(HearingAction.PRESS))
+            Thread.sleep(80)
+            assertEquals(1, opens, "The native row and a second press do not open another capture")
+            desk.hearing(request(HearingAction.RELEASE))
+            assertFalse(row.state.value.showTalk)
+            assertEquals(HearingState.OFF, desk.snapshot(scope).hearing?.state)
+        }
+    }
+
+    @Test fun theEmberTowerLauncherDoesNotShowConversationControls() = runBlocking {
+        val row = VoicePickerModel()
+        DesktopChat(
+            Files.createTempDirectory("launcher-row"),
+            listOf(ScriptedRuntime(completeOnStart = true)),
+            RowSpeech(),
+            voices = row,
+            product = org.formulagen.wrapper.hovel.HOVEL_PRODUCT,
+        ).use { desk ->
+            desk.open(scope)
+            assertFalse(row.state.value.visible)
+            assertNull(desk.snapshot(scope).hearing)
+        }
+    }
+
+    private fun request(action: HearingAction) = org.formulagen.wrapper.bridge.ChatHearingRequest(
+        scope.profile, scope.companionId, scope.name, scope.sessionId, action, member,
+    )
 }
 
 private class LevelEngine : HearingEngine {

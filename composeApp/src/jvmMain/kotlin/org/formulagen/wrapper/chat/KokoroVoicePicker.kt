@@ -20,6 +20,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import org.formulagen.wrapper.voice.HearingDuplex
+import org.formulagen.wrapper.voice.VoiceConversation
+import org.formulagen.wrapper.voice.catalogControls
+import org.formulagen.wrapper.voice.catalogOwnsConversationControls
 import org.jetbrains.compose.resources.painterResource
 import westbergwrapper.composeapp.generated.resources.Res
 import westbergwrapper.composeapp.generated.resources.ember_chat
@@ -39,6 +43,9 @@ internal data class VoicePickerState(
     val fillersOn: Boolean = false,
     val partial: String = "",
     val hearingNotice: String? = null,
+    /** False once the catalog page has sent press, so this row cannot arm a second capture. */
+    val showTalk: Boolean = false,
+    val duplexLabel: String = "",
 ) {
     companion object {
         val Hidden = VoicePickerState()
@@ -54,17 +61,30 @@ internal fun voicePickerState(
     fillersOn: Boolean = false,
     partial: String = "",
     hearingNotice: String? = null,
+    product: String = VoiceConversation.CATALOG_PRODUCT,
+    pageOwnsTalk: Boolean = false,
+    duplexMode: HearingDuplex = HearingDuplex.HALF,
+    duplexReason: String = "default",
 ): VoicePickerState {
-    if (!chatOpen || !kokoro || voices.isEmpty()) return VoicePickerState.Hidden
+    if (!catalogOwnsConversationControls(product) || !chatOpen || !kokoro || voices.isEmpty()) return VoicePickerState.Hidden
     val selected = if (voices.any { it.id == selectedId }) selectedId else voices.first().id
+    val controls = catalogControls(
+        product,
+        chatOpen = true,
+        kokoro = true,
+        pageOwnsTalk = pageOwnsTalk,
+        duplex = org.formulagen.wrapper.voice.DuplexChoice(duplexMode, duplexReason),
+    )
     return VoicePickerState(
-        visible = true,
+        visible = controls.showVoicePicker,
         voices = voices,
         selectedId = selected,
         phase = phase,
         fillersOn = fillersOn,
         partial = partial,
         hearingNotice = hearingNotice,
+        showTalk = controls.showTalk,
+        duplexLabel = controls.duplexLabel,
     )
 }
 
@@ -99,13 +119,15 @@ internal fun KokoroVoicePicker(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onTalk, modifier = Modifier.size(36.dp)) {
-                Icon(
-                    painterResource(Res.drawable.ember_chat),
-                    contentDescription = if (state.phase == TalkPhase.OFF) "Talk with Ember" else "Stop talking",
-                    tint = talkTint(state.phase),
-                    modifier = Modifier.size(22.dp),
-                )
+            if (state.showTalk) {
+                IconButton(onClick = onTalk, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        painterResource(Res.drawable.ember_chat),
+                        contentDescription = if (state.phase == TalkPhase.OFF) "Talk with Ember" else "Stop talking",
+                        tint = talkTint(state.phase),
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
             }
             Text(
                 talkLabel(state.phase),
@@ -118,6 +140,14 @@ internal fun KokoroVoicePicker(
                     if (state.fillersOn) "Fillers on" else "Fillers",
                     fontWeight = if (state.fillersOn) FontWeight.SemiBold else FontWeight.Normal,
                     color = if (state.fillersOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (state.duplexLabel.isNotEmpty()) {
+                Text(
+                    state.duplexLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 8.dp),
                 )
             }
             Spacer(Modifier.weight(1f))

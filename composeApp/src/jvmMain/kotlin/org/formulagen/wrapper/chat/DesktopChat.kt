@@ -1,10 +1,16 @@
 package org.formulagen.wrapper.chat
 
 import java.nio.file.Path
+import org.formulagen.wrapper.GAMERO_PRODUCT_NAME
 import org.formulagen.wrapper.voice.BargeInGuard
 import org.formulagen.wrapper.voice.DuplexChoice
 import org.formulagen.wrapper.voice.HEARING_BARGE_SUSTAIN_MS
 import org.formulagen.wrapper.voice.HEARING_BARGE_TALK_GAP_MS
+import org.formulagen.wrapper.voice.HearingStates
+import org.formulagen.wrapper.voice.LatencyMetric
+import org.formulagen.wrapper.voice.VoiceConversation
+import org.formulagen.wrapper.voice.catalogHearingState
+import org.formulagen.wrapper.voice.catalogOwnsConversationControls
 import org.formulagen.wrapper.voice.HEARING_ENDPOINT_SILENCE_MS
 import org.formulagen.wrapper.voice.HEARING_MIN_SPEECH_MS
 import org.formulagen.wrapper.voice.HEARING_RESUME_GUARD_MS
@@ -60,6 +66,7 @@ internal class DesktopChat(
     private val route: HearingRoute? = null,
     duplexChoice: DuplexChoice = DuplexChoice(HearingDuplex.HALF, "default"),
     private val bargeMs: Int = HEARING_BARGE_SUSTAIN_MS,
+    private val product: String = GAMERO_PRODUCT_NAME,
 ) : ChatCapability, AutoCloseable {
     private val runtimes = runtimes.associateBy { it.id }
     private val workers: Map<RuntimeId, WorkRuntime> = work?.runtimes.orEmpty()
@@ -83,6 +90,16 @@ internal class DesktopChat(
     private var resumePending = false
     private var hearingPartial = ""
     private var hearingNotice: String? = null
+    /** The catalog page sent press. The native icon stays hidden so only one capture can arm. */
+    private var pageOwnsCapture = false
+    /** The member the page named on press. The native row leaves this null and uses the active member. */
+    private var hearingMember: TeamMember? = null
+    /** The page's effort. Chat send on this host still uses the runtime default when the field is absent. */
+    private var hearingEffort: String? = null
+    private var userMuted = false
+    private var hearingUnavailable = false
+    /** The permission sentence is shown until the first arm, then the row stays quiet. */
+    private var explained = false
     private var active: Session? = null
     /** The last view the host ended on its own, so that view's polls keep showing why. */
     private var ended: Pair<ChatScope, ChatSnapshot>? = null
@@ -120,6 +137,11 @@ internal class DesktopChat(
     }
 
     private class PendingHandover(val requestId: String, val from: RuntimeId?, val state: ChatState, val notice: String?)
+
+    private sealed interface HearingArm {
+        class Ready(val snapshot: ChatSnapshot) : HearingArm
+        class Start(val ear: DesktopHearing?) : HearingArm
+    }
 
     /**
      * A turn answering the user entry [userEntryId] with [member], whose reply is the entry [replyId].
@@ -376,7 +398,35 @@ internal class DesktopChat(
     private fun live(session: Session, generation: Int = session.generation) = !closed && active === session && generation == session.generation
     private fun view(session: Session) = ChatSnapshot(session.state, session.record.entries,
         session.refusal?.takeIf { it.first == session.state }?.second ?: session.notice, speech.status(), session.failure,
-        session.waiting?.takeIf { session.state == ChatState.AWAITING_YOU })
+        session.waiting?.takeIf { session.state == ChatState.AWAITING_YOU },
+        if (catalogOwnsConversationControls(product)) hearingField() else null)
+
+    /** Present on this build. An older snapshot that omitted [ChatSnapshot.hearing] still decodes. */
+    private fun hearingField(): ChatHearing {
+        val wire = catalogHearingState(
+            hostPresent = true,
+            armed = talkOn,
+            muted = userMuted && talkOn,
+            phase = talkPhase.name.lowercase(),
+            partial = hearingPartial,
+            unavailable = hearingUnavailable,
+        )
+        val state = when (wire) {
+            HearingStates.REQUESTING -> HearingState.REQUESTING
+            HearingStates.LISTENING -> HearingState.LISTENING
+            HearingStates.HEARING -> HearingState.HEARING
+            HearingStates.THINKING -> HearingState.THINKING
+            HearingStates.MUTED -> HearingState.MUTED
+            HearingStates.UNAVAILABLE -> HearingState.UNAVAILABLE
+            else -> HearingState.OFF
+        }
+        val partial = hearingPartial.trim().take(ChatLimits.MESSAGE).takeIf { it.isNotEmpty() }
+        val notice = rowNotice()?.take(ChatLimits.NOTICE)?.takeIf { it.isNotEmpty() }
+        return ChatHearing(state, partial, notice)
+    }
+
+    /** The permission sentence until the first arm. After that, only a real notice. */
+    private fun rowNotice(): String? = hearingNotice ?: if (!explained && !talkOn && !hearingUnavailable) VoiceConversation.PERMISSION_COPY else null
 
     /** A refusal: no change, and its notice stays in every snapshot until the chat's state changes. */
     private fun refuse(session: Session, notice: String): ChatSnapshot {
@@ -661,7 +711,11 @@ internal class DesktopChat(
                 phase = talkPhase,
                 fillersOn = liveFillers.enabled,
                 partial = hearingPartial,
-                hearingNotice = hearingNotice,
+                hearingNotice = rowNotice(),
+                product = product,
+                pageOwnsTalk = pageOwnsCapture,
+                duplexMode = duplexChoice.mode,
+                duplexReason = duplexChoice.reason,
             ),
         )
     }
@@ -672,7 +726,7 @@ internal class DesktopChat(
      */
     internal fun converseClick() {
         val ear = synchronized(gate) {
-            if (closed || active == null) return
+            if (pageOwnsCapture || closed || active == null) return
             if (talkOn && replyLiveLocked()) {
                 bargeInLocked("press")
                 return
@@ -681,19 +735,83 @@ internal class DesktopChat(
                 endConversationLocked()
                 return
             }
-            route?.arm()?.let { duplexChoice = it }
-            talkOn = true
-            hearingPartial = ""
-            hearingNotice = null
-            bargeGuard.reset()
-            setPhase(TalkPhase.LISTENING)
-            log(LogLevel.Info, "hearing", "duplex=${duplexChoice.mode.name.lowercase()} reason=${duplexChoice.reason}")
-            publishPicker()
-            hearing
+            armLocked()
         }
+        launchCapture(ear)
+    }
+
+    /**
+     * The catalog page. Press arms the microphone this host owns and hides the native icon.
+     * A second press does not open a second capture. Release and off end the session.
+     */
+    override suspend fun hearing(args: ChatHearingRequest): ChatSnapshot {
+        val armed = synchronized(gate) {
+            val session = current(args.scope())
+            if (session.state == ChatState.AWAITING_YOU && args.action != HearingAction.OFF && args.action != HearingAction.RELEASE) {
+                return@synchronized HearingArm.Ready(refuse(session, ANSWER_FIRST))
+            }
+            pageOwnsCapture = true
+            when (args.action) {
+                HearingAction.PRESS, HearingAction.HANDS_FREE -> {
+                    hearingMember = args.member
+                    hearingEffort = args.effort
+                    log(LogLevel.Info, "hearing", "page action=${args.action.name.lowercase()} effort=${if (hearingEffort == null) "default" else "page"}")
+                    if (talkOn && replyLiveLocked()) {
+                        bargeInLocked("press")
+                        HearingArm.Ready(view(session))
+                    } else if (talkOn) {
+                        publishPicker()
+                        HearingArm.Ready(view(session))
+                    } else {
+                        HearingArm.Start(armLocked())
+                    }
+                }
+                HearingAction.RELEASE, HearingAction.OFF -> {
+                    endConversationLocked()
+                    HearingArm.Ready(view(session))
+                }
+                HearingAction.MUTE -> {
+                    userMuted = true
+                    if (talkOn) hearing?.setPaused(true)
+                    publishPicker()
+                    HearingArm.Ready(view(session))
+                }
+                HearingAction.UNMUTE -> {
+                    userMuted = false
+                    publishPicker()
+                    HearingArm.Ready(view(session))
+                }
+            }
+        }
+        return when (armed) {
+            is HearingArm.Ready -> armed.snapshot
+            is HearingArm.Start -> {
+                launchCapture(armed.ear)
+                synchronized(gate) { view(current(args.scope())) }
+            }
+        }
+    }
+
+    /** Opens one session. A call while one is already open returns the live engine only when [talkOn] was just set. */
+    private fun armLocked(): DesktopHearing? {
+        route?.arm()?.let { duplexChoice = it }
+        talkOn = true
+        explained = true
+        hearingUnavailable = false
+        hearingPartial = ""
+        hearingNotice = null
+        bargeGuard.reset()
+        setPhase(TalkPhase.LISTENING)
+        log(LogLevel.Info, "hearing", "duplex=${duplexChoice.mode.name.lowercase()} reason=${duplexChoice.reason}")
+        publishPicker()
+        return hearing
+    }
+
+    private fun launchCapture(ear: DesktopHearing?) {
         if (ear == null) {
             synchronized(gate) {
                 talkOn = false
+                hearingUnavailable = true
                 setPhase(TalkPhase.OFF)
                 hearingNotice = "Talk needs the hearing models. Run scripts/fetch-voice.sh, then rebuild."
                 publishPicker()
@@ -713,13 +831,15 @@ internal class DesktopChat(
             onUtterance = { result -> synchronized(gate) { onUtteranceLocked(result) } },
             onFailed = { message ->
                 synchronized(gate) {
-                    hearingNotice = message
+                    hearingNotice = if (message.contains("denied", ignoreCase = true)) VoiceConversation.MIC_SETTINGS_NOTICE else message
+                    hearingUnavailable = true
                     if (talkOn) endConversationLocked() else publishPicker()
                 }
             },
             onFrame = { voicedMs, chunkMs, prob -> synchronized(gate) { onHearingFrame(voicedMs, chunkMs, prob) } },
         )
         if (!started) synchronized(gate) {
+            if (pageOwnsCapture && talkOn) return@synchronized
             talkOn = false
             setPhase(TalkPhase.OFF)
             log(LogLevel.Info, "hearing", "button busy")
@@ -764,6 +884,7 @@ internal class DesktopChat(
     private fun endConversationLocked() {
         val session = active
         talkOn = false
+        userMuted = false
         resumePending = false
         guardGeneration++
         hearingPartial = ""
@@ -831,7 +952,7 @@ internal class DesktopChat(
         val started = System.nanoTime()
         speech.stop()
         val flushMs = (System.nanoTime() - started) / 1_000_000
-        log(LogLevel.Info, "hearing", "barge-in $kind flush_ms=$flushMs")
+        log(LogLevel.Info, "hearing", "barge-in $kind ${LatencyMetric.FLUSH_MS}=$flushMs")
         fillerTurn.cancel()
         if (session.state == ChatState.RESPONDING || session.state == ChatState.AWAITING_YOU) {
             val turn = session.turn
@@ -890,14 +1011,14 @@ internal class DesktopChat(
     private fun noteSend() {
         if (endpointAt == 0L || sentAt != 0L) return
         sentAt = System.nanoTime()
-        log(LogLevel.Info, "hearing", "latency endpoint_to_send_ms=${(sentAt - endpointAt) / 1_000_000}")
+        log(LogLevel.Info, "hearing", "latency ${LatencyMetric.ENDPOINT_TO_SEND_MS}=${(sentAt - endpointAt) / 1_000_000}")
     }
 
     private fun noteToken() {
         if (endpointAt == 0L || tokenAt != 0L) return
         if (sentAt == 0L) noteSend()
         tokenAt = System.nanoTime()
-        log(LogLevel.Info, "hearing", "latency send_to_first_token_ms=${(tokenAt - sentAt) / 1_000_000}")
+        log(LogLevel.Info, "hearing", "latency ${LatencyMetric.SEND_TO_FIRST_TOKEN_MS}=${(tokenAt - sentAt) / 1_000_000}")
     }
 
     private fun noteAudio() {
@@ -913,7 +1034,7 @@ internal class DesktopChat(
         log(
             LogLevel.Info,
             "hearing",
-            "latency endpoint_to_send_ms=${latency.endpointToSendMs} send_to_first_token_ms=${latency.sendToFirstTokenMs} first_token_to_first_audio_ms=${latency.firstTokenToFirstAudioMs}",
+            "latency ${LatencyMetric.ENDPOINT_TO_SEND_MS}=${latency.endpointToSendMs} ${LatencyMetric.SEND_TO_FIRST_TOKEN_MS}=${latency.sendToFirstTokenMs} ${LatencyMetric.FIRST_TOKEN_TO_FIRST_AUDIO_MS}=${latency.firstTokenToFirstAudioMs}",
         )
     }
 
@@ -935,6 +1056,10 @@ internal class DesktopChat(
     private fun notePlaybackLocked() {
         if (!talkOn) return
         syncPlaybackToHearing()
+        if (userMuted) {
+            hearing?.setPaused(true)
+            return
+        }
         val voice = speech.status().state
         val chat = active?.state
         val emberBusy = voice == VoiceState.PREPARING || voice == VoiceState.SPEAKING
@@ -1011,7 +1136,7 @@ internal class DesktopChat(
 
     private fun commitHearingLocked(result: HearingResult) {
         val session = active ?: return
-        val member = Handovers.currentMember(session.record.entries)
+        val member = hearingMember ?: Handovers.currentMember(session.record.entries)
         when (val decision = decideHearing(result, member, session.state)) {
             HearingCommit.Ignore -> Unit
             is HearingCommit.Notice -> {
@@ -1055,6 +1180,12 @@ internal class DesktopChat(
             work?.startOfWork?.forget(it.scope.sessionId)
             talkOn = false
             playbackNoted = false
+            pageOwnsCapture = false
+            hearingMember = null
+            hearingEffort = null
+            userMuted = false
+            hearingUnavailable = false
+            explained = false
             resumePending = false
             guardGeneration++
             setPhase(TalkPhase.OFF)

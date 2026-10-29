@@ -162,6 +162,7 @@ internal class DesktopServices private constructor(
                     route = route,
                     duplexChoice = choice,
                     bargeMs = hearingBargeMs(environment),
+                    product = product,
                 ))
                 // Both runtimes sign in outside Hovel, on the player's own install, so a status check never signs a chat out.
                 val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),
