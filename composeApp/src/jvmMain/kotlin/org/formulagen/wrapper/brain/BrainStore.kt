@@ -22,7 +22,8 @@ import org.formulagen.wrapper.chat.NativeConversation
 /**
  * What the controller does next with a run: [PLAN] asks the coordinator what to do with the request, [EXECUTE] runs the
  * queued attempt, [EVALUATE] has the coordinator grade its result, [ADVANCE] start or skip the next workflow step, and
- * [FINISH] answer once every step is done.
+ * [FINISH] answer once every step is done. [THREAD_REPLY] is a conversation's reply in a thread, which the coordinator
+ * forwards, answers or turns into a new task ([THREAD_REPLY_DECISIONS]); it never belongs to a run.
  */
 @Serializable
 internal enum class BrainPhase {
@@ -31,6 +32,7 @@ internal enum class BrainPhase {
     @SerialName("evaluate") EVALUATE,
     @SerialName("advance") ADVANCE,
     @SerialName("finish") FINISH,
+    @SerialName("thread-reply") THREAD_REPLY,
 }
 
 /**

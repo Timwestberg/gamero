@@ -199,6 +199,8 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
         DesktopServices.create(url, support.toPath(), System.getenv(), product, window).also { resources.services = it }
     }
     val companion = services.companion
+    // A Mac registered before runs its conversations from launch, with no page involved. Keychain may block, so off the UI thread.
+    LaunchedEffect(companion) { companion?.let { withContext(Dispatchers.IO) { it.resume() } } }
     // Approvals and the start-of-work confirmation: windows of Hovel's own that the page cannot reach.
     NativeDialogHost(services.dialogs)
     LaunchedEffect(start) {
@@ -242,12 +244,12 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
             if (companion != null) {
                 Text(companion.status, Modifier.padding(8.dp))
                 companion.approval?.let { approval ->
-                    Text("Connect account ${approval.ownerId} at $url to this Mac? This stores a host credential in Keychain and allows read-only Codex tasks in ${System.getenv("GAMERO_WORKSPACE")} while Gamero is open. Codex uses your own ChatGPT subscription.", Modifier.padding(8.dp))
+                    Text("Connect account ${approval.ownerId} at $url to this Mac? This stores a host credential in Keychain, and this Mac then runs the account's companion conversations whenever Hovel is open, with your own provider sign-ins. Agents work only in folders you choose here, and ask here before anything your settings do not allow.", Modifier.padding(8.dp))
                     Button(onClick = { approval.answer.complete(true) }) { Text("Approve computer connection") }
                     Button(onClick = { approval.answer.complete(false) }) { Text("Cancel") }
                 }
             } else if (isHovelProduct()) {
-                Text("Set GAMERO_CODEX_PATH and GAMERO_WORKSPACE to enable this Mac's optional Codex connection.", Modifier.padding(8.dp))
+                Text("Companion conversations run on a Mac.", Modifier.padding(8.dp))
             }
             val picker by services.voicePicker.state
             KokoroVoicePicker(

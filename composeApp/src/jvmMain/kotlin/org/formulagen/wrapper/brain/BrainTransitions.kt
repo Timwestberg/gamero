@@ -224,6 +224,7 @@ internal fun BrainRecord.decided(decision: CoordinatorDecision, coordinator: Bra
                 .withRun(run.copy(summary = run.summary.copy(skipped = skipped)).advanced(workflow))
         }
         is CoordinatorDecision.StepResult -> graded(decision, coordinator, newId)
+        is CoordinatorDecision.Forward -> error("A forward answers a thread reply, never a run")
     }
 }
 

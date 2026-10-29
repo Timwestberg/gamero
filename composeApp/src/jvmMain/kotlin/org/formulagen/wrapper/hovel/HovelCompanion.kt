@@ -13,6 +13,7 @@ import org.formulagen.wrapper.bridge.CapabilityPack
 import org.formulagen.wrapper.bridge.CompanionCapability
 import org.formulagen.wrapper.bridge.CompanionMethods
 import org.formulagen.wrapper.bridge.CompanionRegistration
+import org.formulagen.wrapper.closeInReverse
 import org.formulagen.wrapper.companion.*
 import java.net.URI
 import java.nio.file.Files
@@ -27,22 +28,38 @@ import java.util.UUID
 data class HostRegistration(val id: String, val ownerId: String, val name: String)
 data class ConnectionApproval(val ownerId: String, val answer: CompletableDeferred<Boolean>)
 
-/** Product adapter owns Hovel semantics; provider credentials never enter this class. */
+/**
+ * A registered Mac's connection to its account: the [registration], the [transport] that alone holds
+ * the host token, where status lines go, and [heartbeat], which hands each heartbeat's answer to the
+ * memory lane.
+ */
+class HostConnection(
+    val registration: HostRegistration,
+    val transport: HovelHttpTransport,
+    val status: (String) -> Unit,
+    val heartbeat: (JsonObject) -> Unit,
+)
+
+/**
+ * Product adapter owns Hovel semantics; provider credentials never enter this class. Once this Mac
+ * is registered it runs from launch ([resume]) with no page involved: [conversations] starts the
+ * conversation runner for the account, and Codex ([executable], when installed) runs memory jobs.
+ */
 class HovelCompanion(
     private val appUrl: String,
     private val directory: Path,
-    private val executable: Path,
-    private val workspace: Path,
+    private val executable: Path?,
     private val credentials: HostCredentials = MacHostCredentials(),
+    private val conversations: (HostConnection) -> AutoCloseable = { AutoCloseable {} },
 ) : AutoCloseable {
-    var status by mutableStateOf("Sign in to Codex with `codex login` in Terminal, then connect this Mac from Hovel.")
+    var status by mutableStateOf("Connect this Mac from Hovel to run your companion conversations here.")
         private set
     var approval by mutableStateOf<ConnectionApproval?>(null)
         private set
     private val lifecycle = Any()
     private var closed = false
     private var generation = 0L
-    private var session: HovelHostSession? = null
+    private var session: AutoCloseable? = null
     private var registration: HostRegistration? = null
     private val mutex = kotlinx.coroutines.sync.Mutex()
     private val origin = URI(appUrl).let { URI(it.scheme, null, it.host, it.port, null, null, null).toASCIIString() }
@@ -95,27 +112,7 @@ class HovelCompanion(
                     synchronized(lifecycle) {
                         context.ensureActive()
                         check(!closed && generation == authorizedGeneration && registration == registered) { "Native authorization expired" }
-                        if (session == null) {
-                            val transport = HovelHttpTransport(URI("$origin/api/hovel/v1/hovel"), registered.ownerId, registered.id, token)
-                            val journal = ExecutionJournal(directory.resolve("journal-${registered.id}"), registered.id)
-                            var memoryJournal: ExecutionJournal? = null
-                            try {
-                                // Memory jobs keep their own journal and output, so one may run beside a task.
-                                val memoryJobs = ExecutionJournal(directory.resolve("memory-journal-${registered.id}"), registered.id)
-                                memoryJournal = memoryJobs
-                                // Tasks run on the player's own Codex login, as companion chat does; so do memory jobs.
-                                val provider = CodexCliProvider(executable, workspace, directory.resolve("output-${registered.id}"))
-                                // Extraction reads only its input: an empty private folder, never the player's project and its AGENTS.md.
-                                val memoryWorkspace = privateDirectory(directory.resolve("memory-workspace-${registered.id}"))
-                                val memoryProvider = CodexCliProvider(executable, memoryWorkspace, directory.resolve("memory-output-${registered.id}"))
-                                session = HovelHostSession(
-                                    hostId = registered.id,
-                                    journal = journal, provider = provider,
-                                    memoryJournal = memoryJobs, memoryProvider = memoryProvider,
-                                    checkReadiness = provider::readiness, transport = transport,
-                                ) { status = it }.also { it.start() }
-                            } catch (error: Exception) { journal.close(); memoryJournal?.close(); throw error }
-                        }
+                        if (session == null) session = startSession(registered, token)
                     }
                     buildJsonObject { put("id", registered.id); put("connected", true) }
                 }
@@ -129,6 +126,47 @@ class HovelCompanion(
             }
             throw error
         } finally { mutex.unlock() }
+    }
+
+    /**
+     * At launch: a Mac registered before connects again on its own, from `registration.json` and the
+     * Keychain token, with no page involved. Nothing happens before the one-time registration. Blocks
+     * on Keychain, so callers run it off the UI thread.
+     */
+    fun resume() {
+        val file = directory.resolve("registration.json")
+        if (!Files.exists(file)) return
+        try {
+            require(Files.size(file) <= 4096)
+            val registered = json.decodeFromString<HostRegistration>(Files.readString(file))
+            val token = credentials.read(registered.id)
+            synchronized(lifecycle) { if (!closed && session == null) session = startSession(registered, token) }
+        } catch (error: Exception) {
+            status = "Connect this Mac from Hovel again to run your companion conversations here."
+        }
+    }
+
+    /** The registered Mac's session: the memory lane (with Codex) and the conversation runner. Called holding [lifecycle]. */
+    private fun startSession(registered: HostRegistration, token: String): AutoCloseable {
+        val transport = HovelHttpTransport(URI("$origin/api/hovel/v1/hovel"), registered.ownerId, registered.id, token)
+        var memory: HovelHostSession? = null
+        try {
+            if (executable != null) {
+                // Memory jobs keep their own journal and output, on the player's own Codex login.
+                val memoryJobs = ExecutionJournal(directory.resolve("memory-journal-${registered.id}"), registered.id)
+                // Extraction reads only its input: an empty private folder, never the player's project and its AGENTS.md.
+                val memoryWorkspace = privateDirectory(directory.resolve("memory-workspace-${registered.id}"))
+                val memoryProvider = CodexCliProvider(executable, memoryWorkspace, directory.resolve("memory-output-${registered.id}"))
+                memory = HovelHostSession(registered.id, memoryJobs, memoryProvider, memoryProvider::readiness, transport) { status = it }
+                    .also { it.start() }
+            }
+            val lane = memory
+            val runner = conversations(HostConnection(registered, transport, { status = it }, { response -> lane?.heartbeat(response) }))
+            return AutoCloseable { closeInReverse(listOfNotNull(lane, runner)) }
+        } catch (error: Exception) {
+            memory?.close()
+            throw error
+        }
     }
 
     private fun privateDirectory(path: Path): Path = Files.createDirectories(path).also {
