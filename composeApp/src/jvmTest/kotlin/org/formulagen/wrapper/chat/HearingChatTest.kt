@@ -8,6 +8,10 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import org.formulagen.wrapper.bridge.BridgeUpdateRequiredException
 import org.formulagen.wrapper.bridge.HandoverReason
+import org.formulagen.wrapper.bridge.ChatDictation
+import org.formulagen.wrapper.bridge.ChatDictationRequest
+import org.formulagen.wrapper.bridge.DictationAction
+import org.formulagen.wrapper.bridge.DictationState
 import org.formulagen.wrapper.bridge.HearingAction
 import org.formulagen.wrapper.bridge.HearingState
 import org.formulagen.wrapper.bridge.ChatEntry
@@ -1132,6 +1136,80 @@ class CatalogControlTest {
     private fun request(action: HearingAction) = ChatHearingRequest(
         scope.profile, scope.companionId, scope.name, scope.sessionId, action, member,
     )
+
+    @Test fun dictationFillsTheDraftWithoutSendingOrSpeaking() = runBlocking {
+        val engine = object : HearingEngine {
+            override fun startUtterance() {}
+            override fun accept(samples: FloatArray) {}
+            override fun partial() = "move the lamp"
+            override fun finish() = HearingResult("  move the lamp by the window  ", 900, 6.0)
+            override fun close() {}
+        }
+        val runtime = ScriptedRuntime(completeOnStart = true)
+        val row = VoicePickerModel()
+        DesktopChat(
+            Files.createTempDirectory("dictation"),
+            listOf(runtime),
+            RowSpeech(),
+            voices = row,
+            fillers = FillerSettings(thresholdMs = 60_000),
+            hearing = DesktopHearing(engine, { ScriptedMic(FloatArray(4800) { 0.2f }) }),
+        ).use { desk ->
+            desk.open(scope)
+            assertNull(desk.snapshot(scope).dictation, "No dictation until the page starts it")
+            assertNotNull(desk.dictation(dictate(DictationAction.START)).dictation)
+            await { runBlocking { desk.snapshot(scope) }.dictation?.partial == "move the lamp" }
+            assertEquals(DictationState.HEARING, desk.snapshot(scope).dictation?.state)
+            assertNull(desk.snapshot(scope).hearing, "Dictation is not a voice conversation")
+            assertFalse(row.state.value.showTalk, "The page owns the microphone while it dictates")
+            val done = desk.dictation(dictate(DictationAction.STOP))
+            assertEquals(ChatDictation(DictationState.DONE, text = "move the lamp by the window"), done.dictation)
+            assertNull(desk.snapshot(scope).dictation, "The text is answered once")
+            assertTrue(desk.snapshot(scope).messages.isEmpty(), "Dictation sends nothing")
+            assertEquals(0, runtime.turns)
+            assertEquals(VoiceState.IDLE, desk.snapshot(scope).voice.state, "Dictation speaks nothing")
+
+            desk.dictation(dictate(DictationAction.START))
+            assertNull(desk.dictation(dictate(DictationAction.CANCEL)).dictation, "Cancel drops the text")
+            assertNull(desk.dictation(dictate(DictationAction.STOP)).dictation, "Stop with nothing open answers nothing")
+        }
+    }
+
+    @Test fun talkAndDictationShareTheMicrophoneOneAtATime() = runBlocking {
+        DesktopChat(
+            Files.createTempDirectory("dictation-talk"),
+            listOf(ScriptedRuntime(completeOnStart = true)),
+            RowSpeech(),
+            voices = VoicePickerModel(),
+            fillers = FillerSettings(thresholdMs = 60_000),
+            hearing = DesktopHearing(LevelEngine(), { ScriptedMic(FloatArray(0)) }),
+        ).use { desk ->
+            desk.open(scope)
+            desk.hearing(request(HearingAction.HANDS_FREE))
+            assertEquals(
+                ChatDictation(DictationState.UNAVAILABLE, notice = DICTATION_WHILE_TALKING),
+                desk.dictation(dictate(DictationAction.START)).dictation,
+            )
+            desk.hearing(request(HearingAction.OFF))
+            // The conversation's capture is still letting go of the microphone; dictation waits for it.
+            assertEquals(DictationState.LISTENING, desk.dictation(dictate(DictationAction.START)).dictation?.state)
+            assertEquals(TALK_WHILE_DICTATING, desk.hearing(request(HearingAction.HANDS_FREE)).notice)
+            assertEquals(HearingState.OFF, desk.snapshot(scope).hearing?.state)
+            assertNull(desk.dictation(dictate(DictationAction.CANCEL)).dictation)
+        }
+    }
+
+    @Test fun dictationWithoutTheHearingModelsSaysHowToGetThem() = runBlocking {
+        DesktopChat(Files.createTempDirectory("dictation-models"), listOf(ScriptedRuntime()), RowSpeech()).use { desk ->
+            desk.open(scope)
+            val refused = desk.dictation(dictate(DictationAction.START))
+            assertEquals(ChatDictation(DictationState.UNAVAILABLE, notice = DICTATION_NEEDS_MODELS), refused.dictation)
+            assertEquals(refused.dictation, desk.snapshot(scope).dictation, "The reason stays until the page starts again")
+        }
+    }
+
+    private fun dictate(action: DictationAction) =
+        ChatDictationRequest(scope.profile, scope.companionId, scope.name, scope.sessionId, action)
 }
 
 private class LevelEngine : HearingEngine {

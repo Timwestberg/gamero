@@ -100,6 +100,11 @@ internal class DesktopChat(
     private var hearingEffort: ModelEffort? = null
     private var userMuted = false
     private var hearingUnavailable = false
+    /** The page is dictating into its draft: one hold on [hearing]. Never true while [talkOn]. */
+    private var dictating = false
+    private var dictationPartial = ""
+    /** Why dictation is unavailable, until the page starts it again. */
+    private var dictationNotice: String? = null
     /** The permission sentence is shown until the first arm, then the row stays quiet. */
     private var explained = false
     private var active: Session? = null
@@ -145,6 +150,13 @@ internal class DesktopChat(
     private sealed interface HearingArm {
         class Ready(val snapshot: ChatSnapshot) : HearingArm
         class Start(val ear: DesktopHearing?) : HearingArm
+    }
+
+    private sealed interface DictationStep {
+        class Ready(val snapshot: ChatSnapshot) : DictationStep
+        class Start(val ear: DesktopHearing?) : DictationStep
+        /** Close the hold; [keep] answers its text, a cancel drops it. */
+        class Finish(val ear: DesktopHearing?, val keep: Boolean) : DictationStep
     }
 
     /**
@@ -445,7 +457,17 @@ internal class DesktopChat(
         return ChatSnapshot(session.state, session.record.entries,
             session.refusal?.takeIf { it.first == session.state }?.second ?: session.notice, speech.status(), session.failure,
             session.waiting?.takeIf { session.state == ChatState.AWAITING_YOU },
-            if (session.pageHears) hearingField() else null)
+            if (session.pageHears) hearingField() else null, dictationField())
+    }
+
+    /** Present while dictating, or with the reason it stopped until the page starts again. */
+    private fun dictationField(): ChatDictation? = when {
+        dictating -> {
+            val partial = dictationPartial.trim().take(ChatLimits.MESSAGE).takeIf { it.isNotEmpty() }
+            ChatDictation(if (partial == null) DictationState.LISTENING else DictationState.HEARING, partial = partial)
+        }
+        dictationNotice != null -> ChatDictation(DictationState.UNAVAILABLE, notice = dictationNotice!!.take(ChatLimits.NOTICE))
+        else -> null
     }
 
     /** Present on this build. An older snapshot that omitted [ChatSnapshot.hearing] still decodes. */
@@ -808,7 +830,9 @@ internal class DesktopChat(
             }
             pageOwnsCapture = true
             when (args.action) {
-                HearingAction.PRESS, HearingAction.HANDS_FREE -> {
+                HearingAction.PRESS, HearingAction.HANDS_FREE -> if (dictating) {
+                    HearingArm.Ready(refuse(session, TALK_WHILE_DICTATING))
+                } else {
                     hearingMember = args.member
                     hearingEffort = args.effort
                     log(LogLevel.Info, "hearing", "page action=${args.action.name.lowercase()} effort=${hearingEffort?.value ?: "default"}")
@@ -846,6 +870,94 @@ internal class DesktopChat(
                 synchronized(gate) { view(current(args.scope())) }
             }
         }
+    }
+
+    /**
+     * Dictation is one hold on the hearing engine: [DesktopHearing.down] streams the transcript into the snapshot, and
+     * stop waits for the last decode, outside the lock, and answers the text once. Nothing is sent or spoken. Starting
+     * stops reply audio so the microphone does not hear Ember. It works while a dialog waits, since it sends nothing.
+     */
+    override suspend fun dictation(args: ChatDictationRequest): ChatSnapshot {
+        val step = synchronized(gate) {
+            val session = current(args.scope())
+            pageOwnsCapture = true
+            when (args.action) {
+                DictationAction.START -> when {
+                    dictating -> DictationStep.Ready(view(session))
+                    talkOn -> {
+                        dictationNotice = DICTATION_WHILE_TALKING
+                        DictationStep.Ready(view(session))
+                    }
+                    else -> {
+                        dictating = true
+                        dictationPartial = ""
+                        dictationNotice = null
+                        explained = true
+                        if (playbackAudible()) speech.stop()
+                        log(LogLevel.Info, "dictation", "start")
+                        publishPicker()
+                        DictationStep.Start(hearing)
+                    }
+                }
+                DictationAction.STOP, DictationAction.CANCEL ->
+                    if (dictating) DictationStep.Finish(hearing, keep = args.action == DictationAction.STOP)
+                    else DictationStep.Ready(view(session))
+            }
+        }
+        return when (step) {
+            is DictationStep.Ready -> step.snapshot
+            is DictationStep.Start -> {
+                launchDictation(step.ear)
+                synchronized(gate) { view(current(args.scope())) }
+            }
+            is DictationStep.Finish -> {
+                val heard = step.ear?.let(::finishHold)
+                synchronized(gate) {
+                    dictating = false
+                    dictationPartial = ""
+                    publishPicker()
+                    val text = heard?.trim()?.take(ChatLimits.MESSAGE)?.takeIf { step.keep && it.isNotEmpty() }
+                    log(LogLevel.Info, "dictation", "${if (step.keep) "stop" else "cancel"} chars=${text?.length ?: 0}")
+                    val snapshot = view(current(args.scope()))
+                    if (step.keep) snapshot.copy(dictation = ChatDictation(DictationState.DONE, text = text)) else snapshot
+                }
+            }
+        }
+    }
+
+    private fun launchDictation(ear: DesktopHearing?) {
+        if (ear == null) return dictationUnavailable(DICTATION_NEEDS_MODELS)
+        // A voice conversation that just ended may still be letting go of the microphone.
+        ear.awaitStopped(MICROPHONE_HANDOFF_MS)
+        val started = ear.down(
+            onPartial = { text ->
+                synchronized(gate) {
+                    if (dictating && text != dictationPartial) {
+                        dictationPartial = text
+                        publishPicker()
+                    }
+                }
+            },
+            onFailed = { message ->
+                dictationUnavailable(if (message.contains("denied", ignoreCase = true)) VoiceConversation.MIC_SETTINGS_NOTICE else message)
+            },
+        )
+        if (!started) dictationUnavailable(MICROPHONE_IN_USE)
+    }
+
+    private fun dictationUnavailable(notice: String) = synchronized(gate) {
+        dictating = false
+        dictationPartial = ""
+        dictationNotice = notice
+        log(LogLevel.Info, "dictation", "unavailable")
+        publishPicker()
+    }
+
+    /** Close the hold and wait for its last decode. Null when the hold had already failed or ended. */
+    private fun finishHold(ear: DesktopHearing): String? {
+        var text: String? = null
+        ear.up { text = it.text }
+        return text
     }
 
     /** Opens one session. A call while one is already open returns the live engine only when [talkOn] was just set. */
@@ -1243,6 +1355,9 @@ internal class DesktopChat(
             hearingEffort = null
             userMuted = false
             hearingUnavailable = false
+            dictating = false
+            dictationPartial = ""
+            dictationNotice = null
             explained = false
             resumePending = false
             guardGeneration++
@@ -1276,6 +1391,15 @@ internal data class StageLatency(
 
 /** Every send, retry and handover while a native dialog is up is refused with this. */
 internal const val ANSWER_FIRST = "Answer the approval first."
+
+/** Talk and dictation share the microphone, so each waits for the other. */
+internal const val DICTATION_WHILE_TALKING = "End the voice conversation to dictate."
+internal const val TALK_WHILE_DICTATING = "Finish dictating to start a voice conversation."
+internal const val DICTATION_NEEDS_MODELS = "Dictation needs the hearing models. Run scripts/fetch-voice.sh, then rebuild."
+/** How long dictation waits for a capture that is stopping to let go of the microphone. */
+private const val MICROPHONE_HANDOFF_MS = 1_000L
+/** The microphone is held by another capture, such as the native chat row's. */
+internal const val MICROPHONE_IN_USE = "The microphone is in use. Try again in a moment."
 
 /** How long a talk-only reply may take. */
 private const val TALK_TIMEOUT_MINUTES = 3L

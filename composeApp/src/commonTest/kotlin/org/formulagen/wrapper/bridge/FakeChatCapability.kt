@@ -13,5 +13,8 @@ class FakeChatCapability : ChatCapability {
     override suspend fun hearing(args: ChatHearingRequest) = ChatSnapshot(
         hearing = ChatHearing(HearingState.UNAVAILABLE, notice = org.formulagen.wrapper.voice.VoiceConversation.NO_HOST_NOTICE),
     )
+    override suspend fun dictation(args: ChatDictationRequest) = ChatSnapshot(
+        dictation = ChatDictation(DictationState.UNAVAILABLE, notice = org.formulagen.wrapper.voice.VoiceConversation.NO_HOST_NOTICE),
+    )
     override suspend fun closeSession(scope: ChatScope) = Unit
 }

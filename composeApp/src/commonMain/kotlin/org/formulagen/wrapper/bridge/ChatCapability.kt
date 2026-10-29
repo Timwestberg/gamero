@@ -28,6 +28,11 @@ interface ChatCapability {
      * names a path, a model file, a token or audio, and an unknown one is rejected.
      */
     suspend fun hearing(args: ChatHearingRequest): ChatSnapshot
+    /**
+     * The catalog page dictates into its draft on the microphone the host owns. Nothing is sent or spoken.
+     * The arguments are a scope and an action.
+     */
+    suspend fun dictation(args: ChatDictationRequest): ChatSnapshot
     suspend fun closeSession(scope: ChatScope)
 }
 
@@ -376,14 +381,63 @@ data class ChatHearingRequest(
     fun scope() = ChatScope(profile, companionId, name, sessionId)
 }
 
+/** Dictation, separate from [HearingState]: the microphone fills the page's draft and sends nothing. */
+@Serializable
+enum class DictationState {
+    @SerialName("listening") LISTENING,
+    @SerialName("hearing") HEARING,
+    /** Only in the result of [DictationAction.STOP]. */
+    @SerialName("done") DONE,
+    @SerialName("unavailable") UNAVAILABLE,
+}
+
+/**
+ * [partial] is the transcript so far while dictating. [text] is everything heard, only with [DictationState.DONE] and
+ * absent when nothing was. [notice] says why dictation is unavailable. Each is at most its chat limit.
+ */
+@Serializable
+data class ChatDictation(
+    val state: DictationState,
+    val partial: String? = null,
+    val text: String? = null,
+    val notice: String? = null,
+) {
+    init {
+        require(partial == null || partial.length in 1..ChatLimits.MESSAGE)
+        require(text == null || text.length in 1..ChatLimits.MESSAGE)
+        require(notice == null || notice.length in 1..ChatLimits.NOTICE)
+    }
+}
+
+/** What the catalog page asks of dictation: open the microphone, close it with the text, or close it and drop the text. */
+@Serializable
+enum class DictationAction {
+    @SerialName("start") START,
+    @SerialName("stop") STOP,
+    @SerialName("cancel") CANCEL,
+}
+
+/** Dictation names no member and no effort: nothing is sent. No path, model file, or token. */
+@Serializable
+data class ChatDictationRequest(
+    val profile: String,
+    val companionId: String,
+    val name: String,
+    val sessionId: String,
+    val action: DictationAction,
+) {
+    fun scope() = ChatScope(profile, companionId, name, sessionId)
+}
+
 /**
  * [failure] is why the last turn failed, absent once a turn succeeds. [waiting] is present only while `awaiting-you`.
  * [hearing] is omitted for host-bridge v2. It is sent only after the page sets [ChatScope.hearing] or calls `chat.hearing`.
+ * [dictation] is present only while the page dictates, or with a notice until it starts again; `chat.dictation` `stop` answers it [DictationState.DONE].
  */
 @Serializable
 data class ChatSnapshot(val state: ChatState = ChatState.READY, val messages: List<ChatEntry> = emptyList(),
     val notice: String? = null, val voice: ChatVoice = ChatVoice(), val failure: ChatFailureReport? = null,
-    val waiting: ChatWaiting? = null, val hearing: ChatHearing? = null)
+    val waiting: ChatWaiting? = null, val hearing: ChatHearing? = null, val dictation: ChatDictation? = null)
 
 /**
  * The contract's handover `from` is `nullable`, not `optional`: the key is always there. The bridge
@@ -446,6 +500,7 @@ object ChatMethods {
     val HEARING = BridgeMethod("chat.hearing", ChatHearingRequest.serializer(), ChatSnapshot.serializer()) {
         valid(it.scope()) && valid(it.member)
     }
+    val DICTATION = BridgeMethod("chat.dictation", ChatDictationRequest.serializer(), ChatSnapshot.serializer()) { valid(it.scope()) }
     fun pack(chat: Capability<ChatCapability>): CapabilityPack = binder.pack(chat)
     internal val binder = CapabilityBinder("chat", listOf<CapabilityHandler<ChatCapability>>(
         OPEN.handle { chat, args -> chat.open(args) },
@@ -457,6 +512,7 @@ object ChatMethods {
         STOP.handle { chat, args -> chat.stop(args) },
         STOP_SPEAKING.handle { chat, args -> chat.stopSpeaking(args) },
         HEARING.handle { chat, args -> chat.hearing(args) },
+        DICTATION.handle { chat, args -> chat.dictation(args) },
         CLOSE.handle { chat, args -> chat.closeSession(args); NoResult },
     ))
 }
