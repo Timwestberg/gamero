@@ -10,6 +10,17 @@
 
 **Tech Stack:** sherpa-onnx 2.0.0 JVM (already loaded for Kokoro 82M v1.0), Silero VAD v5, streaming Zipformer English int8, AVAudioEngine voice processing on Apple, the host-bridge `chat.*` contract, Kokoro blends Sam / Jamie / Riley / Harper.
 
+## What the draft stack shipped
+
+Mac only, still drafts, stacked on #56 (`5911aaf`). Milestones 5–7 are not started.
+
+- **#59** Click the chat icon to start a session. Another click, Escape, or Stop ends it. Fillers stay in the product and default off (`~/.gamero/voice-fillers`, `HOVEL_VOICE_FILLERS` overrides one launch). One second of quiet after speech sends. Empty text and speech under 240 ms do not. Half duplex until echo cancellation is actually up: the mic is paused while Ember speaks, then about 300 ms.
+- **#60** The reply is spoken sentence by sentence. A click or Escape during playback flushes first, cancels the provider turn, keeps the partial text, and leaves the session listening.
+- **#61** Full duplex uses one voice-processing graph (`voice/native/ember_audio.m`) for the mic and the speaker. If the library is missing, the graph fails to start, or `~/.gamero/hearing-self-check` says fail, the session stays half duplex and does not leave the mic open. While she is preparing or playing, 250 ms of frames at VAD probability 0.5 or higher flushes playback (`barge-in vad flush_ms=`) and cancels the turn. A short quiet chunk does not wipe that run. Self-echo is discarded (`no_vad_speech`, `too_short`, `self_echo`).
+- **#62** The shared contract lives in gamero `voice` `commonMain` (`VoiceConversation.kt`): states, actions, endpoint and discard reasons, barge-in, latency caps, the four Kokoro ids and speeds, sentence gap 160 ms, fillers default off, and the model checksums. `ChatSnapshot.hearing` is omitted on host-bridge v2 until the page sends `"hearing": true` or calls `chat.hearing`. Until then the native Gamero Adventures row is the control. Ember Tower does not show it. A bare Escape while the catalog page has focus still barges in. No Kotlin/JS target. No server-platform or game-platform PR.
+
+The speaker wait from #56 is kept: playback is not abandoned after two minutes, and a playback thread that fails to start does not block the voice worker. A streamed player that fails to start clears the preparing state.
+
 ## Global Constraints
 
 - Build on draft PR [#56](https://github.com/Timwestberg/gamero/pull/56) (`cursor/kokoro-chat-voice-c3ed` at `d4370ed`), which is stacked on #54 / #53. `main` still speaks with PocketTTS and only after the reply is finished.
@@ -108,7 +119,7 @@ sequenceDiagram
 
 Threads. The Kokoro worker (`hovel-voice`) and the player thread (`hovel-voice-play`) stay as #56 built them. Hearing gets its own thread (`hovel-hearing`) so a Zipformer decode never waits on a Kokoro sentence, and a Kokoro sentence never waits on the microphone. They meet under `DesktopChat`'s existing gate. The audio callback only enqueues 16 kHz frames. It does not run the recognizer and it does not take the chat gate.
 
-Push-to-talk on the way to hands-free may keep `SourceDataLine` for playback, because the microphone is closed while Ember speaks. The hands-free milestone replaces both directions with the graph. After that, `openSpeaker` is the fallback for a machine where voice processing fails to start, and hands-free refuses to arm on that fallback.
+Click-to-converse keeps `SourceDataLine` for playback while echo cancellation is down, because the microphone is closed while Ember speaks. Full duplex replaces both directions with the graph. If voice processing does not start, playback stays on `openSpeaker` and the session stays half duplex. The microphone is not left open on that fallback.
 
 What crosses which boundary:
 
@@ -513,13 +524,13 @@ Each milestone is one PR series, based on #56 for gamero. Ship them in order. A 
 
 **Produces:** one session that sends each endpoint as the existing talk path with `speak = true` and `mode = TALK`.
 
-- [ ] A click on the chat icon opens `TargetDataLine` at 16 kHz. Another click, Escape, or stop closes it. The session does not get stuck if a reply, a cancel, or a voice change lands in the middle.
-- [ ] One second of quiet after speech sends one talk turn to `currentMember`. Empty text and a burst shorter than 240 ms send nothing. A null member shows the notice in section 8 and sends nothing. The session then keeps listening for the next turn.
-- [ ] `awaiting-you` does not send.
-- [ ] The reply still speaks through today's `completed` path. While the chat is `responding` or the model's audio is `preparing` or `speaking`, captured audio is discarded. Listening resumes about 300 ms after playback is idle and the reply has finished. Echo cancellation stays milestone 3. Sentence streaming and barge-in of the model's audio are milestone 2.
-- [ ] Fillers from section 5.4 stay available and default off, pending tuning. The Voice-row toggle persists like the Kokoro voice. `HOVEL_VOICE_FILLERS` overrides it. When they are on: cached per blend, one per hearing turn, skipped when the reply has started, flushed by stop, threshold 450 ms, and a `hearing` log line each time one plays.
-- [ ] The row shows Off, Listening, Thinking, or Speaking, and the live partial when the recognizer has one.
-- [ ] Typed chat and Kokoro preview still pass their tests.
+- [x] A click on the chat icon opens the microphone at 16 kHz. Another click, Escape, or stop closes it. The session does not get stuck if a reply, a cancel, or a voice change lands in the middle.
+- [x] One second of quiet after speech sends one talk turn to `currentMember`. Empty text and a burst shorter than 240 ms send nothing. A null member shows the notice in section 8 and sends nothing. The session then keeps listening for the next turn.
+- [x] `awaiting-you` does not send.
+- [x] While echo cancellation is not up, captured audio is discarded while Ember is preparing or speaking, and listening resumes about 300 ms after playback is idle. Sentence streaming and barge-in are milestone 2.
+- [x] Fillers from section 5.4 stay available and default off, pending tuning. The Voice-row toggle persists like the Kokoro voice. `HOVEL_VOICE_FILLERS` overrides it. When they are on: cached per blend, one per hearing turn, skipped when the reply has started, flushed by stop, threshold 450 ms, and a `hearing` log line each time one plays.
+- [x] The row shows Off, Listening, Thinking, or Speaking, and the live partial when the recognizer has one.
+- [x] Typed chat and Kokoro preview still pass their tests.
 
 **Done when:** clicking the icon on a Mac, saying a sentence, and pausing for a second produces a user bubble and a spoken reply, and a second click ends the session. This VM cannot run that check.
 
@@ -533,11 +544,11 @@ Each milestone is one PR series, based on #56 for gamero. Ship them in order. A 
 
 **Produces:** `fun enqueue(piece: String)`, `fun interruptForHearing()`.
 
-- [ ] `enqueue` on a live generation does not bump `generation` and does not flush.
-- [ ] `speak` and `stop` still flush, as they do now.
-- [ ] The cursor's cases are tests: growing Claude text, a Codex replacement, an unclosed fence, the 40 character comma cut, and the tail on `completed`.
-- [ ] A press during playback runs `interruptForHearing`: flush first, turn cancelled, partial bubble kept, notice empty, the press's utterance can still send with `speak = true`.
-- [ ] `stopSpeaking` still leaves the provider running and still sets `speak` false.
+- [x] `enqueue` on a live generation does not bump `generation` and does not flush.
+- [x] `speak` and `stop` still flush, as they do now. The #56 speaker wait is unbounded, and a playback thread that fails to start does not block the worker.
+- [x] The cursor's cases are tests: growing Claude text, a Codex replacement, an unclosed fence, the 40 character comma cut, and the tail on `completed`.
+- [x] A press during playback flushes first, cancels the turn, keeps the partial bubble, leaves the notice empty, and can still send the press's utterance with `speak = true`.
+- [x] `stopSpeaking` still leaves the provider running and still sets `speak` false.
 
 **Done when:** the first sentence can start playback before `completed`, the existing stream and gap tests pass, and a press cuts the audio.
 
@@ -549,11 +560,11 @@ Each milestone is one PR series, based on #56 for gamero. Ship them in order. A 
 
 **Produces:** `ember_audio_start`, `ember_audio_play`, `ember_audio_flush`, `ember_audio_stop`. Playback samples are the far end. The tap is 16 kHz float for hearing.
 
-- [ ] Hands-free uses the graph for both directions. It does not open `TargetDataLine` beside `SourceDataLine`.
-- [ ] Voice processing failing to start leaves hands-free unavailable and leaves push-to-talk working.
-- [ ] The endpoint knobs in section 6 are the `HearingTurn` defaults, covered by tests with a fake clock.
-- [ ] Run the echo test, the cut-off script, the WER script, and the stage log on a Mac. Put the numbers in the PR.
-- [ ] `Info.plist` carries `NSMicrophoneUsageDescription` on a freshly packaged app and on a jar-refresh package.
+- [x] Hands-free uses the graph for both directions. It does not open `TargetDataLine` beside `SourceDataLine` while the graph is up.
+- [x] Voice processing failing to start, a missing library, or a failed self-check stays half duplex: the mic closes while Ember speaks, and click-to-converse still works. The mic is not left open without echo cancellation.
+- [x] Endpoint is VAD silence, stable text, or a 15 s cap, covered by `TurnCommitter` tests. The first Mac session uses 1000 ms of trailing quiet.
+- [ ] The Mac echo self-test, cut-off script, and WER script still need Tim's numbers in the PR. The in-app self-test and `scripts/echo-self-test.sh` exist.
+- [x] `Info.plist` carries `NSMicrophoneUsageDescription` on a freshly packaged app and on a jar-refresh package.
 
 **Done when:** a hands-free turn on that Mac survives Ember's own sentence without a false barge-in, a real interruption stops her within the 50 ms flush cap, and the stage log is attached.
 
@@ -565,10 +576,10 @@ Each milestone is one PR series, based on #56 for gamero. Ship them in order. A 
 
 **Produces:** the types in section 9. The page passes `member` and `effort` on press.
 
-- [ ] An older snapshot without `hearing` still decodes.
-- [ ] `chat.hearing` rejects a path, a token, or an unknown field.
-- [ ] The composer shows the partial and the states. The native row and the composer cannot arm two captures. The page path wins when both exist, and the native row hides its hold button once the page sends `press`.
-- [ ] Permission copy matches section 5.2.
+- [x] An older snapshot without `hearing` still decodes. A v2 `chat.open` omits `hearing` until the page sends `"hearing": true` or calls `chat.hearing`.
+- [x] `chat.hearing` rejects a path, a token, or an unknown field.
+- [x] The native Gamero Adventures row is the control until the page opts in. A page `press` hides that row's talk icon so only one capture arms. The game-platform composer is not wired yet.
+- [x] Permission copy matches section 5.2.
 
 **Done when:** the catalog in the Mac app arms the microphone the host owns, and a browser with no host shows unavailable without asking for a microphone.
 
