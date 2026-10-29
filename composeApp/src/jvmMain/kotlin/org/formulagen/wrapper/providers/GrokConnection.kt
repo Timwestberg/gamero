@@ -2,7 +2,15 @@ package org.formulagen.wrapper.providers
 
 import java.nio.file.Path
 import java.time.Clock
-import org.formulagen.wrapper.chat.grok.*
+import org.formulagen.wrapper.providers.grok.GROK_ACCOUNT_METHODS
+import org.formulagen.wrapper.providers.grok.GrokAccount
+import org.formulagen.wrapper.providers.grok.GrokAcp
+import org.formulagen.wrapper.providers.grok.GrokAuthAvailability
+import org.formulagen.wrapper.providers.grok.GrokBudget
+import org.formulagen.wrapper.providers.grok.GrokLaunch
+import org.formulagen.wrapper.providers.grok.findGrokExecutable
+import org.formulagen.wrapper.providers.grok.grokHandshake
+import org.formulagen.wrapper.providers.grok.grokInitialize
 
 /** One short-lived account check shared by the provider card and conversation readiness. */
 internal data class GrokAccess(val executable: Path?, val auth: GrokAuthAvailability, val account: GrokAccount? = null)
@@ -35,13 +43,13 @@ private fun readGrokAccess(executable: Path, environment: Map<String, String>): 
         var rpc: GrokAcp? = null
         try {
             launch.verify(budget.remaining())
-            val transport = GrokAcp(launch.agentBuilder(), GROK_ACCOUNT_METHODS, allowReloadResponses = true)
+            val transport = launch.startAgent(GROK_ACCOUNT_METHODS)
             rpc = transport
             val initialized = transport.call("initialize", grokInitialize(), budget.remaining())
             auth = grokHandshake(initialized).auth
-            launch.checkPolicies()
+            launch.recheck()
             if (auth != GrokAuthAvailability.CACHED_CREDENTIAL) GrokAccess(executable, auth)
-            else GrokAccess(executable, auth, grokAccount(transport, initialized, budget)).also { launch.checkPolicies() }
+            else GrokAccess(executable, auth, launch.authenticate(transport, initialized, budget))
         } finally { launch.closeAfter(rpc) }
     } catch (error: Exception) {
         if (error is InterruptedException || Thread.currentThread().isInterrupted) throw InterruptedException()

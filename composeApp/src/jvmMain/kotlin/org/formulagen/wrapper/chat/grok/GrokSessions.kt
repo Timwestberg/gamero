@@ -9,6 +9,7 @@ import java.util.UUID
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.SharedRules
+import org.formulagen.wrapper.providers.grok.validGrokSessionId
 
 internal enum class GrokMode { TALK, WORK }
 

@@ -1,4 +1,4 @@
-package org.formulagen.wrapper.chat
+package org.formulagen.wrapper.chat.grok
 
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
@@ -7,15 +7,28 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
-import org.formulagen.wrapper.chat.grok.*
+import org.formulagen.wrapper.chat.ChatFailure
+import org.formulagen.wrapper.chat.ChatRuntime
+import org.formulagen.wrapper.chat.Readiness
+import org.formulagen.wrapper.chat.SummaryRequest
+import org.formulagen.wrapper.chat.TurnEvents
+import org.formulagen.wrapper.chat.TurnHandle
+import org.formulagen.wrapper.chat.TurnRequest
+import org.formulagen.wrapper.chat.boundSummary
+import org.formulagen.wrapper.chat.companionConversationIds
+import org.formulagen.wrapper.chat.loggingDaemonThreads
+import org.formulagen.wrapper.chat.summaryInstruction
 import org.formulagen.wrapper.hovel.HovelCompanion
-import org.formulagen.wrapper.providers.GrokConnection
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
+import org.formulagen.wrapper.providers.GrokConnection
+import org.formulagen.wrapper.providers.grok.GrokAuthAvailability
+import org.formulagen.wrapper.providers.grok.GrokBudget
+import org.formulagen.wrapper.providers.grok.GrokTransportFailure
+import org.formulagen.wrapper.providers.grok.GrokTransportIssue
 
 /** Grok subscription chat using the same conversation, handover and event seam as Codex and Claude. */
 internal class GrokChatRuntime(
@@ -130,46 +143,30 @@ internal class GrokChatRuntime(
         /** Only missing pre-submission mappings can request DesktopChat's one context-restoration retry. */
         private fun run() {
             val saved = request.conversation
-            if (saved != null && saved.personaHash != request.persona.hash) { fail(ChatFailure.ConversationLost); return }
-            val access = connection.check(fresh = true)
-            val account = access.account ?: run {
-                fail(if (access.auth == GrokAuthAvailability.SIGNED_OUT) ChatFailure.SignedOut else ChatFailure.Temporary); return
-            }
-            val executable = access.executable ?: run { fail(ChatFailure.Temporary); return }
-            val model = request.model?.takeUnless { it == RUNTIME_DEFAULT_MODEL } ?: account.defaultModel
-            if (account.models.none { it.modelId == model }) { fail(ChatFailure.ModelUnavailable); return }
-            val scope = GrokSessionScope(request.profile, request.companionId, GrokMode.TALK, model, account.fingerprint)
-            scope.validate()
-            // Read the histories outside the lock: a handle active at any time during the read is kept,
-            // since its history may have been written after the read passed it.
-            synchronized(bindingLock) { saved?.id?.let { activate(it); activeHandle = it }; scans++; touched += activeHandles }
-            try {
-                val retained = companionConversationIds(root, request.profile, RuntimeId.GROK_BUILD)
-                synchronized(bindingLock) { retained?.let { bindings.prune(request.profile, it + activeHandles + touched) } }
-            } finally { synchronized(bindingLock) { if (--scans == 0) touched.clear() } }
-            val previous = saved?.let {
-                when (val lookup = bindings.find(it.id, scope)) {
-                    is GrokSessionLookup.Found -> lookup.binding
-                    GrokSessionLookup.Missing, GrokSessionLookup.ModelChanged -> { fail(ChatFailure.ConversationLost); return }
-                    else -> { fail(ChatFailure.Unexpected); return }
-                }
+            val start = when (val resolved = resolveGrokTalkTurn(request, connection, bindings, beforeLookup = {
+                // Activate the saved handle, then read the histories outside the lock: a handle active at any time
+                // during the read is kept, since its history may have been written after the read passed it.
+                synchronized(bindingLock) { saved?.id?.let { activate(it); activeHandle = it }; scans++; touched += activeHandles }
+                try {
+                    val retained = companionConversationIds(root, request.profile, RuntimeId.GROK_BUILD)
+                    synchronized(bindingLock) { retained?.let { bindings.prune(request.profile, it + activeHandles + touched) } }
+                } finally { synchronized(bindingLock) { if (--scans == 0) touched.clear() } }
+            })) {
+                is GrokTurnStart.Failed -> { fail(resolved.failure); return }
+                is GrokTurnStart.Ready -> resolved
             }
             val location = root.resolve(request.profile).resolve("grok-talk").resolve(request.companionId)
-                .resolve(HovelCompanion.sha256("${account.fingerprint}/${request.persona.hash}/$model"))
+                .resolve(HovelCompanion.sha256("${start.account.fingerprint}/${request.persona.hash}/${start.model}"))
             if (ended.get()) return
-            val opened = try {
-                GrokTalkSession.open(executable, environment, request.persona.instructions, model,
-                    persistentFolder = location, resume = previous?.providerSessionId, expectedAccount = account.fingerprint,
+            val opened = bindings.openForgettingLost(start.previous) {
+                GrokTalkSession.open(start.executable, environment, request.persona.instructions, start.model,
+                    persistentFolder = location, resume = start.previous?.providerSessionId, expectedAccount = start.account.fingerprint,
                     onUpdate = ::update)
-            } catch (_: GrokSessionLost) {
-                // Grok refused the saved session before any prompt: start fresh rather than repeat the failing load.
-                previous?.let { bindings.forget(it.handle) }
-                fail(ChatFailure.ConversationLost); return
-            }
+            } ?: run { fail(ChatFailure.ConversationLost); return }
             session = opened
             if (ended.get() || closed.get()) { opened.abort(); return }
             val binding = synchronized(bindingLock) {
-                (previous ?: bindings.create(opened.sessionId, scope)).also { activate(it.handle); activeHandle = it.handle }
+                (start.previous ?: bindings.create(opened.sessionId, start.scope)).also { activate(it.handle); activeHandle = it.handle }
             }
             synchronized(this) { state = GrokTurnState(opened.sessionId) }
             if (saved == null) deliver { events.opened(binding.handle) }

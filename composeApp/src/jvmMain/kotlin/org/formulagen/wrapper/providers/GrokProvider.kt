@@ -1,11 +1,8 @@
 package org.formulagen.wrapper.providers
 
-import java.io.File
-import java.nio.file.Files
-import java.nio.file.Path
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.grok.GROK_VERSION_MESSAGE
-import org.formulagen.wrapper.chat.grok.GrokAuthAvailability
+import org.formulagen.wrapper.providers.grok.GROK_VERSION_MESSAGE
+import org.formulagen.wrapper.providers.grok.GrokAuthAvailability
 
 /** Subscription status and models; the separate development work gate owns project availability. */
 internal class GrokProvider(
@@ -50,15 +47,3 @@ internal class GrokProvider(
 internal const val GROK_SIGN_IN_DETECTED =
     "Grok Build reports a saved sign-in, but Hovel could not verify subscription access for companion chat. " +
         "You do not need to sign in again."
-
-/** Explicit override, PATH, official user install and common package-manager locations. Never installs Grok. */
-internal fun findGrokExecutable(environment: Map<String, String>,
-    fixed: List<String> = listOf("/opt/homebrew/bin/grok", "/usr/local/bin/grok")): Path? {
-    val configured = environment["GAMERO_GROK_PATH"]
-    val home = environment["HOME"] ?: System.getProperty("user.home")
-    val candidates = if (configured != null) listOf(configured) else
-        environment["PATH"].orEmpty().split(File.pathSeparator).filter { it.isNotBlank() }.map { "$it/grok" } +
-            listOf("$home/.grok/bin/grok", "$home/.local/bin/grok") + fixed
-    return candidates.mapNotNull { runCatching { Path.of(it) }.getOrNull() }
-        .firstOrNull { it.isAbsolute && Files.isRegularFile(it) && Files.isExecutable(it) }
-}
