@@ -1,10 +1,53 @@
 package org.formulagen.wrapper.bridge
 
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+/** An AI runtime the host runs on the person's own subscription. The names are Hovel Brain's `runtimeId`. */
+@Serializable
+enum class RuntimeId(val providerId: RuntimeProviderId) {
+    @SerialName("codex") CODEX(RuntimeProviderId.OPENAI),
+    @SerialName("claude-code") CLAUDE_CODE(RuntimeProviderId.ANTHROPIC),
+}
+
+/** Hovel Brain's provider: the company behind a runtime. [RuntimeId.providerId] is `RUNTIME_PROVIDERS`. */
+@Serializable
+enum class RuntimeProviderId {
+    @SerialName("openai") OPENAI,
+    @SerialName("anthropic") ANTHROPIC,
+}
+
+/** Reasoning levels advertised by installed runtimes; omitted effort uses the runtime default. */
+@Serializable
+enum class ModelEffort(val value: String) {
+    @SerialName("none") NONE("none"),
+    @SerialName("minimal") MINIMAL("minimal"),
+    @SerialName("low") LOW("low"),
+    @SerialName("medium") MEDIUM("medium"),
+    @SerialName("high") HIGH("high"),
+    @SerialName("xhigh") XHIGH("xhigh"),
+    @SerialName("max") MAX("max"),
+    @SerialName("ultra") ULTRA("ultra"),
+}
+
 /** Rules more than one capability uses. Mirrors event-contracts `host-bridge/shared.ts`. */
 object SharedRules {
     /** The profile of a person who is not signed in. */
     const val LOCAL_PROFILE = "local"
     const val COMPANION_NAME_LIMIT = 40
+    /** Hovel Brain's sentinel model: the runtime's own default, or for Claude Code the profile's default Claude model. */
+    const val RUNTIME_DEFAULT_MODEL = "runtime-default"
+    /**
+     * A model as its runtime names it, or [RUNTIME_DEFAULT_MODEL]: one lower-case token of at most
+     * 128 characters. Native code hands it to Claude Code as a command-line argument, so it starts
+     * with a letter or digit and is never read as an option. Optional `[1m]` preserves Claude
+     * context selection. Mirrors `MODEL_ID_PATTERN`.
+     */
+    const val MODEL_ID_PATTERN = "^(?=.{1,128}$)[a-z0-9][a-z0-9._:/-]*(?:\\[1m\\])?$"
+    private val MODEL_ID = Regex(MODEL_ID_PATTERN)
+
+    /** Whether [value] is a model name by [MODEL_ID_PATTERN]. */
+    fun isModelId(value: String): Boolean = MODEL_ID.matches(value)
 
     /**
      * `local`, or a signed-in account's UUID in canonical lower case. Native code builds folder

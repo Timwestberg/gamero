@@ -24,6 +24,12 @@ if [ ! -f "$NATIVE_JAR" ]; then
   die "native library for ${plat}-${cpu} is missing. Run ./setup.sh on this machine."
 fi
 
+for arg in "$@"; do
+  if [ "$arg" = "--fluency" ]; then
+    exec "$ROOT/../../../voice/fluency.sh"
+  fi
+done
+
 CLIP="$ROOT/../../../voice/src/commonMain/kotlin/org/formulagen/wrapper/voice/ReferenceClip.kt"
 if [ ! -f "$CLIP" ]; then
   die "missing $CLIP"

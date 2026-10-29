@@ -4,6 +4,7 @@ package org.formulagen.wrapper.voice
 
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.math.abs
 import kotlin.math.sqrt
 import kotlin.time.TimeSource
 
@@ -46,7 +47,15 @@ interface PieceEngine {
     val sampleRate: Int
     fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio
     fun release()
+
+    /** PocketTTS retries when a take fills [maxFrames]. Kokoro does not use that cap. */
+    fun usesFrameCeiling(): Boolean = true
+    fun requestCancel() {}
+    fun clearCancel() {}
+    fun isCancelled(): Boolean = false
 }
+
+class SpeechCancelled : RuntimeException("speech cancelled")
 
 data class SpeakResult(
     val samples: FloatArray,
@@ -71,16 +80,34 @@ class EmberVoice(
     private val state = AtomicInt(IDLE)
 
     fun speak(text: String, listener: SpeechListener? = null): SpeakResult {
+        return speakStreaming(text, listener) { _, _ -> true }
+    }
+
+    /**
+     * Synthesizes one sentence at a time. [onSentence] is the raw sentence,
+     * before the crossfade. Return false to drop the rest. Playback can start
+     * from the first sentence while the next one is still being generated.
+     */
+    fun speakStreaming(
+        text: String,
+        listener: SpeechListener? = null,
+        onSentence: (FloatArray, Int) -> Boolean,
+    ): SpeakResult {
         if (!state.compareAndSet(IDLE, SPEAKING)) {
             throw IllegalStateException(
                 if (state.load() == RELEASED) "EmberVoice was released" else "EmberVoice is already speaking",
             )
         }
         try {
-            return speakLocked(text, listener)
+            engine.clearCancel()
+            return speakLocked(text, listener, onSentence)
         } finally {
             state.compareAndSet(SPEAKING, IDLE)
         }
+    }
+
+    fun cancel() {
+        engine.requestCancel()
     }
 
     fun release() {
@@ -91,7 +118,11 @@ class EmberVoice(
         engine.release()
     }
 
-    private fun speakLocked(text: String, listener: SpeechListener?): SpeakResult {
+    private fun speakLocked(
+        text: String,
+        listener: SpeechListener?,
+        onSentence: (FloatArray, Int) -> Boolean,
+    ): SpeakResult {
         val events = ArrayList<SpeechEvent>()
         fun emit(event: SpeechEvent) {
             events.add(event)
@@ -99,7 +130,7 @@ class EmberVoice(
         }
         emit(SpeechEvent(SPEECH_START))
         val started = nowMs()
-        val pieces = speechPieces(text, config.firstPieceTargetChars, config.laterPieceMaxChars)
+        val pieces = speechPieces(text, config.longSentenceMaxChars)
         if (pieces.isEmpty()) {
             emit(SpeechEvent(SPEECH_END, audioSeconds = 0.0))
             return SpeakResult(FloatArray(0), engine.sampleRate, 0.0, 0.0, 0.0, 0.0, events)
@@ -107,30 +138,79 @@ class EmberVoice(
         val parts = ArrayList<FloatArray>()
         var ttfaMs = 0.0
         var sampleRate = engine.sampleRate
+        val gapMs = config.resolvedSentenceGapMs
         for ((index, piece) in pieces.withIndex()) {
-            val frames = config.framesFor(piece.length)
-            var take = engine.synthesize(piece, frames, config.seed)
-            var spentMs = take.synthMs
-            var retried = false
-            if (frames > 0 && ranLong(config, piece, take)) {
-                val second = engine.synthesize(piece, frames, config.seed + 1)
-                retried = true
-                spentMs += second.synthMs
-                if (second.samples.size <= take.samples.size) take = second
+            if (engine.isCancelled()) break
+            val take = try {
+                synthesizePiece(engine, config, piece)
+            } catch (cancelled: SpeechCancelled) {
+                break
             }
-            if (index == 0) ttfaMs = firstAudibleMs(take.ttfaMs, retried, spentMs)
+            if (take.samples.isEmpty() || engine.isCancelled()) break
+            if (index == 0) ttfaMs = take.ttfaMs
             sampleRate = take.sampleRate
-            emit(SpeechEvent(SPEECH_LEVEL, rms = rms(take.samples)))
-            parts.add(take.samples)
+            val shaped = if (gapMs > 0) {
+                shapeSentence(
+                    take.samples,
+                    config.silenceTrimThreshold.toFloat(),
+                    sampleRate * config.crossfadeMs / 1000,
+                    fadeHead = index > 0,
+                    fadeTail = true,
+                )
+            } else {
+                take.samples
+            }
+            if (shaped.isEmpty()) continue
+            emit(SpeechEvent(SPEECH_LEVEL, rms = rms(shaped)))
+            val gapSamples = sampleRate * gapMs / 1000
+            val played = if (parts.isNotEmpty() && gapSamples > 0) joinRaw(FloatArray(gapSamples), shaped) else shaped
+            parts.add(shaped)
+            if (!onSentence(played, take.sampleRate)) break
         }
-        val gap = sampleRate * config.silenceMs / 1000
-        val samples = concat(parts, gap)
+        val gap = if (gapMs > 0) sampleRate * gapMs / 1000 else sampleRate * config.silenceBetweenPiecesMs / 1000
+        val fade = if (gap == 0) sampleRate * config.crossfadeMs / 1000 else 0
+        val samples = concat(parts, gap, fade, config.crossfadeEdgeThreshold.toFloat())
         val totalMs = nowMs() - started
         val audioSeconds = if (sampleRate > 0) samples.size / sampleRate.toDouble() else 0.0
         val rtf = if (totalMs > 0.0) audioSeconds / (totalMs / 1000.0) else 0.0
         emit(SpeechEvent(SPEECH_END, audioSeconds = audioSeconds))
         return SpeakResult(samples, sampleRate, ttfaMs, totalMs, audioSeconds, rtf, events)
     }
+}
+
+internal const val POCKET_FRAME_MS = 80
+
+/** PocketTTS emits one frame every 80 ms. At 24 kHz that is 1920 samples. */
+internal fun frameSamples(sampleRate: Int): Int = sampleRate * POCKET_FRAME_MS / 1000
+
+/** The ceiling stopped this take when the audio fills the frame budget. */
+internal fun hitFrameCeiling(sampleCount: Int, sampleRate: Int, maxFrames: Int): Boolean {
+    if (maxFrames <= 0 || sampleRate <= 0) return false
+    val frame = frameSamples(sampleRate)
+    if (frame <= 0) return false
+    return sampleCount >= maxFrames * frame - frame
+}
+
+/** One retry, same seed. Cap is min(firstCap * factor, maxFrames). */
+internal fun retryFrames(firstCap: Int, factor: Int, maxFrames: Int): Int = minOf(firstCap * factor, maxFrames)
+
+/**
+ * Same seed on every call. A second pass happens only when the frame ceiling
+ * truncated the take, and that pass keeps the raised cap.
+ */
+internal fun synthesizePiece(engine: PieceEngine, config: VoiceConfig, piece: String): PieceAudio {
+    val frames = config.framesFor(piece.length)
+    val first = engine.synthesize(piece, frames, config.seed)
+    if (!engine.usesFrameCeiling() || !hitFrameCeiling(first.samples.size, first.sampleRate, frames)) {
+        return first.copy(ttfaMs = firstAudibleMs(first.ttfaMs, false, first.synthMs))
+    }
+    val second = engine.synthesize(
+        piece,
+        retryFrames(frames, config.raisedCapFactor, config.raisedCapMaxFrames),
+        config.seed,
+    )
+    val spent = first.synthMs + second.synthMs
+    return second.copy(ttfaMs = firstAudibleMs(second.ttfaMs, true, spent), synthMs = spent)
 }
 
 internal fun ranLong(config: VoiceConfig, piece: String, audio: PieceAudio): Boolean {
@@ -147,18 +227,123 @@ fun rms(samples: FloatArray): Float {
     return sqrt(sum / samples.size).toFloat()
 }
 
-internal fun concat(parts: List<FloatArray>, gap: Int): FloatArray {
+/**
+ * Drops samples quieter than [threshold] at both ends. A take that is quiet
+ * all the way through is left as it is.
+ */
+internal fun trimEdgeSilence(samples: FloatArray, threshold: Float): FloatArray {
+    if (samples.isEmpty() || threshold <= 0f) return samples
+    var start = 0
+    while (start < samples.size && abs(samples[start]) < threshold) start++
+    var end = samples.size
+    while (end > start && abs(samples[end - 1]) < threshold) end--
+    if (start == 0 && end == samples.size) return samples
+    if (end <= start) return samples
+    return samples.copyOfRange(start, end)
+}
+
+/** Fades an edge to silence over [fade] samples so a trimmed cut does not click. */
+internal fun fadeEdge(samples: FloatArray, fade: Int, fadeHead: Boolean, fadeTail: Boolean): FloatArray {
+    if (fade <= 0 || samples.isEmpty() || (!fadeHead && !fadeTail)) return samples
+    val used = minOf(fade, samples.size / 2)
+    if (used <= 0) return samples
+    val out = samples.copyOf()
+    var index = 0
+    while (index < used) {
+        val gain = index.toFloat() / used.toFloat()
+        if (fadeHead) out[index] *= gain
+        if (fadeTail) out[out.size - 1 - index] *= gain
+        index++
+    }
+    return out
+}
+
+internal fun shapeSentence(
+    samples: FloatArray,
+    threshold: Float,
+    fadeSamples: Int,
+    fadeHead: Boolean,
+    fadeTail: Boolean,
+): FloatArray = fadeEdge(trimEdgeSilence(samples, threshold), fadeSamples, fadeHead, fadeTail)
+
+/** Samples quieter than [threshold] from [from] until speech, and from the end back. */
+internal fun edgeSilenceSamples(samples: FloatArray, threshold: Float): Pair<Int, Int> {
+    var start = 0
+    while (start < samples.size && abs(samples[start]) < threshold) start++
+    var end = samples.size
+    while (end > start && abs(samples[end - 1]) < threshold) end--
+    val tail = if (end <= start) samples.size else samples.size - end
+    val lead = if (end <= start) 0 else start
+    return lead to tail
+}
+
+/**
+ * Joins pieces. A positive [gap] inserts that many zero samples and does not
+ * crossfade. With no gap, a boundary whose edge peaks at or above
+ * [edgeThreshold] over [crossfadeSamples] is mixed for that many samples.
+ */
+internal fun concat(
+    parts: List<FloatArray>,
+    gap: Int,
+    crossfadeSamples: Int = 0,
+    edgeThreshold: Float = 0.02f,
+): FloatArray {
     if (parts.isEmpty()) return FloatArray(0)
-    val silence = if (gap > 0) gap else 0
+    var acc = parts[0]
+    for (index in 1 until parts.size) {
+        val next = parts[index]
+        if (gap > 0) {
+            val silence = FloatArray(gap)
+            acc = joinRaw(acc, silence, next)
+            continue
+        }
+        val fade = fadeLength(acc, next, crossfadeSamples, edgeThreshold)
+        acc = if (fade > 0) crossfade(acc, next, fade) else joinRaw(acc, next)
+    }
+    return acc
+}
+
+private fun fadeLength(previous: FloatArray, next: FloatArray, requested: Int, edgeThreshold: Float): Int {
+    if (requested <= 0 || previous.isEmpty() || next.isEmpty()) return 0
+    val window = minOf(requested, previous.size, next.size)
+    val tail = peak(previous, previous.size - window, window)
+    val head = peak(next, 0, window)
+    return if (tail >= edgeThreshold || head >= edgeThreshold) window else 0
+}
+
+private fun peak(samples: FloatArray, from: Int, count: Int): Float {
+    var max = 0f
+    val end = minOf(samples.size, from + count)
+    var index = from.coerceAtLeast(0)
+    while (index < end) {
+        max = maxOf(max, abs(samples[index]))
+        index += 1
+    }
+    return max
+}
+
+private fun crossfade(previous: FloatArray, next: FloatArray, fade: Int): FloatArray {
+    val out = FloatArray(previous.size + next.size - fade)
+    previous.copyInto(out)
+    var index = 0
+    while (index < fade) {
+        val t = index.toFloat() / fade.toFloat()
+        val at = previous.size - fade + index
+        out[at] = previous[at] * (1f - t) + next[index] * t
+        index += 1
+    }
+    next.copyInto(out, previous.size, fade)
+    return out
+}
+
+private fun joinRaw(vararg parts: FloatArray): FloatArray {
     var total = 0
     for (part in parts) total += part.size
-    if (parts.size > 1) total += silence * (parts.size - 1)
     val out = FloatArray(total)
     var pos = 0
-    for ((index, part) in parts.withIndex()) {
+    for (part in parts) {
         part.copyInto(out, pos)
         pos += part.size
-        if (index < parts.lastIndex) pos += silence
     }
     return out
 }

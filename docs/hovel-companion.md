@@ -21,7 +21,7 @@ All paths below are under
 | `HovelCompanion` | [hovel/HovelCompanion.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelCompanion.kt) | Handles the bridge methods, shows the approval dialog, owns the registration file, starts the host session. |
 | `MacHostCredentials` | [companion/MacHostCredentials.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/companion/MacHostCredentials.kt) | Stores and reads the host bearer token in the macOS Keychain. |
 | `HovelHttpTransport` | [hovel/HovelHostAdapter.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostAdapter.kt) | The only HTTP client that sends the host token to the server. |
-| `HovelHostSession` | [hovel/HovelHostSession.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostSession.kt) | Heartbeat loop and a single task worker. |
+| `HovelHostSession` | [hovel/HovelHostSession.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostSession.kt) | Heartbeat loop, a task worker and a memory-job worker (one item each at a time), and the consolidation timer. |
 
 `DesktopServices.create` builds the services; [main.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/main.kt) attaches them to the WebView.
 
@@ -139,9 +139,14 @@ again.
    crosses the bridge.
 4. **Activation.** `activateConnection` must name the same owner and host as the
    approved registration. It reads the token from Keychain and starts a
-   `HovelHostSession` with a transport, a per-host journal
-   (`journal-<hostId>`) and a Codex provider writing to `output-<hostId>`
-   (lines 81-100). A second activation reuses the running session.
+   `HovelHostSession` with a transport, a per-host task journal
+   (`journal-<hostId>`) and a Codex provider writing to `output-<hostId>`,
+   plus a memory-job journal (`memory-journal-<hostId>`) and a second Codex
+   provider writing to `memory-output-<hostId>`. Both providers use the same
+   login. Memory jobs run in an empty private folder,
+   `memory-workspace-<hostId>`, never the player's workspace, so a project's
+   `AGENTS.md` cannot change their output. A second activation reuses the
+   running session.
 
 ### Keychain
 
@@ -154,13 +159,14 @@ prompt.
 
 ## Host transport
 
-`HovelHttpTransport` (HovelHostAdapter.kt lines 18-43):
+`HovelHttpTransport` (HovelHostAdapter.kt):
 
 - Base URL is `<app origin>/api/hovel/v1/hovel`. Requests go to
   `/native/<ownerId>/<hostId>/<route>` with header `X-Hovel-Host-Token`.
 - HTTPS only, or HTTP on `localhost`, `127.0.0.1` or `[::1]`. No user info,
   query or fragment.
-- Routes allowed: `heartbeat`, `claim`, `progress`. The `brain/*` routes are
+- Routes allowed: `heartbeat`, `claim`, `progress`, `memory/claim`,
+  `memory/progress` and `memory/consolidate`. The `brain/*` routes are
   allowed only when `brainEnabled` is true, which defaults to false and is not
   set by `HovelCompanion`.
 - Redirects are never followed. Connect timeout 10 seconds, request timeout
@@ -175,9 +181,20 @@ prompt.
 `HovelHostSession` (HovelHostSession.kt) runs a heartbeat immediately and then
 every 10 seconds after the previous one ends. Each heartbeat reports the Codex
 state (`ready`, `auth-required` or `unavailable`) and declares
-`features: ["provider-input"]` (`HOVEL_HOST_FEATURES` in HovelHostAdapter.kt),
-then updates the status line. The server sends follow-up tasks only to a
-computer that declares `provider-input`. A failed heartbeat shows "Server unavailable; tasks remain on this computer".
+`features: ["provider-input", "memory-context", "memory-extraction"]`
+(`HOVEL_HOST_FEATURES` in HovelHostAdapter.kt), then updates the status line.
+The server sends follow-up tasks only to a computer that declares
+`provider-input`, recalled memory only with `memory-context`, and memory jobs
+only with `memory-extraction`. A failed heartbeat shows "Server unavailable;
+tasks remain on this computer".
+
+The session runs two lanes, each with its own journal and a single worker
+thread: one user task and one memory job may run at the same time. A malformed
+task never holds up a memory job, nor the reverse. A memory job is checked
+against the journal's rules before it is offered, so one this version cannot
+run is shown on the status line rather than retried quietly.
+
+### Tasks
 
 If no task is running, it picks the first returned task in `queued`, `claimed`
 or `running`, skipping `queued` tasks unless Codex is ready. The task must be
@@ -189,13 +206,70 @@ exchanges and the new prompt, in place of `request.prompt`. A task with
 journaled. Prompts may be up to 131,072 characters, the server's
 `providerInput` limit; character context stays at 16,384.
 
-The task runs on a single worker thread through `ExecutionCoordinator`, so one task runs
-at a time and launch rules from [desktop-execution.md](desktop-execution.md)
-apply. `ExecutionJournal` also holds a `host.lock` so two companions cannot share
-a journal.
+A task may carry `recalledMemory`: generated notes the server chose when it
+accepted the task, up to 12,288 characters. Codex gets it as its own section
+between the character context and the task, never as user-authored text:
 
-`close()` stops both threads, closes the journal so no stale worker can cross the
-launch boundary, and waits up to 3 and 5 seconds for them to end.
+```text
+Platform-owned character context (user-authored):
+<characterMemory>
+
+<recalledMemory, when present>
+
+User task:
+<providerInput, else prompt>
+```
+
+This is byte for byte the server's `hovelProviderPrompt`.
+`HovelProviderPromptTest` checks every case of the server's fixture
+(`event-contracts/src/hovel/fixtures/provider-prompt.json`), copied into
+`HovelProviderPromptFixture.kt` by
+`tools/sync-server-fixtures.py ../server-platform`, the same script that copies
+the host-bridge fixtures. Run it after the fixture changes; `--check` fails
+when a copy is stale.
+
+### Memory jobs
+
+A heartbeat from a computer declaring `memory-extraction` also returns
+`memoryJobs`: its open jobs, oldest first. If no memory job is running, the
+session picks the first one in `queued`, `claimed` or `running` (`queued` only
+when Codex is ready) whose `kind` is `extract` and host-bridge `runtimeId` is
+`codex`. A job naming another kind or runtime is left for a companion that runs
+it. A job missing either field is treated as unreadable (below), so a renamed
+field asks for an update instead of being skipped in silence.
+
+A memory job runs the server-built `input` exactly as given: no character
+section and no recalled memory. It runs on the job's `model` and `effort`,
+which the player chose in Hovel's memory settings (defaults: `runtime-default`
+model, `low` effort); see [desktop-execution.md](desktop-execution.md) for the
+Codex flags. It goes through `ExecutionCoordinator` like a task, on
+`memory/claim` and `memory/progress` with `jobId` (`HovelMemoryJobRemote`). A
+successful result over 65,536 characters is reported `failed` with its length,
+never cut short into broken JSON.
+
+A failed or uncertain job needs nothing on this computer. The server closes it
+and plans the day again, up to 3 attempts, then waits for the player's retry in
+Hovel. A job the server replaced or took back answers 409 and is never offered
+again. Memory job failures leave the status line unchanged, except a job this
+version cannot read (a missing field, such as `runtimeId` under an older name,
+a model or effort it does not know, or an input longer than it can run). The status line then says "Connected · Update
+Hovel on this computer to run its memory jobs", and the job stays queued until
+the companion is updated.
+
+### Consolidation
+
+The session calls `memory/consolidate` 1 minute after start, every 5 minutes
+after that, and right after each delivered memory job result. The calls run on
+their own thread, so a slow one never delays a heartbeat. Only the extraction
+computer chosen in Hovel's memory settings may consolidate; any other computer
+gets 403. Every failure is ignored and waits for the next call.
+
+### Closing
+
+`ExecutionJournal` holds a `host.lock` so two companions cannot share a
+journal. `close()` stops the heartbeat and consolidation threads and both
+workers, closes both journals so no stale worker can cross the launch boundary,
+and waits at most 5 seconds in all for them to end.
 
 ## Failure messages to know
 
@@ -209,7 +283,7 @@ launch boundary, and waits up to 3 and 5 seconds for them to end.
 | Status line "Connection failed. Check the native configuration, Keychain approval and server." | A `prepareConnection` or `activateConnection` failure, or an unknown method name, other than a cancellation (HovelCompanion.kt line 105). Failures before that point (bad `capabilities` args, a closed companion, "Another native operation is pending") leave the status line unchanged and reach the page only as the generic 400. This status replaces the specific error, so the causes below never reach the window. |
 | (not shown) "This native profile belongs to another account" | Thrown when `registration.json` has a different `ownerId` (HovelCompanion.kt line 124). Users see only the two generic messages above; check `registration.json` in the data directory. |
 | Status line "Server unavailable; tasks remain on this computer" | A heartbeat failed. The session keeps retrying every 10 seconds. |
-| Status line "Task needs reconciliation on this computer; no automatic host change" | Any exception from `ExecutionCoordinator.accept`, including network errors and a server 409, not only a stopped task (HovelHostSession.kt line 51). See the journal before retrying. |
+| Status line "Task needs reconciliation on this computer; no automatic host change" | Any exception from `ExecutionCoordinator.accept` for a task, including network errors and a server 409, not only a stopped task. See the journal before retrying. Memory jobs never set it. |
 
 ## Tests
 
@@ -219,6 +293,11 @@ launch boundary, and waits up to 3 and 5 seconds for them to end.
 
 `HovelAdapterTest` covers registration reuse and that the token is not in
 `registration.json`, invalidation during a blocked activation, the transport
-deadline on a stalled body, the origin policy, and host pinning. Live JCEF,
+deadline on a stalled body, the origin policy, host pinning, the declared
+features, recalled memory, and memory jobs: their request, routes, output
+limit and refusals. `HovelHostSessionTest` covers a memory job beside a running
+task, one item per lane, malformed items, other providers and consolidation.
+`HovelProviderPromptTest` checks the provider text against the server fixture.
+Live JCEF,
 Keychain and Codex need a Mac; follow
 [hovel-native-validation.md](hovel-native-validation.md).

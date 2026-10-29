@@ -17,7 +17,17 @@ class DesktopChatTest {
     private val threadId = "10000000-0000-4000-8000-000000000001"
     private val freshThreadId = "10000000-0000-4000-8000-000000000002"
     private fun scope(profile: String = "local", companion: String = UUID.randomUUID().toString()) = ChatScope(profile, companion, "Ember", UUID.randomUUID().toString())
-    private fun send(scope: ChatScope, speak: Boolean = true) = ChatSend(scope.profile, scope.companionId, scope.name, scope.sessionId, UUID.randomUUID().toString(), "Hello", speak)
+    private val codex = TeamMember(RuntimeId.CODEX, SharedRules.RUNTIME_DEFAULT_MODEL)
+    private fun send(scope: ChatScope, speak: Boolean = true, member: TeamMember = codex, text: String = "Hello") =
+        ChatSend(scope.profile, scope.companionId, scope.name, scope.sessionId, member, UUID.randomUUID().toString(), text, speak)
+    private fun handover(scope: ChatScope, from: TeamMember?, to: TeamMember, requestId: String = UUID.randomUUID().toString()) =
+        ChatHandover(scope.profile, scope.companionId, scope.name, scope.sessionId, from, HandoverReason.MANUAL, requestId, to)
+    /** The text a person reads for an entry: a message, or a handover's summary. */
+    private val ChatEntry.text: String get() = when (this) {
+        is ChatEntry.User -> text
+        is ChatEntry.Assistant -> text
+        is ChatEntry.Handover -> summary.orEmpty()
+    }
     private class Speech : ChatSpeech {
         val said = CopyOnWriteArrayList<String>()
         var stops = 0
@@ -41,6 +51,7 @@ class DesktopChatTest {
             calls += method; this.params += params
             return when(method) {
                 "account/read" -> { beforeAccount(); if (connected) json("""{"account":{"type":"chatgpt"}}""") else json("""{"account":null}""") }
+                "config/read" -> json("""{"config":{}}""")
                 "thread/resume" -> { if (resumeRejected) throw CodexRequestRejected(); json("""{"thread":{"id":"$thread"}}""") }
                 "thread/start" -> { if (resumeRejected) thread = freshThreadId; json("""{"thread":{"id":"$thread"}}""") }
                 "turn/start" -> {
@@ -54,7 +65,6 @@ class DesktopChatTest {
             put("threadId", thread); put("turnId", turn); put("itemId", "message"); put("delta", text)
         })
         fun complete() = notify("turn/completed", json("""{"threadId":"$thread","turn":{"id":"turn-1","status":"completed"}}"""))
-        override fun loginResult(loginId: String): Boolean? = null
         override fun close() { onClose(); closed = true }
     }
     private fun json(value: String) = Json.parseToJsonElement(value).jsonObject
@@ -63,14 +73,17 @@ class DesktopChatTest {
         while (!check()) { if (System.nanoTime() > until) fail("Condition timed out"); Thread.sleep(10) }
     }
     private fun state(chat: DesktopChat, scope: ChatScope) = runBlocking { chat.snapshot(scope) }
+    /** A chat whose only runtime is Codex, served by [rpc] instead of an app-server process. */
+    private fun chat(root: Path, speech: ChatSpeech, rpc: (receive: (String, JsonObject) -> Unit) -> CodexAppServer) =
+        DesktopChat(root, listOf(CodexChatRuntime(root, Path.of("/usr/bin/true")) { _, receive -> rpc(receive) }), speech)
 
     @Test fun streamsPersistsDeduplicatesAndResumesOnlyItsCompanion() = runBlocking {
         val root = Files.createTempDirectory("chat-history")
         val speech = Speech(); val rpcs = CopyOnWriteArrayList<Rpc>()
-        DesktopChat(root, Path.of("/usr/bin/true"), speech) { _, receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
+        chat(root, speech) { receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
             val a = scope(); chat.open(a); await { state(chat,a).state == ChatState.READY }
             val request = send(a); chat.send(request); chat.send(request)
-            await { rpcs[0].calls.contains("turn/start") }
+            await { rpcs.isNotEmpty() && rpcs[0].calls.contains("turn/start") }
             rpcs[0].delta("Ignored", "other-turn"); rpcs[0].delta("Hello "); rpcs[0].delta("friend"); rpcs[0].complete()
             await { state(chat,a).state == ChatState.READY }
             assertEquals("Hello friend", chat.snapshot(a).messages.last().text)
@@ -83,7 +96,8 @@ class DesktopChatTest {
             val a2 = a.copy(sessionId = UUID.randomUUID().toString())
             chat.open(a2); await { state(chat,a2).state == ChatState.READY }
             assertEquals("Hello friend", chat.snapshot(a2).messages.last().text)
-            chat.send(send(a2,false)); await { rpcs.last().calls.contains("turn/start") }
+            // The new view's first send starts a new app-server, which resumes the thread.
+            chat.send(send(a2,false)); await { rpcs.size == 2 && rpcs.last().calls.contains("turn/start") }
             assertContains(rpcs.last().calls,"thread/resume")
             val resume = rpcs.last().params[rpcs.last().calls.indexOf("thread/resume")]
             assertEquals(JsonPrimitive(true), resume["excludeTurns"])
@@ -99,7 +113,7 @@ class DesktopChatTest {
 
     @Test fun buffersEventsBeforeTurnAcknowledgementAndMutesPendingReply() = runBlocking {
         val speech = Speech(); lateinit var rpc: Rpc
-        DesktopChat(Files.createTempDirectory("chat-early"), Path.of("/usr/bin/true"), speech) { _, receive -> Rpc(receive).also { rpc=it; it.earlyReply=true } }.use { chat ->
+        chat(Files.createTempDirectory("chat-early"), speech) { receive -> Rpc(receive).also { rpc=it; it.earlyReply=true } }.use { chat ->
             val a=scope(); chat.open(a); await { state(chat,a).state==ChatState.READY }
             chat.send(send(a)); await { state(chat,a).state==ChatState.READY }
             assertEquals("Early hello",chat.snapshot(a).messages.last().text)
@@ -114,23 +128,32 @@ class DesktopChatTest {
     @Test fun stoppingAnAccountProbeCannotResurrectIt() = runBlocking {
         val entered=CountDownLatch(1); val release=CountDownLatch(1)
         val speech=Speech(); lateinit var old: Rpc
-        DesktopChat(Files.createTempDirectory("chat-stop"),Path.of("/usr/bin/true"),speech) { _, receive ->
+        chat(Files.createTempDirectory("chat-stop"), speech) { receive ->
             Rpc(receive).also { old=it; it.beforeAccount={ entered.countDown(); release.await(5,TimeUnit.SECONDS) } }
         }.use { chat ->
-            val a=scope(); chat.open(a); assertTrue(entered.await(5,TimeUnit.SECONDS))
+            // A view checks the account on its first send.
+            val a=scope(); chat.open(a); chat.send(send(a)); assertTrue(entered.await(5,TimeUnit.SECONDS))
             chat.stop(a); release.countDown(); old.notify("transport/closed",buildJsonObject {})
             Thread.sleep(50); assertEquals(ChatState.CANCELLED,chat.snapshot(a).state); await { old.closed }
         }
     }
 
     @Test fun disconnectedAccountsNeverStartATurnAndCorruptHistoryIsPreserved() = runBlocking {
-        val root=Files.createTempDirectory("chat-invalid"); lateinit var rpc: Rpc
-        DesktopChat(root,Path.of("/usr/bin/true"),Speech()) { _, receive -> Rpc(receive).also { rpc=it; it.connected=false } }.use { chat ->
-            val a=scope(); chat.open(a); await { state(chat,a).state==ChatState.DISCONNECTED }
-            assertFails { chat.send(send(a)) }; assertEquals(listOf("account/read"),rpc.calls.toList())
+        val root=Files.createTempDirectory("chat-invalid"); lateinit var rpc: Rpc; val all = CopyOnWriteArrayList<Rpc>()
+        fun rpcs() = all
+        chat(root, Speech()) { receive -> Rpc(receive).also { rpc=it; all += it; it.connected=false } }.use { chat ->
+            val a=scope(); chat.open(a); chat.send(send(a)); await { state(chat,a).state==ChatState.DISCONNECTED }
+            assertEquals("Sign in to Codex again: run `codex login` in Terminal.", chat.snapshot(a).notice)
+            // Nothing reached Codex: the message stays, unanswered, with why; a resend checks the account again.
+            val failed = chat.snapshot(a)
+            assertEquals(UserStatus.UNANSWERED, (failed.messages.last() as ChatEntry.User).status)
+            assertEquals(ChatFailureReport(ChatFailureKind.SIGNED_OUT, codex), failed.failure)
+            assertTrue(failed.messages.none { it is ChatEntry.Assistant }, "No empty reply is left")
+            chat.send(send(a)); await { state(chat,a).state==ChatState.DISCONNECTED }
+            assertEquals(listOf("account/read", "account/read"), rpcs().flatMap { it.calls }.toList())
             await { rpc.closed }
             chat.closeSession(a)
-            val file=root.resolve("local/codex/companion-chats/${a.companionId}.json")
+            val file=root.resolve("local/companion-chats/${a.companionId}.json")
             Files.writeString(file,"broken")
             assertFails { chat.open(a) }; assertEquals("broken",Files.readString(file))
         }
@@ -138,51 +161,136 @@ class DesktopChatTest {
 
     @Test fun failedResumeStartsAFreshThreadAndSavesIt() = runBlocking {
         val root = Files.createTempDirectory("chat-resume"); val rpcs = CopyOnWriteArrayList<Rpc>()
-        DesktopChat(root, Path.of("/usr/bin/true"), Speech()) { _, receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
+        var rejectResume = false
+        chat(root, Speech()) { receive -> Rpc(receive).also { rpcs += it; it.resumeRejected = rejectResume } }.use { chat ->
             val a = scope(); chat.open(a); await { state(chat,a).state == ChatState.READY }
-            chat.send(send(a, false)); await { rpcs[0].calls.contains("turn/start") }
+            chat.send(send(a, false)); await { rpcs.isNotEmpty() && rpcs[0].calls.contains("turn/start") }
             rpcs[0].complete(); await { state(chat,a).state == ChatState.READY }
             chat.closeSession(a)
             val again = a.copy(sessionId = UUID.randomUUID().toString())
             chat.open(again); await { state(chat,again).state == ChatState.READY }
-            rpcs.last().resumeRejected = true
-            chat.send(send(again, false)); await { rpcs.last().calls.contains("turn/start") }
-            // Opening and sending each confirm the account before any thread call.
-            assertEquals(listOf("account/read", "account/read", "thread/resume", "thread/start", "turn/start"), rpcs.last().calls.toList())
-            assertEquals(JsonPrimitive(freshThreadId), rpcs.last().params.last()["threadId"])
+            rejectResume = true
+            chat.send(send(again, false, text = "Still there?")); await { rpcs.size == 2 && rpcs.last().calls.contains("turn/start") }
+            // A view's first send checks the account and the turn confirms it before any thread call. Codex no longer has
+            // the thread, so the turn starts over in a new one, which hears the recent messages.
+            assertEquals(listOf("account/read", "account/read", "config/read", "thread/resume", "account/read", "config/read", "thread/start", "turn/start"), rpcs.last().calls.toList())
+            val turn = rpcs.last().params.last()
+            assertEquals(JsonPrimitive(freshThreadId), turn["threadId"])
+            assertEquals("Earlier in this conversation (the most recent messages):\n<<<\nPerson: Hello\n>>>\n\nStill there?",
+                turn.getValue("input").jsonArray.single().jsonObject.getValue("text").jsonPrimitive.content)
             rpcs.last().delta("Fresh hello"); rpcs.last().complete(); await { state(chat,again).state == ChatState.READY }
             assertEquals("Fresh hello", chat.snapshot(again).messages.last().text)
-            val saved = ChatHistory(root.resolve("local/codex/companion-chats/${a.companionId}.json")).read()
-            assertEquals(freshThreadId, saved.threadId)
-            assertEquals(4, saved.messages.size)
+            val saved = ChatHistory(root.resolve("local/companion-chats/${a.companionId}.json")).read()
+            assertEquals(freshThreadId, saved.conversations[RuntimeId.CODEX]?.id)
+            assertTrue(saved.pendingContext.isEmpty())
+            // Codex's first turn is noted as a fresh start, and its new thread as getting the recent messages.
+            assertEquals(listOf("handover", "user", "assistant", "handover", "user", "assistant"), saved.entries.map { it::class.simpleName!!.lowercase() })
+            val note = saved.entries[3] as ChatEntry.Handover
+            assertEquals(listOf(codex, codex, HandoverMethod.RECENT_MESSAGES), listOf(note.from, note.to, note.method))
+        }
+    }
+
+    @Test fun aConversationFromBeforeTeamsMovesHereAndStartsFreshOnThePlayersCodexLogin() = runBlocking {
+        val root = Files.createTempDirectory("chat-migrate"); val rpcs = CopyOnWriteArrayList<Rpc>()
+        val a = scope()
+        val oldHome = root.resolve("local/codex")
+        val legacy = oldHome.resolve("companion-chats/${a.companionId}.json")
+        Files.createDirectories(legacy.parent)
+        Files.writeString(oldHome.resolve("auth-marker"), "the old login")
+        Files.writeString(legacy, """{"threadId":"$threadId","messages":[{"id":"${UUID.randomUUID()}","role":"user","text":"Hi"},{"id":"${UUID.randomUUID()}","role":"assistant","text":"Hello again"}]}""")
+        chat(root, Speech()) { receive -> Rpc(receive).also { rpcs += it; it.thread = freshThreadId } }.use { chat ->
+            chat.open(a); await { state(chat,a).state == ChatState.READY }
+            assertEquals(listOf("Hi", "Hello again"), chat.snapshot(a).messages.map { it.text })
+            // Hovel's own record moves out; the old home and everything else in it stay as they were.
+            assertFalse(Files.exists(legacy))
+            assertEquals("the old login", Files.readString(oldHome.resolve("auth-marker")))
+            chat.send(send(a, false, text = "Still there?")); await { rpcs.isNotEmpty() && rpcs[0].calls.contains("turn/start") }
+            // The thread lives in the old per-profile home, so it is never resumed: a new one hears the recent messages.
+            assertFalse(rpcs[0].calls.contains("thread/resume"))
+            assertEquals("Earlier in this conversation (the most recent messages):\n<<<\nPerson: Hi\nCompanion: Hello again\n>>>\n\nStill there?",
+                rpcs[0].params.last().getValue("input").jsonArray.single().jsonObject.getValue("text").jsonPrimitive.content)
+            rpcs[0].complete(); await { state(chat,a).state == ChatState.READY }
+            val saved = ChatHistory(root.resolve("local/companion-chats/${a.companionId}.json")).read()
+            assertEquals(NativeConversation(freshThreadId, Persona.companion("Ember").hash, playerLogin = true), saved.conversations[RuntimeId.CODEX])
+            // The conversation notes the fresh start, as the host's own note, just before the message it answers.
+            val note = saved.entries.filterIsInstance<ChatEntry.Handover>().single()
+            assertEquals(listOf(codex, codex, HandoverMethod.RECENT_MESSAGES, HandoverReason.HOST), listOf(note.from, note.to, note.method, note.reason))
+            assertEquals(listOf("user", "assistant", "handover", "user", "assistant"), saved.entries.map { it::class.simpleName!!.lowercase() })
+        }
+    }
+
+    @Test fun anUnreadableOldConversationStaysBesideANewOne() = runBlocking {
+        val root = Files.createTempDirectory("chat-migrate-broken")
+        val a = scope()
+        val legacy = root.resolve("local/codex/companion-chats/${a.companionId}.json")
+        Files.createDirectories(legacy.parent); Files.writeString(legacy, "broken")
+        chat(root, Speech()) { receive -> Rpc(receive) }.use { chat ->
+            chat.open(a); await { state(chat,a).state == ChatState.READY }
+            assertTrue(chat.snapshot(a).messages.isEmpty())
+            chat.send(send(a, false)); await { state(chat,a).messages.size == 3 }
+            assertEquals(HandoverMethod.FRESH, (chat.snapshot(a).messages.first() as ChatEntry.Handover).method)
+        }
+        assertEquals("broken", Files.readString(legacy))
+        assertTrue(Files.exists(root.resolve("local/companion-chats/${a.companionId}.json")))
+    }
+
+    @Test fun handoverTextOwedToARuntimeIsSentWithItsNextTurnOnly() = runBlocking {
+        val root = Files.createTempDirectory("chat-pending"); val rpcs = CopyOnWriteArrayList<Rpc>()
+        val a = scope()
+        val history = ChatHistory(root.resolve("local/companion-chats/${a.companionId}.json"))
+        val context = "Earlier in this conversation (written by Claude · Sonnet):\n<<<\nuser: Hi\n>>>"
+        history.write(ChatRecord(pendingContext = mapOf(RuntimeId.CODEX to context)))
+        fun input(rpc: Rpc, turn: Int) = rpc.params.filterIndexed { index, _ -> rpc.calls[index] == "turn/start" }[turn]
+            .getValue("input").jsonArray.single().jsonObject.getValue("text").jsonPrimitive.content
+        chat(root, Speech()) { receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
+            chat.open(a); await { state(chat,a).state == ChatState.READY }
+            chat.send(send(a, false)); await { rpcs.isNotEmpty() && rpcs[0].calls.contains("turn/start") }
+            assertEquals("$context\n\nHello", input(rpcs[0], 0))
+            rpcs[0].complete(); await { state(chat,a).state == ChatState.READY }
+            assertTrue(history.read().pendingContext.isEmpty())
+            chat.send(send(a, false)); await { rpcs[0].calls.count { it == "turn/start" } == 2 }
+            assertEquals("Hello", input(rpcs[0], 1))
+        }
+        history.write(history.read().copy(pendingContext = mapOf(RuntimeId.CLAUDE_CODE to context)))
+        chat(root, Speech()) { receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
+            val again = a.copy(sessionId = UUID.randomUUID().toString())
+            chat.open(again); await { state(chat,again).state == ChatState.READY }
+            chat.send(send(again, false)); await { rpcs.size == 2 && rpcs.last().calls.contains("turn/start") }
+            assertEquals("Hello", input(rpcs.last(), 0))
+            rpcs.last().complete(); await { state(chat,again).state == ChatState.READY }
+            assertEquals(setOf(RuntimeId.CLAUDE_CODE), history.read().pendingContext.keys)
         }
     }
 
     @Test fun losingAnIdleAppServerStartsANewOneOnTheNextSend() = runBlocking {
         val rpcs = CopyOnWriteArrayList<Rpc>()
-        DesktopChat(Files.createTempDirectory("chat-idle-loss"), Path.of("/usr/bin/true"), Speech()) { _, receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
+        chat(Files.createTempDirectory("chat-idle-loss"), Speech()) { receive -> Rpc(receive).also { rpcs += it } }.use { chat ->
             val a = scope(); chat.open(a); await { state(chat,a).state == ChatState.READY }
-            chat.send(send(a, false)); await { rpcs[0].calls.contains("turn/start") }
+            chat.send(send(a, false)); await { rpcs.isNotEmpty() && rpcs[0].calls.contains("turn/start") }
             rpcs[0].complete(); await { state(chat,a).state == ChatState.READY }
             rpcs[0].notify("transport/closed", buildJsonObject {})
             await { rpcs[0].closed }
             assertEquals(ChatState.READY, chat.snapshot(a).state)
             chat.send(send(a, false)); await { rpcs.size == 2 && rpcs[1].calls.contains("turn/start") }
-            assertEquals(listOf("account/read", "thread/resume", "turn/start"), rpcs[1].calls.toList())
+            assertEquals(listOf("account/read", "config/read", "thread/resume", "turn/start"), rpcs[1].calls.toList())
             assertEquals(1, rpcs[0].calls.count { it == "turn/start" })
         }
     }
 
     @Test fun viewsTheHostEndedKeepTheirFinalSnapshot() = runBlocking {
-        DesktopChat(Files.createTempDirectory("chat-no-codex"), null, Speech()).use { chat ->
+        DesktopChat(Files.createTempDirectory("chat-no-codex"), emptyList(), Speech()).use { chat ->
             val a = scope()
-            assertEquals(ChatState.ERROR, chat.open(a).state)
-            assertEquals(ChatState.ERROR, chat.snapshot(a).state)
-            assertEquals("Install Codex on this Mac and restart Hovel.", chat.snapshot(a).notice)
+            assertEquals(ChatState.READY, chat.open(a).state)
+            // Codex is offered but not installed: the message stays, unanswered, for a retry with another member.
+            val sent = chat.send(send(a))
+            assertEquals(ChatState.DISCONNECTED, sent.state)
+            assertEquals(listOf(UserStatus.UNANSWERED), sent.messages.filterIsInstance<ChatEntry.User>().map { it.status })
+            assertEquals(ChatFailureReport(ChatFailureKind.UNAVAILABLE, codex), sent.failure)
+            assertEquals("Install Codex on this Mac, then restart Hovel to connect.", chat.snapshot(a).notice)
             assertFails { chat.snapshot(scope()) }
             chat.closeSession(a); assertFails { chat.snapshot(a) }
         }
-        DesktopChat(Files.createTempDirectory("chat-invalidate"), Path.of("/usr/bin/true"), Speech()) { _, receive -> Rpc(receive) }.use { chat ->
+        chat(Files.createTempDirectory("chat-invalidate"), Speech()) { receive -> Rpc(receive) }.use { chat ->
             val a = scope(); chat.open(a); await { state(chat,a).state == ChatState.READY }
             chat.invalidate()
             assertEquals(ChatState.ERROR, chat.snapshot(a).state)
@@ -192,11 +300,14 @@ class DesktopChatTest {
     }
 
     @Test fun stoppingNeverWaitsForTheAppServerToExit() = runBlocking {
-        val closing = CountDownLatch(1); val release = CountDownLatch(1); lateinit var rpc: Rpc
-        DesktopChat(Files.createTempDirectory("chat-release"), Path.of("/usr/bin/true"), Speech()) { _, receive ->
-            Rpc(receive).also { rpc = it; it.onClose = { closing.countDown(); release.await(5, TimeUnit.SECONDS) } }
+        val closing = CountDownLatch(1); val release = CountDownLatch(1); val rpcs = CopyOnWriteArrayList<Rpc>()
+        chat(Files.createTempDirectory("chat-release"), Speech()) { receive ->
+            Rpc(receive).also { rpcs += it; it.onClose = { closing.countDown(); release.await(5, TimeUnit.SECONDS) } }
         }.use { chat ->
-            val a = scope(); chat.open(a); await { state(chat,a).state == ChatState.READY }
+            // Stop during a reply closes the app-server, which here takes long to exit.
+            val a = scope(); chat.open(a); chat.send(send(a, false)); await { rpcs.isNotEmpty() && rpcs[0].calls.contains("turn/start") }
+            val rpc = rpcs[0]
+            Thread.sleep(50)
             val started = System.nanoTime()
             assertEquals(ChatState.CANCELLED, chat.stop(a).state)
             assertEquals(ChatState.CANCELLED, chat.snapshot(a).state)
@@ -204,6 +315,74 @@ class DesktopChatTest {
             assertTrue(System.nanoTime() - started < TimeUnit.SECONDS.toNanos(4))
             assertFalse(rpc.closed)
             release.countDown(); await { rpc.closed }
+        }
+    }
+
+    /** A runtime the test drives by hand: it records turns and summaries and answers what the test sets. */
+    private class FakeRuntime(override val id: RuntimeId = RuntimeId.CODEX) : ChatRuntime {
+        val requests = CopyOnWriteArrayList<TurnRequest>()
+        val events = CopyOnWriteArrayList<TurnEvents>()
+        val summaries = CopyOnWriteArrayList<SummaryRequest>()
+        @Volatile var readiness: Readiness = Readiness.Ready
+        @Volatile var summary: (SummaryRequest) -> String = { "They said hello." }
+        @Volatile var stops = 0
+        @Volatile var releases = 0
+        override fun readiness(profile: String) = readiness
+        override fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle { requests += turn; this.events += events; return TurnHandle { stops++ } }
+        override fun summarize(request: SummaryRequest): String { summaries += request; return summary(request) }
+        override fun release() { releases++ }
+        override fun close() = Unit
+    }
+
+    @Test fun aLostConversationStartsFreshOnceAndFailuresBecomeNotices() = runBlocking {
+        val runtime = FakeRuntime()
+        DesktopChat(Files.createTempDirectory("chat-fake-runtime"), listOf(runtime), Speech()).use { chat ->
+            val a = scope(); chat.open(a); await { state(chat,a).state == ChatState.READY }
+            chat.send(send(a, false)); await { runtime.events.size == 1 }
+            assertNull(runtime.requests[0].conversation)
+            runtime.events[0].opened(threadId); runtime.events[0].partial("Hel"); runtime.events[0].completed("Hello", threadId)
+            assertEquals(ChatState.READY, chat.snapshot(a).state); assertEquals("Hello", chat.snapshot(a).messages.last().text)
+
+            chat.send(send(a, false)); await { runtime.events.size == 2 }
+            assertEquals(NativeConversation(threadId, Persona.companion("Ember").hash, playerLogin = true), runtime.requests[1].conversation)
+            runtime.events[1].partial("Partial"); runtime.events[1].failed(ChatFailure.ConversationLost)
+            await { runtime.events.size == 3 }
+            assertNull(runtime.requests[2].conversation); assertEquals("Hello", runtime.requests[2].text)
+            assertEquals(ChatState.RESPONDING, chat.snapshot(a).state); assertEquals("", chat.snapshot(a).messages.last().text)
+            // The new conversation hears the recent messages, noted just before the person's message.
+            assertEquals("Earlier in this conversation (the most recent messages):\n<<<\nPerson: Hello\nCompanion: Hello\n>>>", runtime.requests[2].context)
+            val note = chat.snapshot(a).messages.dropLast(2).last() as ChatEntry.Handover
+            assertEquals(HandoverMethod.RECENT_MESSAGES, note.method); assertEquals(codex, note.from); assertEquals(codex, note.to)
+            // A new conversation that is lost too is not retried again.
+            runtime.events[2].failed(ChatFailure.ConversationLost)
+            assertEquals(ChatState.ERROR, chat.snapshot(a).state)
+            assertEquals("Codex could not continue this conversation. Send your message again to start fresh.", chat.snapshot(a).notice)
+            assertEquals(3, runtime.requests.size)
+
+            // An error needs Reconnect, which opens the same view again.
+            chat.open(a); await { state(chat,a).state == ChatState.READY }
+            chat.send(send(a, false)); await { runtime.events.size == 4 }
+            runtime.events[3].failed(ChatFailure.UsageLimit(java.time.Instant.now().plusSeconds(3600)))
+            assertEquals(ChatState.ERROR, chat.snapshot(a).state)
+            assertTrue(chat.snapshot(a).notice!!.startsWith("You've reached your Codex usage limit. It resets at "))
+            assertEquals("You've reached your Claude usage limit. Try again later.", failureNotice(RuntimeId.CLAUDE_CODE, ChatFailure.UsageLimit(null)))
+
+            // Stop ends a started reply through its handle, without ending the runtime's other work.
+            chat.open(a); await { state(chat,a).state == ChatState.READY }
+            chat.send(send(a, false)); await { runtime.events.size == 5 }
+            Thread.sleep(100)
+            val releases = runtime.releases
+            assertEquals(ChatState.CANCELLED, chat.stop(a).state)
+            assertEquals(1, runtime.stops); assertEquals(releases, runtime.releases)
+            runtime.events[4].completed("Late", threadId)
+            assertEquals(ChatState.CANCELLED, chat.snapshot(a).state); assertEquals("", chat.snapshot(a).messages.last().text)
+
+            chat.send(send(a, false)); await { runtime.events.size == 6 }
+            runtime.events[5].failed(ChatFailure.SignedOut)
+            assertEquals(ChatState.DISCONNECTED, chat.snapshot(a).state)
+            assertEquals("Sign in to Codex again: run `codex login` in Terminal.", chat.snapshot(a).notice)
+            // Every failed send keeps the person's message.
+            assertEquals(5, chat.snapshot(a).messages.count { it is ChatEntry.User })
         }
     }
 
@@ -242,14 +421,54 @@ class DesktopChatTest {
     }
 
     @Test fun voiceIsUnavailableUntilTheEngineAndFilesArePresent() {
-        val model = Files.createTempDirectory("voice-model")
-        val clip = Files.createTempFile(model, "voice", ".wav")
-        val env = mapOf("HOVEL_VOICE_MODEL" to model.toString(), "HOVEL_VOICE_REFERENCE" to clip.toString())
+        val root = Files.createTempDirectory("voice-model")
+        val kokoro = root.resolve("kokoro")
+        Files.createDirectories(kokoro)
+        for (name in listOf("model.onnx", "voices-blends.bin", "tokens.txt", "lexicon-us-en.txt")) {
+            Files.writeString(kokoro.resolve(name), "x")
+        }
+        val pocket = root.resolve("pocket")
+        Files.createDirectories(pocket)
+        val clip = Files.createTempFile(pocket, "voice", ".wav")
+        val choice = root.resolve("missing-choice.txt")
+        val kokoroEnv = mapOf(
+            "HOVEL_KOKORO_MODEL" to kokoro.toString(),
+            "HOVEL_KOKORO_VOICE_FILE" to choice.toString(),
+        )
+        val pocketEnv = mapOf(
+            "HOVEL_VOICE_BACKEND" to "sherpa",
+            "HOVEL_VOICE_MODEL" to pocket.toString(),
+            "HOVEL_VOICE_REFERENCE" to clip.toString(),
+        )
         try {
-            assertNotNull(desktopVoiceConfig(env, engineLinked = true))
-            assertNull(desktopVoiceConfig(env, engineLinked = false))
-            assertNull(desktopVoiceConfig(env - "HOVEL_VOICE_REFERENCE", engineLinked = true))
-            assertNull(desktopVoiceConfig(env + ("HOVEL_VOICE_MODEL" to model.resolve("missing").toString()), engineLinked = true))
-        } finally { model.toFile().deleteRecursively() }
+            val chat = checkNotNull(desktopVoiceConfig(kokoroEnv, engineLinked = true))
+            assertEquals(org.formulagen.wrapper.voice.VoiceConfig.KOKORO, chat.backend)
+            assertEquals("adam70-michael30", chat.kokoroVoiceId)
+            assertNull(desktopVoiceConfig(kokoroEnv, engineLinked = false))
+            assertNull(desktopVoiceConfig(kokoroEnv - "HOVEL_KOKORO_MODEL" + ("HOVEL_KOKORO_MODEL" to root.resolve("missing").toString()), engineLinked = true))
+            Files.delete(kokoro.resolve("voices-blends.bin"))
+            assertNull(desktopVoiceConfig(kokoroEnv, engineLinked = true))
+            val cloned = checkNotNull(desktopVoiceConfig(pocketEnv, engineLinked = true))
+            assertEquals(org.formulagen.wrapper.voice.VoiceConfig.SHERPA, cloned.backend)
+            assertNull(desktopVoiceConfig(pocketEnv - "HOVEL_VOICE_REFERENCE", engineLinked = true))
+            assertNull(desktopVoiceConfig(mapOf("HOVEL_VOICE_MODEL" to pocket.toString(), "HOVEL_VOICE_REFERENCE" to clip.toString()), engineLinked = true))
+        } finally { root.toFile().deleteRecursively() }
     }
+    @Test fun sendAndRetryCarryEffortWithoutChangingMemberIdentity() = runBlocking<Unit> {
+        val runtime = FakeRuntime()
+        val root = Files.createTempDirectory("chat-effort")
+        DesktopChat(root, listOf(runtime), Speech()).use { chat ->
+            val a = scope(); chat.open(a); await { state(chat, a).state == ChatState.READY }
+            val message = send(a, false).copy(effort = ModelEffort.HIGH)
+            chat.send(message); await { runtime.events.size == 1 }
+            assertEquals(ModelEffort.HIGH, runtime.requests[0].effort)
+            runtime.events[0].failed(ChatFailure.Temporary)
+            chat.retry(ChatRetry(a.profile, a.companionId, a.name, a.sessionId, message.requestId, codex, UUID.randomUUID().toString(), false, effort = ModelEffort.LOW))
+            await { runtime.events.size == 2 }
+            assertEquals(ModelEffort.LOW, runtime.requests[1].effort)
+            assertEquals(runtime.requests[0].model, runtime.requests[1].model)
+        }
+        root.toFile().deleteRecursively()
+    }
+
 }

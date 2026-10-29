@@ -66,6 +66,7 @@ class BridgeRouterTest {
         ProviderMethods.pack(supported(platform, "providers.status", FakeProviderCapability())),
         PetMethods.pack(supported(platform, "pet.status", FakePetCapability())),
         GameMethods.pack(supported(platform, "games.launch", fakes.games)),
+        WorkspaceMethods.pack(supported(platform, "workspace.status", FakeWorkspaceCapability())),
         CompanionMethods.pack(supported(platform, "companion.capabilities", object : CompanionCapability {
             override suspend fun prepareConnection(ownerId: String) = fakes.prepare(ownerId)
             override suspend fun activateConnection(ownerId: String, hostId: String) = JsonObject(emptyMap())

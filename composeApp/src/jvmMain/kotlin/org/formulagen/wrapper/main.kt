@@ -22,6 +22,8 @@ import kotlinx.coroutines.*
 import java.io.File
 import java.net.URI
 import kotlin.system.exitProcess
+import org.formulagen.wrapper.approvals.NativeDialogHost
+import org.formulagen.wrapper.chat.KokoroVoicePicker
 import org.formulagen.wrapper.bridge.desktopHostCapabilities
 import org.formulagen.wrapper.companion.NativeBridge
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
@@ -177,6 +179,8 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
         DesktopServices.create(url, support.toPath(), System.getenv(), product, window).also { resources.services = it }
     }
     val companion = services.companion
+    // Approvals and the start-of-work confirmation: windows of Hovel's own that the page cannot reach.
+    NativeDialogHost(services.dialogs)
     LaunchedEffect(start) {
         if (!start) return@LaunchedEffect
         lifecycle.start {
@@ -226,6 +230,8 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
             } else if (isHovelProduct()) {
                 Text("Set GAMERO_CODEX_PATH and GAMERO_WORKSPACE to enable this Mac's optional Codex connection.", Modifier.padding(8.dp))
             }
+            val picker by services.voicePicker.state
+            KokoroVoicePicker(picker, services.chat::chooseSpokenVoice)
             App(url, enableLegacyBridge = false, webViewFactory = ::persistentDesktopBrowser, onPageLoaded = { loaded, title ->
                 log(LogLevel.Info, "Desktop", SmokeMarkers.pageLoaded(loaded, title))
             }, onWebViewCreated = { browser ->
