@@ -14,7 +14,7 @@ From the repository root:
 
 ```sh
 ./gradlew :composeApp:jvmTest :composeApp:jvmJar --console=plain
-GAMERO_WEB_URL=http://localhost:5173/hovel.html ./gradlew :composeApp:run
+GAMERO_WEB_URL=http://localhost:5173/hovel ./gradlew :composeApp:run
 ```
 
 For launch, set `GAMERO_BROWSER_JAVA_HOME` to an independently installed and

@@ -6,7 +6,7 @@ and `IosWebUrlTest` (URL rules in cases 3 and 4, product rule in case 3b).
 
 Common preconditions: an Apple Silicon Mac with Xcode 26 and an iOS simulator
 runtime. Unless a case says otherwise, Hovel is served at
-`http://127.0.0.1:8080/hovel.html` with `pnpm serve:edge`.
+`http://127.0.0.1:8080/hovel` with `pnpm serve:edge`.
 Debug builds open on the Hovel start screen: tap "Open the door" first, or
 launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 
@@ -26,7 +26,7 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 - **Preconditions:** The HTTPS dev server and extracted certificate from
   [docs/ios.md](docs/ios.md#sign-in-https).
 - **Steps:** Run
-  `GAMERO_WEB_URL=https://localhost:8123/hovel.html GAMERO_SMOKE_ROOT_CERT=/tmp/vite-dev-cert.pem tools/ios-smoke.sh`.
+  `GAMERO_WEB_URL=https://localhost:8123/hovel GAMERO_SMOKE_ROOT_CERT=/tmp/vite-dev-cert.pem tools/ios-smoke.sh`.
 - **Expected:** `PASS: GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Hovel`.
   Without `GAMERO_SMOKE_ROOT_CERT`, it fails at the reachability check.
 
@@ -46,7 +46,7 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
   `http://localhost:8080/index.html`.
 - **Steps:** Launch with
   `SIMCTL_CHILD_GAMERO_PRODUCT=gamero SIMCTL_CHILD_GAMERO_WEB_URL=http://localhost:8080/index.html xcrun simctl launch --console-pty booted org.formulagen.wrapper.WestbergWrapper`.
-- **Expected:** The app loads that page, not `hovel.html`. The log shows
+- **Expected:** The app loads that page, not `/hovel`. The log shows
   `origin=http://localhost:8080` with that page's title.
 
 ### 3b. Product selects the Hovel start screen
@@ -65,7 +65,7 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 ### 4. HTTPS URL from the xcconfig
 
 - **Preconditions:** A reachable HTTPS deployment of Hovel.
-- **Steps:** Set `GAMERO_WEB_URL=https:/$()/<host>/hovel.html` in
+- **Steps:** Set `GAMERO_WEB_URL=https:/$()/<host>/hovel` in
   `iosApp/Configuration/Config.xcconfig`, build, and run without a launch
   override. Tap "Open the door" on the start screen.
 - **Expected:** Hovel loads from that origin, and the log shows
@@ -75,7 +75,7 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 
 ### Missing or invalid URL
 
-- **Steps:** Launch with `SIMCTL_CHILD_GAMERO_WEB_URL=http://example.com/hovel.html`
+- **Steps:** Launch with `SIMCTL_CHILD_GAMERO_WEB_URL=http://example.com/hovel`
   (cleartext to a non-loopback host). Repeat with a URL that has a `#fragment`,
   `user:pass@`, or a `file:` scheme, and with an empty xcconfig value and no
   launch override.
@@ -103,7 +103,7 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 ### Sign-in over HTTP loopback fails
 
 - **Steps:** With server-platform's identity service running, sign in through
-  `http://127.0.0.1:8080/hovel.html`.
+  `http://127.0.0.1:8080/hovel`.
 - **Expected:** Sign-in fails, as observed with identity on `main`. Verify
   returns 200, but the next `/auth/refresh` fails with "Missing refresh token",
   because WKWebView drops identity's `Secure` cookies over HTTP. The app
@@ -117,7 +117,7 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
   identity running, `pnpm dev` on `https://localhost:8123`, and the dev
   certificate trusted in this simulator.
 - **Steps:** Launch with
-  `SIMCTL_CHILD_GAMERO_PRODUCT=gamero SIMCTL_CHILD_GAMERO_WEB_URL=https://localhost:8123/hovel.html`, enter a phone
+  `SIMCTL_CHILD_GAMERO_PRODUCT=gamero SIMCTL_CHILD_GAMERO_WEB_URL=https://localhost:8123/hovel`, enter a phone
   number, then enter the PIN from the identity log once.
 - **Expected:** The log shows `GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Hovel`.
   After the PIN, Hovel leaves the sign-in card and stays signed in. Identity
@@ -131,7 +131,7 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 - **Steps:** After an HTTPS launch through `simctl`, quit the app and open it
   from the home screen.
 - **Expected:** It loads the Info.plist default
-  (`http://127.0.0.1:8080/hovel.html`), not the HTTPS URL, because
+  (`http://127.0.0.1:8080/hovel`), not the HTTPS URL, because
   `SIMCTL_CHILD_*` applies to one launch. Relaunch through `simctl`, or set the
   URL in the scheme or `Config.xcconfig`.
 
