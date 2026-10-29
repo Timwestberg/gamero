@@ -24,11 +24,14 @@ All paths below are under
 | `HovelCompanion` | [hovel/HovelCompanion.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelCompanion.kt) | Handles the bridge methods, shows the approval dialog, owns the registration file, starts the host session at activation and again at every launch. |
 | `MacHostCredentials` | [companion/MacHostCredentials.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/companion/MacHostCredentials.kt) | Stores and reads the host bearer token in the macOS Keychain. |
 | `HovelHttpTransport` | [hovel/HovelHostAdapter.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostAdapter.kt) | The only HTTP client that sends the host token to the server. |
-| `HovelHostSession` | [hovel/HovelHostSession.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostSession.kt) | The memory lane: one memory job at a time, from the runner's heartbeat, and the consolidation timer. |
+| `HovelHostSession` | [hovel/HovelHostSession.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostSession.kt) | The Codex lanes fed by the runner's heartbeat: one Hovel task (with `GAMERO_WORKSPACE`, until step E) and one memory job at a time, and the consolidation timer. |
 | `ConversationHost` | [conversations/ConversationHost.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/ConversationHost.kt) | Builds the runner for the registered account, with runtime instances of its own, and owns `project.*`. |
-| `ConversationRunner` | [conversations/ConversationRunner.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/ConversationRunner.kt) | The host stream, the heartbeat, claims, the claim journal and one serial lane per conversation. |
-| `CoordinatorEngine` | [conversations/CoordinatorEngine.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/CoordinatorEngine.kt) | Runs one claimed message through the companion brain: coordinator, threads, workflow, checkpoints and deltas. |
-| `NativeRoutes` | [conversations/NativeRoutes.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/NativeRoutes.kt) | Every conversation route the Mac calls, spelled once. |
+| `ConversationRunner` | [conversations/ConversationRunner.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/ConversationRunner.kt) | The host stream and its watchdog, the heartbeat, claims, the claim journal and one serial lane per conversation. Also defines `MessageEngine`. |
+| `CoordinatorEngine` | [conversations/CoordinatorEngine.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/CoordinatorEngine.kt) | Runs one claimed message through the companion brain: coordinator, threads, workflow, and the outbox of checkpoints. |
+| `ProviderTurns` | [conversations/ProviderTurns.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/ProviderTurns.kt) | The engine's provider turns: readiness, model resolution, talk permits, work leases and Stop. |
+| `ConversationPrompts` | [conversations/ConversationPrompts.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/ConversationPrompts.kt) | `CONVERSATION_PROTOCOL` and the coordinator's and specialists' inputs. |
+| `NativeRoute` | [hovel/NativeRoutes.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/NativeRoutes.kt) | Every route a registered Mac calls: one table of method, path template and builder, which is also what the transport allows. |
+| `DesktopBrain` | [brain/DesktopBrain.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/brain/DesktopBrain.kt) | Frozen: serves the page's `brain.*` methods only and is removed in step E. See below. |
 
 `DesktopServices.create` builds the services; [main.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/main.kt) attaches them to the WebView.
 
@@ -37,7 +40,10 @@ All paths below are under
 `DesktopServices.create` creates a `HovelCompanion` when `GAMERO_PRODUCT` (or
 `-Dgamero.product`) is `hovel` and the OS is macOS. Codex (`GAMERO_CODEX_PATH`,
 else `codex` on `PATH` or an installed location) is optional: without it the
-Mac runs conversations on the runtimes it has, and no memory jobs.
+Mac runs conversations on the runtimes it has, and no memory jobs. With Codex
+and `GAMERO_WORKSPACE` set, the Mac also runs web Hovel's read-only Codex tasks
+in that workspace (the task lane), which stays until step E removes the web
+task UI. Both are read only from the environment.
 
 Otherwise the companion's v2 methods answer `unsupported` and version 1 answers
 every query with `403`. On a product other than Hovel the window shows nothing.
@@ -145,7 +151,9 @@ again.
    approved registration. It reads the token from Keychain and starts the host
    session: the conversation runner (below) and, with Codex, the memory lane, a
    memory-job journal (`memory-journal-<hostId>`) and a Codex provider writing
-   to `memory-output-<hostId>` on the player's own login. Memory jobs run in an
+   to `memory-output-<hostId>` on the player's own login. With
+   `GAMERO_WORKSPACE` too, the task lane: a task journal (`journal-<hostId>`)
+   and a Codex provider writing to `output-<hostId>`. Memory jobs run in an
    empty private folder, `memory-workspace-<hostId>`, never a project folder, so
    a project's `AGENTS.md` cannot change their output. A second activation
    reuses the running session.
@@ -171,41 +179,52 @@ prompt.
   `X-Hovel-Contract` (this build's companion contract, `HovelContract.CURRENT`).
 - HTTPS only, or HTTP on `localhost`, `127.0.0.1` or `[::1]`. No user info,
   query or fragment.
-- Routes allowed: the conversation routes in `NativeRoutes` with their method
-  (`POST heartbeat`, `GET stream`, `POST conversations/claim`,
-  `POST conversations/:id/messages`, `POST messages/:id/checkpoints|deltas|progress`,
-  `PUT projects/:id/folders`, `POST approvals/:id/answer`, and
-  `GET approvals/:id`), plus `memory/claim`, `memory/progress` and
-  `memory/consolidate`. The `brain/*` routes are allowed only when
-  `brainEnabled` is true, which defaults to false and is not set by
-  `HovelCompanion`. The task routes are gone.
+- Routes allowed: exactly the `NativeRoute` table, each with its method and
+  record ids in place of its parameters: `POST heartbeat`, `GET stream`,
+  `POST conversations/claim`, `POST messages/:id/checkpoints|deltas|progress`,
+  `GET projects/:id`, `PUT projects/:id/folders`, `GET approvals/:id`,
+  `GET artifacts/:id/text?cursor=`, the task lane's `POST claim` and
+  `POST progress`, and `POST memory/claim|progress|consolidate`. The Mac never
+  answers an approval on a route of its own (see Approvals). The `brain/*`
+  routes are allowed only when `brainEnabled` is true, which defaults to false
+  and is not set by `HovelCompanion`.
 - Redirects are never followed. Connect timeout 10 seconds, request timeout
   15 seconds, and the whole exchange including the body is bounded by
   `timeoutMillis` (default 15 seconds).
 - Response bodies over 16 MiB are cut off and fail.
 - HTTP `409` throws `HovelRejectedException`, meaning the server refused and
-  committed nothing. Other non-2xx codes throw `HovelStatusException` with the
-  status. The JSON `data` field is returned.
+  committed nothing; its `code` is the body's, such as `update-required`. Other
+  non-2xx codes throw `HovelStatusException` with the status; a 400, 403 or 404
+  is `final`. The JSON `data` field is returned.
 - `openStream` holds `GET stream` open as server-sent events, with no request
   timeout; closing it ends the connection.
 
 ## Conversations
 
 `ConversationRunner` makes the Mac the worker for its projects' conversations.
-It replaced the task lane; the memory lane and consolidation stay.
+The task lane and the memory lane ride its heartbeat.
 
 ### Connection
 
 - **Stream:** it holds `GET stream` (`hostStreamEvent`s, as raw events or in the
   server's SSE envelope; heartbeats, comments and unknown event types are
-  skipped), and reconnects with backoff from 1 to 30 seconds.
-- **Heartbeat:** every 10 seconds, `computerHeartbeat` (the provider directory
-  with the readiness and models of Codex, Claude Code and Grok Build, and each
-  ready runtime's usage as an `allowanceSnapshot`) plus the memory features
-  (`memory-context`, `memory-extraction`). `HostDirectory` refreshes the directory
-  every minute and usage every 5 minutes. The answer goes to the memory lane. A
-  successful heartbeat retries claims and outcomes that waited for the server, and
-  publishes project folders.
+  skipped), and reconnects with backoff from 1 to 30 seconds. A watchdog drops a
+  stream that has sent no line (the server's own heartbeats included) for 75
+  seconds, so a silently dead connection reconnects.
+- **Heartbeat:** every 10 seconds, hovel-service's heartbeat body plus
+  `computerHeartbeat`:
+  - `providerState`: the task lane's Codex readiness when it has one, else the
+    best readiness in the directory (`ready`, `auth-required`, `unavailable`);
+  - `features`: `provider-input` with the task lane, and `memory-context` and
+    `memory-extraction` with the memory lane (`hovelHostFeatures`);
+  - `directory`: the readiness and models of Codex, Claude Code and Grok Build;
+  - `allowances`: each ready runtime's usage as an `allowanceSnapshot`.
+
+  `HostDirectory` refreshes the directory every minute and usage every 5
+  minutes. The answer goes to the task and memory lanes. Whether the heartbeat
+  gets through or not, claims and outcomes that waited for the server are tried
+  again and project folders are published; nothing in a round stops the
+  schedule.
 
 ### Claiming and running
 
@@ -214,10 +233,16 @@ It replaced the task lane; the memory lane and consolidation stay.
   conversations run at once (`MAX_RUNNING`); a lane waits for a slot before it
   claims, so a waiting message stays queued on the server.
 - `stop.requested` and `message.cancelled` stop the running message, which
-  settles `stopped`. `approval.answered` closes the Mac's dialog when the phone
-  answered first. `project.changed` publishes that project's folders.
-- `mac-update-required` leaves the message queued and sets the status line to
-  "Update Hovel on this Mac to run every message in its conversations".
+  settles `stopped`. A Stop that arrives while a claim is on its way applies
+  once it lands: the message settles `stopped` before any provider turn. The
+  server keeps stop requests and announces them again when the stream
+  connects. `approval.answered` closes the Mac's dialog when the phone answered
+  first. `project.changed` reads the project and publishes its folders when the
+  account's differ.
+- `mac-update-required`, a 409 `update-required` and a claim this build cannot
+  read leave the message queued and set the status line to "Update Hovel on
+  this Mac to run every message in its conversations".
+- A lane with nothing queued and nothing journaled is let go.
 
 ### Crash safety
 
@@ -231,7 +256,13 @@ the server answers, so the journal is keyed by claim id:
 | `launching` | Settle `reconciliation-required`; never run again. |
 | `settling` | Deliver the decided outcome until the server takes it. |
 
-A refusal (409) means the server took the claim back, and nothing is settled.
+The journal is read once when the store opens and kept as an index; an
+unreadable entry is skipped and logged. A refusal (409) anywhere after the claim
+lands settles the message (`stopped` after a Stop, else
+`reconciliation-required`), so it never stays claimed. A 400, 403 or 404 on a
+claim or its progress is final: the journal entry is dropped and logged once.
+A claim that lands after Hovel began to quit stays `claimed` for the next
+launch, with no provider turn.
 
 ### The engine
 
@@ -253,14 +284,30 @@ conversation: no page opens, ends or reopens it.
   thread's specialist (`forward`, with an optional note), answers in the thread,
   or delegates a new task in a new thread. A coordinator note says which.
 - **Checkpoints:** `thread.upserted`, `message.appended`, `run.changed`,
-  `artifact.stored` and `approval.opened`/`closed`, each retried until stored.
-  Deltas are best effort, cut to 2,048 characters and numbered per reply.
+  `artifact.stored` and `approval.opened`/`closed`. Each one is saved in the
+  conversation record's outbox before it is sent, in the order the server needs
+  (main-conversation entries, then threads, then thread entries, the run and a
+  notice), so a thread is always upserted before its entries. The outbox is
+  flushed at the start of a run, after each change and before the message
+  settles; what the server could not take waits for the next flush, and one it
+  refused is dropped. Deltas are best effort, cut to 2,048 characters and
+  numbered per reply.
+- **Inputs:** a text input's whole text is read with `GET artifacts/:id/text`,
+  page by page, up to the brain's input bound. When the read fails, the turn
+  says it works from the preview; a file attached on another device is named,
+  and its bytes stay there.
+- **Thread replies** build on the newer revision of this Mac's thread and the
+  claim's.
 - **Settling:** a completed run, or one waiting for the person, answers
   `answered`; Stop answers `stopped`; a paused run answers `failed`, and the
   person's retry of the same message reviews the run natively and resumes it.
 - **Talk turns** run one at a time per Codex talk runtime, which holds one turn;
   working specialists run in parallel, each on its thread's lease, which
   `WorkRuntime.release(lease)` ends without touching other leases.
+- **Crashes and quitting:** a run left working pauses for review when the
+  conversation's next message runs, and a thread outside a run left `running`
+  is interrupted; both are published. Quitting pauses the running run and
+  publishes it (`run.changed`) before the message settles.
 
 Locally, `ConversationStore` keeps `<providers>/<accountId>/conversations/<id>/`:
 the coordinator's and each thread's provider conversations, the workflow run, the
@@ -276,8 +323,11 @@ pruning keeps every handle these records hold.
   and answer display names (`ProjectFolderNames.display`), roles, `exists` and
   `readableBy`, never a path. Each change is published with
   `PUT projects/:id/folders` against the project revision this Mac last saw (from
-  a claim or its own save); until one is known, or after a conflict, the folders
-  wait. A 403 or 404 marks the project as another computer's.
+  a claim, a read or its own save). When none is known, the Mac reads
+  `GET projects/:id`, so a project never claimed here still publishes; a conflict
+  reads it again. A claim or read whose folders differ from this Mac's marks the
+  project unpublished. A project on another computer, or a 403 or 404, marks it
+  as another computer's.
 - A work turn's `WorkScope` carries `ProjectFolders(working, context)`. A runtime
   is given context folders only when its `ContextFolderSupport` is `VERIFIED`:
   Claude Code (`--add-dir`, with Edit and Write denied under each folder) and Codex
@@ -291,25 +341,67 @@ permission request, start of work, stage approval and resume review gets an id,
 opens on the Mac as a native dialog and on the server as `approval.opened`, with
 `presentApproval`'s folder-relative lines (`./src/app.ts`, `[docs]/plan.md`) or
 `mac-only` when it names anything else or cannot be shareable text. The first
-answer wins: a Mac answer is posted, and the stored approval says which answer
-won; a phone answer (`approval.answered`, read back with `GET approvals/:id`)
-closes the dialog as `answered-elsewhere`. Nobody answering withdraws it. A late
-or repeated answer changes nothing, and each approval keeps a receipt. The server
-expiry allows three dialog timeouts, since dialogs show one at a time and the Mac
-withdraws an approval itself when its dialog ends unanswered; a Mac answer the
-server refused for anything but another answer still stands. Folder
+answer wins:
+
+- The person answers on the Mac: the answer is recorded only as the
+  `approval.closed` (`answered`) checkpoint, fenced by the claim. When that is
+  refused because another answer won, the Mac reads `GET approvals/:id` and the
+  stored answer applies. When the winner cannot be read, the person's answer
+  stands, never the dialog's default. When the server cannot be reached, the
+  person's answer stands and its close waits in the outbox.
+- Another surface answers first: `approval.answered` is read back with
+  `GET approvals/:id` and closes the dialog as `answered-elsewhere`. If that read
+  fails, the dialog stays open for the person.
+- Nobody answers, or the work stops: the approval is withdrawn.
+
+A late or repeated answer changes nothing, and each approval keeps a receipt.
+The server expiry allows three dialog timeouts, since dialogs show one at a time
+and the Mac withdraws an approval itself when its dialog ends unanswered. Folder
 trust stays a Mac-only dialog.
 
 ### `host.contract`
 
 `DesktopHostContract` answers the page's contract with `HovelContract.CURRENT`
-and keeps the page's for its context, so the host can leave out runtimes newer
-than the page renders.
+and keeps the page's for its context. Every runtime arrived in the first
+contract, so nothing is filtered by it yet.
+
+`companion.capabilities` still answers `sandbox: "read-only"`, the page
+contract's literal. It describes the task lane's Codex sandbox, not
+conversation work, whose working specialists write in the project's working
+folder after the start-of-work approval. Changing it needs a host-bridge
+contract change with version skew for older pages.
+
+### DesktopBrain is frozen
+
+`DesktopBrain` serves the page's `brain.*` methods only and is removed in step
+E. Fixes to how a coordinator runs go in `CoordinatorEngine`. The rules both
+must apply alike are shared, so they cannot drift:
+
+- `brain/BrainTransitions.kt`: the run state machine.
+- `brain/RoleReadiness.kt`: role readiness (`roleIssues`) and stage selection
+  (`stagesFor`, `asksBeforeStarting`).
+- `brain/BrainPrompts.kt`: the protocol lines both coordinators send
+  (`COORDINATOR_EVIDENCE_RULES`, `COORDINATOR_WORKFLOW_RULES`,
+  `COORDINATOR_DECISION_SHAPES`) and the handoff of run inputs
+  (`RunRecord.handoffInputs`). The brain's own protocol text is pinned by
+  `SharedCoordinatorRulesTest`.
+
+## Tasks
+
+`HovelHostSession` takes the heartbeat answer the runner hands it. With the task
+lane, its `tasks` are offered one at a time, as before: the first in `queued`,
+`claimed` or `running` (`queued` only when Codex is ready), pinned to this host
+in `local` mode (`hovelExecutionRequest`), through `ExecutionCoordinator` on
+`claim` and `progress` (`HovelTaskRemote`). A follow-up runs the server's
+`providerInput`, and recalled memory goes in its own section, byte for byte the
+server's `hovelProviderPrompt` (`HovelProviderPromptTest`). Any failure accepting
+a task sets "Task needs reconciliation on this computer; no automatic host
+change". Step E removes this lane with the web task UI.
 
 ## Memory jobs
 
-`HovelHostSession` takes the heartbeat answer the runner hands it. Its
-`memoryJobs` are its open jobs, oldest first. If no memory job is running, it
+From the same heartbeat answer, `memoryJobs` are this computer's open jobs,
+oldest first. If no memory job is running, it
 picks the first one in `queued`, `claimed` or `running` (`queued` only when
 Codex is ready) whose `kind` is `extract` and host-bridge `runtimeId` is
 `codex`. A job naming another kind or runtime is left for a companion that runs
@@ -341,7 +433,7 @@ consolidate; any other computer gets 403. Every failure waits for the next call.
 ### Closing
 
 `close()` stops the runner, the stream, the heartbeat and the lanes, then the
-memory lane and its journal, and waits at most 5 seconds. Quitting is not the
+task and memory lanes and their journals, and waits at most 5 seconds. Quitting is not the
 person's Stop: a running message's run pauses for review and the message settles
 `reconciliation-required` (or does at the next launch, from the journal), so the
 person can retry it.
@@ -358,6 +450,7 @@ person can retry it.
 | Status line "Connection failed. Check the native configuration, Keychain approval and server." | A `prepareConnection` or `activateConnection` failure, or an unknown method name, other than a cancellation (HovelCompanion.kt line 125). Failures before that point (bad `capabilities` args, a closed companion, "Another native operation is pending") leave the status line unchanged and reach the page only as the generic 400. This status replaces the specific error, so the causes below never reach the window. |
 | (not shown) "This native profile belongs to another account" | Thrown when `registration.json` has a different `ownerId` (HovelCompanion.kt line 190). Users see only the two generic messages above; check `registration.json` in the data directory. |
 | Status line "Server unavailable; messages wait on the server" | A heartbeat failed. The runner keeps trying every 10 seconds; queued messages wait on the server. |
+| Status line "Task needs reconciliation on this computer; no automatic host change" | Accepting a Hovel task failed, including network errors and a server 409. See the task journal before retrying. |
 | Status line "Update Hovel on this Mac to run every message in its conversations" | A claim answered `mac-update-required`: a message needs a newer contract. It stays queued until this Mac updates or it expires. |
 | A message settled `reconciliation-required` | Its turn may have started before a crash or an error the runner could not classify. It never runs again unless the person retries it. |
 
@@ -369,19 +462,26 @@ person can retry it.
 
 `HovelAdapterTest` covers registration reuse and that the token is not in
 `registration.json`, invalidation during a blocked activation, the transport
-deadline on a stalled body, the origin policy, and memory jobs: their request,
-routes, output limit and refusals. `HovelHostSessionTest` covers the memory lane
-fed by a heartbeat, one job at a time, unreadable and other providers' jobs and
+deadline on a stalled body, the origin policy, the heartbeat's features, tasks
+and memory jobs: their request, routes, output limit and refusals.
+`HovelHostSessionTest` covers both lanes fed by a heartbeat, one item per lane,
+unreadable and other providers' items, the task provider state and
 consolidation. `HovelProviderPromptTest` checks the provider text against the
 server fixture.
 
 The `conversations` tests run against a fake hovel-service (`FakeServer`):
 `ConversationRunnerTest` (parallel conversations, the cap, crash and journal
-recovery, stop and cancel, expiry, `mac-update-required`, offline outcomes,
-reconnects), `CoordinatorEngineTest` (direct streaming, delegation and threads,
-workflow returns, `THREAD_REPLY`, Stop, retry review, context folders),
-`RemoteApprovalsTest` (races and late answers), `PresentApprovalTest`,
-`ProjectFoldersTest`, `ContextFoldersTest` and the wire tests.
+recovery, stop and cancel, a Stop while a claim is on its way, a claim landing
+after quitting, final and update-required refusals, a refusal mid-run, expiry,
+`mac-update-required`, offline outcomes, a failed heartbeat still retrying,
+reconnects and the idle watchdog, lane eviction), `CoordinatorEngineTest`
+(direct streaming, delegation and threads, workflow returns, `THREAD_REPLY` and
+the newer thread revision, Stop, quitting, retry review, the outbox, whole input
+text, crash recovery of threads, context folders), `RemoteApprovalsTest` (races,
+refused closes and late answers), `PresentApprovalTest`, `ProjectFoldersTest`,
+`ContextFoldersTest`, `ConversationStoreTest` and the wire tests.
+`SharedCoordinatorRulesTest` pins the frozen brain's protocol and the shared
+readiness and stage rules.
 `CompanionContractFixtureTest` reads and writes back every payload in
 `CompanionContractFixtures.kt`, which `tools/sync-server-fixtures.py` builds
 from the server's samples with `tools/companion-fixtures.mts` and checks against

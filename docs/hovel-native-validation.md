@@ -65,11 +65,12 @@ cancellation delivery must be verified against the installed runtime.
 
 ## 2. Hovel registration and genuine task acceptance
 
-> Hovel tasks are replaced by project conversations (companion projects step C).
-> The registration steps below stand; the task submission does not. Until
-> hovel-service serves the conversation routes (step B), the conversation run is:
-> register once, then quit and relaunch Hovel and confirm the status line reaches
-> "Connected · Conversations run on this Mac" with no page action. Then, from a
+> Project conversations (companion projects step C) run beside Hovel tasks, which
+> stay until step E removes the web task UI; the task steps below still apply
+> with `GAMERO_WORKSPACE` set. The conversation run, once hovel-service serves the
+> conversation routes (step B): register once, then quit and relaunch Hovel and
+> confirm the status line reaches "Connected · Conversations run on this Mac"
+> with no page action. Then, from a
 > browser on the same Mac: send a message in a talk-only project (the reply
 > streams); choose a working folder with `project.chooseFolder` and send work to
 > a working specialist (the start of work asks natively, the thread fills in);
