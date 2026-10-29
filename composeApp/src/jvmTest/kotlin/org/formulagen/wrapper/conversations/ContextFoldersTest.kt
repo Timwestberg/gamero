@@ -60,11 +60,20 @@ class ContextFoldersTest {
     }
 
     @Test fun noRuntimeIsVerifiedBeforeItsLiveProbe() {
-        // Flip a runtime to VERIFIED only together with its passing probe below.
-        val claude = org.formulagen.wrapper.chat.claude.ClaudeWorkRuntime::class.java
-        assertNotNull(claude)
-        assertFalse(ContextFolderSupport.UNVERIFIED.readable)
-        assertFalse(ContextFolderSupport.NONE.readable)
+        // Flip a runtime to VERIFIED only together with its passing probe in ContextFolderProbeTest.
+        val root = java.nio.file.Files.createTempDirectory("context-support").toRealPath()
+        val broker = org.formulagen.wrapper.approvals.ApprovalBroker { _, _, _ -> org.formulagen.wrapper.approvals.ApprovalDecision.DENY }
+        val claude = org.formulagen.wrapper.providers.ClaudeRuntime(root.resolve("claude"), root.resolve("providers"), emptyMap())
+        val runtimes = listOf(
+            org.formulagen.wrapper.chat.claude.ClaudeWorkRuntime(claude, org.formulagen.wrapper.providers.ClaudeConnection(claude), broker),
+            org.formulagen.wrapper.chat.codex.CodexWorkRuntime(root, root.resolve("codex"), broker),
+            org.formulagen.wrapper.chat.grok.GrokWorkRuntime(root, emptyMap(), org.formulagen.wrapper.providers.GrokConnection(emptyMap()), broker),
+        )
+        try {
+            assertEquals(mapOf(RuntimeId.CLAUDE_CODE to ContextFolderSupport.UNVERIFIED, RuntimeId.CODEX to ContextFolderSupport.UNVERIFIED,
+                RuntimeId.GROK_BUILD to ContextFolderSupport.NONE), runtimes.associate { it.id to it.contextFolders })
+            assertTrue(runtimes.none { it.contextFolders.readable })
+        } finally { runtimes.forEach { it.close() } }
         assertTrue(ContextFolderSupport.VERIFIED.readable)
     }
 }
