@@ -5,38 +5,34 @@ import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.*
-import org.formulagen.wrapper.process.runBounded
 
 /** A private Grok configuration, referencing the runtime-owned login without reading or copying it. */
 internal class GrokLaunch private constructor(
     val folder: Path,
-    private val executable: Path,
-    private val environment: Map<String, String>,
+    executable: Path,
+    environment: Map<String, String>,
     private val policyHomes: List<Path>,
-    val workspace: Path,
-) : AutoCloseable {
+    workspace: Path,
+) : GrokLaunchPolicy(executable, environment, workspace, folder.resolve("talk.md")) {
     private val removed = java.util.concurrent.atomic.AtomicBoolean()
     private val home = folder.resolve("home")
     private val grokHome = home.resolve(".grok")
-    private val profile = folder.resolve("talk.md")
 
-    /** Only the tested runtime can use this auth pin and profile; future versions need a fresh acceptance run. */
-    fun verify(timeout: Duration = 10.seconds) {
+    /**
+     * Only the tested runtime can use this auth pin and profile; future versions need a fresh acceptance run.
+     * Talk loads no project configuration, so it never needs folder trust.
+     */
+    override fun verify(timeout: Duration): Boolean {
         val budget = GrokBudget(timeout)
         checkPolicies()
-        val version = runBounded(builder(listOf("--version")), budget.remaining(), 256)
-        check(version?.exitCode == 0 && grokVersionSupported(version.output)) { "Untested Grok version" }
-        val inspected = runBounded(builder(listOf("--no-auto-update", "inspect", "--json")), budget.remaining())
-        check(inspected?.exitCode == 0) { "Grok inspection unavailable" }
-        verifyGrokInspection(Json.parseToJsonElement(inspected.output).jsonObject, grokHome.resolve("config.toml"))
+        verifyGrokInspection(inspect(budget), grokHome.resolve("config.toml"))
         checkPolicies()
+        return true
     }
 
-    /** A local ACP process, with explicit profile and no shared leader or client execution capabilities. */
-    fun agentBuilder(): ProcessBuilder = builder(listOf("--no-auto-update", "--no-subagents", "--disable-web-search",
-        "agent", "--no-leader", "--agent-profile", profile.toString(), "stdio"))
+    /** Hovel wrote this launch's configuration itself, so only a managed policy can appear. */
+    override fun recheck() = checkPolicies()
 
     /** Refuse managed installations rather than silently dropping their configuration from the isolated home. */
     fun checkPolicies() {
@@ -45,19 +41,8 @@ internal class GrokLaunch private constructor(
         }
     }
 
-    /** Clear inherited endpoints, credentials, startup imports and shell customization. */
-    private fun builder(arguments: List<String>): ProcessBuilder = ProcessBuilder(listOf(executable.toString()) + arguments)
-        .directory(workspace.toFile()).apply { environment().clear(); environment().putAll(environment) }
-
-    /** The owner must close and reap its ACP process before removing the private configuration. */
+    /** The owner must close and reap its ACP process before removing the private configuration ([closeAfter]). */
     override fun close() { if (removed.compareAndSet(false, true)) removeGrokLaunchFolder(folder) }
-
-    /** An interrupted startup still reaps the child before removing its configuration. */
-    fun closeAfter(rpc: GrokAcp?) {
-        val interrupted = Thread.interrupted()
-        try { rpc?.close(); rpc?.awaitClosed(); close() }
-        finally { if (interrupted) Thread.currentThread().interrupt() }
-    }
 
     companion object {
         /** Create a new isolated session home; neither this factory nor its cleanup opens the credential store. */
@@ -95,8 +80,6 @@ internal class GrokLaunch private constructor(
             check(Files.isDirectory(it, NOFOLLOW_LINKS))
             Files.setPosixFilePermissions(it, PosixFilePermissions.fromString("rwx------"))
         }
-
-
     }
 }
 

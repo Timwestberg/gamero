@@ -23,7 +23,6 @@ import org.formulagen.wrapper.chat.TurnRequest
 import org.formulagen.wrapper.chat.WorkRuntime
 import org.formulagen.wrapper.chat.companionConversationIds
 import org.formulagen.wrapper.chat.loggingDaemonThreads
-import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.process.readLoginShellPath
@@ -31,7 +30,6 @@ import org.formulagen.wrapper.providers.GrokConnection
 import org.formulagen.wrapper.providers.grok.GROK_STOP_GRACE
 import org.formulagen.wrapper.providers.grok.GROK_TURN_HANDOFF
 import org.formulagen.wrapper.providers.grok.GrokAuthAvailability
-import org.formulagen.wrapper.providers.grok.GrokSessionLost
 import org.formulagen.wrapper.providers.grok.GrokTransportFailure
 import org.formulagen.wrapper.providers.grok.GrokWorkAuthUnpinned
 import org.formulagen.wrapper.providers.grok.GrokWorkLaunch
@@ -146,29 +144,17 @@ internal class GrokWorkRuntime(
         /** Resume only the same account, persona, model and canonical project; never replay an ambiguous prompt. */
         private fun run() {
             val saved = request.conversation
-            if (saved != null && saved.personaHash != request.persona.hash) { fail(ChatFailure.ConversationLost); return }
-            val access = connection.check(fresh = true)
-            val account = access.account ?: run {
-                fail(if (access.auth == GrokAuthAvailability.SIGNED_OUT) ChatFailure.SignedOut else ChatFailure.Temporary); return
+            val start = resolveGrokTurn(request, GrokMode.WORK, connection, bindings,
+                prune = {
+                    companionConversationIds(root, request.profile, RuntimeId.GROK_BUILD)
+                        ?.let { bindings.prune(request.profile, it + listOfNotNull(saved?.id)) }
+                },
+                unresumable = { log(LogLevel.Warn, "grok", "Grok work binding could not be resumed (${it::class.simpleName})") })
+            val (account, executable, model, canonical, scope, previous) = when (start) {
+                is GrokTurnStart.Failed -> { fail(start.failure); return }
+                is GrokTurnStart.Ready -> start
             }
-            val executable = access.executable ?: run { fail(ChatFailure.Temporary); return }
-            val model = request.model?.takeUnless { it == SharedRules.RUNTIME_DEFAULT_MODEL } ?: account.defaultModel
-            if (account.models.none { it.modelId == model }) { fail(ChatFailure.ModelUnavailable); return }
-            val folder = work.folder.toRealPath()
-            val scope = GrokSessionScope(request.profile, request.companionId, GrokMode.WORK, model,
-                account.fingerprint, HovelCompanion.sha256(folder.toString()))
-            scope.validate()
-            companionConversationIds(root, request.profile, RuntimeId.GROK_BUILD)?.let { bindings.prune(request.profile, it + listOfNotNull(saved?.id)) }
-            val previous = saved?.let {
-                when (val lookup = bindings.find(it.id, scope)) {
-                    is GrokSessionLookup.Found -> lookup.binding
-                    GrokSessionLookup.Missing, GrokSessionLookup.ModelChanged -> { fail(ChatFailure.ConversationLost); return }
-                    else -> {
-                        log(LogLevel.Warn, "grok", "Grok work binding could not be resumed (${lookup::class.simpleName})")
-                        fail(ChatFailure.Unexpected); return
-                    }
-                }
-            }
+            val folder = checkNotNull(canonical)
             if (!active()) return
             val opened = try {
                 GrokWorkSession.open(executable, environment, folder, request.persona.instructions, model,

@@ -27,7 +27,7 @@ class GrokTalkSessionSmokeTest {
             val home = Path.of(launch.agentBuilder().environment().getValue("GROK_HOME"))
             val skill = Files.createDirectories(home.resolve("skills/hovel-isolation-fixture"))
             Files.writeString(skill.resolve("SKILL.md"), "---\nname: hovel-isolation-fixture\ndescription: Must stay excluded\n---\nUnexpected instructions")
-            launch.verify()
+            launch.verify(10.seconds)
             val transport = GrokAcp(launch.agentBuilder(), GROK_ACCOUNT_METHODS, allowReloadResponses = true)
             rpc = transport
             assertEquals(GrokAuthAvailability.SIGNED_OUT, grokHandshake(transport.call("initialize", grokInitialize())).auth)

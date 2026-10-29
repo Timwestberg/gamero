@@ -7,7 +7,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
@@ -30,7 +29,6 @@ import org.formulagen.wrapper.providers.grok.GROK_STOP_GRACE
 import org.formulagen.wrapper.providers.grok.GROK_TURN_HANDOFF
 import org.formulagen.wrapper.providers.grok.GrokAuthAvailability
 import org.formulagen.wrapper.providers.grok.GrokBudget
-import org.formulagen.wrapper.providers.grok.GrokSessionLost
 import org.formulagen.wrapper.providers.grok.GrokTransportFailure
 import org.formulagen.wrapper.providers.grok.GrokTransportIssue
 
@@ -147,29 +145,18 @@ internal class GrokChatRuntime(
         /** Only missing pre-submission mappings can request DesktopChat's one context-restoration retry. */
         private fun run() {
             val saved = request.conversation
-            if (saved != null && saved.personaHash != request.persona.hash) { fail(ChatFailure.ConversationLost); return }
-            val access = connection.check(fresh = true)
-            val account = access.account ?: run {
-                fail(if (access.auth == GrokAuthAvailability.SIGNED_OUT) ChatFailure.SignedOut else ChatFailure.Temporary); return
-            }
-            val executable = access.executable ?: run { fail(ChatFailure.Temporary); return }
-            val model = request.model?.takeUnless { it == RUNTIME_DEFAULT_MODEL } ?: account.defaultModel
-            if (account.models.none { it.modelId == model }) { fail(ChatFailure.ModelUnavailable); return }
-            val scope = GrokSessionScope(request.profile, request.companionId, GrokMode.TALK, model, account.fingerprint)
-            scope.validate()
-            // Read the histories outside the lock: a handle active at any time during the read is kept,
-            // since its history may have been written after the read passed it.
-            synchronized(bindingLock) { saved?.id?.let { activate(it); activeHandle = it }; scans++; touched += activeHandles }
-            try {
-                val retained = companionConversationIds(root, request.profile, RuntimeId.GROK_BUILD)
-                synchronized(bindingLock) { retained?.let { bindings.prune(request.profile, it + activeHandles + touched) } }
-            } finally { synchronized(bindingLock) { if (--scans == 0) touched.clear() } }
-            val previous = saved?.let {
-                when (val lookup = bindings.find(it.id, scope)) {
-                    is GrokSessionLookup.Found -> lookup.binding
-                    GrokSessionLookup.Missing, GrokSessionLookup.ModelChanged -> { fail(ChatFailure.ConversationLost); return }
-                    else -> { fail(ChatFailure.Unexpected); return }
-                }
+            val start = resolveGrokTurn(request, GrokMode.TALK, connection, bindings, prune = {
+                // Read the histories outside the lock: a handle active at any time during the read is kept,
+                // since its history may have been written after the read passed it.
+                synchronized(bindingLock) { saved?.id?.let { activate(it); activeHandle = it }; scans++; touched += activeHandles }
+                try {
+                    val retained = companionConversationIds(root, request.profile, RuntimeId.GROK_BUILD)
+                    synchronized(bindingLock) { retained?.let { bindings.prune(request.profile, it + activeHandles + touched) } }
+                } finally { synchronized(bindingLock) { if (--scans == 0) touched.clear() } }
+            })
+            val (account, executable, model, _, scope, previous) = when (start) {
+                is GrokTurnStart.Failed -> { fail(start.failure); return }
+                is GrokTurnStart.Ready -> start
             }
             val location = root.resolve(request.profile).resolve("grok-talk").resolve(request.companionId)
                 .resolve(HovelCompanion.sha256("${account.fingerprint}/${request.persona.hash}/$model"))

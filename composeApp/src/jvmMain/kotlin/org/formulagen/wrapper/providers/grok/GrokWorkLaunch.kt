@@ -11,13 +11,13 @@ import org.tomlj.Toml
 
 /** A per-turn tool profile over the player's original home, login, preferences and project rules. */
 internal class GrokWorkLaunch private constructor(
-    private val executable: Path,
-    private val environment: Map<String, String>,
-    val workspace: Path,
-    private val profile: Path,
+    executable: Path,
+    environment: Map<String, String>,
+    workspace: Path,
+    profile: Path,
     private val config: Path,
     private val home: Path,
-) : AutoCloseable {
+) : GrokLaunchPolicy(executable, environment, workspace, profile) {
     /** The folder Grok trusts for [workspace]: its reported project root, which can be an enclosing repository. */
     var trustFolder: Path = workspace
         private set
@@ -26,14 +26,10 @@ internal class GrokWorkLaunch private constructor(
     val trustTooBroad: Boolean get() = trustFolder.parent == null || home.startsWith(trustFolder)
 
     /** Inspect using the runtime's resolver; unsupported configuration is refused, never rewritten. */
-    fun verify(timeout: Duration): Boolean {
+    override fun verify(timeout: Duration): Boolean {
         val budget = GrokBudget(timeout)
         checkConfig()
-        val version = runBounded(builder(listOf("--version")), budget.remaining(), 256)
-        check(version?.exitCode == 0 && grokVersionSupported(version.output)) { "Untested Grok version" }
-        val result = runBounded(builder(listOf("--no-auto-update", "inspect", "--json")), budget.remaining())
-        check(result?.exitCode == 0) { "Grok inspection unavailable" }
-        val report = Json.parseToJsonElement(result.output).jsonObject
+        val report = inspect(budget)
         verifyGrokWorkInspection(report, config)
         trustFolder = projectRoot(report)
         check(workspace.startsWith(trustFolder)) { "Grok project trust scope could not be verified" }
@@ -62,15 +58,10 @@ internal class GrokWorkLaunch private constructor(
     /** The parsed auth pin is checked before startup and again immediately before submitting a turn. */
     fun checkConfig() = verifyGrokWorkConfig(readGrokWorkConfig(config))
 
-    /** A fixed tool allowlist also disables Grok's background shell and task lifecycle tooling. */
-    fun agentBuilder() = builder(listOf("--no-auto-update", "--no-subagents", "--disable-web-search",
-        "agent", "--no-leader", "--agent-profile", profile.toString(), "stdio"))
+    /** The player can edit their configuration at any time, so its accepted settings are read again. */
+    override fun recheck() = checkConfig()
 
-    /** The player's environment without inherited credential, endpoint, overlay and auto-approval variables. */
-    private fun builder(args: List<String>) = ProcessBuilder(listOf(executable.toString()) + args)
-        .directory(workspace.toFile()).apply { environment().clear(); environment().putAll(environment) }
-
-    /** The owning session must reap its process before removing the disposable profile. */
+    /** The owning session must reap its process before removing the disposable profile ([closeAfter]). */
     override fun close() { Files.deleteIfExists(profile) }
 
     companion object {
