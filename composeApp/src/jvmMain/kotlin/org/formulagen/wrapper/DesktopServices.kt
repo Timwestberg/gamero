@@ -1,7 +1,6 @@
 package org.formulagen.wrapper
 
 import java.awt.EventQueue
-import java.net.URI
 import java.nio.file.Path
 import javax.swing.JFrame
 import org.formulagen.wrapper.bridge.Capability
@@ -70,6 +69,8 @@ import org.formulagen.wrapper.chat.readSavedFillers
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.hovel.HovelCompanionCapability
+import org.formulagen.wrapper.hovel.appOrigin
+import org.formulagen.wrapper.hovel.hovelStateFolder
 import org.formulagen.wrapper.pet.DesktopPetLauncher
 import org.formulagen.wrapper.progression.embedded.DesktopGameLauncher
 import org.formulagen.wrapper.bridge.RuntimeId
@@ -154,8 +155,7 @@ internal class DesktopServices private constructor(
             fun <T : AutoCloseable> own(service: T): T = service.also { owned += it }
             try {
                 val codex = findCodexExecutable(environment)
-                val origin = URI(appUrl).let { URI(it.scheme, null, it.host, it.port, null, null, null).toASCIIString() }
-                val providerRoot = support.resolve("providers").resolve(HovelCompanion.sha256(origin))
+                val providerRoot = support.resolve("providers").resolve(HovelCompanion.sha256(appOrigin(appUrl)))
                 // Claude is offered only by a development build that asks for it, until Anthropic confirms a
                 // companion persona on a player's subscription is allowed; anything else fails closed.
                 val claudeOffered = claudeProviderEnabled(environment, release = System.getProperty("gamero.release") == "true",
@@ -237,7 +237,7 @@ internal class DesktopServices private constructor(
                 // Hovel tasks keep their read-only Codex workspace until step E removes them with the web task UI.
                 val taskWorkspace = environment["GAMERO_WORKSPACE"]?.let(Path::of)
                 val companion = conversations?.let { host ->
-                    own(HovelCompanion(appUrl, support.resolve("hovel-${HovelCompanion.sha256(appUrl)}"), codex, taskWorkspace,
+                    own(HovelCompanion(appUrl, hovelStateFolder(support, appUrl), codex, taskWorkspace,
                         conversations = host::start))
                 }
                 val games = if (window != null && environment["HOVEL_GAME_PROJECT"] != null) {

@@ -48,8 +48,11 @@ task UI. Both are read only from the environment.
 Otherwise the companion's v2 methods answer `unsupported` and version 1 answers
 every query with `403`. On a product other than Hovel the window shows nothing.
 The companion's data directory is
-`~/Library/Application Support/Gamero/hovel-<sha256 of the app URL>`, so each
-configured app URL gets its own registration, memory journal and output.
+`~/Library/Application Support/Gamero/hovel-<sha256 of the app origin>`
+(`hovelStateFolder` in `HovelStateFolder.kt`), so each site gets its own
+registration, journals and output, whichever page it opens (`/hovel` or the old
+`/hovel.html`). A directory from before, named by the full app URL, moves there
+once on launch.
 
 A new `NativeBridge` is attached each time the WebView is created, and the old
 one is closed first. On app close, `DesktopResources.close` closes the bridge,
