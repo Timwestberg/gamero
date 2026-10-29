@@ -41,7 +41,7 @@ Android uses the same Kotlin sherpa API once `voice/libs/sherpa-onnx.aar` is pre
 
 ## iOS
 
-`iosMain` calls `voice/ios/ember_voice_bridge.h`. The Swift and Objective-C++ next to that header include the sherpa-onnx 2.0.0 xcframework, so the Kotlin side does not guess sherpa's struct layout. `voice/ios-bench/embed-sherpa.sh` copies that framework into the app bundle. The Xcode target turns user-script sandboxing off so the script can read `SHERPA_ONNX_FRAMEWORKS`. `backend = "fluid-audio"` selects FluidAudio and clones the prepared clip. It does not speak a bundled named voice. Without that package linked, the bridge returns NULL and the engine says so. A second speak on the C bridge returns 0 instead of running two generations on one engine.
+`iosMain` calls `voice/ios/ember_voice_bridge.h`. The Swift and Objective-C++ next to that header include the sherpa-onnx 2.0.0 xcframework, so the Kotlin side does not guess sherpa's struct layout. `voice/ios-bench/embed-sherpa.sh` copies that framework into the app bundle. The Xcode target turns user-script sandboxing off so the script can read `SHERPA_ONNX_FRAMEWORKS`. `backend = "fluid-audio"` selects FluidAudio. One `PocketTtsManager` and one cloned voice last for the conversation. Later pieces only open a session on that clone. It does not speak a bundled named voice. Without that package linked, the bridge returns NULL and the engine says so. A second speak on the C bridge returns 0 instead of running two generations on one engine.
 
 One command, on the Mac that has the phones plugged in:
 
