@@ -7,6 +7,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.MenuBar
@@ -27,6 +31,7 @@ import org.formulagen.wrapper.chat.KokoroVoicePicker
 import org.formulagen.wrapper.bridge.desktopHostCapabilities
 import org.formulagen.wrapper.companion.NativeBridge
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
+import org.formulagen.wrapper.voice.runEchoSelfTest
 import org.formulagen.wrapper.hovel.HovelLaunchScreen
 import org.formulagen.wrapper.hovel.HovelStartState
 import org.formulagen.wrapper.hovel.AUTO_ENTER_KEY
@@ -44,8 +49,11 @@ import javax.swing.JFrame
 private class DesktopResources : AutoCloseable {
     val browser = AtomicReference<org.cef.browser.CefBrowser?>(null)
     val windowActive = AtomicBoolean(false)
+    var services: DesktopServices? = null
     private var keyboardClient: CefClient? = null
-    private val keyboard = BrowserEditKeyboard(browser::get, windowActive::get)
+    private val keyboard = BrowserEditKeyboard(browser::get, windowActive::get, onEscape = {
+        services?.chat?.endConversation() == true
+    })
 
     fun attachBrowser(target: org.cef.browser.CefBrowser) {
         browser.set(null)
@@ -59,7 +67,6 @@ private class DesktopResources : AutoCloseable {
         browser.set(target)
     }
 
-    var services: DesktopServices? = null
     var bridge: NativeBridge? = null
     override fun close() {
         windowActive.set(false)
@@ -115,7 +122,16 @@ fun main(args: Array<String>) {
             CompositionLocalProvider(LocalWindowExceptionHandlerFactory provides object : WindowExceptionHandlerFactory {
                 override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler = failure
             }) {
-                Window(onCloseRequest = { resources.services?.closeGame(); exitApplication() }, title = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME) {
+                Window(
+                    onCloseRequest = { resources.services?.closeGame(); exitApplication() },
+                    title = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME,
+                    onPreviewKeyEvent = { event ->
+                        if (event.key == Key.Escape && event.type == KeyEventType.KeyDown) {
+                            resources.services?.chat?.endConversation()
+                            true
+                        } else false
+                    },
+                ) {
                     DisposableEffect(window) {
                         // Read AWT state on its event thread, never from the CEF callback thread.
                         val listener = object : WindowAdapter() {
@@ -132,7 +148,21 @@ fun main(args: Array<String>) {
                         }
                     }
                     if (System.getProperty("os.name").contains("Mac")) {
+                        LaunchedEffect(Unit) {
+                            val flag = System.getenv("HOVEL_HEARING_SELF_TEST")?.trim()?.lowercase()
+                            if (flag == "1" || flag == "true" || flag == "yes") {
+                                withContext(Dispatchers.IO) { runEchoSelfTest() }
+                            }
+                        }
                         MenuBar {
+                            Menu("Develop") {
+                                Item("Echo self-test", onClick = {
+                                    Thread({
+                                        println("echo self-test: starting inside Gamero Adventures")
+                                        println("echo self-test: finished exit=${runEchoSelfTest()}")
+                                    }, "ember-echo-self-test").apply { isDaemon = true }.start()
+                                })
+                            }
                             Menu("Edit") {
                                 Item("Undo", onClick = { editActions.perform(BrowserEditAction.UNDO) })
                                 Item("Redo", onClick = { editActions.perform(BrowserEditAction.REDO) })
@@ -231,7 +261,12 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                 Text("Set GAMERO_CODEX_PATH and GAMERO_WORKSPACE to enable this Mac's optional Codex connection.", Modifier.padding(8.dp))
             }
             val picker by services.voicePicker.state
-            KokoroVoicePicker(picker, services.chat::chooseSpokenVoice)
+            KokoroVoicePicker(
+                picker,
+                services.chat::chooseSpokenVoice,
+                services.chat::converseClick,
+                services.chat::toggleFillers,
+            )
             App(url, enableLegacyBridge = false, webViewFactory = ::persistentDesktopBrowser, onPageLoaded = { loaded, title ->
                 log(LogLevel.Info, "Desktop", SmokeMarkers.pageLoaded(loaded, title))
             }, onWebViewCreated = { browser ->

@@ -43,6 +43,17 @@ export HOVEL_KOKORO_MODEL="${HOVEL_KOKORO_MODEL:-$VOICE_ROOT/models/kokoro-multi
 export HOVEL_VOICE_BACKEND="${HOVEL_VOICE_BACKEND:-kokoro}"
 export HOVEL_VOICE_MODEL="${HOVEL_VOICE_MODEL:-$VOICE_ROOT/models/sherpa-onnx-pocket-tts-int8-2026-01-26}"
 export HOVEL_VOICE_REFERENCE="${HOVEL_VOICE_REFERENCE:-$VOICE_ROOT/models/voices/0a67_enhanced-24k.wav}"
+export HOVEL_HEARING_MODEL="${HOVEL_HEARING_MODEL:-$VOICE_ROOT/models/hearing}"
+# Fillers default off. The Voice row saves the choice in ~/.gamero/voice-fillers.
+# HOVEL_VOICE_FILLERS=1 turns them on for this launch and overrides that file.
+# HOVEL_VOICE_FILLER_MS is the wait before a filler. Fillers stay off unless the Voice row
+# or HOVEL_VOICE_FILLERS turns them on. HOVEL_HEARING_SILENCE_MS (1000) and
+# HOVEL_HEARING_GUARD_MS (300) tune the endpoint and the half-duplex resume pause.
+# HOVEL_HEARING_DUPLEX is auto, full, or half. auto uses the Mac voice-processing graph
+# when libember_audio.dylib loads and ~/.gamero/hearing-self-check is not "fail".
+export HOVEL_VOICE_FILLER_MS="${HOVEL_VOICE_FILLER_MS:-450}"
+export HOVEL_HEARING_DUPLEX="${HOVEL_HEARING_DUPLEX:-auto}"
+export HOVEL_EMBER_AUDIO="${HOVEL_EMBER_AUDIO:-$VOICE_ROOT/deps/ember-audio/libember_audio.dylib}"
 
 # Stop unless the game project runs the pinned embedding engine.
 require_embed_godot() {
@@ -66,6 +77,12 @@ warn_missing_voice() {
   if ! compgen -G "$VOICE_ROOT/deps/sherpa/sherpa-onnx-jvm-*.jar" >/dev/null \
     || [[ "$kokoro_ok" -eq 0 ]]; then
     echo 'Spoken replies are off: Kokoro voice files are missing. Run scripts/fetch-voice.sh to enable them.' >&2
+  fi
+  if [[ ! -f "$HOVEL_HEARING_MODEL/silero_vad.onnx" || ! -f "$HOVEL_HEARING_MODEL/zipformer/tokens.txt" ]]; then
+    echo 'Talk with Ember is off: hearing models are missing. Run scripts/fetch-voice.sh to enable them.' >&2
+  fi
+  if [[ ! -f "$HOVEL_EMBER_AUDIO" ]]; then
+    echo 'Full duplex is off until scripts/build-ember-audio.sh writes libember_audio.dylib. Conversation stays half duplex.' >&2
   fi
 }
 

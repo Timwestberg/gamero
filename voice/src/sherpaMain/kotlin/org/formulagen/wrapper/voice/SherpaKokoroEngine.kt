@@ -56,6 +56,17 @@ class SherpaKokoroEngine(private val config: VoiceConfig) : PieceEngine {
 
     override fun usesFrameCeiling(): Boolean = false
 
+    private var voiceOverride: String? = null
+
+    override fun synthesizeLine(text: String, voiceId: String): PieceAudio {
+        voiceOverride = voiceId
+        try {
+            return synthesize(text, 0, config.seed)
+        } finally {
+            voiceOverride = null
+        }
+    }
+
     override fun requestCancel() {
         cancel.set(true)
     }
@@ -95,7 +106,7 @@ class SherpaKokoroEngine(private val config: VoiceConfig) : PieceEngine {
     }
 
     private fun voice(): KokoroVoice {
-        val id = config.kokoroVoiceId.ifEmpty { kokoroCatalog().defaultId }
+        val id = voiceOverride ?: config.kokoroVoiceId.ifEmpty { kokoroCatalog().defaultId }
         return kokoroVoice(id) ?: throw IllegalStateException("Unknown Kokoro voice '$id'.")
     }
 }

@@ -21,11 +21,31 @@ interface ChatCapability {
     suspend fun retry(args: ChatRetry): ChatSnapshot
     suspend fun stop(scope: ChatScope): ChatSnapshot
     suspend fun stopSpeaking(scope: ChatScope): ChatSnapshot
+    /**
+     * The catalog page arms, mutes, or ends the microphone the host owns.
+     * The arguments are a scope, an action, the member, and an optional effort.
+     * A path, a model file, or a token is rejected.
+     */
+    suspend fun hearing(args: ChatHearingRequest): ChatSnapshot
     suspend fun closeSession(scope: ChatScope)
 }
 
 @Serializable
-data class ChatScope(val profile: String, val companionId: String, val name: String, val sessionId: String)
+data class ChatScope(
+    val profile: String,
+    val companionId: String,
+    val name: String,
+    val sessionId: String,
+    /**
+     * Handshake for a page that can read [ChatSnapshot.hearing]. Host-bridge v2 pages omit it.
+     * The host then omits `hearing` on every chat result, which a strict v2 decoder requires.
+     */
+    val hearing: Boolean? = null,
+)
+
+/** The lease is the four ids. [ChatScope.hearing] is a handshake, not a different chat. */
+internal fun ChatScope.sameChat(other: ChatScope) =
+    profile == other.profile && companionId == other.companionId && name == other.name && sessionId == other.sessionId
 
 /**
  * A companion team member as the chat sees it: a runtime and one of its models, or
@@ -288,11 +308,66 @@ data class ChatWaiting(val kind: WaitingKind, val summary: String) {
     init { require(summary.length <= ChatLimits.NOTICE) }
 }
 
-/** [failure] is why the last turn failed, absent once a turn succeeds. [waiting] is present only while `awaiting-you`. */
+/**
+ * Hearing, separate from [VoiceState]. Absent when this build has no hearing, so an older
+ * snapshot that never sent the field still decodes. The page polls this. It is not audio.
+ */
+@Serializable
+enum class HearingState {
+    @SerialName("off") OFF,
+    @SerialName("requesting") REQUESTING,
+    @SerialName("listening") LISTENING,
+    @SerialName("hearing") HEARING,
+    @SerialName("thinking") THINKING,
+    @SerialName("muted") MUTED,
+    @SerialName("unavailable") UNAVAILABLE,
+}
+
+/** [partial] is the live transcript, at most [ChatLimits.MESSAGE]. [notice] explains a refusal or a missing microphone. */
+@Serializable
+data class ChatHearing(val state: HearingState = HearingState.OFF, val partial: String? = null, val notice: String? = null) {
+    init {
+        require(partial == null || partial.length in 1..ChatLimits.MESSAGE)
+        require(notice == null || notice.length in 1..ChatLimits.NOTICE)
+    }
+}
+
+/** What the catalog page asks the host to do with the microphone. */
+@Serializable
+enum class HearingAction {
+    @SerialName("press") PRESS,
+    @SerialName("release") RELEASE,
+    @SerialName("handsFree") HANDS_FREE,
+    @SerialName("mute") MUTE,
+    @SerialName("unmute") UNMUTE,
+    @SerialName("off") OFF,
+}
+
+/**
+ * [member] is who answers the heard turn. [effort] is the page's model effort when the page
+ * armed the microphone, and null when the native row did. No path, model file, or token.
+ */
+@Serializable
+data class ChatHearingRequest(
+    val profile: String,
+    val companionId: String,
+    val name: String,
+    val sessionId: String,
+    val action: HearingAction,
+    val member: TeamMember,
+    val effort: String? = null,
+) {
+    fun scope() = ChatScope(profile, companionId, name, sessionId)
+}
+
+/**
+ * [failure] is why the last turn failed, absent once a turn succeeds. [waiting] is present only while `awaiting-you`.
+ * [hearing] is omitted for host-bridge v2. It is sent only after the page sets [ChatScope.hearing] or calls `chat.hearing`.
+ */
 @Serializable
 data class ChatSnapshot(val state: ChatState = ChatState.READY, val messages: List<ChatEntry> = emptyList(),
     val notice: String? = null, val voice: ChatVoice = ChatVoice(), val failure: ChatFailureReport? = null,
-    val waiting: ChatWaiting? = null)
+    val waiting: ChatWaiting? = null, val hearing: ChatHearing? = null)
 
 /**
  * The contract's handover `from` is `nullable`, not `optional`: the key is always there. The bridge
@@ -349,6 +424,9 @@ object ChatMethods {
     val RETRY = BridgeMethod("chat.retry", ChatRetry.serializer(), ChatSnapshot.serializer()) {
         valid(it.scope()) && valid(it.member) && BridgeProtocol.UUID_PATTERN.matches(it.entryId) && BridgeProtocol.UUID_PATTERN.matches(it.requestId)
     }
+    val HEARING = BridgeMethod("chat.hearing", ChatHearingRequest.serializer(), ChatSnapshot.serializer()) {
+        valid(it.scope()) && hearingMemberAllowed(it.member) && acceptableHearingEffort(it.effort)
+    }
     fun pack(chat: Capability<ChatCapability>): CapabilityPack = binder.pack(chat)
     internal val binder = CapabilityBinder("chat", listOf<CapabilityHandler<ChatCapability>>(
         OPEN.handle { chat, args -> chat.open(args) },
@@ -358,6 +436,24 @@ object ChatMethods {
         RETRY.handle { chat, args -> chat.retry(args) },
         STOP.handle { chat, args -> chat.stop(args) },
         STOP_SPEAKING.handle { chat, args -> chat.stopSpeaking(args) },
+        HEARING.handle { chat, args -> chat.hearing(args) },
         CLOSE.handle { chat, args -> chat.closeSession(args); NoResult },
     ))
 }
+
+/** A page effort is a short word. A path, a model file, or a token is not an effort. Null is the runtime default. */
+internal fun acceptableHearingEffort(effort: String?): Boolean {
+    if (effort == null) return true
+    if (!HEARING_EFFORT.matches(effort)) return false
+    return HEARING_BLOCKED.none { effort.contains(it) }
+}
+
+/** The member names a runtime model. It is not a filesystem path or a weight file. */
+internal fun hearingMemberAllowed(member: TeamMember): Boolean {
+    if (!SharedRules.isModelId(member.modelId)) return false
+    val id = member.modelId
+    return !id.contains('/') && !id.contains('\\') && HEARING_BLOCKED.none { id.contains(it) }
+}
+
+private val HEARING_EFFORT = Regex("^[a-z][a-z0-9-]{0,31}$")
+private val HEARING_BLOCKED = listOf("token", "onnx", "secret", "path")

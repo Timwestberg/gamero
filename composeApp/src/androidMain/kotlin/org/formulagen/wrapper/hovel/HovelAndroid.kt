@@ -67,6 +67,7 @@ internal fun hovelAutoEnter(intent: Intent?, context: Context): Boolean =
 /** Hovel's capability packs for the host bridge. Android has none of the desktop product capabilities, so their methods answer `unsupported`. */
 internal fun hovelBridgePacks(): List<CapabilityPack> = listOf(
     CompanionMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.BrainMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.ChatMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.ProviderMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.PetMethods.pack(Capability.Unsupported),

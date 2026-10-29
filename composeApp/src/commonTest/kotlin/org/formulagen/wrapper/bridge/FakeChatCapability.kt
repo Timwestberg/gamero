@@ -9,5 +9,8 @@ class FakeChatCapability : ChatCapability {
     override suspend fun retry(args: ChatRetry) = ChatSnapshot(ChatState.RESPONDING)
     override suspend fun stop(scope: ChatScope) = ChatSnapshot(ChatState.CANCELLED)
     override suspend fun stopSpeaking(scope: ChatScope) = ChatSnapshot()
+    override suspend fun hearing(args: ChatHearingRequest) = ChatSnapshot(
+        hearing = ChatHearing(HearingState.UNAVAILABLE, notice = org.formulagen.wrapper.voice.VoiceConversation.NO_HOST_NOTICE),
+    )
     override suspend fun closeSession(scope: ChatScope) = Unit
 }

@@ -64,6 +64,19 @@ class CodexChatRuntimeTest {
         rpc.notify("turn/completed", buildJsonObject { put("threadId", threadId); putJsonObject("turn") { put("id", "turn-1"); put("status", "completed") } })
     }
 
+    @Test fun accountAndConnectionNotificationsWithoutThreadIdsKeepTheTransportUsable() {
+        val root = Files.createTempDirectory("codex-account-events")
+        val rpcs = mutableListOf<Rpc>()
+        runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.onTurn = { complete(rpc, thread, "Hi") } }.use { codex ->
+            assertEquals(Readiness.Ready, codex.readiness("local"))
+            rpcs.single().notify("account/updated", buildJsonObject { put("authMode", "chatgpt") })
+            rpcs.single().notify("remoteControl/status/changed", buildJsonObject {})
+            val events = Events(); codex.startTurn(request("gpt-6.1-sol"), events)
+            assertContains(events.seen, "completed Hi")
+            assertFalse(rpcs.single().closed)
+        }
+    }
+
     @Test fun sendsAnExplicitModelOnEveryTurnAndOmitsTheDefault() {
         val root = Files.createTempDirectory("codex-model")
         val rpcs = mutableListOf<Rpc>()

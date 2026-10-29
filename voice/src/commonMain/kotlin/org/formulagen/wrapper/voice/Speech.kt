@@ -46,6 +46,8 @@ fun firstAudibleMs(callbackMs: Double, retried: Boolean, spentMs: Double): Doubl
 interface PieceEngine {
     val sampleRate: Int
     fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio
+    /** A short line in [voiceId], for a clip that will be replayed later. Kokoro uses the blend. Pocket ignores the id. */
+    fun synthesizeLine(text: String, voiceId: String): PieceAudio = synthesize(text, 0, 1)
     fun release()
 
     /** PocketTTS retries when a take fills [maxFrames]. Kokoro does not use that cap. */
@@ -109,6 +111,9 @@ class EmberVoice(
     fun cancel() {
         engine.requestCancel()
     }
+
+    /** Outside [speak]. The caller serializes this with speech on one thread. */
+    fun synthesizeLine(text: String, voiceId: String): PieceAudio = engine.synthesizeLine(text, voiceId)
 
     fun release() {
         if (!state.compareAndSet(IDLE, RELEASED)) {
