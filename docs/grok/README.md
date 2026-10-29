@@ -106,3 +106,17 @@ HOVEL_GROK_PROFILE_SMOKE=/absolute/path/to/grok \
 The real profile check passes cancellation and process cleanup, rejects a late Allow, keeps histories/workspaces separate, and restores the first profile's context. It references the existing credential store and grants trust only in a disposable configuration home. It does not authenticate Hovel accounts. Native Retry after a forced work-process failure also passes: reconnect does not resend, explicit Retry obtains a real reply, and the saved user message is not duplicated.
 
 The latest full native run is **445 passed, 24 opt-in skipped, zero failures**. Native dialogs now use modeless presentation so the main chat can receive Stop/Close. The desktop Stop-with-approval-open run is still unverified: its edit was applied and the action taken needs clarification. Authenticated Hovel account-switch UI acceptance requires the currently unavailable local identity service and test accounts. Release gates remain closed.
+
+## Bumping the supported Grok version
+
+Hovel accepts exactly one Grok Build release. Talk, work, the setup card and the provider copy all read it from `GROK_VERIFIED_VERSION` in `composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/chat/grok/GrokCompatibility.kt`; any other release shows **Update** on the card and cannot sign in or start a conversation.
+
+1. Review the new release against the [source audit](source-audit.md): auth fallback, folder trust, the talk and work profiles, permission metadata, watcher replies and the `inspect --json` fields Hovel checks. Pin the audit to the new source commit and record anything that moved.
+2. Set `GROK_VERIFIED_VERSION` to the new release's exact `grok --version` output. The player-facing version and messages derive from it.
+3. Run the deterministic suite: `./gradlew :composeApp:jvmTest`.
+4. On a Mac signed in to a test Grok subscription, run every live smoke with the new binary. These send controlled model turns:
+   - Talk: `HOVEL_GROK_CHAT_SMOKE`, `HOVEL_GROK_TALK_SMOKE` with `HOVEL_GROK_TALK_PROMPT_SMOKE=1` and `HOVEL_GROK_LIFECYCLE_SMOKE=1`, and `HOVEL_GROK_ACP_SMOKE`.
+   - Work: `HOVEL_GROK_WORK_AUTH_SMOKE` with `HOVEL_GROK_WORK_PERMISSION_SMOKE=1` and `HOVEL_GROK_WORK_LIFECYCLE_SMOKE=1`, `HOVEL_GROK_WORK_ADAPTER_SMOKE`, `HOVEL_GROK_WORK_CLEANUP_SMOKE` and `HOVEL_GROK_PROFILE_SMOKE`.
+   - Handover: `HOVEL_GROK_HANDOVER_SMOKE` with `HOVEL_CLAUDE_HANDOVER_SMOKE`.
+5. Refresh the evidence: rerun `python3 tools/probe-grok-initialize.py` for `initialize-<version>.json`, replace `startup-`, `talk-` and `work-<version>.json` with the new sanitized results, and update the links here and in the audit.
+6. Repeat the native Mac checks under [Project work](#project-work): trust dialog, edit approval and denial, activity, Stop and Close chat.

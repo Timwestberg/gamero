@@ -29,7 +29,7 @@ internal class GrokWorkLaunch private constructor(
         val budget = GrokBudget(timeout)
         checkConfig()
         val version = runBounded(builder(listOf("--version")), budget.remaining(), 256)
-        check(version?.exitCode == 0 && version.output.trim() == GROK_VERIFIED_VERSION) { "Untested Grok version" }
+        check(version?.exitCode == 0 && grokVersionSupported(version.output)) { "Untested Grok version" }
         val result = runBounded(builder(listOf("--no-auto-update", "inspect", "--json")), budget.remaining())
         check(result?.exitCode == 0) { "Grok inspection unavailable" }
         val report = Json.parseToJsonElement(result.output).jsonObject

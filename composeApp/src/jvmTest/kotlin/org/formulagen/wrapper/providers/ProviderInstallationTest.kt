@@ -5,6 +5,7 @@ import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import kotlinx.coroutines.runBlocking
 import org.formulagen.wrapper.bridge.*
+import org.formulagen.wrapper.chat.grok.GROK_VERIFIED_VERSION
 import kotlin.test.*
 
 class ProviderInstallationTest {
@@ -13,16 +14,21 @@ class ProviderInstallationTest {
         return try { block(root) } finally { root.toFile().deleteRecursively() }
     }
 
-    private fun executable(root: Path, name: String, version: String = "2.1.304", help: Boolean = true): Path {
+    private fun executable(root: Path, name: String, version: String = if (name == "grok") GROK_VERIFIED_VERSION else "2.1.304",
+        help: Boolean = true): Path {
         val file = root.resolve("$name ' \$(touch injected)")
         val command = if (name == "claude") "claude auth login" else "$name login"
         Files.writeString(file, """#!/bin/sh
 if [ "${'$'}1" = "--version" ]; then echo '$version'; exit 0; fi
 for arg in "${'$'}@"; do
-  if [ "${'$'}arg" = "--help" ]; then echo '${if (help) "Usage: $command [OPTIONS]" else "Old CLI"}'; exit 0; fi
+  if [ "${'$'}arg" = "--help" ]; then
+    printf '%s\n' "${'$'}@" > help-args
+    printf '%s\n' "${'$'}GROK_DISABLE_AUTOUPDATER" > help-environment
+    echo '${if (help) "Usage: $command [OPTIONS]" else "Old CLI"}'; exit 0
+  fi
 done
 printf '%s\n' "${'$'}@" > args
-printf '%s\n' "${'$'}HOME" "${'$'}CODEX_HOME" "${'$'}GROK_HOME" "${'$'}OPENAI_API_KEY" > environment
+printf '%s\n' "${'$'}HOME" "${'$'}CODEX_HOME" "${'$'}GROK_HOME" "${'$'}OPENAI_API_KEY" "${'$'}GROK_DISABLE_AUTOUPDATER" > environment
 """)
         Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rwx------"))
         return file
@@ -48,7 +54,13 @@ printf '%s\n' "${'$'}HOME" "${'$'}CODEX_HOME" "${'$'}GROK_HOME" "${'$'}OPENAI_AP
             assertTrue(service.startLogin(id))
             val folder = root.resolve(name).resolve("sign-in")
             assertEquals(if (id == RuntimeId.CLAUDE_CODE) listOf("auth", "login") else listOf("login"), Files.readAllLines(folder.resolve("args")))
-            assertEquals(listOf(home, if (id == RuntimeId.CODEX) account else "", if (id == RuntimeId.GROK_BUILD) account else "", ""), Files.readAllLines(folder.resolve("environment")))
+            val grok = id == RuntimeId.GROK_BUILD
+            assertEquals(listOf(home, if (id == RuntimeId.CODEX) account else "", if (grok) account else "", "", if (grok) "1" else ""),
+                Files.readAllLines(folder.resolve("environment")))
+            // Neither the setup probe nor the login can make Grok update itself away from the accepted release.
+            assertEquals(when (id) { RuntimeId.CLAUDE_CODE -> listOf("auth", "login", "--help"); RuntimeId.GROK_BUILD -> listOf("--no-auto-update", "login", "--help")
+                else -> listOf("login", "--help") }, Files.readAllLines(folder.resolve("help-args")))
+            assertEquals(listOf(if (grok) "1" else ""), Files.readAllLines(folder.resolve("help-environment")))
             assertFalse(Files.exists(folder.resolve("injected")))
         }
     }
@@ -69,6 +81,20 @@ printf '%s\n' "${'$'}HOME" "${'$'}CODEX_HOME" "${'$'}GROK_HOME" "${'$'}OPENAI_AP
         assertEquals(0, launches)
     }
 
+    @Test fun aGrokReleaseOtherThanTheAcceptedOneIsOutdatedAndCannotSignIn() = fixture { root ->
+        var launches = 0
+        for (version in listOf("grok 1.0.71 (0123456789ab)", "grok 1.0.70", "1.0.70", "")) {
+            val path = executable(root, "grok", version = version)
+            val service = ProviderInstallation(root, emptyMap(), discover = { path }, openTerminal = { launches++; true }, mac = true)
+            assertEquals(ProviderSetupState.OUTDATED, service.setup(RuntimeId.GROK_BUILD).state, version)
+            assertFalse(service.startLogin(RuntimeId.GROK_BUILD))
+            assertFalse(Files.exists(root.resolve("sign-in/help-args")), "No login probe runs for an unsupported release")
+        }
+        assertEquals(0, launches)
+        val supported = executable(root, "grok")
+        assertEquals(ProviderSetupState.READY, ProviderInstallation(root, emptyMap(), discover = { supported }, mac = true).setup(RuntimeId.GROK_BUILD).state)
+    }
+
     @Test fun unsupportedHelpAndLaunchFailureNeverClaimSuccess() = fixture { root ->
         var path = executable(root, "grok", help = false)
         val service = ProviderInstallation(root, emptyMap(), discover = { path }, openTerminal = { false }, mac = true)
@@ -76,7 +102,7 @@ printf '%s\n' "${'$'}HOME" "${'$'}CODEX_HOME" "${'$'}GROK_HOME" "${'$'}OPENAI_AP
         assertFalse(service.startLogin(RuntimeId.GROK_BUILD))
         path = executable(root, "grok")
         assertFalse(service.startLogin(RuntimeId.GROK_BUILD))
-        Files.list(root.resolve("sign-in")).use { assertEquals(0, it.count()) }
+        Files.list(root.resolve("sign-in")).use { files -> assertEquals(0, files.filter { it.toString().endsWith(".command") }.count()) }
         assertEquals(ProviderSetupState.UNAVAILABLE, ProviderInstallation(root, emptyMap(), mac = false).setup(RuntimeId.CODEX).state)
         assertEquals(ProviderSetupState.UNAVAILABLE, ProviderInstallation(root, emptyMap(), discover = { error("private failure") }, mac = true).setup(RuntimeId.CODEX).state)
     }

@@ -4,6 +4,7 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import org.formulagen.wrapper.bridge.*
+import org.formulagen.wrapper.chat.grok.GROK_VERSION_MESSAGE
 import org.formulagen.wrapper.chat.grok.GrokAuthAvailability
 
 /** Subscription status and models; the separate development work gate owns project availability. */
@@ -27,7 +28,7 @@ internal class GrokProvider(
             GrokAuthAvailability.API_KEY -> ProviderStatus(id, ProviderState.ERROR, detail = ProviderDetail.API_KEY,
                 message = "Grok Build is offering API-key access. Sign in with your Grok account to use your subscription here.")
             GrokAuthAvailability.UNKNOWN -> ProviderStatus(id, ProviderState.ERROR, detail = ProviderDetail.UNKNOWN,
-                message = "Grok Build could not pass the subscription and compatibility checks. This Hovel build supports Grok Build 1.0.70. Choose Check again to retry.")
+                message = "Grok Build could not pass the subscription and compatibility checks. $GROK_VERSION_MESSAGE Choose Check again to retry.")
         }
     }
 

@@ -7,6 +7,7 @@ import kotlin.time.Duration.Companion.seconds
 import org.formulagen.wrapper.bridge.ProviderSetup
 import org.formulagen.wrapper.bridge.ProviderSetupState
 import org.formulagen.wrapper.bridge.RuntimeId
+import org.formulagen.wrapper.chat.grok.grokVersionSupported
 import org.formulagen.wrapper.process.runBounded
 
 /**
@@ -62,7 +63,14 @@ internal class ProviderInstallation(
                 ?: return@guarded ProviderSetup(id, ProviderSetupState.UNAVAILABLE) to null
             if (version < MIN_CLAUDE_VERSION) return@guarded ProviderSetup(id, ProviderSetupState.OUTDATED) to null
         }
-        val help = probe(loginArgs(id) + "--help")
+        // Every Grok talk and work launch requires the exact accepted release, so another one cannot sign in here.
+        if (id == RuntimeId.GROK_BUILD) {
+            val version = probe(listOf("--version"))?.takeIf { it.exitCode == 0 }
+                ?: return@guarded ProviderSetup(id, ProviderSetupState.UNAVAILABLE) to null
+            if (!grokVersionSupported(version.output)) return@guarded ProviderSetup(id, ProviderSetupState.OUTDATED) to null
+        }
+        // Grok's global flag goes before the subcommand, so the help still reads "Usage: grok login".
+        val help = probe((if (id == RuntimeId.GROK_BUILD) listOf("--no-auto-update") else emptyList()) + loginArgs(id) + "--help")
             ?: return@guarded ProviderSetup(id, ProviderSetupState.UNAVAILABLE) to null
         val command = when (id) {
             RuntimeId.CODEX -> "codex login"
@@ -79,7 +87,10 @@ internal class ProviderInstallation(
         Files.setPosixFilePermissions(it, PosixFilePermissions.fromString("rwx------"))
     }
 
-    /** Match each account reader's credential home. No API keys, tokens or endpoint overrides are inherited. */
+    /**
+     * Match each account reader's credential home. No API keys, tokens or endpoint overrides are inherited.
+     * Grok's probes and login never update Grok itself: Hovel accepts only one release.
+     */
     private fun loginEnvironment(id: RuntimeId, executable: Path): Map<String, String> {
         val keys = CHILD_ENV + when (id) {
             RuntimeId.CODEX -> listOf("CODEX_HOME", "CODEX_CA_CERTIFICATE")
@@ -90,7 +101,7 @@ internal class ProviderInstallation(
             "PATH" to (listOf(executable.parent.toString()) + environment["PATH"].orEmpty().split(":") +
                 listOf("/usr/bin", "/bin", "/usr/sbin", "/sbin")).filter { it.isNotBlank() }.distinct().joinToString(":"),
             "TERM" to "xterm-256color",
-        )
+        ) + (if (id == RuntimeId.GROK_BUILD) mapOf("GROK_DISABLE_AUTOUPDATER" to "1") else emptyMap())
     }
 }
 

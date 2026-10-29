@@ -27,7 +27,7 @@ internal class GrokLaunch private constructor(
         val budget = GrokBudget(timeout)
         checkPolicies()
         val version = runBounded(builder(listOf("--version")), budget.remaining(), 256)
-        check(version?.exitCode == 0 && version.output.trim() == GROK_VERIFIED_VERSION) { "Untested Grok version" }
+        check(version?.exitCode == 0 && grokVersionSupported(version.output)) { "Untested Grok version" }
         val inspected = runBounded(builder(listOf("--no-auto-update", "inspect", "--json")), budget.remaining())
         check(inspected?.exitCode == 0) { "Grok inspection unavailable" }
         verifyGrokInspection(Json.parseToJsonElement(inspected.output).jsonObject)
@@ -131,7 +131,6 @@ internal fun verifyGrokInspection(report: JsonObject) {
     check(permissions["enforced"] == null || (permissions["enforced"] as? JsonArray)?.isEmpty() == true)
 }
 
-internal const val GROK_VERIFIED_VERSION = "grok 1.0.70 (f50904eaee6c)"
 private val directoryPermissions = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------"))
 private val POLICY_FILES = listOf("requirements.toml", "managed_config.toml")
 private const val GROK_ISOLATED_CONFIG = """[auth]

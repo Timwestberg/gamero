@@ -46,6 +46,7 @@ class GrokProviderTest {
             auth = GrokAuthAvailability.UNKNOWN
             assertEquals(ProviderState.ERROR, provider.status("local", ProviderAction.STATUS).state)
             assertEquals(ProviderDetail.UNKNOWN, provider.status("local", ProviderAction.STATUS).detail)
+            assertTrue(provider.status("local", ProviderAction.STATUS).message.orEmpty().contains("supports Grok Build 1.0.70."))
             val beforeInvalid = checks
             assertFailsWith<IllegalArgumentException> { provider.status("../profile", ProviderAction.STATUS) }
             assertEquals(beforeInvalid, checks)
