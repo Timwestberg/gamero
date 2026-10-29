@@ -9,6 +9,8 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.*
 import org.formulagen.wrapper.approvals.*
 import org.formulagen.wrapper.bridge.*
+import org.formulagen.wrapper.chat.grok.GrokWorkTrust
+import org.formulagen.wrapper.chat.grok.grokWorkTrustDialog
 import org.formulagen.wrapper.providers.GrokConnection
 import org.formulagen.wrapper.workspace.FolderPicker
 import org.formulagen.wrapper.workspace.WorkspaceStore
@@ -153,6 +155,61 @@ class GrokWorkRuntimeTest {
         }
     }
 
+    @Test fun trustAsksWithBothFoldersAndRequiresGrokToTrustExactlyTheConfirmedRoot() {
+        FakeGrokRuntime().use { fake ->
+            val repository = Files.createDirectories(fake.root.resolve("repository")).toRealPath()
+            val project = Files.createDirectories(repository.resolve("game")).toRealPath()
+            val asked = CopyOnWriteArrayList<Pair<java.nio.file.Path, java.nio.file.Path>>()
+            val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
+            val trust = GrokWorkTrust { selected, root, _ -> asked += selected to root; true }
+            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker, trust).use { runtime ->
+                fake.untrusted(repository, rootAfterTrust = project)
+                val moved = WorkFixtureEvents()
+                runtime.startTurn(workRequest(fake, project), moved); moved.done.get(10, TimeUnit.SECONDS)
+                assertEquals(ChatFailure.Temporary, moved.failure)
+                assertEquals(listOf(project to repository), asked)
+                assertFalse("session/prompt" in fake.requests())
+                fake.untrusted(repository)
+                val trusted = WorkFixtureEvents()
+                runtime.startTurn(workRequest(fake, project), trusted); trusted.done.get(10, TimeUnit.SECONDS)
+                assertNull(trusted.failure)
+                assertEquals(listOf(project to repository, project to repository), asked)
+                assertEquals(2, fake.requests().count { it == "trust" })
+            }
+        }
+    }
+
+    @Test fun aTrustRootCoveringTheHomeFolderOrTheDiskIsRefusedWithoutAsking() {
+        FakeGrokRuntime().use { fake ->
+            val project = Files.createDirectories(fake.root.resolve("notes")).toRealPath()
+            val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
+            val trust = GrokWorkTrust { _, _, _ -> error("A trust root above the home folder must not be offered") }
+            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker, trust).use { runtime ->
+                for (root in listOf(fake.root, fake.root.parent, java.nio.file.Path.of("/"))) {
+                    fake.untrusted(root)
+                    val events = WorkFixtureEvents()
+                    runtime.startTurn(workRequest(fake, project), events); events.done.get(10, TimeUnit.SECONDS)
+                    assertEquals(ChatFailure.ProjectTrustTooBroad, events.failure, root.toString())
+                }
+                assertFalse("trust" in fake.requests())
+                assertFalse("session/prompt" in fake.requests())
+            }
+        }
+    }
+
+    @Test fun theTrustDialogNamesBothFoldersAndSaysWhenGrokTrustsMore() {
+        val project = java.nio.file.Path.of("/work/repository/game")
+        val enclosing = grokWorkTrustDialog(project, project.parent)
+        assertEquals(listOf("Project folder in Hovel: /work/repository/game", "Folder Grok will trust: /work/repository",
+            "These are different folders. Grok trusts the whole folder /work/repository, including everything in it outside your project folder."),
+            enclosing.lines.take(3))
+        assertEquals(false, enclosing.dismiss)
+        val same = grokWorkTrustDialog(project, project)
+        assertEquals(listOf("Project folder in Hovel: /work/repository/game", "Folder Grok will trust: /work/repository/game"), same.lines.take(2))
+        assertTrue(same.lines.none { it.startsWith("These are different folders") })
+        assertEquals("Folder Grok will trust: /work/\\u202Erepo", grokWorkTrustDialog(project, java.nio.file.Path.of("/work/\u202Erepo")).lines[1])
+    }
+
     @Test fun workBindingsCannotResumeInAnotherWorkspaceOrReplayAnAmbiguousPrompt() {
         FakeGrokRuntime().use { fake ->
             val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
@@ -178,9 +235,9 @@ class GrokWorkRuntimeTest {
     }
 }
 
-private fun workRequest(fake: FakeGrokRuntime) = TurnRequest("local", "20000000-0000-4000-8000-000000000002",
+private fun workRequest(fake: FakeGrokRuntime, folder: java.nio.file.Path = fake.root) = TurnRequest("local", "20000000-0000-4000-8000-000000000002",
     Persona.working("Ember"), null, null, null, "Hello",
-    WorkScope(fake.root, "lease", "Ember", TeamMember(RuntimeId.GROK_BUILD, "runtime-default")))
+    WorkScope(folder, "lease", "Ember", TeamMember(RuntimeId.GROK_BUILD, "runtime-default")))
 
 private fun awaitCondition(condition: () -> Boolean) {
     val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)

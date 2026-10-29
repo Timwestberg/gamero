@@ -25,7 +25,7 @@ internal class GrokWorkRuntime(
     private val environment: Map<String, String>,
     private val connection: GrokConnection,
     private val broker: ApprovalBroker,
-    private val trust: GrokWorkTrust = GrokWorkTrust { _, _ -> false },
+    private val trust: GrokWorkTrust = GrokWorkTrust { _, _, _ -> false },
 ) : WorkRuntime {
     override val id = RuntimeId.GROK_BUILD
     private val bindings = GrokSessions(root.resolve("grok-work-bindings"))
@@ -100,7 +100,11 @@ internal class GrokWorkRuntime(
                     if (active()) run()
                 } catch (error: Exception) {
                     if (active()) log(LogLevel.Warn, "grok", "Grok work $stage failed (${(error as? GrokTransportFailure)?.issue ?: "check"})")
-                    fail(if (error is GrokWorkTrustDeclined) ChatFailure.ProjectTrustRequired else ChatFailure.Temporary)
+                    fail(when (error) {
+                        is GrokWorkTrustDeclined -> ChatFailure.ProjectTrustRequired
+                        is GrokWorkTrustTooBroad -> ChatFailure.ProjectTrustTooBroad
+                        else -> ChatFailure.Temporary
+                    })
                 } finally {
                     approvals?.close()
                     try { session?.close() } catch (_: Exception) {
@@ -142,8 +146,8 @@ internal class GrokWorkRuntime(
             }
             if (!active()) return
             val opened = GrokWorkSession.open(executable, environment, folder, request.persona.instructions, model,
-                account.fingerprint, previous?.providerSessionId, ::update, confirmTrust = { trustFolder ->
-                    active() && trust.ask(trustFolder, startupCancel) && active()
+                account.fingerprint, previous?.providerSessionId, ::update, confirmTrust = { selected, root ->
+                    active() && trust.ask(selected, root, startupCancel) && active()
                 }) { params, respond ->
                 val relay = approvals
                 if (active() && relay != null) relay.receive(params, respond)

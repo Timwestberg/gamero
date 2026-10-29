@@ -15,9 +15,15 @@ internal class GrokWorkLaunch private constructor(
     val workspace: Path,
     private val profile: Path,
     private val config: Path,
+    private val home: Path,
 ) : AutoCloseable {
+    /** The folder Grok trusts for [workspace]: its reported project root, which can be an enclosing repository. */
     var trustFolder: Path = workspace
         private set
+
+    /** Grok's trust root is the player's home folder, a folder above it, or the disk: Hovel never asks to trust that. */
+    val trustTooBroad: Boolean get() = trustFolder.parent == null || home.startsWith(trustFolder)
+
     /** Inspect using the runtime's resolver; unsupported configuration is refused, never rewritten. */
     fun verify(timeout: Duration): Boolean {
         val budget = GrokBudget(timeout)
@@ -28,21 +34,29 @@ internal class GrokWorkLaunch private constructor(
         check(result?.exitCode == 0) { "Grok inspection unavailable" }
         val report = Json.parseToJsonElement(result.output).jsonObject
         verifyGrokWorkInspection(report, config)
-        trustFolder = (report["projectRoot"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.let(Path::of)?.toRealPath() ?: workspace
+        trustFolder = projectRoot(report)
         check(workspace.startsWith(trustFolder)) { "Grok project trust scope could not be verified" }
         checkConfig()
         return report["projectTrusted"] == JsonPrimitive(true)
     }
 
-    /** Called only after an explicit native confirmation that names Grok's persistent folder trust. */
-    fun trust(timeout: Duration) {
+    /**
+     * Called only after an explicit native confirmation that names Grok's persistent trust of [confirmed].
+     * Grok must report that same root afterwards; trust that landed on another folder is a failure.
+     */
+    fun trust(confirmed: Path, timeout: Duration) {
         checkConfig()
         val result = runBounded(builder(listOf("--no-auto-update", "--trust", "inspect", "--json")), timeout)
         check(result?.exitCode == 0) { "Grok folder trust could not be saved" }
         val report = Json.parseToJsonElement(result.output).jsonObject
         verifyGrokWorkInspection(report, config)
+        check(projectRoot(report) == confirmed) { "Grok trusted a different folder than the one confirmed" }
         check(report["projectTrusted"] == JsonPrimitive(true)) { "Grok folder trust was not established" }
     }
+
+    /** The canonical root Grok reports, or the workspace itself when it reports none. */
+    private fun projectRoot(report: JsonObject): Path =
+        (report["projectRoot"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.let(Path::of)?.toRealPath() ?: workspace
 
     /** The parsed auth pin is checked before startup and again immediately before submitting a turn. */
     fun checkConfig() = verifyGrokWorkConfig(readGrokWorkConfig(config))
@@ -77,7 +91,8 @@ internal class GrokWorkLaunch private constructor(
                 PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))
             try {
                 Files.writeString(profile, GROK_WORK_PROFILE + "\n" + instructions)
-                return GrokWorkLaunch(executable, env, workspace.toRealPath(), profile, config)
+                return GrokWorkLaunch(executable, env, workspace.toRealPath(), profile, config,
+                    runCatching { home.toRealPath() }.getOrDefault(home.normalize()))
             } catch (error: Exception) { Files.deleteIfExists(profile); throw error }
         }
     }

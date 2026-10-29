@@ -119,6 +119,8 @@ internal sealed interface ChatFailure {
     data object ModelUnavailable : ChatFailure
     /** The provider's explicit project trust was declined or revoked before work could start. */
     data object ProjectTrustRequired : ChatFailure
+    /** The provider would trust the player's whole home folder (or more) for this project, which Hovel never asks. */
+    data object ProjectTrustTooBroad : ChatFailure
     /** Overloaded, a server error or a dropped connection: sending again later may work. */
     data object Temporary : ChatFailure
     /** The runtime no longer has the conversation, or it was started with another persona: start a new one. */

@@ -600,7 +600,7 @@ private fun failureKind(failure: ChatFailure) = when (failure) {
     ChatFailure.ModelUnavailable -> ChatFailureKind.MODEL_UNAVAILABLE
     ChatFailure.Temporary -> ChatFailureKind.TEMPORARY
     ChatFailure.Lockdown -> ChatFailureKind.LOCKDOWN
-    ChatFailure.ConversationLost, ChatFailure.Unexpected, ChatFailure.ProjectTrustRequired -> ChatFailureKind.UNEXPECTED
+    ChatFailure.ConversationLost, ChatFailure.Unexpected, ChatFailure.ProjectTrustRequired, ChatFailure.ProjectTrustTooBroad -> ChatFailureKind.UNEXPECTED
 }
 
 /** A lost sign-in leaves the chat "disconnected"; every other failure is an error the person can retry. */
@@ -620,6 +620,8 @@ private fun couldNotComplete(runtime: RuntimeId) = "${runtime.copy.program} coul
 /** The person-facing reason a turn failed. Raw runtime output never reaches it. */
 internal fun failureNotice(runtime: RuntimeId, failure: ChatFailure, zone: ZoneId = ZoneId.systemDefault()): String = when (failure) {
     ChatFailure.ProjectTrustRequired -> "Work did not start. ${runtime.copy.product} needs your approval to trust this project and load its instructions."
+    ChatFailure.ProjectTrustTooBroad -> "Work did not start. ${runtime.copy.program} treats your home folder, or a folder above it, " +
+        "as this project, and Hovel will not ask you to trust all of that. Choose a project folder that is its own repository."
     ChatFailure.SignedOut -> signedOutNotice(runtime)
     is ChatFailure.UsageLimit -> "You've reached your ${runtime.copy.product} usage limit. " +
         (failure.resetsAt?.let { "It resets at ${resetTime(it, zone)}." } ?: "Try again later.")

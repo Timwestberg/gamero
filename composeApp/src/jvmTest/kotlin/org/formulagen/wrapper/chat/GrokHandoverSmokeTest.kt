@@ -56,7 +56,7 @@ class GrokHandoverSmokeTest {
             workspace.choose(scope.profile, scope.companionId)
             DesktopChat(providers, listOf(GrokChatRuntime(providers, env, connection), ClaudeChatRuntime(claude, claudeConnection)), speech,
                 work = ChatWork(workspace, StartOfWork(dialogs), listOf(
-                    GrokWorkRuntime(providers, env, connection, broker, GrokWorkTrust { folder, cancel -> folder == project && !cancel.isCancelled }),
+                    GrokWorkRuntime(providers, env, connection, broker, GrokWorkTrust { _, trusted, cancel -> trusted == project && !cancel.isCancelled }),
                     ClaudeWorkRuntime(claude, claudeConnection, broker)))).use { chat ->
                 chat.openForClient(ChatOpenForClient(scope.profile, scope.companionId, scope.name, scope.sessionId, listOf("grok-build", "claude-code")))
                 suspend fun send(member: TeamMember, text: String): ChatEntry.Assistant {

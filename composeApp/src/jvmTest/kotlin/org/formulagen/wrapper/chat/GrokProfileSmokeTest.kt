@@ -57,7 +57,7 @@ class GrokProfileSmokeTest {
         }
         val member = TeamMember(RuntimeId.GROK_BUILD, "runtime-default")
         val workers = listOf(GrokWorkRuntime(providers, env, connection, broker,
-            GrokWorkTrust { folder, cancel -> folder in setOf(projectA, projectB) && !cancel.isCancelled }))
+            GrokWorkTrust { _, trusted, cancel -> trusted in setOf(projectA, projectB) && !cancel.isCancelled }))
         try {
             DesktopChat(providers, listOf(GrokChatRuntime(providers, env, connection)), speech,
                 work = ChatWork(workspace, StartOfWork(dialogs), workers)).use { chat ->

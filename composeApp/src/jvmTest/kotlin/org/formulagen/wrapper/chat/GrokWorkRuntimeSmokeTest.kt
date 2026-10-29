@@ -94,7 +94,7 @@ class GrokWorkRuntimeSmokeTest {
                 "Do not use other tools or alter other files. If denied, stop without retrying. Remember ORCHID_WORK.", work)
         val first = WorkSmokeEvents()
         try {
-            GrokWorkRuntime(root.resolve("providers"), env, GrokConnection(env), broker, GrokWorkTrust { folder, cancel -> folder == project && !cancel.isCancelled }).use { runtime ->
+            GrokWorkRuntime(root.resolve("providers"), env, GrokConnection(env), broker, GrokWorkTrust { _, trusted, cancel -> trusted == project && !cancel.isCancelled }).use { runtime ->
                 assertEquals(Readiness.Ready, runtime.readiness("local"))
                 runtime.startTurn(request, first); first.await()
                 assertNull(first.failure)

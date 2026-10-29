@@ -185,8 +185,14 @@ internal class FakeGrokRuntime : AutoCloseable {
             def out(value): print(json.dumps(dict(jsonrpc='2.0',**value)),flush=True)
             if '--version' in sys.argv: print('${GROK_VERIFIED_VERSION}'); sys.exit(0)
             if 'inspect' in sys.argv:
-                print(json.dumps(dict(projectTrusted=True,projectInstructions=[],hooks=[],skills=[],plugins=[],mcpServers=[],lspServers=[],
-                    configSources={'layers':[{'role':'user','path':str(pathlib.Path(os.environ['GROK_HOME'])/'config.toml')}]},permissions={'managedSettingsExists':False}))); sys.exit(0)
+                trust=json.loads((root/'trust.json').read_text()) if (root/'trust.json').exists() else {}
+                if '--trust' in sys.argv:
+                    with (root/'requests').open('a') as f: f.write('trust\n')
+                    trust['trusted']=True; trust['root']=trust.get('rootAfterTrust',trust.get('root')); (root/'trust.json').write_text(json.dumps(trust))
+                report=dict(projectTrusted=trust.get('trusted',True),projectInstructions=[],hooks=[],skills=[],plugins=[],mcpServers=[],lspServers=[],
+                    configSources={'layers':[{'role':'user','path':str(pathlib.Path(os.environ['GROK_HOME'])/'config.toml')}]},permissions={'managedSettingsExists':False})
+                if trust.get('root'): report['projectRoot']=trust['root']
+                print(json.dumps(report)); sys.exit(0)
             meta=dict(auth_mode='Oidc',backend_billed=False,is_team_principal=False,is_organization_principal=False,gate=None,subscription_tier='SuperGrok')
             models=dict(currentModelId='grok-test',availableModels=[dict(modelId='grok-test',name='Grok Test')])
             sid='provider/opaque-id'
@@ -230,6 +236,9 @@ internal class FakeGrokRuntime : AutoCloseable {
         executable.toFile().setExecutable(true)
     }
     fun mode(value: String) { Files.writeString(root.resolve("mode"), value) }
+    /** Inspection reports the project untrusted with [projectRoot]; `--trust` then reports [rootAfterTrust]. */
+    fun untrusted(projectRoot: java.nio.file.Path, rootAfterTrust: java.nio.file.Path = projectRoot) = Files.writeString(root.resolve("trust.json"),
+        buildJsonObject { put("trusted", false); put("root", projectRoot.toString()); put("rootAfterTrust", rootAfterTrust.toString()) }.toString())
     fun requests(): List<String> = root.resolve("requests").let { if (Files.exists(it)) Files.readAllLines(it) else emptyList() }
     override fun close() { root.toFile().deleteRecursively() }
 }
