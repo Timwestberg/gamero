@@ -30,6 +30,12 @@ class SharedLimitsTest {
         assertEquals(mapOf("accountLabel" to ProviderLimits.ACCOUNT_LABEL, "displayName" to ProviderLimits.DISPLAY_NAME,
             "message" to ProviderLimits.MESSAGE, "models" to ProviderLimits.MODELS, "plan" to ProviderLimits.PLAN,
             "runtimes" to ProviderLimits.RUNTIMES), numbers("PROVIDER_LIMITS"))
+        assertEquals(mapOf("condition" to BrainLimits.CONDITION, "configuration" to BrainLimits.CONFIGURATION, "cursor" to BrainLimits.CURSOR,
+            "description" to BrainLimits.DESCRIPTION, "dispatches" to BrainLimits.DISPATCHES, "history" to BrainLimits.HISTORY,
+            "input" to BrainLimits.INPUT, "inputs" to BrainLimits.INPUTS, "label" to BrainLimits.LABEL, "output" to BrainLimits.OUTPUT,
+            "preview" to BrainLimits.PREVIEW, "returns" to BrainLimits.RETURNS, "roleInstructions" to BrainLimits.ROLE_INSTRUCTIONS,
+            "specialists" to BrainLimits.SPECIALISTS, "stepInstructions" to BrainLimits.STEP_INSTRUCTIONS, "steps" to BrainLimits.STEPS),
+            numbers("BRAIN_LIMITS"))
         assertEquals(SharedRules.MODEL_ID_PATTERN, limits.getValue("MODEL_ID_PATTERN").jsonPrimitive.content)
         assertEquals(SharedRules.CLIENT_RUNTIME_LIMIT, limits.getValue("CLIENT_RUNTIME_LIMIT").jsonPrimitive.int)
         assertEquals(SharedRules.CLIENT_RUNTIME_PATTERN, limits.getValue("CLIENT_RUNTIME_PATTERN").jsonPrimitive.content)

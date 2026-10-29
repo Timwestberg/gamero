@@ -87,8 +87,11 @@ final class BenchLogicTests: XCTestCase {
             PieceTake(ttfaMs: 20, synthMs: 30, samples: 24000, sampleRate: 24000),
         ])
         let catalog = BenchCatalog(
-            silence_ms: 40,
-            num_steps: 1,
+            silenceBetweenPiecesMs: 40,
+            numSteps: 1,
+            fallbackNumSteps: 3,
+            decoderFramesPerCallback: 2,
+            longSentenceMaxChars: 400,
             temperature: 0.3,
             seed: 1,
             lines: [
@@ -96,7 +99,7 @@ final class BenchLogicTests: XCTestCase {
             ]
         )
         let row = runBench(catalog: catalog, synth: synth)[0]
-        XCTAssertEqual(synth.seeds, [1, 2])
+        XCTAssertEqual(synth.seeds, [1, 1])
         XCTAssertEqual(row.ttfaMs, 150)
         XCTAssertEqual(row.audioSeconds, 1.0, accuracy: 0.001)
     }
@@ -107,8 +110,11 @@ final class BenchLogicTests: XCTestCase {
             PieceTake(ttfaMs: 12, synthMs: 12, samples: 2400, sampleRate: 24000),
         ])
         let catalog = BenchCatalog(
-            silence_ms: 40,
-            num_steps: 1,
+            silenceBetweenPiecesMs: 40,
+            numSteps: 1,
+            fallbackNumSteps: 3,
+            decoderFramesPerCallback: 2,
+            longSentenceMaxChars: 400,
             temperature: 0.3,
             seed: 1,
             lines: [
@@ -132,8 +138,11 @@ final class BenchLogicTests: XCTestCase {
             PieceTake(ttfaMs: 12, synthMs: 40, samples: 24000 * 10, sampleRate: 24000),
         ])
         let catalog = BenchCatalog(
-            silence_ms: 40,
-            num_steps: 1,
+            silenceBetweenPiecesMs: 40,
+            numSteps: 1,
+            fallbackNumSteps: 3,
+            decoderFramesPerCallback: 2,
+            longSentenceMaxChars: 400,
             temperature: 0.3,
             seed: 1,
             lines: [

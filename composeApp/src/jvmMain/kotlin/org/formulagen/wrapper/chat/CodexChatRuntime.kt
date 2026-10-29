@@ -232,9 +232,8 @@ internal class CodexChatRuntime(
             turn?.events?.failed(ChatFailure.Temporary)
             return@synchronized
         }
-        // Account and other process-wide notifications have no thread and cannot address a reply or summary.
-        val thread = (params["threadId"] as? JsonPrimitive)?.contentOrNull ?: return@synchronized
-        connection.summaries[thread]?.let { it.receive(method, params); return@synchronized }
+        val thread = (params["threadId"] as? JsonPrimitive)?.contentOrNull
+        thread?.let(connection.summaries::get)?.let { it.receive(method, params); return@synchronized }
         var overflow: Turn? = null
         val turn = synchronized(lock) {
             val turn = connection.turn?.takeIf { it.thread == thread } ?: return@synchronized null

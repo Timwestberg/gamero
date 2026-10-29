@@ -77,6 +77,7 @@ class BridgeRouterTest {
 
     /** Hovel's product set: the companion, supported only where the parity table says. */
     private fun hovelPacks(platform: HostPlatform, fakes: Fakes = Fakes()): List<CapabilityPack> = listOf(
+        BrainMethods.pack(supported(platform, "brain.open", FakeBrainCapability())),
         ChatMethods.pack(supported(platform, "chat.open", FakeChatCapability())),
         ProviderMethods.pack(supported(platform, "providers.status", FakeProviderCapability())),
         PetMethods.pack(supported(platform, "pet.status", FakePetCapability())),
