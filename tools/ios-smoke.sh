@@ -4,8 +4,9 @@
 # Usage: tools/ios-smoke.sh
 #
 # Environment:
-#   GAMERO_WEB_URL         page to load (default http://127.0.0.1:8080/hovel.html)
-#   GAMERO_EXPECTED_TITLE  document title that proves the page loaded (default Hovel)
+#   GAMERO_WEB_URL         page to load (default http://127.0.0.1:8080/hovel)
+#   GAMERO_EXPECTED_TITLE  document title that proves the page loaded (default Hovel). Signed
+#                          out, /hovel moves to /auth?next=%2Fhovel, which keeps that title
 #   GAMERO_SMOKE_TIMEOUT   seconds to wait for the page (default 90)
 #   GAMERO_SIM_DEVICE      existing simulator name or UDID to reuse; it is left booted
 #   GAMERO_SMOKE_ROOT_CERT PEM certificate to trust in curl and the simulator, for an HTTPS
@@ -17,7 +18,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 out="$root/build/ios"
-url="${GAMERO_WEB_URL:-http://127.0.0.1:8080/hovel.html}"
+url="${GAMERO_WEB_URL:-http://127.0.0.1:8080/hovel}"
 title="${GAMERO_EXPECTED_TITLE:-Hovel}"
 timeout="${GAMERO_SMOKE_TIMEOUT:-90}"
 cert="${GAMERO_SMOKE_ROOT_CERT:-}"
