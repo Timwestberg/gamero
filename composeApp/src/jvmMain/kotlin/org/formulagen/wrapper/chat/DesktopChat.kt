@@ -36,6 +36,9 @@ internal class DesktopChat(
     private val speech: ChatSpeech,
     private val offered: Set<RuntimeId> = RuntimeId.entries.toSet(),
     private val work: ChatWork? = null,
+    private val isConverted: (String, String) -> Boolean = { _, _ -> false },
+    private val beforeOpen: () -> Unit = {},
+    private val ownershipGate: Any = Any(),
 ) : ChatCapability, AutoCloseable {
     private val runtimes = runtimes.associateBy { it.id }
     private val workers: Map<RuntimeId, WorkRuntime> = work?.runtimes.orEmpty()
@@ -88,14 +91,26 @@ internal class DesktopChat(
     }
 
     /** Opening is the only operation allowed to replace an active conversation. */
-    override suspend fun open(scope: ChatScope): ChatSnapshot = synchronized(gate) {
-        check(!closed)
-        val old = active
-        if (old?.scope == scope && old.state !in setOf(ChatState.ERROR, ChatState.DISCONNECTED)) return@synchronized view(old)
-        invalidateLocked(keepEnded = false)
-        ended = null
-        val history = companionChatHistory(providerRoot, scope.profile, scope.companionId)
-        view(Session(scope, Persona.companion(scope.name), history, history.read()).also { active = it })
+    override suspend fun open(scope: ChatScope): ChatSnapshot = synchronized(ownershipGate) {
+        require(!isConverted(scope.profile, scope.companionId)) { "Use the coordinator conversation for this companion" }
+        beforeOpen()
+        synchronized(gate) state@{
+            require(!isConverted(scope.profile, scope.companionId)) { "Use the coordinator conversation for this companion" }
+            check(!closed)
+            val old = active
+            if (old?.scope == scope && old.state !in setOf(ChatState.ERROR, ChatState.DISCONNECTED)) return@state view(old)
+            invalidateLocked(keepEnded = false)
+            ended = null
+            val history = companionChatHistory(providerRoot, scope.profile, scope.companionId)
+            view(Session(scope, Persona.companion(scope.name), history, history.read()).also { active = it })
+        }
+    }
+
+    /** A conversion cannot cancel a legacy turn or race a new send. */
+    fun <T> whileIdle(profile: String, companionId: String, action: () -> T): T = synchronized(gate) {
+        val session = active?.takeIf { it.scope.profile == profile && it.scope.companionId == companionId }
+        if (session?.state in setOf(ChatState.RESPONDING, ChatState.HANDING_OVER, ChatState.AWAITING_YOU)) throw BridgeBusyException()
+        action()
     }
 
     /** Polling cannot reopen an expired lease, but a view the host ended keeps reading its final state. */
@@ -110,6 +125,7 @@ internal class DesktopChat(
      * member on a runtime this build does not offer is refused with a notice and no entry.
      */
     override suspend fun send(args: ChatSend): ChatSnapshot = synchronized(gate) {
+        require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
         val session = current(args.scope())
         if (session.record.entries.any { it.id == args.requestId }) return@synchronized view(session)
         if (session.state == ChatState.AWAITING_YOU) return@synchronized refuse(session, ANSWER_FIRST)
@@ -138,6 +154,7 @@ internal class DesktopChat(
      * no reply or switch is in progress.
      */
     override suspend fun retry(args: ChatRetry): ChatSnapshot = synchronized(gate) {
+        require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
         val session = current(args.scope())
         val record = session.record
         if (record.entries.any { it.id == args.requestId }) return@synchronized view(session)
@@ -240,6 +257,7 @@ internal class DesktopChat(
      * and, when there is something it missed, handed a summary (or the recent messages) on the worker.
      */
     override suspend fun handover(args: ChatHandover): ChatSnapshot = synchronized(gate) {
+        require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
         val session = current(args.scope())
         if (session.record.entries.any { it.id == args.requestId } || session.handover?.requestId == args.requestId) return@synchronized view(session)
         // A refusal is a snapshot with a notice and no new entry; the page keeps the current member.
