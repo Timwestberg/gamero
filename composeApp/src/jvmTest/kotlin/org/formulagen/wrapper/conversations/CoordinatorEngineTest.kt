@@ -43,9 +43,9 @@ class CoordinatorEngineTest {
 
         /** Queue [text] (in [threadId]), claim it and run it here. */
         fun send(text: String, threadId: String? = null, messageId: String = id(), cancel: CancelSignal = CancelSignal(),
-            history: List<ConversationMessage> = emptyList(), memory: String? = null): MessageState {
+            history: List<ConversationMessage> = emptyList(), memory: String? = null, closing: () -> Boolean = { false }): MessageState {
             val claim = claim(text, threadId, messageId, history, memory)
-            return ClaimOutput(server, claim.claimId, claim.message.id, attempts = 1).use { engine.run(claim, it, cancel) }
+            return ClaimOutput(server, claim.claimId, claim.message.id, attempts = 1).use { engine.run(claim, it, cancel, closing) }
         }
 
         fun claim(text: String, threadId: String? = null, messageId: String = id(), history: List<ConversationMessage> = emptyList(),
@@ -289,6 +289,44 @@ class CoordinatorEngineTest {
         assertEquals(listOf(threadId), fixture.worker.released)
         assertEquals(BrainRunState.CANCELLED, fixture.record().brain.run?.summary?.state)
         assertEquals(BrainAttemptState.INTERRUPTED, fixture.server.threads().last().state, "work that may have changed files is interrupted")
+    }
+
+    @Test fun quittingPausesTheRunForReviewInsteadOfStoppingIt() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        fixture.delegateThenAnswer()
+        fixture.worker.reply = { null }
+        val cancel = CancelSignal()
+        val messageId = id()
+        val state = CompletableFuture.supplyAsync { fixture.send("Add sign-in", messageId = messageId, cancel = cancel, closing = { cancel.isCancelled }) }
+        assertTrue(fixture.worker.started.await(5, TimeUnit.SECONDS))
+        cancel.cancel()
+        assertEquals(MessageState.RECONCILIATION_REQUIRED, state.get(5, TimeUnit.SECONDS))
+        assertEquals(BrainRunState.PAUSED, fixture.record().brain.run?.summary?.state, "the person's retry resumes it")
+        fixture.worker.reply = { "Implemented sign-in." }
+        assertEquals(MessageState.ANSWERED, fixture.send("Add sign-in", messageId = messageId))
+    }
+
+    @Test fun aLostCoordinatorConversationIsForgottenSoTheNextMessageStartsFresh() {
+        val fixture = Fixture(brain())
+        fixture.chat.reply = { "Hello." }
+        fixture.send("Hi")
+        assertEquals(1, fixture.record().brain.coordinatorContexts.size)
+        fixture.chat.failure = ChatFailure.ConversationLost
+        assertEquals(MessageState.FAILED, fixture.send("Still there?"))
+        assertEquals(emptyMap(), fixture.record().brain.coordinatorContexts)
+        assertEquals(MessageState.ANSWERED, fixture.send("Hello again"))
+        assertNull(fixture.chat.requests.last().conversation)
+    }
+
+    @Test fun aRepairedReplyStreamsAsAReplyOfItsOwn() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        var turns = 0
+        fixture.decide = { if (turns++ == 0) "{\"kind\":\"answer\"}\n" + "x".repeat(CompanionLimits.MESSAGE + 1) else "{\"kind\":\"answer\"}\nShort." }
+        assertEquals(MessageState.ANSWERED, fixture.send("Hi"))
+        val answer = fixture.server.appended().last()
+        assertEquals("Short.", answer.text)
+        assertEquals("Short.", fixture.server.deltas.filter { it.messageId == answer.id }.joinToString("") { it.text })
+        assertEquals(2, fixture.server.deltas.map { it.messageId }.distinct().size)
     }
 
     @Test fun aRetriedMessageReviewsTheRunAndRerunsItsThread() {

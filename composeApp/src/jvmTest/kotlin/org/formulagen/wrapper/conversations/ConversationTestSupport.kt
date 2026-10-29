@@ -171,8 +171,9 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
     @Synchronized override fun answer(approvalId: String, answer: ApprovalAnswer): AgentApproval {
         if (offline) throw java.io.IOException("offline")
         answers += approvalId to answer
+        if (refuseAnswers) throw HovelRejectedException()
         val approval = approvals[approvalId] ?: throw HovelStatusException(404)
-        if (refuseAnswers || approval.state != ApprovalState.OPEN || approval.revision != answer.expectedRevision) throw HovelRejectedException()
+        if (approval.state != ApprovalState.OPEN || approval.revision != answer.expectedRevision) throw HovelRejectedException()
         return approval.copy(state = ApprovalState.ANSWERED, revision = approval.revision + 1,
             answer = ApprovalAnswerRecord(ApprovalSurface.MAC, hostId, answer.option)).also { approvals[approvalId] = it }
     }

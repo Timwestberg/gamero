@@ -49,7 +49,7 @@ class RemoteApprovalsTest {
             assertEquals(ApprovalPresentation.Anywhere(listOf("Edit ./src/app.ts")), approval.presentation)
             assertEquals(thread, approval.threadId)
             assertEquals(server.hostId, approval.computerId)
-            assertEquals("2026-10-29T12:10:00Z", approval.expiresAt, "it expires with the Mac's dialog")
+            assertEquals("2026-10-29T12:30:00Z", approval.expiresAt, "past the Mac's dialog, with room for dialogs before it")
             screen.open.single()(0)
             assertEquals(ApprovalDecision.ALLOW_ONCE, decision.get(5, TimeUnit.SECONDS))
             assertEquals(listOf(approval.id to ApprovalAnswer(0, ApprovalOption.ALLOW_ONCE)), server.answers)
@@ -85,12 +85,23 @@ class RemoteApprovalsTest {
         }
     }
 
+    @Test fun aMacAnswerToAnApprovalTheServerLetExpireStillStands() {
+        approvals.register(thread, scope).use {
+            val decision = asking()
+            val approval = opened()
+            server.approvals[approval.id] = approval.copy(state = ApprovalState.EXPIRED)
+            screen.open.single()(0)
+            assertEquals(ApprovalDecision.ALLOW_ONCE, decision.get(5, TimeUnit.SECONDS), "nobody else answered it")
+            assertEquals(ApprovalSurface.MAC, approvals.receipt(approval.id)?.by)
+        }
+    }
+
     @Test fun aRefusedMacAnswerWhoseWinnerCannotBeReadAppliesTheDialogsDefault() {
         approvals.register(thread, scope).use {
             val decision = asking()
             val approval = opened()
             server.refuseAnswers = true
-            server.approvals[approval.id] = approval.copy(state = ApprovalState.EXPIRED)
+            server.approvals.remove(approval.id)
             screen.open.single()(0)
             assertEquals(ApprovalDecision.DENY, decision.get(5, TimeUnit.SECONDS))
         }

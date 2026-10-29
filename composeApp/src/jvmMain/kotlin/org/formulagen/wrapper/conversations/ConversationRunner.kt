@@ -67,7 +67,9 @@ internal class ConversationRunner(
 
     /** Recover journaled claims, then start the heartbeat and the stream. */
     fun start() {
-        store.pendingClaims().forEach { session(it.conversationId).recover(it) }
+        // Outcomes first, so a lane's next claim follows its last message's settle.
+        store.pendingClaims().sortedBy { it.phase == ClaimPhase.CLAIMING || it.phase == ClaimPhase.CLAIMED }
+            .forEach { session(it.conversationId).recover(it) }
         timer.scheduleWithFixedDelay(::beat, 0, heartbeatEvery.inWholeMilliseconds, TimeUnit.MILLISECONDS)
         streamThread = Thread.ofPlatform().daemon().name("hovel-conversation-stream").start(::listen)
     }
@@ -82,7 +84,8 @@ internal class ConversationRunner(
             status(OFFLINE)
             return
         }
-        store.pendingClaims().forEach { session(it.conversationId).retry(it) }
+        store.pendingClaims().sortedBy { it.phase == ClaimPhase.CLAIMING || it.phase == ClaimPhase.CLAIMED }
+            .forEach { session(it.conversationId).retry(it) }
         runCatching { publisher.publishPending() }
     }
 
@@ -125,15 +128,21 @@ internal class ConversationRunner(
 
     private fun session(conversationId: String) = sessions.computeIfAbsent(conversationId, ::Session)
 
+    /**
+     * Stop everything. A running message is not the person's Stop: its run pauses for review and the message
+     * settles `reconciliation-required` (now, or at the next launch from the journal), so the person may retry
+     * it. The lanes get up to 5 seconds to wind down before they are interrupted.
+     */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         sessions.values.forEach { it.stop() }
         runCatching { stream?.close() }
         streamThread?.interrupt()
         val executors = listOf(timer, control) + sessions.values.map { it.executor }
-        executors.forEach { it.shutdownNow() }
+        executors.forEach { it.shutdown() }
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
         executors.forEach { it.awaitTermination(maxOf(0L, deadline - System.nanoTime()), TimeUnit.NANOSECONDS) }
+        executors.forEach { it.shutdownNow() }
     }
 
     /** One message running in a conversation: its id and its Stop. */
@@ -158,11 +167,11 @@ internal class ConversationRunner(
 
         fun cancel(messageId: String) { current?.takeIf { it.messageId == messageId }?.cancel?.cancel() }
 
-        /** A claim journaled before a restart: run on, settle as uncertain, or deliver its outcome. */
+        /** A claim journaled before a restart: run on, settle as uncertain, or deliver its outcome; then look for more. */
         fun recover(entry: ClaimEntry) = when (entry.phase) {
             ClaimPhase.CLAIMING, ClaimPhase.CLAIMED -> poke()
-            ClaimPhase.LAUNCHING -> submit { settle(entry, MessageState.RECONCILIATION_REQUIRED) }
-            ClaimPhase.SETTLING -> submit { deliver(entry) }
+            ClaimPhase.LAUNCHING -> submit { if (settle(entry, MessageState.RECONCILIATION_REQUIRED)) poke() }
+            ClaimPhase.SETTLING -> submit { if (deliver(entry)) poke() }
         }
 
         /** After a heartbeat: a claim that could not reach the server, or an undelivered outcome, is tried again. */
@@ -170,7 +179,8 @@ internal class ConversationRunner(
             if (busy) return
             when (entry.phase) {
                 ClaimPhase.CLAIMING, ClaimPhase.CLAIMED -> poke()
-                ClaimPhase.SETTLING -> submit { deliver(entry) }
+                // The server holds the conversation's next message until this one settles.
+                ClaimPhase.SETTLING -> submit { if (deliver(entry)) poke() }
                 ClaimPhase.LAUNCHING -> Unit
             }
         }
@@ -212,18 +222,19 @@ internal class ConversationRunner(
                 "The server answered a claim that is not this one"
             }
             val messageId = claim.message.id
-            folders.learned(store.accountId, claim.project.id, claim.project.revision)
-            runCatching { publisher.publish(claim.project.id) }
-            var entry = store.journal(claiming.copy(phase = ClaimPhase.CLAIMED, messageId = messageId, revision = claim.message.revision))
-            entry = store.journal(entry.copy(phase = ClaimPhase.LAUNCHING))
+            // Running at once, so a Stop from here on is never lost.
             val cancel = CancelSignal()
             current = Running(messageId, cancel)
+            folders.learned(store.accountId, claim.project.id, claim.project.revision)
+            later { publisher.publish(claim.project.id) }
+            var entry = store.journal(claiming.copy(phase = ClaimPhase.CLAIMED, messageId = messageId, revision = claim.message.revision))
+            entry = store.journal(entry.copy(phase = ClaimPhase.LAUNCHING))
             val output = ClaimOutput(api, claim.claimId, messageId)
             try {
                 val claimed = claim.message.revision
                 val revision = api.progress(messageId, MessageProgress(claim.claimId, messageId, claimed, MessageState.RUNNING))
                 entry = store.journal(entry.copy(revision = revision ?: (claimed + 1)))
-                val state = engine.run(claim, output, cancel)
+                val state = engine.run(claim, output, cancel) { closed.get() }
                 output.drain()
                 settle(entry, state)
             } catch (_: HovelRejectedException) {
@@ -238,17 +249,17 @@ internal class ConversationRunner(
             }
         }
 
-        /** Journal [state] as the outcome, then deliver it. */
+        /** Journal [state] as the outcome, then deliver it. True once the server has it. */
         private fun settle(entry: ClaimEntry, state: MessageState) = deliver(store.journal(entry.copy(phase = ClaimPhase.SETTLING, outcome = state)))
 
         /**
          * Settle the message on the server. A refusal means the server has moved on (settled, stopped or
          * expired), and the outcome is dropped; an unreachable server keeps it for the next heartbeat.
          */
-        private fun deliver(journaled: ClaimEntry) {
+        private fun deliver(journaled: ClaimEntry): Boolean {
             // A heartbeat may have queued this delivery twice; the second finds it delivered.
-            val entry = store.claims(conversationId).find { it.claimId == journaled.claimId && it.phase == ClaimPhase.SETTLING } ?: return
-            val messageId = entry.messageId ?: return store.forget(entry)
+            val entry = store.claims(conversationId).find { it.claimId == journaled.claimId && it.phase == ClaimPhase.SETTLING } ?: return true
+            val messageId = entry.messageId ?: run { store.forget(entry); return true }
             val outcome = checkNotNull(entry.outcome)
             val revision = checkNotNull(entry.revision)
             fun send(at: Long) = api.progress(messageId, MessageProgress(entry.claimId, messageId, at, outcome))
@@ -262,7 +273,9 @@ internal class ConversationRunner(
                 store.forget(entry)
             } catch (error: Exception) {
                 log(LogLevel.Warn, "conversations", "A message outcome waits for the server", error)
+                return false
             }
+            return true
         }
     }
 

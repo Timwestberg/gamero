@@ -42,8 +42,12 @@ import org.formulagen.wrapper.logger.log
  */
 /** Runs one claimed message to the state that settles it. [CoordinatorEngine] is the companion brain's. */
 internal fun interface MessageEngine {
-    /** Run [claim], sending through [output]; [cancel] is the person's Stop. Throws `HovelRejectedException` when the claim is gone. */
-    fun run(claim: ClaimResult, output: ClaimOutput, cancel: CancelSignal): MessageState
+    /**
+     * Run [claim], sending through [output]. [cancel] ends the run: the person's Stop, or Hovel quitting when
+     * [closing] says so, and then unfinished work pauses for review instead of ending. Throws
+     * `HovelRejectedException` when the claim is gone.
+     */
+    fun run(claim: ClaimResult, output: ClaimOutput, cancel: CancelSignal, closing: () -> Boolean): MessageState
 }
 
 internal class CoordinatorEngine(
@@ -64,13 +68,14 @@ internal class CoordinatorEngine(
     /** The runtimes this Mac lets read context folders: a project lists them as `readableBy`. */
     fun readableBy(): List<RuntimeId> = RuntimeId.entries.filter { work[it]?.contextFolders?.readable == true }
 
-    override fun run(claim: ClaimResult, output: ClaimOutput, cancel: CancelSignal): MessageState = MessageRun(claim, output, cancel).run()
+    override fun run(claim: ClaimResult, output: ClaimOutput, cancel: CancelSignal, closing: () -> Boolean): MessageState =
+        MessageRun(claim, output, cancel, closing).run()
 
     /** The person stopped the message, or a stage dialog's Stop ended the run. */
     private class Stopped : RuntimeException("Stopped")
 
     /** One claimed message's run: its record, what it sends, and its Stop. */
-    private inner class MessageRun(val claim: ClaimResult, val out: ClaimOutput, val cancel: CancelSignal) {
+    private inner class MessageRun(val claim: ClaimResult, val out: ClaimOutput, val cancel: CancelSignal, val closing: () -> Boolean) {
         val conversationId = claim.conversation.id
         val projectId = claim.project.id
         val companionId = claim.companion.id
@@ -94,6 +99,10 @@ internal class CoordinatorEngine(
             catch (_: InterruptedException) { stopped() }
             catch (refused: HovelRejectedException) { throw refused }
             catch (failure: ProviderFailure) {
+                // The next message starts the coordinator's conversation fresh.
+                if (failure.coordinator && failure.failure == ChatFailure.ConversationLost) {
+                    update { it.copy(brain = it.brain.copy(coordinatorContexts = it.brain.coordinatorContexts - failure.context)) }
+                }
                 system(failurePause(failure, "the coordinator"), message.threadId)
                 MessageState.FAILED
             } catch (error: Exception) {
@@ -154,8 +163,7 @@ internal class CoordinatorEngine(
             seedHistory()
             val thread = record.threads[threadId] ?: claim.thread?.let(::localThread) ?: error("Unknown thread")
             val coordinator = resolved(coordinatorRole())
-            val replyId = uuid()
-            val decision = decide(coordinator, THREAD_REPLY_DECISIONS, threadId, replyId) { allowed ->
+            val (decision, replyId) = decide(coordinator, THREAD_REPLY_DECISIONS, threadId) { allowed ->
                 threadReplyRequest(threadId, thread, allowed)
             } ?: run {
                 system("The coordinator could not decide what to do with this reply. Send it again.", threadId)
@@ -212,24 +220,20 @@ internal class CoordinatorEngine(
             val current = currentRun()
             val coordinator = resolved(coordinatorRole())
             val allowed = allowedDecisions(current)
-            val replyId = uuid()
-            val decision = decide(coordinator, allowed, null, replyId) { kinds ->
+            val (decision, replyId) = decide(coordinator, allowed, null) { kinds ->
                 coordinatorRequest(uuid(), current, kinds, handoff(current.artifacts.filter { it.id in current.inputs }.map { it.id }, false),
                     current.attempts.lastOrNull()?.outputIds?.let { handoff(it, false) } ?: "", record.brain.messages.takeLast(10))
                     .withContext()
-            }
-            if (decision == null) {
+            } ?: run {
                 change { it.paused("The coordinator returned an invalid decision, so no specialist was started. Reply to try again.", BrainWaitingKind.INPUT) }
                 return
             }
             var first = true
-            val applied = runCatching {
-                change { it.decided(decision, coordinator) { if (first) { first = false; replyId } else uuid() } }
-            }
-            // A decision that does not fit the run (a step that is not next, an unknown role) applies nothing.
-            applied.exceptionOrNull()?.let { error ->
-                if (error is Stopped || error is HovelRejectedException) throw error
-                change { it.paused("The coordinator's decision did not fit this run, so nothing was started. Reply to try again.", BrainWaitingKind.INPUT) }
+            change { brain ->
+                // A decision that does not fit the run (a step that is not next, an unknown role) applies nothing.
+                runCatching { brain.decided(decision, coordinator) { if (first) { first = false; replyId } else uuid() } }.getOrElse {
+                    brain.paused("The coordinator's decision did not fit this run, so nothing was started. Reply to try again.", BrainWaitingKind.INPUT)
+                }
             }
         }
 
@@ -323,10 +327,17 @@ internal class CoordinatorEngine(
             }) { it.afterFailure(failure, failurePause(failure, it.failingRole)) }
         }
 
-        /** The person stopped: the run, if any is unfinished, is cancelled. */
+        /**
+         * The person stopped: the run, if any is unfinished, is cancelled. Hovel quitting is not a Stop: the run pauses
+         * for review, so the person's retry resumes it, and the message is left for the next launch to settle.
+         */
         fun stopped(): MessageState {
-            val run = record.brain.run
-            if (run != null && !run.summary.state.terminal) runCatching { change(live = false) { it.copy(run = run.halted(BrainRunState.CANCELLED), waiting = null) } }
+            val run = record.brain.run?.takeIf { !it.summary.state.terminal }
+            if (closing()) {
+                if (run != null) runCatching { update { it.copy(brain = it.brain.copy(run = run.halted(BrainRunState.PAUSED), waiting = INTERRUPTED).nextRevision()) } }
+                return MessageState.RECONCILIATION_REQUIRED
+            }
+            if (run != null) runCatching { change(live = false) { it.copy(run = run.halted(BrainRunState.CANCELLED), waiting = null) } }
             return MessageState.STOPPED
         }
 
@@ -366,19 +377,21 @@ internal class CoordinatorEngine(
         // ---- Provider turns ------------------------------------------------------------------------
 
         /**
-         * The coordinator's decision among [allowed], with one repair attempt; null when both replies
-         * were invalid. An answer's body streams as reply [replyId] in [threadId] once its header validates.
+         * The coordinator's decision among [allowed], with one repair attempt, and the reply id its answer
+         * streamed as; null when both replies were invalid. Each attempt streams as a reply of its own in
+         * [threadId], once its answer header validates.
          */
-        fun decide(coordinator: BrainRoleSnapshot, allowed: Set<DecisionKind>, threadId: String?, replyId: String,
-            request: (Set<DecisionKind>) -> String): CoordinatorDecision? {
+        fun decide(coordinator: BrainRoleSnapshot, allowed: Set<DecisionKind>, threadId: String?,
+            request: (Set<DecisionKind>) -> String): Pair<CoordinatorDecision, String>? {
             val instructions = coordinator.copy(instructions = conversationCoordinatorInstructions(coordinator.instructions))
             val persona = Persona.role(companion, coordinator.name, roleInstructions(instructions), false)
             val input = request(allowed)
             repeat(2) { attempt ->
+                val replyId = uuid()
                 val stream = ReplyStream(headed = true, allowAnswer = DecisionKind.ANSWER in allowed) { out.delta(replyId, threadId, it) }
                 val text = talkTurn(coordinator, persona, input + if (attempt == 1) REPLY_REPAIR else "", contextKey(coordinator), stream)
                 val decision = runCatching { parseCoordinatorReply(text, allowed) }.getOrNull()?.takeIf { fits(it, threadId) }
-                if (decision != null) return decision
+                if (decision != null) return decision to replyId
             }
             return null
         }
@@ -495,7 +508,8 @@ internal class CoordinatorEngine(
             val run = after.conversationRun()
             if (run != null && run != before.conversationRun()) out.checkpoint(MessageCheckpoint.RunChanged(run))
             val waiting = after.brain.waiting
-            if (waiting != null && waiting != before.brain.waiting && waiting.kind in NOTICES && added.none { it.text == waiting.summary }) {
+            if (waiting != null && waiting != before.brain.waiting && waiting.kind in NOTICES &&
+                added.none { it.text.take(BrainLimits.DESCRIPTION) == waiting.summary }) {
                 system(waiting.summary, null)
             }
         }
@@ -523,8 +537,7 @@ internal class CoordinatorEngine(
         /** A run left working or awaiting approval belongs to a message that is no longer running: it pauses for review. */
         fun recover() {
             val run = record.brain.run?.takeIf { it.summary.state.active } ?: return
-            val waiting = BrainWaiting(BrainWaitingKind.RECOVERY, "Work was interrupted. Review completed outputs before resuming.")
-            update { it.copy(brain = it.brain.copy(run = run.halted(BrainRunState.PAUSED), waiting = waiting).nextRevision()) }
+            change(live = false) { it.copy(run = run.halted(BrainRunState.PAUSED), waiting = INTERRUPTED) }
         }
 
         /** The main conversation's history as the coordinator reads it, when this Mac has none of its own yet. */
@@ -654,6 +667,9 @@ internal class CoordinatorEngine(
     private companion object {
         /** Waiting reasons the conversation shows as a notice; the others are approvals with dialogs of their own. */
         val NOTICES = setOf(BrainWaitingKind.INPUT, BrainWaitingKind.RECOVERY, BrainWaitingKind.LIMIT)
+
+        /** Why a run that was working when its message ended (a crash, or Hovel quitting) waits for review. */
+        val INTERRUPTED = BrainWaiting(BrainWaitingKind.RECOVERY, "Work was interrupted. Review completed outputs before resuming.")
 
         fun uuid() = UUID.randomUUID().toString()
     }

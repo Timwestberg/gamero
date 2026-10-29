@@ -102,7 +102,7 @@ the size cap need a live JCEF, and the smoke page does not exercise them:
 
 ## Bridge methods
 
-`HovelCompanion.dispatch` (HovelCompanion.kt lines 44-108) handles three methods.
+`HovelCompanion.dispatch` (HovelCompanion.kt lines 68-129) handles three methods.
 Any other name fails.
 
 | Method | Args | Returns |
@@ -112,12 +112,12 @@ Any other name fails.
 | `activateConnection` | `ownerId`, `hostId` | host `id`, `connected` true |
 
 Only one non-`capabilities` call runs at a time. A second call while one is
-pending fails with "Another native operation is pending" (line 50). Each call
+pending fails as busy (line 74). Each call
 records the companion's generation when it starts and fails if
 `invalidatePending` or `close` bumps it before the call finishes.
 
 `invalidatePending` also clears the approved registration
-(HovelCompanion.kt line 146). So after any reload, `activateConnection` fails
+(HovelCompanion.kt line 212). So after any reload, `activateConnection` fails
 with "Native approval is required" until the page calls `prepareConnection`
 again.
 
@@ -130,7 +130,7 @@ again.
    on this Mac. Cancel, a reload or close fails the call.
 2. **Registration.** `prepareRegistration` makes the data directory `0700`, takes
    a file lock on `registration.lock`, and reads or creates `registration.json`
-   (HovelCompanion.kt lines 110-142).
+   (HovelCompanion.kt lines 176-208).
    - If the file exists it must be at most 4096 bytes and belong to the same
      `ownerId`. A different account is rejected: one native profile serves one
      account. The Keychain entry must still be readable.
@@ -294,7 +294,10 @@ opens on the Mac as a native dialog and on the server as `approval.opened`, with
 answer wins: a Mac answer is posted, and the stored approval says which answer
 won; a phone answer (`approval.answered`, read back with `GET approvals/:id`)
 closes the dialog as `answered-elsewhere`. Nobody answering withdraws it. A late
-or repeated answer changes nothing, and each approval keeps a receipt. Folder
+or repeated answer changes nothing, and each approval keeps a receipt. The server
+expiry allows three dialog timeouts, since dialogs show one at a time and the Mac
+withdraws an approval itself when its dialog ends unanswered; a Mac answer the
+server refused for anything but another answer still stands. Folder
 trust stays a Mac-only dialog.
 
 ### `host.contract`
@@ -337,9 +340,11 @@ consolidate; any other computer gets 403. Every failure waits for the next call.
 
 ### Closing
 
-`close()` stops the runner (every running message is stopped), the stream, the
-heartbeat and the lanes, then the memory lane and its journal, and waits at most
-5 seconds for each.
+`close()` stops the runner, the stream, the heartbeat and the lanes, then the
+memory lane and its journal, and waits at most 5 seconds. Quitting is not the
+person's Stop: a running message's run pauses for review and the message settles
+`reconciliation-required` (or does at the next launch, from the journal), so the
+person can retry it.
 
 ## Failure messages to know
 
@@ -350,8 +355,8 @@ heartbeat and the lanes, then the memory lane and its journal, and waits at most
 | `400 Invalid native protocol` | The request is not a JSON object with `"version": 1`. |
 | `400 Unknown native method` | A version 1 call for anything but the three companion methods. Chat, providers, pet and games are host-bridge v2 only. |
 | `400 Native action failed; inspect the companion status` | A bridge method threw. The page never sees the reason. |
-| Status line "Connection failed. Check the native configuration, Keychain approval and server." | A `prepareConnection` or `activateConnection` failure, or an unknown method name, other than a cancellation (HovelCompanion.kt line 105). Failures before that point (bad `capabilities` args, a closed companion, "Another native operation is pending") leave the status line unchanged and reach the page only as the generic 400. This status replaces the specific error, so the causes below never reach the window. |
-| (not shown) "This native profile belongs to another account" | Thrown when `registration.json` has a different `ownerId` (HovelCompanion.kt line 124). Users see only the two generic messages above; check `registration.json` in the data directory. |
+| Status line "Connection failed. Check the native configuration, Keychain approval and server." | A `prepareConnection` or `activateConnection` failure, or an unknown method name, other than a cancellation (HovelCompanion.kt line 125). Failures before that point (bad `capabilities` args, a closed companion, "Another native operation is pending") leave the status line unchanged and reach the page only as the generic 400. This status replaces the specific error, so the causes below never reach the window. |
+| (not shown) "This native profile belongs to another account" | Thrown when `registration.json` has a different `ownerId` (HovelCompanion.kt line 190). Users see only the two generic messages above; check `registration.json` in the data directory. |
 | Status line "Server unavailable; messages wait on the server" | A heartbeat failed. The runner keeps trying every 10 seconds; queued messages wait on the server. |
 | Status line "Update Hovel on this Mac to run every message in its conversations" | A claim answered `mac-update-required`: a message needs a newer contract. It stays queued until this Mac updates or it expires. |
 | A message settled `reconciliation-required` | Its turn may have started before a crash or an error the runner could not classify. It never runs again unless the person retries it. |

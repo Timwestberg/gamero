@@ -95,7 +95,7 @@ internal class ProjectFolderStore(private val root: Path, private val picker: Fo
         val id = key(projectId)
         val record = read(accountId)
         val project = record.projects[id] ?: return
-        val unchanged = project.folders.map { it.id } == folders.map { it.id }
+        val unchanged = project.folders.map { it.id }.toSet() == folders.map { it.id }.toSet()
         write(accountId, record.with(id, project.copy(revision = revision, published = unchanged)))
     }
 

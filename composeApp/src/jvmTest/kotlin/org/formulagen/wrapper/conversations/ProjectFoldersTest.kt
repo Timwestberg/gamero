@@ -109,6 +109,18 @@ class ProjectFoldersTest {
         assertEquals(4, server.folderSaves.last().second.expectedRevision, "the next save is against the revision the last one made")
     }
 
+    @Test fun aWorkingFolderChosenAfterAContextFolderIsPublishedOnce() {
+        val server = FakeServer()
+        val publisher = ProjectFolderPublisher(store, server, account) { emptyList() }
+        store.learned(account, project, 1)
+        choose(dir("docs"), FolderRole.CONTEXT)
+        choose(dir("hovel-notes"), FolderRole.WORKING)
+        publisher.publishPending()
+        publisher.publishPending()
+        assertEquals(1, server.folderSaves.size)
+        assertEquals(listOf(FolderRole.WORKING, FolderRole.CONTEXT), server.folderSaves.single().second.folders.map { it.role })
+    }
+
     @Test fun aConflictWaitsAndARefusalMeansAnotherComputer() {
         val server = FakeServer()
         val publisher = ProjectFolderPublisher(store, server, account) { emptyList() }

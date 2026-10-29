@@ -29,9 +29,11 @@ class ConversationRunnerTest {
         val peak = AtomicInteger()
         val cancels = ConcurrentHashMap<String, CancelSignal>()
         @Volatile var behave: (ClaimResult, ClaimOutput, CancelSignal) -> MessageState = { _, _, _ -> MessageState.ANSWERED }
-        override fun run(claim: ClaimResult, output: ClaimOutput, cancel: CancelSignal): MessageState {
+        val closings = CopyOnWriteArrayList<() -> Boolean>()
+        override fun run(claim: ClaimResult, output: ClaimOutput, cancel: CancelSignal, closing: () -> Boolean): MessageState {
             runs += claim
             cancels[claim.message.id] = cancel
+            closings += closing
             peak.accumulateAndGet(running.incrementAndGet(), ::maxOf)
             try { return behave(claim, output, cancel) } finally { running.decrementAndGet() }
         }
@@ -154,8 +156,8 @@ class ConversationRunnerTest {
         store.journal(ClaimEntry(claimId, talk.id, ClaimPhase.LAUNCHING, message, 2))
         runner.start()
         eventually { server.settled(message) == MessageState.RECONCILIATION_REQUIRED }
+        eventually("then it looks for more and finds nothing") { store.pendingClaims().isEmpty() }
         assertEquals(emptyList(), engine.runs)
-        assertEquals(emptyList(), store.pendingClaims())
     }
 
     @Test fun aDecidedOutcomeIsDeliveredAfterARestart() {
@@ -229,14 +231,30 @@ class ConversationRunnerTest {
         assertEquals(listOf(folders.folders(account, project).single().id), server.folderSaves.first().second.folders.map { it.id })
     }
 
-    @Test fun closingStopsTheRunningMessage() {
-        engine.behave = { _, _, cancel -> eventually { cancel.isCancelled }; MessageState.STOPPED }
+    @Test fun quittingEndsTheRunningMessageAsUncertainNotStopped() {
+        engine.behave = { _, _, cancel -> eventually { cancel.isCancelled }; MessageState.RECONCILIATION_REQUIRED }
         runner.start(); waitConnected()
         val talk = TestConversation()
-        queue(talk)
+        val message = queue(talk)
         server.emit(HostStreamEvent.WorkAvailable(talk.id))
         eventually { engine.cancels.isNotEmpty() }
+        assertFalse(engine.closings.single()())
         runner.close()
         assertTrue(engine.cancels.values.single().isCancelled)
+        assertTrue(engine.closings.single()(), "the engine can tell quitting from the person's Stop")
+        assertEquals(MessageState.RECONCILIATION_REQUIRED, server.settled(message))
+    }
+
+    @Test fun aDeliveredOutcomeLetsTheNextMessageRun() {
+        engine.behave = { claim, _, _ -> if (claim.message.text == "One") server.offline = true; MessageState.ANSWERED }
+        runner.start(); waitConnected()
+        val talk = TestConversation()
+        val first = queue(talk, "One")
+        server.emit(HostStreamEvent.WorkAvailable(talk.id))
+        eventually { store.pendingClaims().any { it.phase == ClaimPhase.SETTLING } }
+        // The server holds the next message until the first settles, then says nothing more.
+        val second = queue(talk, "Two")
+        server.offline = false
+        eventually { server.settled(first) == MessageState.ANSWERED && server.settled(second) == MessageState.ANSWERED }
     }
 }

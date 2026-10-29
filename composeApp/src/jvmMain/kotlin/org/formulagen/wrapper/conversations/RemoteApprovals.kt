@@ -150,14 +150,20 @@ internal class RemoteApprovals(
 
     /**
      * Post the Mac's answer. Answers the option that won: the stored answer, which is the phone's
-     * when it reached the server first; null when the Mac's was refused and the winner cannot be
-     * read, so the caller applies the dialog's default. Unreachable, the Mac's answer stands and is
-     * recorded as closed when the server takes it.
+     * when it reached the server first. A refusal for anything but another answer (the server let it
+     * expire) leaves the Mac's answer standing; null when the winner cannot be read, so the caller
+     * applies the dialog's default. Unreachable, the Mac's answer stands and is recorded as closed
+     * when the server takes it.
      */
     private fun settleHere(scope: ApprovalScope, id: String, option: ApprovalOption): ApprovalOption? = try {
         api.answer(id, ApprovalAnswer(OPENED_REVISION, option)).answer?.option ?: option
     } catch (_: HovelRejectedException) {
-        runCatching { api.approval(id) }.getOrNull()?.answer?.option
+        val stored = runCatching { api.approval(id) }.getOrNull()
+        when {
+            stored == null -> null
+            stored.state == ApprovalState.ANSWERED -> stored.answer?.option
+            else -> option
+        }
     } catch (_: Exception) {
         scope.output.bestEffort(MessageCheckpoint.ApprovalClosed(id, ApprovalOutcome.Answered(option)))
         option
@@ -165,11 +171,17 @@ internal class RemoteApprovals(
 
     private fun receipt(receipt: ApprovalReceipt) = synchronized(receipts) { receipts[receipt.id] = receipt }
 
-    private fun expiry() = clock.instant().plusMillis(APPROVAL_TIMEOUT.inWholeMilliseconds).truncatedTo(ChronoUnit.MILLIS).toString()
+    /**
+     * When the server lets the approval go: past the Mac dialog's own timeout, with room for the dialogs
+     * queued before it, since the Mac withdraws it itself when its dialog ends unanswered.
+     */
+    private fun expiry() = clock.instant().plusMillis(EXPIRY_DIALOGS * APPROVAL_TIMEOUT.inWholeMilliseconds).truncatedTo(ChronoUnit.MILLIS).toString()
 
     companion object {
         /** The revision an approval opens at; the Mac's answer is checked against it. */
         const val OPENED_REVISION = 0L
         private const val RECEIPTS = 256
+        /** Dialog timeouts an approval's expiry allows for: its own, and dialogs shown before it. */
+        private const val EXPIRY_DIALOGS = 3
     }
 }
