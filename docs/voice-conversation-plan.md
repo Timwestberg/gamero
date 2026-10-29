@@ -66,7 +66,7 @@ The sketch is right about the shape: on-device VAD, streaming ASR, endpoint, `ch
 
 These are the refinements the rest of the plan follows.
 
-1. **Push-to-talk is the first loop. Hands-free is the phone call.** A held button needs no echo canceller. Hands-free needs the microphone and the speaker on one voice-processing graph. `SourceDataLine` cannot be that graph's far end.
+1. **Click-to-converse is the first loop. Full-duplex hands-free is the phone call.** One click starts a session. One second of quiet after speech sends the turn, and listening resumes after Ember finishes. There is no echo canceller yet, so the microphone is ignored while she speaks (half-duplex) and for a short guard after playback goes idle. The phone-call graph, where she can be interrupted while the speaker is on, stays milestone 3. `SourceDataLine` cannot be that graph's far end.
 2. **The live recognizer is the streaming Zipformer, not Parakeet and not Kroko.** Kroko's ONNX files are non-commercial. Parakeet TDT 0.6B v3 is CC-BY-4.0 and accurate, and the sherpa build is an offline recognizer of about 630 MB. Waiting to decode the whole utterance misses the budget. It can be a later Mac rescoring experiment. It is not the live path.
 3. **Barge-in is `speech.stop()` plus `chat.stop()`, and it is not `stopSpeaking`.** `stopSpeaking` leaves the provider writing. Once sentences enqueue from `partial`, Ember would start again over the person. Cancel the turn. Keep the partial bubble. The new utterance is a new `chat.send` with `speak: true`.
 4. **Enqueue, do not call `speak` per sentence.** `speak` flushes. Add `enqueue` that appends one piece to the live generation.
@@ -205,9 +205,11 @@ The microphone stays off until the person asks. Text chat works with the microph
 
 ### 5.1 Two ways to talk
 
-**Push-to-talk**, first ship. Hold the mic control, or hold Right Option while the Gamero window is focused and the composer does not have the key. Releasing the button ends the utterance. Space is left for typing. Until barge-in lands, the control stays idle while a reply is in flight, so the microphone is closed for the whole spoken answer and her audio cannot become the next message. Once barge-in lands, a press during playback flushes the audio, cancels the turn, and is the start of the new utterance.
+**Click to converse**, first ship (Tim, 29 Oct 2026). The control is the same chat bubble the Ember desktop pet uses, on the left of the Kokoro voice row. One click starts a session: the microphone listens, and one second of quiet after speech (`HOVEL_HEARING_SILENCE_MS`, default 1000) sends whatever was transcribed as one talk-mode message. The session stays up. Ember replies, then listening starts again on its own. A second click, Escape, or stop ends the session, including a reply that is still speaking. Empty text and a noise-only burst are not sent. The row shows Off, Listening, Thinking, or Speaking beside the icon, and the live partial when there is one.
 
-**Hands-free**, the phone call, after the echo test passes. A second state of the same control, off by default, remembered on this Mac in `~/.gamero/hearing-mode` with the same care as the Kokoro voice id (a single word, no audio). While it is on, the graph stays open, VAD endpoints, and barge-in is her hearing the person for 160 ms. Quitting the chat or the window turns the live capture off. The remembered mode arms again the next time that chat opens, after the permission is already granted. A fresh install remembers nothing and stays off.
+Until echo cancellation lands, this session is half-duplex. The microphone is ignored while Ember is preparing or speaking, and for about 300 ms after playback goes idle (`HOVEL_HEARING_GUARD_MS`). A reply that is still in flight keeps the microphone closed too, so a gap between a filler and the answer is not a new turn. The icon stays clickable the whole time, so the session cannot stick the way the old hold button did.
+
+**Hands-free**, the phone call, after the echo test passes. That is milestone 3, not this session. It needs the microphone and the speaker on one voice-processing graph, remembered on this Mac in `~/.gamero/hearing-mode` with the same care as the Kokoro voice id (a single word, no audio). While it is on, the graph stays open, VAD endpoints, and barge-in is her hearing the person for 160 ms. Quitting the chat or the window turns the live capture off. The remembered mode arms again the next time that chat opens, after the permission is already granted. A fresh install remembers nothing and stays off.
 
 Mute, while hands-free is on, closes the decision path: frames are dropped, VAD cannot endpoint, barge-in cannot fire. Mute does not stop audio that is already playing. The existing stop-speaking control does that. Mute is "do not hear me."
 
@@ -234,17 +236,17 @@ The Kokoro row (Sam, Jamie, Riley, Harper) stays the place the voice is chosen. 
 
 ### 5.4 Fillers
 
-Tim wants the human beat from the start (review of #58, 28 Oct 2026). Fillers are on by default. We will turn them off later if the logs show they get in the way. One flag does that.
+Tim tried the lead-ins (29 Oct 2026) and finds them weird. The feature stays. It defaults off until the lines are tuned. A Voice-row toggle turns them on, and that choice is saved at `~/.gamero/voice-fillers` the same way `~/.gamero/kokoro-voice` saves the blend (`on` or `off`, one word). `HOVEL_VOICE_FILLERS` still overrides the file for that launch (`1` / `on` / `true` enables, `0` / `off` / `false` disables). Unset, with no file, means off.
 
 A filler is a short lead-in Ember already has as audio: "Hmm,", "Let me think,", or "Okay, so". It is not a second reply, and it is not sent to the provider.
 
-- **When.** The clock starts at the hearing endpoint (push-to-talk release counts). If the reply's first speakable piece is not ready within the threshold, she plays one clip. Phase 1 speaks the whole reply from `completed`, so "first speakable piece" there is the start of that `speak`. Phase 2 moves the same signal to the first `enqueue`. The flag and the threshold do not change.
+- **When.** The clock starts when a heard turn is sent. If the reply's first speakable piece is not ready within the threshold, she plays one clip. Phase 1 speaks the whole reply from `completed`, so "first speakable piece" there is the start of that `speak`. Phase 2 moves the same signal to the first `enqueue`. The flag and the threshold do not change.
 - **Instant.** Each of the four blends has its own clips, synthesized once when that voice's engine is warm and kept as PCM. Playing them writes the buffer. It does not call Kokoro again. A cache that is not warm yet skips the filler and logs `filler skipped cache-cold`. It does not synthesize on the threshold.
 - **Varied.** The three lines rotate. The same line is never played on two turns in a row.
 - **Once.** At most one filler per hearing turn. A typed send does not arm one.
 - **Already arriving.** If `speak` or the first `enqueue` has started, the filler is not started. If the clip is already playing when the reply's audio starts, `speak` / `enqueue` stops it with the same flush as `stop`, then the reply plays.
-- **Barge-in.** `speech.stop()` flushes the clip. In Phase 1 a hold during the filler (and only during the filler) is that stop plus cancelling the turn, then the new hold. A hold during the model's own audio stays idle until Phase 2.
-- **Flag.** `VoiceConfig.fillersEnabled`, default true. `HOVEL_VOICE_FILLERS=0` (also `off` or `false`) disables. Unset leaves them on.
+- **Barge-in.** `speech.stop()` flushes the clip. In the first session, clicking the icon again, Escape, or stop ends the session and cancels an in-flight reply, filler included. Talking over her own audio waits for the echo-cancellation milestone.
+- **Flag.** `VoiceConfig.fillersEnabled`, default false, pending tuning. The Voice-row toggle writes `~/.gamero/voice-fillers`. `HOVEL_VOICE_FILLERS` overrides that file at launch. Unset, with no saved choice, leaves them off.
 - **Threshold.** `VoiceConfig.fillerThresholdMs`, default 450. `HOVEL_VOICE_FILLER_MS` overrides it. The value is milliseconds from the endpoint to the moment we give up waiting.
 - **Log.** Every play logs category `hearing`, `filler line="…" voice=<id> waitedMs=<n>`. A skip logs `filler skipped` and the reason (`disabled`, `reply-ready`, `cache-cold`, `already-played`). That log is how we decide to turn them off.
 
@@ -290,7 +292,7 @@ Starting policy, locked by tests, changed only when a measured cut-off or a meas
 | Maximum utterance | 30 s | Then force endpoint. The text still has to fit in 4000 characters |
 | Recognizer rule 2 | 0.32 s | Matches the long hangover so the two do not stack |
 
-Push-to-talk release endpoints immediately, with whatever the recognizer has. The hangover applies to hands-free.
+The first Mac session endpoints on 1000 ms of trailing quiet after speech (`HOVEL_HEARING_SILENCE_MS`, clamped 200–5000). That is longer than the 240/400 ms hangover below so a breath does not send a half sentence while there is no echo canceller. The 240/400 ms table is the later hands-free tuning, after milestone 3. A burst under 240 ms is dropped. Silence before any speech does not send.
 
 Commit rule: hangover elapsed, result non-empty, state is not `Muted`, chat is not `awaiting-you`. Then one `chat.send`.
 
@@ -501,24 +503,25 @@ Each milestone is one PR series, based on #56 for gamero. Ship them in order. A 
 
 **Done when:** `voice/hearing-check.sh` prints the expected line on a machine with the files, and exits 0 with a clear skip when they are absent.
 
-### Milestone 1 — Mac push-to-talk into the real chat
+### Milestone 1 — Mac click-to-converse into the real chat
 
-**Size:** a new thread and a hold control on the existing voice row. Medium, because it takes the chat gate and calls `send`.
+**Size:** a hearing thread and a chat-icon button on the existing voice row. Medium, because it takes the chat gate and calls `send`.
 
 **Files:** `Hearing.kt`, `DesktopHearing.kt`, `KokoroVoicePicker.kt`, `DesktopChat.kt`, tests.
 
 **Consumes:** `HearingEngine`, `Handovers.currentMember`, `ChatSend`.
 
-**Produces:** `fun arm(member: TeamMember, effort: ModelEffort?)`, `fun release()`, and a commit that calls the existing send path with `speak = true` and `mode = TALK`.
+**Produces:** one session that sends each endpoint as the existing talk path with `speak = true` and `mode = TALK`.
 
-- [ ] Hold on the voice row opens `TargetDataLine` at 16 kHz and closes it on release.
-- [ ] Release with text sends one talk turn to `currentMember`. Release with empty text sends nothing. A null member shows the notice in section 8 and sends nothing.
+- [ ] A click on the chat icon opens `TargetDataLine` at 16 kHz. Another click, Escape, or stop closes it. The session does not get stuck if a reply, a cancel, or a voice change lands in the middle.
+- [ ] One second of quiet after speech sends one talk turn to `currentMember`. Empty text and a burst shorter than 240 ms send nothing. A null member shows the notice in section 8 and sends nothing. The session then keeps listening for the next turn.
 - [ ] `awaiting-you` does not send.
-- [ ] The reply still speaks through today's `completed` path. The hold control stays idle while the chat is `responding` or the model's audio is `preparing` or `speaking`. A hold during a filler cuts that clip and the turn. Sentence streaming and barge-in of the model's audio are the next milestone.
-- [ ] Fillers from section 5.4 are on: cached per blend, one per hearing turn, skipped when the reply has started, flushed by stop, flag defaulting on, threshold 450 ms, and a `hearing` log line each time one plays.
+- [ ] The reply still speaks through today's `completed` path. While the chat is `responding` or the model's audio is `preparing` or `speaking`, captured audio is discarded. Listening resumes about 300 ms after playback is idle and the reply has finished. Echo cancellation stays milestone 3. Sentence streaming and barge-in of the model's audio are milestone 2.
+- [ ] Fillers from section 5.4 stay available and default off, pending tuning. The Voice-row toggle persists like the Kokoro voice. `HOVEL_VOICE_FILLERS` overrides it. When they are on: cached per blend, one per hearing turn, skipped when the reply has started, flushed by stop, threshold 450 ms, and a `hearing` log line each time one plays.
+- [ ] The row shows Off, Listening, Thinking, or Speaking, and the live partial when the recognizer has one.
 - [ ] Typed chat and Kokoro preview still pass their tests.
 
-**Done when:** holding the control on a Mac, saying a sentence, and releasing it produces a user bubble and a spoken reply. This VM cannot run that check.
+**Done when:** clicking the icon on a Mac, saying a sentence, and pausing for a second produces a user bubble and a spoken reply, and a second click ends the session. This VM cannot run that check.
 
 ### Milestone 2 — Stream the reply and barge in
 
@@ -609,7 +612,7 @@ Recommended answers, so implementation does not stall. A different answer is a c
 
 1. **Push-to-talk or hands-free first?** Push-to-talk, then the shared graph. The phone call is milestone 3, not milestone 1.
 2. **Which recognizer?** The 74 MB Zipformer int8, chunk-16, left context 128, greedy search, sherpa-onnx 2.0.0. Kroko is out. Parakeet is a later experiment. Moonshine only if the consented script's errors are ordinary sentences missed, and only a MIT card.
-3. **Is 800 ms a promise?** It is the goal when the provider returns a speakable piece quickly. The enforceable caps are 80 ms from endpoint to send, 280 ms from enqueue to audio for a short piece, and 50 ms to flush on barge-in. Provider time is reported beside those. Fillers are on (section 5.4). They are a lead-in when the reply misses the threshold, not a substitute for those caps. `HOVEL_VOICE_FILLERS=0` turns them off without another code change.
+3. **Is 800 ms a promise?** It is the goal when the provider returns a speakable piece quickly. The enforceable caps are 80 ms from endpoint to send, 280 ms from enqueue to audio for a short piece, and 50 ms to flush on barge-in. Provider time is reported beside those. Fillers default off pending tuning (section 5.4). When the person turns them on, they are a lead-in when the reply misses the threshold, not a substitute for those caps. `HOVEL_VOICE_FILLERS` overrides the saved toggle for that launch.
 4. **Cancel the provider on barge-in?** Yes. Flush first, then stop the turn, keep the partial text, send the new utterance as a new message with `speak: true`.
 5. **Where is the button?** On the native Kokoro row until the page can pass `member` and `effort`. Then in the catalog composer, backed by a presentational control from tool-webkit. One capture at a time.
 6. **Store audio?** No. The chat message is stored as typed messages already are. PCM is dropped. Debug wavs require `HOVEL_HEARING_DEBUG=1`.
