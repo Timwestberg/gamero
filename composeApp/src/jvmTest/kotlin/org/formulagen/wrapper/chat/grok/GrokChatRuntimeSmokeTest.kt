@@ -14,15 +14,13 @@ import org.formulagen.wrapper.chat.TurnEvents
 import org.formulagen.wrapper.chat.TurnRequest
 import org.formulagen.wrapper.providers.GrokConnection
 import org.formulagen.wrapper.providers.GrokProvider
-import org.junit.Assume.assumeTrue
+import org.formulagen.wrapper.providers.grok.GrokSmoke
 
 /** Full production adapter opt-in, including a saved handle reused by a new adapter instance. */
 class GrokChatRuntimeSmokeTest {
     @Test fun nativeAdapterUsesTheSubscriptionAndRestoresConversationAfterRestart() {
-        val executable = System.getenv("HOVEL_GROK_CHAT_SMOKE")
-        assumeTrue("Set HOVEL_GROK_CHAT_SMOKE for the two-prompt production adapter test", executable != null)
+        val env = GrokSmoke.environment(GrokSmoke.turnsExecutable())
         val root = Files.createTempDirectory("grok-adapter-smoke")
-        val env = System.getenv() + ("GAMERO_GROK_PATH" to requireNotNull(executable))
         try {
             val connection = GrokConnection(env)
             assertEquals(ProviderState.CONNECTED, GrokProvider(connection).status("local", ProviderAction.STATUS).state)

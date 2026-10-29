@@ -1,20 +1,15 @@
 package org.formulagen.wrapper.providers.grok
 
 import java.nio.file.Files
-import java.nio.file.Path
 import kotlinx.serialization.json.*
-import org.junit.Assume.assumeTrue
 import kotlin.test.*
 
 /** Explicit real-binary check in a disposable home; authentication and prompts are not permitted. */
 class GrokAcpSmokeTest {
     @Test fun officialBinaryInitializesAndRefusesASessionWithoutCredentials() {
-        val executable = System.getenv("HOVEL_GROK_ACP_SMOKE")
-        assumeTrue("Set HOVEL_GROK_ACP_SMOKE to an official Grok executable", executable != null)
+        val path = GrokSmoke.executable()
         val root = Files.createTempDirectory("hovel-grok-acp-smoke")
         try {
-            val path = Path.of(requireNotNull(executable))
-            require(path.isAbsolute && Files.isExecutable(path))
             val builder = ProcessBuilder(path.toString(), "--no-auto-update", "agent", "--no-leader", "stdio")
                 .directory(root.toFile()).apply {
                     environment().clear()

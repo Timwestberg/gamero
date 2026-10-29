@@ -17,17 +17,15 @@ import org.formulagen.wrapper.providers.grok.GROK_VERIFIED_VERSION
 import org.formulagen.wrapper.providers.grok.GrokAcp
 import org.formulagen.wrapper.providers.grok.GrokBudget
 import org.formulagen.wrapper.providers.grok.GrokRequestRejected
+import org.formulagen.wrapper.providers.grok.GrokSmoke
 import org.formulagen.wrapper.providers.grok.grokAccount
 import org.formulagen.wrapper.providers.grok.grokInitialize
 import org.formulagen.wrapper.providers.grok.validGrokSessionId
-import org.junit.Assume.assumeTrue
 
-/** Local-config acceptance after the owner pins OIDC; model turns require a second explicit opt-in. */
+/** Local-config acceptance after the owner pins OIDC ([GrokSmoke]); model turns require a second explicit opt-in. */
 class GrokWorkAuthSmokeTest {
     @Test fun installedRuntimeCancelsAnActiveCommandAndReapsItsChildren() {
-        assumeTrue("Enable HOVEL_GROK_WORK_LIFECYCLE_SMOKE for a bounded temporary command",
-            System.getenv("HOVEL_GROK_WORK_LIFECYCLE_SMOKE") == "1")
-        probe { executable, folder, env ->
+        probe(turns = true) { executable, folder, env ->
             val started = folder.resolve("started.pid")
             val finished = folder.resolve("finished.txt")
             val command = "/usr/bin/printf '%s' \"\$\$\" > $started; /bin/sleep 30; /usr/bin/printf FINISHED > $finished"
@@ -107,9 +105,7 @@ class GrokWorkAuthSmokeTest {
 
     /** Harmless operations are approved once, repeated explicitly, then denied to detect persistent grants. */
     private fun permissionProbe(example: (Path) -> PermissionExample) {
-        assumeTrue("Enable HOVEL_GROK_WORK_PERMISSION_SMOKE for disposable-project model turns",
-            System.getenv("HOVEL_GROK_WORK_PERMISSION_SMOKE") == "1")
-        probe { executable, folder, env ->
+        probe(turns = true) { executable, folder, env ->
             val sample = example(folder)
             Files.writeString(sample.file, sample.before)
             val session = AtomicReference("")
@@ -199,18 +195,18 @@ class GrokWorkAuthSmokeTest {
         } finally { rpc.close(); rpc.awaitClosed() }
     }
 
-    /** Preserve the real home and configuration; refuse startup integrations before this bounded probe. */
-    private fun probe(action: (Path, Path, Map<String, String>) -> Unit) {
-        val executable = System.getenv("HOVEL_GROK_WORK_AUTH_SMOKE")
-        assumeTrue("Set HOVEL_GROK_WORK_AUTH_SMOKE only after explicitly pinning local OIDC auth", executable != null)
-        val path = Path.of(requireNotNull(executable))
-        require(path.isAbsolute && Files.isExecutable(path))
+    /**
+     * Preserve the real home and configuration; refuse startup integrations before this bounded probe. Run only
+     * after explicitly pinning local OIDC auth; [turns] probes also send controlled model turns.
+     */
+    private fun probe(turns: Boolean = false, action: (Path, Path, Map<String, String>) -> Unit) {
+        val path = if (turns) GrokSmoke.turnsExecutable() else GrokSmoke.executable()
         val home = Path.of(requireNotNull(System.getenv("HOME")))
-        val provider = Path.of(System.getenv("GROK_HOME") ?: home.resolve(".grok").toString())
+        val provider = GrokSmoke.providerHome
         val config = provider.resolve("config.toml")
         val original = Files.readAllBytes(config)
         val folder = Files.createTempDirectory("hovel-grok-work-auth-")
-        val env = mapOf("HOME" to home.toString(), "GROK_HOME" to provider.toString(),
+        val env = mapOf("HOME" to home.toString(), "GROK_HOME" to provider.toString(), "GROK_AUTH_PATH" to GrokSmoke.authPath.toString(),
             "PATH" to "/usr/bin:/bin:/usr/sbin:/sbin", "BROWSER" to "/usr/bin/false", "GROK_DISABLE_AUTOUPDATER" to "1")
         try {
             val version = runBounded(builder(path, folder, env, listOf("--version")), 10.seconds, 256)

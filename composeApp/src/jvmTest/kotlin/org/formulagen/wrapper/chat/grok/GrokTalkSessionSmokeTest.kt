@@ -10,17 +10,16 @@ import org.formulagen.wrapper.providers.grok.GrokAcp
 import org.formulagen.wrapper.providers.grok.GrokAuthAvailability
 import org.formulagen.wrapper.providers.grok.GrokLaunch
 import org.formulagen.wrapper.providers.grok.GrokRequestRejected
+import org.formulagen.wrapper.providers.grok.GrokSmoke
 import org.formulagen.wrapper.providers.grok.grokHandshake
 import org.formulagen.wrapper.providers.grok.grokInitialize
-import org.junit.Assume.assumeTrue
 
-/** Explicit account opt-in: no prompts unless HOVEL_GROK_TALK_PROMPT_SMOKE is also set. */
+/** Explicit account opt-in ([GrokSmoke]): no prompts unless model turns are also allowed. */
 class GrokTalkSessionSmokeTest {
     @Test fun installedRuntimeExcludesSkillsOnDiskAndRejectsEmptyStoreWithoutInteractiveAuth() {
-        val executable = System.getenv("HOVEL_GROK_TALK_SMOKE")
-        assumeTrue("Set HOVEL_GROK_TALK_SMOKE for the installed-runtime control checks", executable != null)
+        val executable = GrokSmoke.executable()
         val root = Files.createTempDirectory("grok-empty-login-smoke")
-        val launch = GrokLaunch.create(Path.of(requireNotNull(executable)), System.getenv() +
+        val launch = GrokLaunch.create(executable, GrokSmoke.environment(executable) +
             ("GROK_AUTH_PATH" to root.resolve("missing-auth.json").toString()), "Control check")
         var rpc: GrokAcp? = null
         try {
@@ -40,14 +39,13 @@ class GrokTalkSessionSmokeTest {
     }
 
     @Test fun installedRuntimeEstablishesAnAuthenticatedToolFreeSession() {
-        val executable = System.getenv("HOVEL_GROK_TALK_SMOKE")
-        assumeTrue("Set HOVEL_GROK_TALK_SMOKE to the signed-in runtime", executable != null)
+        val executable = GrokSmoke.executable()
         val updates = java.util.concurrent.CopyOnWriteArrayList<JsonObject>()
-        GrokTalkSession.open(Path.of(requireNotNull(executable)), System.getenv(),
+        GrokTalkSession.open(executable, GrokSmoke.environment(executable),
             "You are the Hovel integration test companion. Answer concisely.", onUpdate = { updates += it }).use { session ->
             assertTrue(session.account.models.isNotEmpty())
             assertTrue(updates.any { it["update"]?.jsonObject?.get("sessionUpdate") == JsonPrimitive("available_commands_update") })
-            if (System.getenv("HOVEL_GROK_TALK_PROMPT_SMOKE") == "1") {
+            if (GrokSmoke.turns) {
                 val outcome = session.prompt("Reply with exactly HOVEL_GROK_OK.", 60.seconds)
                 var state = GrokTurnState(session.sessionId)
                 updates.forEach { state = state.update(it) }
@@ -60,19 +58,18 @@ class GrokTalkSessionSmokeTest {
     }
 
     @Test fun installedRuntimeReloadsPrivateConversationAndCancelsAnActivePrompt() {
-        val executable = System.getenv("HOVEL_GROK_TALK_SMOKE")
-        assumeTrue("Enable HOVEL_GROK_LIFECYCLE_SMOKE for the two-prompt reload and cancellation check",
-            executable != null && System.getenv("HOVEL_GROK_LIFECYCLE_SMOKE") == "1")
+        val executable = GrokSmoke.turnsExecutable()
+        val environment = GrokSmoke.environment(executable)
         val folder = Files.createTempDirectory("grok-resume-smoke")
         val updates = java.util.concurrent.CopyOnWriteArrayList<JsonObject>()
         val instructions = "You are the Hovel integration test companion. Follow short exact-output requests."
         try {
-            val saved = GrokTalkSession.open(Path.of(requireNotNull(executable)), System.getenv(), instructions,
+            val saved = GrokTalkSession.open(executable, environment, instructions,
                 persistentFolder = folder, onUpdate = { updates += it }).use { session ->
                 assertEquals(JsonPrimitive("end_turn"), session.prompt("Remember HOVEL_ORCHID. Reply exactly SAVED.")["stopReason"])
                 Triple(session.sessionId, session.account.fingerprint, session.model)
             }
-            GrokTalkSession.open(Path.of(executable), System.getenv(), instructions, saved.third, persistentFolder = folder,
+            GrokTalkSession.open(executable, environment, instructions, saved.third, persistentFolder = folder,
                 resume = saved.first, expectedAccount = saved.second, onUpdate = { updates += it }).use { session ->
                 updates.clear()
                 val outcome = session.prompt("What word did I ask you to remember? Reply with that word only.")
@@ -83,7 +80,7 @@ class GrokTalkSessionSmokeTest {
                 assertEquals("HOVEL_ORCHID", state.text.trim())
             }
             val active = java.util.concurrent.CountDownLatch(1)
-            GrokTalkSession.open(Path.of(executable), System.getenv(), instructions, onUpdate = { params ->
+            GrokTalkSession.open(executable, environment, instructions, onUpdate = { params ->
                 if (params["update"]?.jsonObject?.get("sessionUpdate") in listOf(JsonPrimitive("agent_message_chunk"), JsonPrimitive("agent_thought_chunk")))
                     active.countDown()
             }).use { session ->

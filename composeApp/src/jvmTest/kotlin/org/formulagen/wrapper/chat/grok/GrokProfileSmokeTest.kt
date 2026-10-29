@@ -1,8 +1,6 @@
 package org.formulagen.wrapper.chat.grok
 
 import java.nio.file.Files
-import java.nio.file.Path
-import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
@@ -12,26 +10,20 @@ import org.formulagen.wrapper.approvals.*
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.chat.*
 import org.formulagen.wrapper.providers.GrokConnection
+import org.formulagen.wrapper.providers.grok.GrokSmoke
 import org.formulagen.wrapper.workspace.FolderPicker
 import org.formulagen.wrapper.workspace.WorkspaceStore
-import org.junit.Assume.assumeTrue
 
 /** Real Grok sessions across Hovel profile leases; this does not exercise Hovel's account sign-in UI. */
 class GrokProfileSmokeTest {
     @Test fun profileReplacementCancelsRealApprovalAndKeepsWorkspacesAndContextSeparate() = runBlocking {
-        val executable = System.getenv("HOVEL_GROK_PROFILE_SMOKE")
-        assumeTrue("Set HOVEL_GROK_PROFILE_SMOKE to exercise real profile transitions", executable != null)
+        val executable = GrokSmoke.turnsExecutable()
         val root = Files.createTempDirectory("hovel-grok-profiles-")
         val projectA = Files.createDirectory(root.resolve("project-a")).toRealPath()
         val projectB = Files.createDirectory(root.resolve("project-b")).toRealPath()
         val markerA = Files.writeString(projectA.resolve("test.txt"), "BEFORE")
         Files.writeString(projectB.resolve("test.txt"), "PROFILE_B_FILE")
-        val home = Files.createDirectory(root.resolve("grok-home"), PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")))
-        val source = Path.of(System.getenv("GROK_HOME") ?: System.getenv("HOME") + "/.grok")
-        Files.copy(source.resolve("config.toml"), home.resolve("config.toml"))
-        Files.setPosixFilePermissions(home.resolve("config.toml"), PosixFilePermissions.fromString("rw-------"))
-        val env = System.getenv() + mapOf("GAMERO_GROK_PATH" to requireNotNull(executable), "GROK_HOME" to home.toString(),
-            "GROK_AUTH_PATH" to (System.getenv("GROK_AUTH_PATH") ?: source.resolve("auth.json").toString()))
+        val env = GrokSmoke.disposableHomeEnvironment(root, executable)
         val providers = root.resolve("providers")
         val connection = GrokConnection(env)
         val shown = CompletableFuture<Unit>()

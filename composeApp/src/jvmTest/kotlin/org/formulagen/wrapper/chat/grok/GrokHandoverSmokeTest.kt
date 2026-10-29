@@ -2,7 +2,6 @@ package org.formulagen.wrapper.chat.grok
 
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
@@ -12,6 +11,7 @@ import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.chat.*
 import org.formulagen.wrapper.chat.claude.ClaudeWorkRuntime
 import org.formulagen.wrapper.providers.*
+import org.formulagen.wrapper.providers.grok.GrokSmoke
 import org.formulagen.wrapper.workspace.FolderPicker
 import org.formulagen.wrapper.workspace.WorkspaceStore
 import org.junit.Assume.assumeTrue
@@ -19,19 +19,14 @@ import org.junit.Assume.assumeTrue
 /** Opt-in production coordinator acceptance, using signed-in Grok and Claude in a disposable project. */
 class GrokHandoverSmokeTest {
     @Test fun workingProvidersHandOverContextAndWorkLogsInBothDirections() = runBlocking {
-        val grokExecutable = System.getenv("HOVEL_GROK_HANDOVER_SMOKE")
+        val grokExecutable = GrokSmoke.turnsExecutable()
         val claudeExecutable = System.getenv("HOVEL_CLAUDE_HANDOVER_SMOKE")
-        assumeTrue("Set both provider executable paths to exercise live handovers", grokExecutable != null && claudeExecutable != null)
+        assumeTrue("Set HOVEL_CLAUDE_HANDOVER_SMOKE=/absolute/path/to/claude as well for live handovers", claudeExecutable != null)
         val root = Files.createTempDirectory("hovel-grok-handover-")
         val project = Files.createDirectory(root.resolve("project")).toRealPath()
         val marker = project.resolve("test.txt")
         Files.writeString(marker, "BEFORE")
-        val home = Files.createDirectory(root.resolve("grok-home"), PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")))
-        val source = Path.of(System.getenv("GROK_HOME") ?: System.getenv("HOME") + "/.grok")
-        Files.copy(source.resolve("config.toml"), home.resolve("config.toml"))
-        Files.setPosixFilePermissions(home.resolve("config.toml"), PosixFilePermissions.fromString("rw-------"))
-        val env = System.getenv() + mapOf("GAMERO_GROK_PATH" to requireNotNull(grokExecutable), "GROK_HOME" to home.toString(),
-            "GROK_AUTH_PATH" to source.resolve("auth.json").toString())
+        val env = GrokSmoke.disposableHomeEnvironment(root, grokExecutable)
         val providers = root.resolve("providers")
         val connection = GrokConnection(env)
         val claude = ClaudeRuntime(Path.of(requireNotNull(claudeExecutable)), providers)
