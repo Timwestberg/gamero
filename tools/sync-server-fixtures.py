@@ -22,7 +22,11 @@ contract fixture changes:
   tools/companion-fixtures.mts from the server's own samples and checked against its zod
   schemas. It runs with the server's tsx, so the server checkout needs its event-contracts
   dependencies installed.
+- phone/DeviceContractFixtures.kt (commonTest) from the same run: the approval device
+  payloads and device routes (`device.*`, `routes.device`) a phone reads and sends, so the
+  phone's types are checked on every platform.
 """
+import functools
 import json
 import subprocess
 import sys
@@ -101,8 +105,9 @@ INSTALL_HINT = """Building the companion fixtures needs Node and server-platform
     (cd {server} && pnpm install)"""
 
 
-def companion_payloads(server: Path) -> str:
-    source = "event-contracts/src/hovel/companions"
+@functools.lru_cache(maxsize=None)
+def companion_fixtures(server: Path) -> dict:
+    """Every payload tools/companion-fixtures.mts prints, by name; run once per server."""
     try:
         run = subprocess.run(["node", "--import", "tsx", str(ROOT / "tools/companion-fixtures.mts"), str(server)],
                              cwd=server / "event-contracts", capture_output=True, text=True)
@@ -112,14 +117,41 @@ def companion_payloads(server: Path) -> str:
         sys.exit(run.stderr.strip() + "\n\n" + INSTALL_HINT.format(server=server))
     if run.stderr:
         print(run.stderr.strip(), file=sys.stderr)
-    printed = run.stdout
-    payloads = json.loads(printed)
-    entries = "\n".join(f"        {kotlin_string(name)} to {kotlin_string(json.dumps(payload, separators=(',', ':')))},"
-                        for name, payload in payloads.items())
+    return json.loads(run.stdout)
+
+
+def is_phone(name: str) -> bool:
+    return name.startswith("device.") or name.startswith("routes.device")
+
+
+def payload_entries(payloads: dict) -> str:
+    return "\n".join(f"        {kotlin_string(name)} to {kotlin_string(json.dumps(payload, separators=(',', ':')))},"
+                     for name, payload in payloads.items())
+
+
+def companion_payloads(server: Path) -> str:
+    source = "event-contracts/src/hovel/companions"
+    payloads = {name: value for name, value in companion_fixtures(server).items() if not is_phone(name)}
+    entries = payload_entries(payloads)
     return HEADER.format(source, source_commit(server, source)) + f"""package org.formulagen.wrapper.conversations
 
 /** Each payload as {{"schema": the zod schema that accepted it, "value": the payload}}. */
 internal object CompanionContractFixtures {{
+    val PAYLOADS: Map<String, String> = mapOf(
+{entries}
+    )
+}}
+"""
+
+
+def device_payloads(server: Path) -> str:
+    source = "event-contracts/src/hovel/companions"
+    payloads = {name: value for name, value in companion_fixtures(server).items() if is_phone(name)}
+    entries = payload_entries(payloads)
+    return HEADER.format(source, source_commit(server, source)) + f"""package org.formulagen.wrapper.phone
+
+/** Each approval device payload as {{"schema": the zod schema that accepted it, "value": the payload}}. */
+internal object DeviceContractFixtures {{
     val PAYLOADS: Map<String, String> = mapOf(
 {entries}
     )
@@ -132,6 +164,7 @@ OUTPUTS = {
     ROOT / TEST.format("jvmTest") / "hovel/HovelProviderPromptFixture.kt": provider_prompt,
     ROOT / TEST.format("commonTest") / "bridge/EmberHearingFixture.kt": ember_hearing,
     ROOT / TEST.format("jvmTest") / "conversations/CompanionContractFixtures.kt": companion_payloads,
+    ROOT / TEST.format("commonTest") / "phone/DeviceContractFixtures.kt": device_payloads,
 }
 
 
@@ -145,6 +178,7 @@ def main() -> int:
     for out, render in OUTPUTS.items():
         text = render(server)
         if "--check" not in sys.argv:
+            out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(text)
         elif not out.exists() or out.read_text() != text:
             print(f"{out} is stale; run tools/sync-server-fixtures.py", file=sys.stderr)

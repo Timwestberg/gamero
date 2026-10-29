@@ -187,6 +187,32 @@ GAMERO_SMOKE_ROOT_CERT=/tmp/vite-dev-cert.pem tools/ios-smoke.sh
 fires when the page finishes loading, and again when its title arrives, so the
 first line may show `title=null`.
 
+## Phone approvals
+
+In the Hovel product the iPhone app is an **approval device**: it answers a
+working agent's permission requests, start-of-work confirmations, stage
+approvals and resume reviews in a native dialog. The code is
+`commonMain/.../phone/PhoneApprovals.kt`, with the iOS pieces in
+`iosMain/.../phone/IosPhoneApprovals.kt`: the Keychain item
+(`org.formulagen.gamero.approval-device`, this device only), CommonCrypto,
+an ephemeral `NSURLSession` without redirects, and `UIAlertController`.
+
+1. Hovel → Settings → Approval devices → "Use this phone for approvals". The
+   page calls `approvalDevice.prepare`; the app asks natively, makes a device
+   id and token, and gives the page only the token's SHA-256. The page
+   registers it with the account, then `approvalDevice.activate` reads the
+   device routes with the new token and keeps it in the Keychain.
+2. While a Hovel page runs, each open approval on the owner stream calls
+   `approvals.present(id)`. The app reads it from
+   `/api/hovel/v1/hovel/devices/<owner>/<device>/approvals/<id>` under the
+   configured web app's origin, shows it, and posts the answer itself. The
+   page learns only how the dialog ended.
+
+The simulator reaches the local edge over HTTP loopback
+(`NSAllowsLocalNetworking`). The iOS test binary has no Keychain, so
+`IosPhoneApprovalsTest` checks CommonCrypto and ids there and skips the
+Keychain item.
+
 ## Known limitations
 
 - **Connect computer is unavailable on iOS.** The Mac-only Codex companion
@@ -199,5 +225,9 @@ first line may show `title=null`.
   `Secure` cookies. See [Sign in (HTTPS)](#sign-in-https).
 - `iosApp/iosApp/GoogleService-Info.plist` must stay in place, because
   `FirebaseApp.configure()` runs at launch.
+- **Approvals need the page open.** There are no push notifications yet, so
+  the phone shows an approval only while a Hovel page runs.
+- **`iosSimulatorArm64Test` does not compile on main**: `commonTest` uses the
+  JVM-only `voice` module (`HearingContractTest`, `FakeChatCapability`).
 
 See [TEST.md](../TEST.md) for manual test cases.

@@ -19,6 +19,7 @@ import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.hovel.HovelIosApp
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
+import org.formulagen.wrapper.phone.iosPhoneApprovals
 import platform.Foundation.NSBundle
 
 private const val TAG = "MainViewController"
@@ -34,11 +35,18 @@ fun MainViewController() = ComposeUIViewController {
     } else {
         val hovel = product == "hovel"
         val attached = remember { arrayOfNulls<IosHostBridge>(1) }
-        DisposableEffect(Unit) { onDispose { attached[0]?.close() } }
+        // One approval device for the app's lifetime, so a dialog outlives a page reload.
+        val approvals = remember { if (hovel) iosPhoneApprovals(url) else null }
+        DisposableEffect(Unit) {
+            onDispose {
+                attached[0]?.close()
+                approvals?.close()
+            }
+        }
         val attach = { webView: NativeWebView ->
             attached[0]?.close()
             // Only Hovel adds its packs, so another product's host answers unknown-method for companion.*.
-            val products = if (hovel) iosHovelBridgePacks() else emptyList()
+            val products = approvals?.let { iosHovelBridgePacks(it, it) } ?: emptyList()
             attached[0] = IosHostBridge(webView, HostBridge(if (hovel) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME, url, iosHostCapabilities(appVersion()), products))
         }
         if (hovel) HovelIosApp(url, onPageLoaded = ::logPageLoaded, onWebViewCreated = attach)

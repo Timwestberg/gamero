@@ -12,6 +12,8 @@ Host bridge (`host-bridge.v2`) on desktop, Android and iOS, and the recipe to ad
 
 iOS (simulator): [build and run guide](docs/ios.md). Smoke test: `tools/ios-smoke.sh` builds the app, loads Hovel on a throwaway simulator, and fails unless the page loads. Android remains outside the current verification scope.
 
+Phone approvals (Hovel on iOS and Android): the phone registers as an approval device and answers approvals in a native dialog with its own device token; see [docs/ios.md](docs/ios.md#phone-approvals). Android uses the same `phone/PhoneApprovals` with a Keystore-sealed credential and `AlertDialog` (`androidMain/.../phone/AndroidPhoneApprovals.kt`); it compiles and assembles, and is not yet run on a device or emulator.
+
 Android: build with `./gradlew -Pgamero.mobileTargets=true :composeApp:assembleDebug`
 (Gradle 9.3.1, AGP 9.1.1, compileSdk 37; Compose 1.12 requires them). Launch the Hovel
 start screen with `adb shell am start -n org.formulagen.wrapper/.MainActivity -e GAMERO_PRODUCT hovel -e GAMERO_WEB_URL <https url>` (debug builds only; release builds read the `gamero_product` and `gamero_web_url` string resources, set from `-Pgamero.product` and `-Pgamero.webUrl`).
