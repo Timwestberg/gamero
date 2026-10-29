@@ -1,6 +1,8 @@
 package org.formulagen.wrapper.chat
 
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.TargetDataLine
@@ -92,6 +94,9 @@ internal class DesktopHearing(
 
     private val paused = AtomicBoolean(false)
     private val restart = AtomicBoolean(false)
+    private val emberSpeaking = AtomicBoolean(false)
+    private val emberHotUntilNs = AtomicLong(0)
+    private val emberWords = AtomicReference("")
     private var committer = TurnCommitter()
 
     /**
@@ -141,7 +146,8 @@ internal class DesktopHearing(
                         val rms = chunkRms(chunk)
                         val prob = engine.lastVadProbability()
                         val text = engine.partial()
-                        val event = committer.observe(voicedMs > 0, chunkMs, rms, text)
+                        val hot = emberSpeaking.get() || System.nanoTime() < emberHotUntilNs.get()
+                        val event = committer.observe(voicedMs > 0, chunkMs, rms, text, prob, hot, emberWords.get())
                         if (event.speech != wasSpeech) {
                             if (event.speech) log(LogLevel.Info, "hearing", "vad start prob=$prob rms=$rms")
                             else log(LogLevel.Info, "hearing", "vad end prob=$prob rms=$rms")
@@ -173,8 +179,10 @@ internal class DesktopHearing(
                             log(LogLevel.Info, "hearing", "send chars=${result.text.length}")
                             log(LogLevel.Info, "hearing", "state=listening")
                             onUtterance(result)
+                        } else if (event.discard != null) {
+                            log(LogLevel.Info, "hearing", "discard reason=${event.discard} text=\"${result.text.take(80)}\" vadMs=${event.vadSpeechMs} prob=${event.maxProb}")
                         } else {
-                            log(LogLevel.Info, "hearing", "endpoint drop reason=${event.reason?.name?.lowercase()} chars=${result.text.length}")
+                            log(LogLevel.Info, "hearing", "endpoint drop chars=${result.text.length}")
                         }
                         onPartial("")
                         restart.set(true)
@@ -196,6 +204,19 @@ internal class DesktopHearing(
             worker.start()
             return true
         }
+    }
+
+    fun noteEmberSpeaking(text: String) {
+        emberSpeaking.set(true)
+        if (text.isNotBlank()) emberWords.set(text)
+        restart.set(true)
+    }
+
+    fun noteEmberSilent(text: String) {
+        emberSpeaking.set(false)
+        if (text.isNotBlank()) emberWords.set(text)
+        emberHotUntilNs.set(System.nanoTime() + 500_000_000L)
+        restart.set(true)
     }
 
     fun setPaused(value: Boolean) {

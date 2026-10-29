@@ -789,8 +789,18 @@ internal class DesktopChat(
 
     private fun setPhase(next: TalkPhase) {
         if (talkPhase == next) return
+        val leavingSpeech = talkPhase == TalkPhase.SPEAKING && next != TalkPhase.SPEAKING
+        val enteringSpeech = next == TalkPhase.SPEAKING
         talkPhase = next
         log(LogLevel.Info, "hearing", "session=${next.name.lowercase()} chat=${active?.state ?: "none"} voice=${speech.status().state}")
+        val line = emberLine()
+        if (enteringSpeech) hearing?.noteEmberSpeaking(line)
+        if (leavingSpeech) hearing?.noteEmberSilent(line)
+    }
+
+    private fun emberLine(): String {
+        val assistant = active?.record?.entries?.lastOrNull { it is ChatEntry.Assistant } as? ChatEntry.Assistant
+        return assistant?.text.orEmpty()
     }
 
     /** A test, or a finished hold, handing the recognizer result to the chat. */

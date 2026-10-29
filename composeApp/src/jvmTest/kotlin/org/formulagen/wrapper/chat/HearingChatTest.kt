@@ -556,6 +556,7 @@ private class LevelEngine : HearingEngine {
         }
     }
     override fun voicedMillisOfLastAccept() = voiced
+    override fun lastVadProbability() = if (voiced > 0) 1f else 0f
     override fun partial() = text
     override fun finish(): HearingResult {
         val result = HearingResult(text, speech, 1.0)

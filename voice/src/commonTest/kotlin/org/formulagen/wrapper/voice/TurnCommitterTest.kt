@@ -51,6 +51,49 @@ class TurnCommitterTest {
         assertEquals(EndpointReason.TEXT_STABLE, reason)
     }
 
+    @Test fun residualEchoWithLowVadIsDiscardedWhileEmberSpeaks() {
+        val committer = TurnCommitter(silenceMs = 1000, calibrateMs = 300, textStableMs = 1000)
+        repeat(3) { committer.observe(false, 100, 0.001f, "") }
+        var discard: String? = null
+        for (frame in 1..15) {
+            val event = committer.observe(
+                vadVoiced = false,
+                frameMs = 100,
+                rms = 0.002f,
+                text = "I",
+                vadProb = 0.2f,
+                emberHot = true,
+                emberText = "I asked the weather",
+            )
+            assertTrue(event.decision != EndpointDecision.SEND, "sent on frame $frame")
+            if (event.discard != null) {
+                discard = event.discard
+                assertTrue(frame * 100 <= 1200)
+                break
+            }
+        }
+        assertEquals("too_short", discard)
+    }
+
+    @Test fun aRealBargeInDuringPlaybackStillSends() {
+        val committer = TurnCommitter(silenceMs = 1000, calibrateMs = 300, textStableMs = 5_000)
+        repeat(3) { committer.observe(false, 100, 0.001f, "") }
+        repeat(3) {
+            committer.observe(true, 100, 0.3f, "stop that now", vadProb = 0.8f, emberHot = true, emberText = "I asked the weather")
+        }
+        var reason: EndpointReason? = null
+        for (frame in 1..12) {
+            val event = committer.observe(
+                false, 100, 0.001f, "stop that now", vadProb = 0.05f, emberHot = true, emberText = "I asked the weather",
+            )
+            if (event.decision == EndpointDecision.SEND) {
+                reason = event.reason
+                break
+            }
+        }
+        assertEquals(EndpointReason.VAD_SILENCE, reason)
+    }
+
     @Test fun fifteenSecondsOfSpeechSendsOnTheCap() {
         val committer = TurnCommitter(silenceMs = 5_000, textStableMs = 60_000, calibrateMs = 100, maxSpeechMs = 15_000)
         committer.observe(false, 100, 0.01f, "")

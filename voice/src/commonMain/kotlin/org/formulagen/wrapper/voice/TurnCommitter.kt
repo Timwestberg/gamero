@@ -10,6 +10,10 @@ data class EndpointEvent(
     val reason: EndpointReason? = null,
     /** This frame counted as the user's speech, after the ambient floor. */
     val speech: Boolean = false,
+    val vadSpeechMs: Int = 0,
+    val maxProb: Float = 0f,
+    /** Set when the partial is thrown away instead of sent. */
+    val discard: String? = null,
 )
 
 /**
@@ -37,6 +41,7 @@ class TurnCommitter(
     private var lastText = ""
     private var heard = false
     private var textSeen = false
+    private var maxProb = 0f
 
     /** Keep the noise floor. Clear the clocks for the next utterance. */
     fun resetUtterance() {
@@ -46,12 +51,22 @@ class TurnCommitter(
         lastText = ""
         heard = false
         textSeen = false
+        maxProb = 0f
     }
 
     fun belowFloor(rms: Float): Boolean = floorReady && rms <= floor + floorMargin
 
-    fun observe(vadVoiced: Boolean, frameMs: Int, rms: Float, text: String): EndpointEvent {
+    fun observe(
+        vadVoiced: Boolean,
+        frameMs: Int,
+        rms: Float,
+        text: String,
+        vadProb: Float = if (vadVoiced) 1f else 0f,
+        emberHot: Boolean = false,
+        emberText: String = "",
+    ): EndpointEvent {
         if (frameMs <= 0) return EndpointEvent(EndpointDecision.LISTEN)
+        if (vadProb > maxProb) maxProb = vadProb
         if (!floorReady) {
             if (!vadVoiced) floorSamples.add(rms)
             calibratedMs += frameMs
@@ -73,25 +88,63 @@ class TurnCommitter(
             heard = true
             speechMs += frameMs
             trailingMs = 0
-            if (speechMs >= maxSpeechMs) return send(EndpointReason.CAP)
-            if (textSeen && stableMs >= textStableMs && speechMs >= minSpeechMs) return send(EndpointReason.TEXT_STABLE)
+            if (speechMs >= maxSpeechMs) return finish(EndpointReason.CAP, spoken, emberHot, emberText)
+            if (textSeen && stableMs >= textStableMs) return finish(EndpointReason.TEXT_STABLE, spoken, emberHot, emberText)
             return EndpointEvent(EndpointDecision.LISTEN, speech = true)
         }
         if (!heard && !textSeen) return EndpointEvent(EndpointDecision.LISTEN)
         trailingMs += frameMs
-        if (trailingMs >= silenceMs && (speechMs >= minSpeechMs || textSeen)) return send(EndpointReason.VAD_SILENCE)
-        if (textSeen && stableMs >= textStableMs && (speechMs >= minSpeechMs || heard)) return send(EndpointReason.TEXT_STABLE)
-        if (trailingMs >= silenceMs) {
-            resetUtterance()
-            return EndpointEvent(EndpointDecision.DROP)
-        }
+        if (textSeen && stableMs >= textStableMs) return finish(EndpointReason.TEXT_STABLE, spoken, emberHot, emberText)
+        if (trailingMs >= silenceMs) return finish(EndpointReason.VAD_SILENCE, spoken, emberHot, emberText)
         return EndpointEvent(EndpointDecision.LISTEN)
     }
 
-    private fun send(reason: EndpointReason): EndpointEvent {
+    private fun finish(reason: EndpointReason, text: String, emberHot: Boolean, emberText: String): EndpointEvent {
+        val discard = screenHeardTurn(text, speechMs, maxProb, emberHot, emberText)
+        val event = if (discard == null && text.isNotBlank() && speechMs >= minSpeechMs) {
+            EndpointEvent(EndpointDecision.SEND, reason, speech = true, vadSpeechMs = speechMs, maxProb = maxProb)
+        } else {
+            EndpointEvent(
+                EndpointDecision.DROP,
+                discard = discard ?: "no_vad_speech",
+                vadSpeechMs = speechMs,
+                maxProb = maxProb,
+            )
+        }
         resetUtterance()
-        return EndpointEvent(EndpointDecision.SEND, reason)
+        return event
     }
+}
+
+/** Null means the turn may be sent. Otherwise the discard reason. */
+fun screenHeardTurn(
+    text: String,
+    vadSpeechMs: Int,
+    maxProb: Float,
+    emberHot: Boolean,
+    emberText: String,
+): String? {
+    val words = speechTokens(text)
+    if (emberHot) {
+        val strong = vadSpeechMs >= 250 && maxProb >= 0.5f
+        if (words.size in 1..2 && !strong) return "too_short"
+        if (!strong) return "no_vad_speech"
+        if (mostlyEcho(words, emberText)) return "self_echo"
+        return null
+    }
+    if (vadSpeechMs < HEARING_MIN_SPEECH_MS) return "no_vad_speech"
+    return null
+}
+
+internal fun speechTokens(text: String): List<String> =
+    text.lowercase().split(Regex("[^a-z0-9']+")).filter { it.isNotEmpty() }
+
+private fun mostlyEcho(words: List<String>, emberText: String): Boolean {
+    if (words.isEmpty()) return false
+    val ember = speechTokens(emberText).toSet()
+    if (ember.isEmpty()) return false
+    val overlap = words.count { it in ember }
+    return overlap * 100 / words.size >= 60
 }
 
 fun chunkRms(samples: FloatArray): Float {
