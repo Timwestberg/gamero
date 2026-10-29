@@ -4,6 +4,7 @@ import java.nio.file.Path
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.approvals.ApprovalLimits
 import org.formulagen.wrapper.approvals.ApprovalSubject
+import org.formulagen.wrapper.approvals.isFormatCharacter
 
 /** Decode the pinned x.ai/tool v1 shape; absent, conflicting or unsupported detail cannot be approved. */
 internal fun grokApprovalSubject(tool: JsonObject, folder: Path): ApprovalSubject? {
@@ -77,10 +78,14 @@ private fun editPath(input: JsonObject, raw: JsonObject, folder: Path): Path? {
     return runCatching { folder.resolve(path).normalize() }.getOrNull()
 }
 
-/** Code may contain line breaks and tabs, but not hidden control characters or truncated text. */
+/**
+ * Code may contain line breaks and tabs, but not hidden control characters, truncated text, or
+ * format characters (bidi overrides, zero-width characters) that could make a dialog show other text.
+ */
 private fun toolText(value: JsonElement?, limit: Int): String? =
     (value as? JsonPrimitive)?.takeIf { it.isString }?.content
         ?.takeIf { it.length <= limit && it.none { char -> char.isISOControl() && char != '\n' && char != '\t' } }
+        ?.takeIf { it.codePoints().noneMatch(::isFormatCharacter) }
 
 /** Grok serializes its tagged ToolInput; a supplied variant must agree with the canonical metadata. */
 private fun toolVariant(raw: JsonObject, expected: String): Boolean =

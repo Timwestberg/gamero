@@ -93,6 +93,21 @@ class GrokApprovalSubjectTest {
         assertNull(grokApprovalSubject(buildJsonObject { put("title", "Write notes.txt"); put("kind", "edit") }, folder))
     }
 
+    @Test fun formatCharactersThatCouldDisguiseTheShownTextAreDenied() {
+        // Bidi override and isolate, zero-width space and joiner, byte-order mark, and a supplementary tag character.
+        for (hidden in listOf("‮", "⁦", "​", "‍", "﻿", String(Character.toChars(0xE0001)))) {
+            val command = "echo safe${hidden}rm -rf ~"
+            assertNull(grokApprovalSubject(envelope("execute", "grok_build", """{"command":"$command","description":"Run"}""",
+                """{"command":"$command","description":"Run"}"""), folder), hidden)
+            assertNull(grokApprovalSubject(envelope("execute", "grok_build", """{"command":"echo hello","description":"Run$hidden"}""",
+                """{"command":"echo hello","description":"Run$hidden"}"""), folder), hidden)
+            assertNull(grokApprovalSubject(envelope("write", "opencode", """{"path":"notes$hidden.txt"}""",
+                """{"file_path":"notes$hidden.txt","content":"new"}"""), folder), hidden)
+            assertNull(grokApprovalSubject(envelope("write", "opencode", """{"path":"notes.txt"}""",
+                """{"file_path":"notes.txt","content":"new$hidden"}"""), folder), hidden)
+        }
+    }
+
     private fun commandTool() = envelope("execute", "grok_build",
         """{"command":"echo hello","description":"Run the example"}""",
         """{"command":"echo hello","description":"Run the example","timeout":5000,"is_background":false}""")
