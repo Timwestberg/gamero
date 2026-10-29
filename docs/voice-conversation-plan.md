@@ -17,7 +17,7 @@ Mac only, still drafts, stacked on #56 (`5911aaf`). Milestones 5–7 are not sta
 - **#59** Click the chat icon to start a session. Another click, Escape, or Stop ends it. Fillers stay in the product and default off (`~/.gamero/voice-fillers`, `HOVEL_VOICE_FILLERS` overrides one launch). One second of quiet after speech sends. Empty text and speech under 240 ms do not. Half duplex until echo cancellation is actually up: the mic is paused while Ember speaks, then about 300 ms.
 - **#60** The reply is spoken sentence by sentence. A click or Escape during playback flushes first, cancels the provider turn, keeps the partial text, and leaves the session listening.
 - **#61** Full duplex uses one voice-processing graph (`voice/native/ember_audio.m`) for the mic and the speaker. If the library is missing, the graph fails to start, or `~/.gamero/hearing-self-check` says fail, the session stays half duplex and does not leave the mic open. While she is preparing or playing, 250 ms of frames at VAD probability 0.5 or higher flushes playback (`barge-in vad flush_ms=`) and cancels the turn. A short quiet chunk does not wipe that run. Self-echo is discarded (`no_vad_speech`, `too_short`, `self_echo`).
-- **#62** The shared contract lives in gamero `voice` `commonMain` (`VoiceConversation.kt`): states, actions, endpoint and discard reasons, barge-in, latency caps, the four Kokoro ids and speeds, sentence gap 160 ms, fillers default off, and the model checksums. `ChatSnapshot.hearing` is omitted on host-bridge v2 until the page sends `"hearing": true` or calls `chat.hearing`. Until then the native Gamero Adventures row is the control. Ember Tower does not show it. A bare Escape while the catalog page has focus still barges in. No Kotlin/JS target. No server-platform or game-platform PR.
+- **#62** The shared contract is server-platform's `ember-hearing.v1` (`event-contracts/src/voice/hearing.v1.ts`): states, actions, endpoint and discard reasons, barge-in, latency caps, and the model checksums. Host-bridge `chat.hearing` and `chatSnapshot.hearing` (`event-contracts/src/host-bridge/chat.ts`) reuse its states and actions. Gamero `voice` `commonMain` (`VoiceConversation.kt`) mirrors it and adds the four Kokoro ids and speeds, sentence gap 160 ms, and fillers default off; `HearingContractTest` checks the mirror against the generated contract fixtures. `ChatSnapshot.hearing` is omitted on host-bridge v2 until the page sends `"hearing": true` on `chat.open`, `chat.openForClient`, `chat.snapshot`, `chat.stop` or `chat.stopSpeaking`, or calls `chat.hearing`; a page does so only when `host.capabilities` lists `chat.hearing`. Until then the native Gamero Adventures row is the control. Ember Tower does not show it. A bare Escape while the catalog page has focus still barges in. No Kotlin/JS target. No game-platform PR yet.
 
 The speaker wait from #56 is kept: playback is not abandoned after two minutes, and a playback thread that fails to start does not block the voice worker. A streamed player that fails to start clears the preparing state.
 
@@ -484,12 +484,12 @@ gamero, edit on top of #56:
 
 - `composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/chat/DesktopSpeech.kt` — `enqueue`, generation left intact.
 - `composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/chat/DesktopChat.kt` — cursor on `partial` and `completed`, `interruptForHearing`.
-- `composeApp/src/commonMain/kotlin/org/formulagen/wrapper/bridge/ChatCapability.kt` — mirror the contract once server-platform has it.
+- `composeApp/src/commonMain/kotlin/org/formulagen/wrapper/bridge/ChatCapability.kt` — mirrors server-platform `host-bridge/chat.ts`; `tools/sync-server-fixtures.py` generates the fixtures that check it.
 - `composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/chat/KokoroVoicePicker.kt` — the hold control for the first loop.
 - `scripts/package-catalog-macos.sh` — microphone usage string.
 - `scripts/dev-env.sh` — `HOVEL_HEARING_MODEL` default beside `HOVEL_KOKORO_MODEL`.
 
-server-platform, when milestone 4 starts: `event-contracts` hearing schema, host-bridge `chat.hearing`, a limits fixture the Kotlin mirror test already knows how to read.
+server-platform (done): `event-contracts` `ember-hearing.v1`, host-bridge `chat.hearing` and `chatSnapshot.hearing`. No new shared limits: `partial` and `notice` use `CHAT_LIMITS`.
 
 tool-webkit: one presentational control, states from section 5.2, covered by the existing UX test style.
 
