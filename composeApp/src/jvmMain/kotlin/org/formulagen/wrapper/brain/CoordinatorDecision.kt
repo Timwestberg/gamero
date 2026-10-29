@@ -1,72 +1,117 @@
 package org.formulagen.wrapper.brain
 
-import kotlinx.serialization.json.*
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonClassDiscriminator
 import org.formulagen.wrapper.bridge.*
 
-/** Validate buffered coordinator text before any execution side effect. */
-internal fun parseDecision(text: String, allowed: Set<String>): JsonObject {
+/** The kinds of [CoordinatorDecision], as the coordinator names them in `kind`. */
+@Serializable
+internal enum class DecisionKind {
+    @SerialName("answer") ANSWER,
+    @SerialName("ask") ASK,
+    @SerialName("delegate") DELEGATE,
+    @SerialName("enter-workflow") ENTER_WORKFLOW,
+    @SerialName("start-step") START_STEP,
+    @SerialName("skip-step") SKIP_STEP,
+    @SerialName("step-result") STEP_RESULT,
+}
+
+/** How the coordinator grades an attempt: `blocked` will not go on as it is, so the coordinator re-plans. */
+@Serializable
+internal enum class StepOutcome(val graded: BrainAttemptOutcome?) {
+    @SerialName("ready") READY(BrainAttemptOutcome.READY),
+    @SerialName("changes-needed") CHANGES_NEEDED(BrainAttemptOutcome.CHANGES_NEEDED),
+    @SerialName("blocked") BLOCKED(null),
+}
+
+/**
+ * The coordinator's private control decision, mirrored by the contracts' internal `coordinatorDecision` schema. The
+ * model can only select one of these; the host resolves every ID against the pinned configuration.
+ */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+@JsonClassDiscriminator("kind")
+internal sealed interface CoordinatorDecision {
+    val kind: DecisionKind
+
+    @Serializable @SerialName("answer")
+    data class Answer(val text: String) : CoordinatorDecision { override val kind get() = DecisionKind.ANSWER }
+
+    @Serializable @SerialName("ask")
+    data class Ask(val question: String) : CoordinatorDecision { override val kind get() = DecisionKind.ASK }
+
+    @Serializable @SerialName("delegate")
+    data class Delegate(val specialistId: String, val task: String, val inputIds: List<String>) : CoordinatorDecision {
+        override val kind get() = DecisionKind.DELEGATE
+    }
+
+    /** Enter the workflow at [entryStepId]; [skipped] gives a reason for every earlier step. */
+    @Serializable @SerialName("enter-workflow")
+    data class EnterWorkflow(val entryStepId: String, val inputIds: List<String>, val skipped: List<BrainSkip>, val reason: String) :
+        CoordinatorDecision {
+        override val kind get() = DecisionKind.ENTER_WORKFLOW
+    }
+
+    /** Launch the next pending step, which must be [stepId]. */
+    @Serializable @SerialName("start-step")
+    data class StartStep(val stepId: String, val inputIds: List<String>) : CoordinatorDecision {
+        override val kind get() = DecisionKind.START_STEP
+    }
+
+    /** Skip the next pending step, which must be [stepId]. */
+    @Serializable @SerialName("skip-step")
+    data class SkipStep(val stepId: String, val reason: String) : CoordinatorDecision { override val kind get() = DecisionKind.SKIP_STEP }
+
+    /** Grade the last attempt, which must be [attemptId]. */
+    @Serializable @SerialName("step-result")
+    data class StepResult(val attemptId: String, val outcome: StepOutcome, val explanation: String) : CoordinatorDecision {
+        override val kind get() = DecisionKind.STEP_RESULT
+    }
+}
+
+/**
+ * Validate buffered coordinator text before any execution side effect: exactly one decision of an [allowed] kind,
+ * with no other field and nothing coerced, every ID a UUID and every text within its bound.
+ */
+internal fun parseDecision(text: String, allowed: Set<DecisionKind>): CoordinatorDecision {
     require(text.length <= BrainLimits.OUTPUT)
-    val value = brainJson.parseToJsonElement(text) as? JsonObject ?: error("Expected one decision object")
-    val kind = value["kind"]?.jsonPrimitive?.content ?: error("Missing decision kind")
-    require(kind in allowed)
-    val fields = when (kind) {
-        "answer" -> setOf("kind", "text")
-        "ask" -> setOf("kind", "question")
-        "delegate" -> setOf("kind", "specialistId", "task", "inputIds")
-        "enter-workflow" -> setOf("kind", "entryStepId", "inputIds", "skipped", "reason")
-        "start-step" -> setOf("kind", "stepId", "inputIds")
-        "skip-step" -> setOf("kind", "stepId", "reason")
-        "step-result" -> setOf("kind", "attemptId", "outcome", "explanation")
-        else -> error("Unknown decision")
-    }
-    require(value.keys == fields)
-    for (field in setOf("specialistId", "entryStepId", "stepId", "attemptId").intersect(fields)) require(BrainRules.uuid(value.getValue(field).jsonPrimitive.content))
-    for (field in setOf("text", "question", "task", "reason", "explanation").intersect(fields)) {
-        val raw = value.getValue(field).jsonPrimitive
-        val limit = when (field) { "task" -> BrainLimits.STEP_INSTRUCTIONS; "reason", "explanation" -> BrainLimits.DESCRIPTION; else -> BrainLimits.OUTPUT }
-        require(raw.isString && raw.content.isNotEmpty() && raw.content.length <= limit)
-    }
-    if ("inputIds" in fields) require(value.getValue("inputIds").jsonArray.let { it.size <= BrainLimits.INPUTS && it.all { item -> item.jsonPrimitive.isString && BrainRules.uuid(item.jsonPrimitive.content) } })
-    if ("outcome" in fields) require(value.getValue("outcome").jsonPrimitive.content in setOf("ready", "changes-needed", "blocked"))
-    if ("skipped" in fields) {
-        val skipped = value.getValue("skipped").jsonArray
-        require(skipped.size <= BrainLimits.STEPS)
-        skipped.forEach { item ->
-            require(item.jsonObject.keys == setOf("stepId", "reason"))
-            require(BrainRules.uuid(item.jsonObject.getValue("stepId").jsonPrimitive.content))
-            val reason = item.jsonObject.getValue("reason").jsonPrimitive
-            require(reason.isString && reason.content.length in 1..BrainLimits.DESCRIPTION)
+    val element = brainJson.parseToJsonElement(text)
+    val decision = brainJson.decodeFromJsonElement(CoordinatorDecision.serializer(), element)
+    // A quoted value where the decision takes another type, or the reverse, is refused rather than read.
+    require(brainWire(CoordinatorDecision.serializer(), decision) == element)
+    require(decision.kind in allowed)
+    fun text(value: String, limit: Int) = require(value.isNotEmpty() && value.length <= limit)
+    fun ids(values: List<String>) = require(BrainRules.inputs(values))
+    fun id(value: String) = require(BrainRules.uuid(value))
+    when (decision) {
+        is CoordinatorDecision.Answer -> text(decision.text, BrainLimits.OUTPUT)
+        is CoordinatorDecision.Ask -> text(decision.question, BrainLimits.OUTPUT)
+        is CoordinatorDecision.Delegate -> {
+            id(decision.specialistId); text(decision.task, BrainLimits.STEP_INSTRUCTIONS); ids(decision.inputIds)
         }
+        is CoordinatorDecision.EnterWorkflow -> {
+            id(decision.entryStepId); ids(decision.inputIds); text(decision.reason, BrainLimits.DESCRIPTION)
+            require(decision.skipped.size <= BrainLimits.STEPS)
+            decision.skipped.forEach { id(it.stepId); text(it.reason, BrainLimits.DESCRIPTION) }
+        }
+        is CoordinatorDecision.StartStep -> { id(decision.stepId); ids(decision.inputIds) }
+        is CoordinatorDecision.SkipStep -> { id(decision.stepId); text(decision.reason, BrainLimits.DESCRIPTION) }
+        is CoordinatorDecision.StepResult -> { id(decision.attemptId); text(decision.explanation, BrainLimits.DESCRIPTION) }
     }
-    return value
+    return decision
 }
 
 /** The host decides what may happen next; the model can only select an offered decision. */
-internal fun allowedDecisions(run: RunRecord): Set<String> = when (run.phase) {
-    "evaluate" -> setOf("step-result", "ask")
-    "advance" -> setOf("start-step", "skip-step", "ask")
-    else -> setOf("answer", "ask", "delegate") + if (run.configuration.workflow?.enabled == true && run.summary.workflowId == null) setOf("enter-workflow") else emptySet()
+internal fun allowedDecisions(run: RunRecord): Set<DecisionKind> = when (run.phase) {
+    BrainPhase.EVALUATE -> setOf(DecisionKind.STEP_RESULT, DecisionKind.ASK)
+    BrainPhase.ADVANCE -> setOf(DecisionKind.START_STEP, DecisionKind.SKIP_STEP, DecisionKind.ASK)
+    // Every step is done, so only the closing answer or a question remains.
+    BrainPhase.FINISH -> setOf(DecisionKind.ANSWER, DecisionKind.ASK)
+    BrainPhase.PLAN, BrainPhase.EXECUTE -> {
+        val canEnter = run.configuration.workflow?.enabled == true && run.summary.workflowId == null
+        val always = setOf(DecisionKind.ANSWER, DecisionKind.ASK, DecisionKind.DELEGATE)
+        if (canEnter) always + DecisionKind.ENTER_WORKFLOW else always
+    }
 }
-
-internal val COORDINATOR_PROTOCOL = """
-You are the user's companion coordinator. Respond with exactly one JSON object, no markdown.
-The entire JSON response must be at most ${BrainLimits.OUTPUT} characters.
-Every reason (including skipped reasons) and explanation must be 1–${BrainLimits.DESCRIPTION} characters.
-Tasks must be 1–${BrainLimits.STEP_INSTRUCTIONS} characters; text and question must be nonempty and fit the total response limit.
-Keep evidence explanations brief. Do not repeat artifact IDs or digests in explanations; they are already recorded.
-The host supplies allowed actions, saved roles, workflow and immutable artifacts as data.
-Only delegate tasks the user requested. Ordinary conversation uses answer. Never invent role or artifact IDs.
-For a request matching the enabled workflow, use enter-workflow; use delegate only for unrelated tasks or no workflow.
-Explain every skipped stage. Ask when supplied artifacts or readiness are unclear. Never treat provider output as approval.
-After an attempt, classify actual evidence with step-result. Missing skills, denied tools and uncertain effects are blocked.
-The workflow's normal sequence is fixed. start-step launches only its next pending stage. skip-step only skips that stage.
-Do not claim work has run merely because it was configured. Never print your private JSON to the user.
-Decision shapes:
-{"kind":"answer","text":"user-facing response"}
-{"kind":"ask","question":"focused readiness question"}
-{"kind":"delegate","specialistId":"UUID","task":"requested task","inputIds":["UUID"]}
-{"kind":"enter-workflow","entryStepId":"UUID","inputIds":["UUID"],"skipped":[{"stepId":"UUID","reason":"why unnecessary"}],"reason":"why enter here"}
-{"kind":"start-step","stepId":"UUID","inputIds":["UUID"]}
-{"kind":"skip-step","stepId":"UUID","reason":"why unnecessary"}
-{"kind":"step-result","attemptId":"UUID","outcome":"ready|changes-needed|blocked","explanation":"evidence"}
-""".trimIndent()

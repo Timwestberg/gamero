@@ -9,6 +9,7 @@ import java.nio.file.attribute.PosixFilePermissions
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.*
@@ -17,13 +18,55 @@ import org.formulagen.wrapper.chat.NativeConversation
 /** A committed save: replaying [id] with the same [digest] rebuilds its document at [revision] from the replayed request. */
 @Serializable internal data class SaveReceipt(val id: String, val digest: String, val revision: Long)
 @Serializable internal data class ConfigRecord(val version: Int = 1, val document: BrainDocument, val receipts: List<SaveReceipt>)
-@Serializable internal data class RunRecord(val summary: BrainRun, val configuration: BrainConfiguration, val workspace: String?, val request: String,
-    val inputs: List<String>, val attempts: List<BrainAttempt> = emptyList(), val artifacts: List<BrainArtifact> = emptyList(), val nextStep: Int = 0,
-    val phase: String = "plan", val task: String = "", val returnsAllowance: Int = BrainLimits.RETURNS, val dispatchesAllowance: Int = BrainLimits.DISPATCHES,
-    val contexts: Map<String, NativeConversation> = emptyMap(), val invalidated: List<String> = emptyList())
-@Serializable internal data class BrainRecord(val version: Int = 1, val messages: List<BrainEntry> = emptyList(), val run: RunRecord? = null,
-    val waiting: BrainWaiting? = null, val receipts: Map<String, String> = emptyMap(), val staged: List<BrainArtifact> = emptyList(),
-    val coordinatorContexts: Map<String, NativeConversation> = emptyMap(), val notice: String? = null)
+
+/**
+ * What the controller does next with a run: [PLAN] asks the coordinator what to do with the request, [EXECUTE] runs the
+ * queued attempt, [EVALUATE] has the coordinator grade its result, [ADVANCE] start or skip the next workflow step, and
+ * [FINISH] answer once every step is done.
+ */
+@Serializable
+internal enum class BrainPhase {
+    @SerialName("plan") PLAN,
+    @SerialName("execute") EXECUTE,
+    @SerialName("evaluate") EVALUATE,
+    @SerialName("advance") ADVANCE,
+    @SerialName("finish") FINISH,
+}
+
+/**
+ * One request's run with the configuration pinned when it began. [nextStep] is the next workflow step; [invalidated]
+ * attempts belong to a pass a return made stale. [contexts] are the specialists' native conversations in this run.
+ */
+@Serializable
+internal data class RunRecord(
+    val summary: BrainRun,
+    val configuration: BrainConfiguration,
+    val workspace: String?,
+    val request: String,
+    val inputs: List<String>,
+    val attempts: List<BrainAttempt> = emptyList(),
+    val artifacts: List<BrainArtifact> = emptyList(),
+    val nextStep: Int = 0,
+    val phase: BrainPhase = BrainPhase.PLAN,
+    val task: String = "",
+    val returnsAllowance: Int = BrainLimits.RETURNS,
+    val dispatchesAllowance: Int = BrainLimits.DISPATCHES,
+    val contexts: Map<String, NativeConversation> = emptyMap(),
+    val invalidated: List<String> = emptyList(),
+)
+
+/** A companion's coordinator conversation, its current run and the request receipts that keep retries single. */
+@Serializable
+internal data class BrainRecord(
+    val version: Int = 1,
+    val messages: List<BrainEntry> = emptyList(),
+    val run: RunRecord? = null,
+    val waiting: BrainWaiting? = null,
+    val receipts: Map<String, String> = emptyMap(),
+    val staged: List<BrainArtifact> = emptyList(),
+    val coordinatorContexts: Map<String, NativeConversation> = emptyMap(),
+    val notice: String? = null,
+)
 
 /** Private atomic storage; corrupt or unknown records are never overwritten. */
 internal class BrainStore(private val root: Path) {
@@ -45,31 +88,35 @@ internal class BrainStore(private val root: Path) {
         }
     }
     /** Compare, commit and receipt are protected by one cross-window/process lock. */
-    fun save(profile: String, companionId: String, revision: Long, mutationId: String, configuration: BrainConfiguration): JsonElement = locked(profile, companionId) { directory ->
-        require(BrainRules.configuration(configuration))
-        val current = readConfig(directory)
-        val digest = digest("$revision:${brainWire(configuration)}".toByteArray())
-        val prior = current?.receipts?.find { it.id == mutationId }
-        if (prior != null) {
-            // The digest covers the expected revision and configuration, so the replayed request is the saved document.
-            require(prior.digest == digest) { "Mutation ID reused with different content" }
-            return@locked saved(BrainDocument(prior.revision, configuration))
+    fun save(profile: String, companionId: String, revision: Long, mutationId: String, configuration: BrainConfiguration): BrainSaveResult =
+        locked(profile, companionId) { directory ->
+            require(BrainRules.configuration(configuration))
+            val current = readConfig(directory)
+            val digest = digest("$revision:${brainWire(configuration)}".toByteArray())
+            val prior = current?.receipts?.find { it.id == mutationId }
+            if (prior != null) {
+                // The digest covers the expected revision and configuration, so the replayed request is the saved document.
+                require(prior.digest == digest) { "Mutation ID reused with different content" }
+                return@locked saved(BrainDocument(prior.revision, configuration))
+            }
+            if ((current?.document?.revision ?: 0) != revision) return@locked BrainSaveResult.Conflict(current?.document?.revision ?: 0)
+            require(revision < BrainLimits.REVISION)
+            val document = BrainDocument(revision + 1, configuration)
+            val receipts = (current?.receipts.orEmpty() + SaveReceipt(mutationId, digest, document.revision)).takeLast(RECEIPTS)
+            val record = ConfigRecord(document = document, receipts = receipts)
+            val content = brainJson.encodeToString(ConfigRecord.serializer(), record)
+            require(content.toByteArray().size <= CONFIG_RECORD_BYTES)
+            atomic(directory.resolve(CONFIGURATION), content)
+            saved(document)
         }
-        if ((current?.document?.revision ?: 0) != revision) return@locked buildJsonObject { put("status", "conflict"); put("currentRevision", current?.document?.revision ?: 0) }
-        require(revision < 9_007_199_254_740_991L)
-        val document = BrainDocument(revision + 1, configuration)
-        val record = ConfigRecord(document = document, receipts = ((current?.receipts ?: emptyList()) + SaveReceipt(mutationId, digest, document.revision)).takeLast(RECEIPTS))
-        val content = brainJson.encodeToString(ConfigRecord.serializer(), record)
-        require(content.toByteArray().size <= CONFIG_RECORD_BYTES)
-        atomic(directory.resolve(CONFIGURATION), content)
-        saved(document)
-    }
-    private fun saved(document: BrainDocument) = buildJsonObject { put("status", "saved"); put("document", brainWire(document)); put("issues", JsonArray(emptyList())) }
+    private fun saved(document: BrainDocument) = BrainSaveResult.Saved(document, emptyList())
     fun readRecord(profile: String, companionId: String): BrainRecord = locked(profile, companionId) { directory ->
         val file = directory.resolve("conversation.json")
         if (!Files.exists(file)) BrainRecord() else {
             require(Files.size(file) <= RECORD_BYTES)
-            brainJson.decodeFromString<BrainRecord>(Files.readString(file)).also { require(it.version == 1); it.run?.let { run -> require(BrainRules.configuration(run.configuration)) } }
+            brainJson.decodeFromString<BrainRecord>(Files.readString(file)).also { record ->
+                require(record.version == 1 && record.run?.let { BrainRules.configuration(it.configuration) } != false)
+            }
         }
     }
     fun writeRecord(profile: String, companionId: String, record: BrainRecord) = locked(profile, companionId) { directory ->
@@ -84,10 +131,19 @@ internal class BrainStore(private val root: Path) {
     fun archived(profile: String, companionId: String, runId: String): RunRecord? = locked(profile, companionId) { directory ->
         require(BrainRules.uuid(runId))
         val file = directory.resolve("run-$runId.json")
-        if (Files.exists(file)) { require(Files.size(file) <= RECORD_BYTES); brainJson.decodeFromString<RunRecord>(Files.readString(file)) } else null
+        if (!Files.exists(file)) return@locked null
+        require(Files.size(file) <= RECORD_BYTES)
+        brainJson.decodeFromString<RunRecord>(Files.readString(file))
     }
     /** An immutable blob is durable before its reference is published. */
-    fun artifact(profile: String, companionId: String, title: String, source: BrainSource, bytes: ByteArray, mediaType: String): BrainArtifact = locked(profile, companionId) { directory ->
+    fun artifact(
+        profile: String,
+        companionId: String,
+        title: String,
+        source: BrainSource,
+        bytes: ByteArray,
+        mediaType: String,
+    ): BrainArtifact = locked(profile, companionId) { directory ->
         require(bytes.size <= ARTIFACT_BYTES)
         val id = UUID.randomUUID().toString()
         val folder = directory.resolve("artifacts"); privateDirectory(folder)
@@ -100,7 +156,8 @@ internal class BrainStore(private val root: Path) {
         }
         FileChannel.open(folder, READ).use { it.force(true) }
         val label = title.trimEcma().take(BrainLimits.LABEL).trimEcma().ifEmpty { "Attached file" }
-        BrainArtifact(id, label, digest(bytes), source, mediaType, if (mediaType == BINARY) "Attached file" else bytes.toString(Charsets.UTF_8).take(BrainLimits.PREVIEW))
+        val preview = if (mediaType == BINARY) "Attached file" else bytes.toString(Charsets.UTF_8).take(BrainLimits.PREVIEW)
+        BrainArtifact(id, label, digest(bytes), source, mediaType, preview)
     }
     fun bytes(profile: String, companionId: String, artifact: BrainArtifact): ByteArray {
         require(BrainRules.uuid(artifact.id))
@@ -145,10 +202,14 @@ internal class BrainStore(private val root: Path) {
             })))
         }
         fun digest(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-        private fun privateDirectory(path: Path) { Files.createDirectories(path); Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rwx------")) }
+        private fun privateDirectory(path: Path) {
+            Files.createDirectories(path)
+            Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rwx------"))
+        }
         private fun atomic(file: Path, content: String) {
             privateDirectory(file.parent)
-            val temp = Files.createTempFile(file.parent, ".brain-", ".tmp", PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))
+            val owner = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"))
+            val temp = Files.createTempFile(file.parent, ".brain-", ".tmp", owner)
             try {
                 FileChannel.open(temp, WRITE).use { channel ->
                     val buffer = java.nio.ByteBuffer.wrap(content.toByteArray())

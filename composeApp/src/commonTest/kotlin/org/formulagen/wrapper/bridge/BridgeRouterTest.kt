@@ -43,6 +43,20 @@ class BridgeRouterTest {
         router.close()
     }
 
+    @Test fun aBrainThePageCannotDecodeAnswersTheSameUpdateGuidance() = runTest {
+        val brain = object : BrainCapability by FakeBrainCapability() {
+            override suspend fun read(args: BrainRead): BrainReadResult = throw BridgeUpdateRequiredException()
+        }
+        val router = router(HostPlatform.DESKTOP, products = listOf(BrainMethods.pack(Capability.Supported(brain))))
+        call(router, watch)
+        val reply = call(router, request("brain.read", buildJsonObject {
+            put("profile", "local"); put("companionId", "10000000-0000-4000-8000-000000000001")
+        })).single()
+        assertEquals("failed", reply.getValue("error").jsonObject.getValue("code").jsonPrimitive.content)
+        assertEquals(BridgeUpdateRequiredException().message, reply.getValue("error").jsonObject.getValue("message").jsonPrimitive.content)
+        router.close()
+    }
+
     private val parity = Json.parseToJsonElement(HostBridgeFixtures.PARITY).jsonObject
     private val trusted = FrameFacts(mainFrame = true, trustedOrigin = true, documentId = "document-1")
     private val watch = """{"version":2,"method":"watchContext","args":{}}"""
