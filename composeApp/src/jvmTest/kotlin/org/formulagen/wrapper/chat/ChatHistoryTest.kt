@@ -55,6 +55,41 @@ class ChatHistoryTest {
         }
     }
 
+    @Test fun conversationIdsComeFromEveryHistoryWhereItIsReadAndNothingIsMoved() {
+        val root = Files.createTempDirectory("history-ids")
+        try {
+            assertEquals(emptySet(), companionConversationIds(root, "local", RuntimeId.GROK_BUILD))
+            val talking = "70000000-0000-4000-8000-000000000007"
+            val working = "80000000-0000-4000-8000-000000000008"
+            companionChatHistory(root, "local", companion).write(ChatRecord(conversations = mapOf(RuntimeId.GROK_BUILD to
+                NativeConversation(talking, hash), RuntimeId.CODEX to NativeConversation(thread, hash)),
+                workConversations = mapOf(RuntimeId.GROK_BUILD to NativeConversation(working, hash))))
+            // A companion whose version 1 history is still in the legacy folder: read there, as read() would, and left there.
+            val other = "20000000-0000-4000-8000-000000000009"
+            val legacy = root.resolve("local/codex/companion-chats/$other.json")
+            writeLegacy(legacy, legacyRecord.replace(thread, session))
+            assertEquals(setOf(talking, working), companionConversationIds(root, "local", RuntimeId.GROK_BUILD))
+            assertEquals(setOf(thread, session), companionConversationIds(root, "local", RuntimeId.CODEX))
+            assertEquals(legacyRecord.replace(thread, session), Files.readString(legacy))
+            assertFalse(Files.exists(root.resolve("local/companion-chats/$other.json")))
+            assertNull(companionConversationIds(root, "local", RuntimeId.GROK_BUILD, limit = 1))
+            // Anything unreadable, newer or unfamiliar in either folder means no answer, so a cleanup deletes nothing.
+            val (file, _) = paths(root)
+            val saved = Files.readString(file)
+            for (newer in listOf("broken", """{"version":4,"entries":[]}""")) {
+                Files.writeString(file, newer)
+                assertNull(companionConversationIds(root, "local", RuntimeId.GROK_BUILD))
+            }
+            Files.writeString(file, saved)
+            for (folder in listOf(file.parent, legacy.parent)) {
+                val unfamiliar = Files.writeString(folder.resolve("notes.txt"), "")
+                assertNull(companionConversationIds(root, "local", RuntimeId.GROK_BUILD))
+                Files.delete(unfamiliar)
+            }
+            assertEquals(setOf(talking, working), companionConversationIds(root, "local", RuntimeId.GROK_BUILD))
+        } finally { root.toFile().deleteRecursively() }
+    }
+
     @Test fun aCorruptRecordIsNeverOverwrittenOrReplacedByTheOldOne() {
         val root = Files.createTempDirectory("history-corrupt")
         val (file, legacy) = paths(root)
@@ -99,8 +134,8 @@ class ChatHistoryTest {
         val root = Files.createTempDirectory("history-invalid")
         val (file, _) = paths(root)
         val history = ChatHistory(file)
-        fun rejects(record: ChatRecord) { history.write(record); assertFails { history.read() } }
-        rejects(ChatRecord(version = 3))
+        fun rejects(record: ChatRecord) { assertFails { history.write(record) } }
+        rejects(ChatRecord(version = 4))
         rejects(ChatRecord(entries = List(41) { ChatEntry.User(java.util.UUID.randomUUID().toString(), "x") }))
         rejects(ChatRecord(entries = listOf(ChatEntry.Assistant(reply, TeamMember(RuntimeId.CODEX, "--model"), ""))))
         rejects(ChatRecord(entries = listOf(ChatEntry.User(user, "x".repeat(4_001)))))
@@ -108,6 +143,7 @@ class ChatHistoryTest {
         rejects(ChatRecord(conversations = mapOf(RuntimeId.CLAUDE_CODE to NativeConversation("../session", hash))))
         rejects(ChatRecord(entries = listOf(ChatEntry.Handover(handover, "yesterday", null, TeamMember(RuntimeId.CODEX, "x"), HandoverMethod.FRESH, HandoverReason.MANUAL))))
         rejects(ChatRecord(pendingContext = mapOf(RuntimeId.CODEX to "x".repeat(PENDING_CONTEXT_LIMIT + 1))))
+        Files.createDirectories(file.parent)
         Files.writeString(file, " ".repeat(3_000_001)); assertFails { history.read() }
         assertFails { companionChatHistory(root, "../../.codex", companion) }
     }

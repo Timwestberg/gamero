@@ -14,6 +14,9 @@ contract fixture changes:
   host-bridge tests.
 - hovel/HovelProviderPromptFixture.kt from
   event-contracts/src/hovel/fixtures/provider-prompt.json, for HovelProviderPromptTest.
+- bridge/EmberHearingFixture.kt from
+  event-contracts/src/voice/fixtures/hearing/ember-hearing.v1.json, so HearingContractTest
+  checks the hearing states and actions against the contract.
 """
 import json
 import subprocess
@@ -79,9 +82,20 @@ internal object HovelProviderPromptFixture {{
 """
 
 
+def ember_hearing(server: Path) -> str:
+    source = "event-contracts/src/voice/fixtures/hearing/ember-hearing.v1.json"
+    return HEADER.format(source, source_commit(server, source)) + f"""package org.formulagen.wrapper.bridge
+
+internal object EmberHearingFixture {{
+    const val JSON = {kotlin_string(compact(server / source))}
+}}
+"""
+
+
 OUTPUTS = {
     ROOT / TEST.format("commonTest") / "bridge/HostBridgeFixtures.kt": host_bridge,
     ROOT / TEST.format("jvmTest") / "hovel/HovelProviderPromptFixture.kt": provider_prompt,
+    ROOT / TEST.format("commonTest") / "bridge/EmberHearingFixture.kt": ember_hearing,
 }
 
 

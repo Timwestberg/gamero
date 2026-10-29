@@ -1,6 +1,7 @@
 package org.formulagen.wrapper.companion
 
-import java.util.concurrent.TimeUnit
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Stop a child and everything it started: ask nicely (destroy), wait up to two seconds, then
@@ -9,6 +10,9 @@ import java.util.concurrent.TimeUnit
  */
 internal fun terminateProcessTree(process: Process, observed: Set<ProcessHandle> = emptySet()) =
     reapProcessTree(process, signalProcessTree(process, observed))
+
+/** How long [terminateProcessTree] waits for a polite exit before force-killing what is left. */
+internal val PROCESS_TREE_GRACE: Duration = 2.seconds
 
 /**
  * The same stop for a caller on a UI thread: the polite signal goes out before this returns, and
@@ -30,7 +34,7 @@ private fun signalProcessTree(process: Process, observed: Set<ProcessHandle> = e
 
 /** Wait for the tree to exit within the grace period, then force-kill anything still running. */
 private fun reapProcessTree(process: Process, descendants: Set<ProcessHandle>) {
-    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+    val deadline = System.nanoTime() + PROCESS_TREE_GRACE.inWholeNanoseconds
     try {
         while ((process.isAlive || descendants.any { it.isAlive }) && System.nanoTime() < deadline) Thread.sleep(20)
     } finally {

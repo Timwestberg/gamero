@@ -28,6 +28,7 @@ internal class RuntimeCopy(
 internal val RuntimeId.copy: RuntimeCopy get() = when (this) {
     RuntimeId.CODEX -> CODEX_COPY
     RuntimeId.CLAUDE_CODE -> CLAUDE_COPY
+    RuntimeId.GROK_BUILD -> GROK_COPY
 }
 
 private val CODEX_COPY = RuntimeCopy(
@@ -47,4 +48,13 @@ private val CLAUDE_COPY = RuntimeCopy(
     signedOut = "Sign in to Claude Code again.",
     cannotWork = "Claude can't work in projects in this version of Hovel.",
     modelNames = CLAUDE_MODELS.associate { it.modelId to it.displayName },
+)
+
+private val GROK_COPY = RuntimeCopy(
+    product = "Grok",
+    program = "Grok Build",
+    notInstalled = "Install Grok Build on this Mac, then restart Hovel to connect.",
+    notOffered = "Grok is not available in this version of Hovel.",
+    signedOut = "Sign in to Grok Build again: run `grok login` in Terminal.",
+    cannotWork = "Grok can't work in projects yet in this version of Hovel.",
 )

@@ -233,7 +233,7 @@ internal class CodexChatRuntime(
             return@synchronized
         }
         val thread = (params["threadId"] as? JsonPrimitive)?.contentOrNull
-        connection.summaries[thread]?.let { it.receive(method, params); return@synchronized }
+        thread?.let(connection.summaries::get)?.let { it.receive(method, params); return@synchronized }
         var overflow: Turn? = null
         val turn = synchronized(lock) {
             val turn = connection.turn?.takeIf { it.thread == thread } ?: return@synchronized null

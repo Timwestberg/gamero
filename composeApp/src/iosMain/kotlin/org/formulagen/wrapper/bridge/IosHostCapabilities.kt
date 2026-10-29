@@ -16,6 +16,7 @@ internal fun iosHostCapabilities(appVersion: String): HostCapabilities = HostCap
 /** Hovel's capability packs on iOS. iOS has none of the desktop product capabilities, so their methods answer `unsupported`. */
 internal fun iosHovelBridgePacks(): List<CapabilityPack> = listOf(
     CompanionMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.BrainMethods.pack(Capability.Unsupported),
     ChatMethods.pack(Capability.Unsupported),
     ProviderMethods.pack(Capability.Unsupported),
     PetMethods.pack(Capability.Unsupported),
