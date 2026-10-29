@@ -1,0 +1,62 @@
+{
+  "checked": "2026-10-28",
+  "runtimeVersion": "grok 1.0.70 (f50904eaee6c)",
+  "sourceRevision": "2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8",
+  "sourceMatchesBinaryRevision": false,
+  "scope": "Personal subscription companion chat; project work and Bot excluded",
+  "authentication": {
+    "cachedMethodAvailable": true,
+    "mode": "Oidc",
+    "tier": "SuperGrok",
+    "backendBilled": false,
+    "accessGate": null,
+    "stableIdentityCompared": true,
+    "rawIdentityPersisted": false,
+    "credentialsReadOrCopiedByHovel": false,
+    "emptyStoreRejectedWithoutClientRequest": true
+  },
+  "isolation": {
+    "freshConfigPerProcess": true,
+    "authPathReferencesRuntimeStore": true,
+    "managedPoliciesAbsentRequired": true,
+    "inspectionCapabilityCountsAllZero": true,
+    "injectedOnDiskSkillExcluded": true,
+    "effectiveToolsEmptyForSession": true,
+    "clientFilesystem": false,
+    "clientTerminal": false,
+    "hostedWebSearch": false,
+    "sessionDataOnlyPersisted": true
+  },
+  "liveChecks": {
+    "productionAdapterReplies": true,
+    "acceptedPartialCompletedEvents": true,
+    "privateHandleResumeAfterAdapterRestart": true,
+    "rememberedContextAfterProcessRestart": true,
+    "activePromptTerminalCancellationWithinFiveSeconds": true
+  },
+  "regressions": {
+    "liveSelectedTests": 168,
+    "liveFailures": 0,
+    "liveSkipped": 0,
+    "broaderSelectedTests": 224,
+    "broaderFailures": 0,
+    "broaderSkippedOptIn": 10
+  },
+  "limitations": [
+    "Only the exact installed version is accepted.",
+    "Subscription metadata is runtime-reported and may use runtime cache if refresh fails.",
+    "Mixed-provider desktop acceptance and project-work permissions are separate checks.",
+    "No work adapter or Bot integration is enabled."
+  ],
+  "desktopChecks": {
+    "runtime": "JBR/JCEF 21.0.9+10-b1163.94",
+    "providerCardConnected": true,
+    "modelPickerPopulated": true,
+    "companionReplyObserved": true,
+    "alternateModelRetainedContext": true,
+    "historyAndSelectedModelPersistAfterFullRestart": true,
+    "mixedProviderHandover": "Incomplete: incoming Codex readiness failed; outgoing Grok remained selected",
+    "voice": "Unavailable in isolated test home; not part of this check",
+    "freshReplyRetainedContextAfterFullRestart": true
+  }
+}

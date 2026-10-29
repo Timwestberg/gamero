@@ -6,17 +6,21 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/** The browser column. Hearing runs on device. Chat and providers stay on the Mac host. */
+/**
+ * The browser catalog page (web/catalog) hears on the device and leaves chat
+ * and providers to the Mac host. server-platform's parity table has no web
+ * column, and HostBridgeFixtures is generated from it, so the browser's side
+ * is checked here: every method the page calls on the host is one desktop
+ * supports.
+ */
 class WebParityTest {
-    @Test fun webSupportsHearingAndDoesNotHostTheChatProviders() {
+    private val pageCallsOnTheHost = listOf("chat.hearing", "chat.send", "chat.stop")
+
+    @Test fun theMacHostSupportsEveryMethodTheBrowserPageCalls() {
         val parity = Json.parseToJsonElement(HostBridgeFixtures.PARITY).jsonObject
         val desktop = parity.getValue("desktop").jsonObject
-        val web = parity.getValue("web").jsonObject
-        assertEquals(desktop.keys, web.keys)
-        assertEquals("supported", web.getValue("chat.hearing").jsonPrimitive.content)
-        assertEquals("unsupported", web.getValue("chat.send").jsonPrimitive.content)
-        assertEquals("unsupported", web.getValue("chat.open").jsonPrimitive.content)
-        assertEquals("unsupported", web.getValue("providers.usage").jsonPrimitive.content)
-        assertEquals("unsupported", web.getValue("providers.status").jsonPrimitive.content)
+        for (method in pageCallsOnTheHost) {
+            assertEquals("supported", desktop.getValue(method).jsonPrimitive.content, method)
+        }
     }
 }
