@@ -142,7 +142,7 @@ internal class GrokWorkRuntime(
             val scope = GrokSessionScope(request.profile, request.companionId, GrokMode.WORK, model,
                 account.fingerprint, HovelCompanion.sha256(folder.toString()))
             scope.validate()
-            grokHistoryHandles(root, request.profile)?.let { bindings.prune(request.profile, it + listOfNotNull(saved?.id)) }
+            companionConversationIds(root, request.profile, RuntimeId.GROK_BUILD)?.let { bindings.prune(request.profile, it + listOfNotNull(saved?.id)) }
             val previous = saved?.let {
                 when (val lookup = bindings.find(it.id, scope)) {
                     is GrokSessionLookup.Found -> lookup.binding

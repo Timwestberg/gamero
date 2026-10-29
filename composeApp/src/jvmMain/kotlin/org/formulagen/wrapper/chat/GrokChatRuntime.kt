@@ -30,6 +30,9 @@ internal class GrokChatRuntime(
     private val summaries = ConcurrentHashMap.newKeySet<Thread>()
     private val bindingLock = Any()
     private val activeHandles = HashSet<String>()
+    /** History scans in progress outside [bindingLock], and every handle active at any time during them. */
+    private var scans = 0
+    private val touched = HashSet<String>()
     private val stopper = Executors.newSingleThreadScheduledExecutor(loggingDaemonThreads("hovel-grok-stop"))
     private val closed = AtomicBoolean()
 
@@ -88,6 +91,9 @@ internal class GrokChatRuntime(
         bindings.clearLocal()
     }
 
+    /** Under [bindingLock]: [handle] is in use, and stays retained by every history scan already running. */
+    private fun activate(handle: String) { activeHandles += handle; if (scans > 0) touched += handle }
+
     /** One worker owns startup, prompt, terminal response and cleanup; callbacks never hold its state lock. */
     private inner class Turn(private val request: TurnRequest, private val events: TurnEvents) {
         private val ended = AtomicBoolean()
@@ -134,10 +140,13 @@ internal class GrokChatRuntime(
             if (account.models.none { it.modelId == model }) { fail(ChatFailure.ModelUnavailable); return }
             val scope = GrokSessionScope(request.profile, request.companionId, GrokMode.TALK, model, account.fingerprint)
             scope.validate()
-            synchronized(bindingLock) {
-                saved?.id?.let { activeHandles += it; activeHandle = it }
-                grokHistoryHandles(root, request.profile)?.let { bindings.prune(request.profile, it + activeHandles) }
-            }
+            // Read the histories outside the lock: a handle active at any time during the read is kept,
+            // since its history may have been written after the read passed it.
+            synchronized(bindingLock) { saved?.id?.let { activate(it); activeHandle = it }; scans++; touched += activeHandles }
+            try {
+                val retained = companionConversationIds(root, request.profile, RuntimeId.GROK_BUILD)
+                synchronized(bindingLock) { retained?.let { bindings.prune(request.profile, it + activeHandles + touched) } }
+            } finally { synchronized(bindingLock) { if (--scans == 0) touched.clear() } }
             val previous = saved?.let {
                 when (val lookup = bindings.find(it.id, scope)) {
                     is GrokSessionLookup.Found -> lookup.binding
@@ -160,7 +169,7 @@ internal class GrokChatRuntime(
             session = opened
             if (ended.get() || closed.get()) { opened.abort(); return }
             val binding = synchronized(bindingLock) {
-                (previous ?: bindings.create(opened.sessionId, scope)).also { activeHandles += it.handle; activeHandle = it.handle }
+                (previous ?: bindings.create(opened.sessionId, scope)).also { activate(it.handle); activeHandle = it.handle }
             }
             synchronized(this) { state = GrokTurnState(opened.sessionId) }
             if (saved == null) deliver { events.opened(binding.handle) }
@@ -208,27 +217,4 @@ internal class GrokChatRuntime(
         private fun fail(failure: ChatFailure) { if (ended.compareAndSet(false, true)) events.failed(failure) }
         private inline fun deliver(event: () -> Unit) { if (!ended.get()) event() }
     }
-}
-
-/** Collect all retained handles or skip cleanup entirely on an unreadable, unfamiliar or oversized directory. */
-internal fun grokHistoryHandles(root: Path, profile: String): Set<String>? {
-    require(org.formulagen.wrapper.bridge.SharedRules.isProfileId(profile))
-    val directory = root.resolve(profile).resolve("companion-chats")
-    if (java.nio.file.Files.notExists(directory, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return emptySet()
-    if (!java.nio.file.Files.isDirectory(directory, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return null
-    return runCatching {
-        val retained = HashSet<String>()
-        java.nio.file.Files.newDirectoryStream(directory).use { entries ->
-            var count = 0
-            for (file in entries) {
-                check(++count <= 256)
-                check(java.nio.file.Files.isRegularFile(file, java.nio.file.LinkOption.NOFOLLOW_LINKS))
-                val name = file.fileName.toString()
-                check(name.endsWith(".json") && java.util.UUID.fromString(name.removeSuffix(".json")).toString() == name.removeSuffix(".json"))
-                val record = ChatHistory(file).read()
-                listOfNotNull(record.conversations[RuntimeId.GROK_BUILD], record.workConversations[RuntimeId.GROK_BUILD]).forEach { retained += it.id }
-            }
-        }
-        retained
-    }.getOrNull()
 }

@@ -1,6 +1,7 @@
 package org.formulagen.wrapper.chat
 
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption.*
 import java.nio.file.attribute.PosixFilePermissions
@@ -51,18 +52,28 @@ internal class ChatHistory(private val file: Path, private val legacy: Path? = n
     private var writtenVersion = 2
     private var incompatible = false
     fun read(): ChatRecord {
-        if (Files.exists(file)) {
-            require(Files.size(file) <= MAX_RECORD_BYTES)
-            val text = Files.readString(file)
-            val version = historyJson.parseToJsonElement(text).jsonObject["version"]?.jsonPrimitive?.intOrNull
-            if (version != null && version > 3) { incompatible = true; throw BridgeUpdateRequiredException() }
-            return historyJson.decodeFromString<ChatRecord>(text).validated().also { writtenVersion = it.version }
-        }
+        current()?.let { return it }
         val old = legacy?.takeIf { Files.exists(it) } ?: return ChatRecord()
         val migrated = runCatching { migrate(old) }.getOrNull() ?: return ChatRecord()
         write(migrated)
         Files.deleteIfExists(old)
         return migrated
+    }
+
+    /**
+     * What [read] returns, without moving a legacy record or writing anything: for reading every
+     * history at once while each may be open in a chat.
+     */
+    fun peek(): ChatRecord = current() ?: legacy?.takeIf { Files.exists(it) }?.let { runCatching { migrate(it) }.getOrNull() } ?: ChatRecord()
+
+    /** The record at [file], or null when there is none yet. */
+    private fun current(): ChatRecord? {
+        if (!Files.exists(file)) return null
+        require(Files.size(file) <= MAX_RECORD_BYTES)
+        val text = Files.readString(file)
+        val version = historyJson.parseToJsonElement(text).jsonObject["version"]?.jsonPrimitive?.intOrNull
+        if (version != null && version > 3) { incompatible = true; throw BridgeUpdateRequiredException() }
+        return historyJson.decodeFromString<ChatRecord>(text).validated().also { writtenVersion = it.version }
     }
 
     /** Replace only after the complete new record has been written privately, always small enough to [read] back. */
@@ -107,10 +118,49 @@ internal fun fitted(record: ChatRecord, limit: Int = MAX_RECORD_BYTES): String {
  * runtime-neutral, migrating a version 1 record from Hovel's old per-profile Codex home.
  */
 internal fun companionChatHistory(providerRoot: Path, profile: String, companionId: String): ChatHistory {
-    require(SharedRules.isProfileId(profile)) { "Invalid profile" }
+    val (folder, legacy) = companionChatFolders(providerRoot, profile)
     val name = "${UUID.fromString(companionId)}.json"
-    return ChatHistory(providerRoot.resolve(profile).resolve("companion-chats").resolve(name),
-        legacy = legacyCodexProfileHome(providerRoot, profile).resolve("companion-chats").resolve(name))
+    return ChatHistory(folder.resolve(name), legacy = legacy.resolve(name))
+}
+
+/**
+ * Every conversation id [runtime] holds, talking or working, across [profile]'s companion histories,
+ * each read where [companionChatHistory] reads it (one not yet moved from the legacy folder included)
+ * and never moved or written. Null when any history is unreadable or newer, either folder holds
+ * anything but `<companion id>.json` files, or there are more than [limit] companions: a caller
+ * cleaning up after the histories then deletes nothing.
+ */
+internal fun companionConversationIds(providerRoot: Path, profile: String, runtime: RuntimeId, limit: Int = 256): Set<String>? {
+    val (folder, legacy) = companionChatFolders(providerRoot, profile)
+    return runCatching {
+        val companions = companionIds(folder, limit) + companionIds(legacy, limit)
+        check(companions.size <= limit)
+        companions.flatMapTo(HashSet()) { id ->
+            val record = companionChatHistory(providerRoot, profile, id).peek()
+            listOfNotNull(record.conversations[runtime], record.workConversations[runtime]).map { it.id }
+        }
+    }.getOrNull()
+}
+
+/** The profile's history folder and the legacy one a version 1 record may still be in. */
+private fun companionChatFolders(providerRoot: Path, profile: String): Pair<Path, Path> {
+    require(SharedRules.isProfileId(profile)) { "Invalid profile" }
+    return providerRoot.resolve(profile).resolve("companion-chats") to legacyCodexProfileHome(providerRoot, profile).resolve("companion-chats")
+}
+
+/** The companions named by [folder]'s `<uuid>.json` files; anything else there, or more than [limit], fails. */
+private fun companionIds(folder: Path, limit: Int): Set<String> {
+    if (Files.notExists(folder, LinkOption.NOFOLLOW_LINKS)) return emptySet()
+    check(Files.isDirectory(folder, LinkOption.NOFOLLOW_LINKS))
+    val ids = HashSet<String>()
+    Files.newDirectoryStream(folder).use { entries ->
+        for (file in entries) {
+            val name = file.fileName.toString()
+            check(ids.size < limit && Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) && name.endsWith(".json"))
+            ids += name.removeSuffix(".json").also { check(UUID.fromString(it).toString() == it) }
+        }
+    }
+    return ids
 }
 
 private const val MAX_RECORD_BYTES = 3_000_000

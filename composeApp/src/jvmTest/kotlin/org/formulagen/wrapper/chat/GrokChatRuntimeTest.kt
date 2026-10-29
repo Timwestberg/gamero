@@ -146,24 +146,25 @@ class GrokChatRuntimeTest {
         }
     }
 
-    @Test fun bindingCleanupRetainsAllHistoriesAndSkipsUnfamiliarOrCorruptData() {
-        val root = Files.createTempDirectory("grok-prune-test")
-        try {
-            assertEquals(emptySet(), grokHistoryHandles(root, "local"))
-            val first = "10000000-0000-4000-8000-000000000001"
-            val second = "10000000-0000-4000-8000-000000000002"
-            val directory = Files.createDirectories(root.resolve("local/companion-chats"))
-            ChatHistory(directory.resolve("$first.json")).write(ChatRecord(conversations = mapOf(
-                RuntimeId.GROK_BUILD to NativeConversation(first, persona.hash))))
-            ChatHistory(directory.resolve("$second.json")).write(ChatRecord(workConversations = mapOf(
-                RuntimeId.GROK_BUILD to NativeConversation(second, persona.hash))))
-            assertEquals(setOf(first, second), grokHistoryHandles(root, "local"))
-            Files.writeString(directory.resolve("$second.json"), "invalid")
-            assertNull(grokHistoryHandles(root, "local"))
-            Files.delete(directory.resolve("$second.json"))
-            Files.writeString(directory.resolve("unexpected"), "")
-            assertNull(grokHistoryHandles(root, "local"))
-        } finally { root.toFile().deleteRecursively() }
+    @Test fun cleanupKeepsEveryBindingAHistoryNamesWhereverThatHistoryIsAndDropsOrphans() {
+        FakeGrokRuntime().use { fake ->
+            val providers = fake.root.resolve("providers")
+            GrokChatRuntime(providers, fake.env, GrokConnection(fake.env)).use { runtime ->
+                val kept = Events(); runtime.startTurn(request(), kept); kept.await()
+                companionChatHistory(providers, "local", "20000000-0000-4000-8000-000000000002").write(ChatRecord(conversations = mapOf(
+                    RuntimeId.GROK_BUILD to NativeConversation(checkNotNull(kept.handle), persona.hash))))
+                val orphan = Events(); runtime.startTurn(request(), orphan); orphan.await()
+                // Another companion's version 1 history, never opened since teams, so still in the legacy folder.
+                val legacy = Files.createDirectories(providers.resolve("local/codex/companion-chats"))
+                    .resolve("20000000-0000-4000-8000-000000000009.json")
+                Files.writeString(legacy, """{"threadId":"10000000-0000-4000-8000-000000000001","messages":[]}""")
+                val next = Events(); runtime.startTurn(request(), next); next.await()
+                assertTrue(Files.exists(providers.resolve("grok-bindings/${kept.handle}.json")))
+                assertFalse(Files.exists(providers.resolve("grok-bindings/${orphan.handle}.json")))
+                assertTrue(Files.exists(providers.resolve("grok-bindings/${next.handle}.json")))
+                assertTrue(Files.exists(legacy), "Reading histories for cleanup never moves one")
+            }
+        }
     }
 
     @Test fun aMessageSentRightAfterStoppingAnUnresponsiveTurnWaitsForItsTeardown() {
