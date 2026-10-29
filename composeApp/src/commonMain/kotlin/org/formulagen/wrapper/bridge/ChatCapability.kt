@@ -13,6 +13,7 @@ import kotlinx.serialization.json.JsonClassDiscriminator
 /** Companion chat is a product capability; it never accepts provider paths or credentials. */
 interface ChatCapability {
     suspend fun open(scope: ChatScope): ChatSnapshot
+    suspend fun openForClient(args: ChatOpenForClient): ChatSnapshot
     suspend fun snapshot(scope: ChatScope): ChatSnapshot
     suspend fun send(args: ChatSend): ChatSnapshot
     /** Make [ChatHandover.to] the active member. Refused while a reply is responding. */
@@ -46,6 +47,13 @@ data class ChatScope(
 /** The lease is the four ids. [ChatScope.hearing] is a handshake, not a different chat. */
 internal fun ChatScope.sameChat(other: ChatScope) =
     profile == other.profile && companionId == other.companionId && name == other.name && sessionId == other.sessionId
+
+/** A chat lease with the page's immutable runtime vocabulary. */
+@Serializable
+data class ChatOpenForClient(val profile: String, val companionId: String, val name: String, val sessionId: String,
+    val supportedRuntimes: List<String>) {
+    fun scope() = ChatScope(profile, companionId, name, sessionId)
+}
 
 /**
  * A companion team member as the chat sees it: a runtime and one of its models, or
@@ -410,6 +418,9 @@ object ChatMethods {
     private fun valid(member: TeamMember) = SharedRules.isModelId(member.modelId)
     private fun method(name: String) = BridgeMethod("chat.$name", ChatScope.serializer(), ChatSnapshot.serializer(), accepts = ::valid)
     val OPEN = method("open")
+    val OPEN_FOR_CLIENT = BridgeMethod("chat.openForClient", ChatOpenForClient.serializer(), ChatSnapshot.serializer()) {
+        valid(it.scope()) && SharedRules.validClientRuntimes(it.supportedRuntimes)
+    }
     val SNAPSHOT = method("snapshot")
     val STOP = method("stop")
     val STOP_SPEAKING = method("stopSpeaking")
@@ -430,6 +441,7 @@ object ChatMethods {
     fun pack(chat: Capability<ChatCapability>): CapabilityPack = binder.pack(chat)
     internal val binder = CapabilityBinder("chat", listOf<CapabilityHandler<ChatCapability>>(
         OPEN.handle { chat, args -> chat.open(args) },
+        OPEN_FOR_CLIENT.handle { chat, args -> chat.openForClient(args) },
         SNAPSHOT.handle { chat, args -> chat.snapshot(args) },
         SEND.handle { chat, args -> chat.send(args) },
         HANDOVER.handle { chat, args -> chat.handover(args) },

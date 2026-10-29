@@ -77,8 +77,11 @@ class DesktopBrainTest {
         @Volatile var connected = true
         override suspend fun perform(action: ProviderAction, scope: ProviderScope) = ProviderStatus(scope.runtimeId, if (connected) ProviderState.CONNECTED else ProviderState.DISCONNECTED)
         override suspend fun list(profile: String) = ProviderList(listOf(RuntimeId.CODEX), emptyList())
+        override suspend fun listForClient(args: ProviderListForClientArgs) = list(args.profile)
         override suspend fun models(scope: ProviderScope) = ProviderModels(listOf(ProviderModel("Test model", true, "test-model", listOf(ModelEffort.HIGH))), scope.runtimeId)
         override suspend fun usage(scope: ProviderScope) = ProviderUsage(scope.runtimeId, 0)
+        override suspend fun setup(scope: ProviderScope) = ProviderSetup(scope.runtimeId, ProviderSetupState.READY)
+        override suspend fun startLogin(scope: ProviderScope) = ProviderLogin(scope.runtimeId, false)
     }
     private class Fixture(workflow: Boolean = false, transform: (BrainConfiguration) -> BrainConfiguration = { it }, answer: Int = 0, open: Boolean = true) : AutoCloseable {
         val root: Path = Files.createTempDirectory("brain-controller")

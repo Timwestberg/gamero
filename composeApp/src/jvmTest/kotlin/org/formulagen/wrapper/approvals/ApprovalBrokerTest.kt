@@ -89,6 +89,22 @@ class ApprovalBrokerTest {
         assertEquals(ChatLimits.NOTICE, ApprovalLimits.WAITING_SUMMARY)
     }
 
+    @Test fun formatCharactersAreShownAsCodePointsSoNoProviderCanReorderOrHideTheDialogText() {
+        // A right-to-left override would show this command as "echo hello ;txt.nimda/ mr", hiding what runs.
+        val spoofed = ApprovalRequest("Em​ber", opus, folder.resolve("ga⁦me"),
+            ApprovalSubject.Command("echo hello ‮rm /admin.txt", null, null, "Clean﻿ the build"), "Allow ⁧this⁩ for this conversation")
+        val dialog = approvalDialog(spoofed)
+        assertEquals("Em\\u200Bber wants to run a command", dialog.title)
+        assertEquals(listOf("echo hello \\u202Erm /admin.txt", "Clean\\uFEFF the build", "Member: Claude · Opus",
+            "Project folder: /Users/player/Projects/game/ga\\u2066me"), dialog.lines)
+        assertEquals("Allow \\u2067this\\u2069 for this conversation", dialog.buttons[1].first)
+        val all = (listOf(dialog.title) + dialog.lines + dialog.buttons.map { it.first }).joinToString("")
+        assertTrue(all.codePoints().noneMatch(::isFormatCharacter))
+        // Supplementary format characters are escaped whole; ordinary text, tabs and line breaks are kept.
+        assertEquals("a\\uE0001b", visibleText("a" + String(Character.toChars(0xE0001)) + "b"))
+        assertEquals("café 世界\t\n", visibleText("café 世界\t\n"))
+    }
+
     @Test fun noAnswerInTimeIsDenyAndTheDialogGoes() {
         val screen = Screen()
         val broker = DialogApprovalBroker(NativeDialogs(screen, timeout = 100.milliseconds))

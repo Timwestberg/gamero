@@ -113,7 +113,7 @@ internal class DesktopChat(
         speech.onVoice { synchronized(gate) { if (!closed) publishPicker() } }
     }
 
-    private class Session(val scope: ChatScope, val persona: Persona, val history: ChatHistory, var record: ChatRecord) {
+    private class Session(val scope: ChatScope, val persona: Persona, val history: ChatHistory, var record: ChatRecord, val understood: Set<RuntimeId>) {
         var state = ChatState.READY
         var notice: String? = null
         var generation = 0
@@ -159,13 +159,21 @@ internal class DesktopChat(
     }
 
     /** Opening is the only operation allowed to replace an active conversation. */
-    override suspend fun open(scope: ChatScope): ChatSnapshot = synchronized(ownershipGate) {
+    override suspend fun open(scope: ChatScope): ChatSnapshot = open(scope, SharedRules.LEGACY_RUNTIMES)
+
+    override suspend fun openForClient(args: ChatOpenForClient): ChatSnapshot {
+        require(SharedRules.validClientRuntimes(args.supportedRuntimes))
+        return open(args.scope(), SharedRules.clientRuntimes(args.supportedRuntimes))
+    }
+
+    private fun open(scope: ChatScope, understood: Set<RuntimeId>): ChatSnapshot = synchronized(ownershipGate) {
         require(!isConverted(scope.profile, scope.companionId)) { "Use the coordinator conversation for this companion" }
         beforeOpen()
         synchronized(gate) state@{
             require(!isConverted(scope.profile, scope.companionId)) { "Use the coordinator conversation for this companion" }
             check(!closed)
             val old = active
+            if (old != null && old.scope.sameChat(scope) && old.understood != understood) throw BridgeUpdateRequiredException()
             if (old != null && old.scope.sameChat(scope) && old.state !in setOf(ChatState.ERROR, ChatState.DISCONNECTED)) {
                 notePage(scope)
                 publishPicker()
@@ -175,7 +183,9 @@ internal class DesktopChat(
             ended = null
             notePage(scope)
             val history = companionChatHistory(providerRoot, scope.profile, scope.companionId)
-            val snapshot = view(Session(scope, Persona.companion(scope.name), history, history.read()).also { active = it })
+            val record = history.read()
+            if (!understood.containsAll(record.runtimeIds())) throw BridgeUpdateRequiredException()
+            val snapshot = view(Session(scope, Persona.companion(scope.name), history, record, understood).also { active = it })
             publishPicker()
             if (liveFillers.enabled) speech.warmFillers(FILLER_LINES)
             snapshot
@@ -207,6 +217,7 @@ internal class DesktopChat(
     private fun submitLocked(args: ChatSend): ChatSnapshot {
         require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
         val session = current(args.scope())
+        if (args.member.runtimeId !in session.understood) throw BridgeUpdateRequiredException()
         if (session.record.entries.any { it.id == args.requestId }) return view(session)
         if (session.state == ChatState.AWAITING_YOU) return refuse(session, ANSWER_FIRST)
         if (session.state == ChatState.RESPONDING || session.state == ChatState.HANDING_OVER) throw BridgeBusyException()
@@ -237,6 +248,7 @@ internal class DesktopChat(
     override suspend fun retry(args: ChatRetry): ChatSnapshot = synchronized(gate) {
         require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
         val session = current(args.scope())
+        if (args.member.runtimeId !in session.understood) throw BridgeUpdateRequiredException()
         val record = session.record
         if (record.entries.any { it.id == args.requestId }) return@synchronized view(session)
         if (session.state == ChatState.AWAITING_YOU) return@synchronized refuse(session, ANSWER_FIRST)
@@ -340,6 +352,8 @@ internal class DesktopChat(
     override suspend fun handover(args: ChatHandover): ChatSnapshot = synchronized(gate) {
         require(!isConverted(args.profile, args.companionId)) { "Use Configure brain and reopen coordinator chat" }
         val session = current(args.scope())
+        if (args.to.runtimeId !in session.understood || args.from?.runtimeId?.let { it !in session.understood } == true)
+            throw BridgeUpdateRequiredException()
         if (session.record.entries.any { it.id == args.requestId } || session.handover?.requestId == args.requestId) return@synchronized view(session)
         // A refusal is a snapshot with a notice and no new entry; the page keeps the current member.
         if (session.state == ChatState.AWAITING_YOU) return@synchronized refuse(session, ANSWER_FIRST)
@@ -425,10 +439,13 @@ internal class DesktopChat(
         if (scope.hearing == true) pageHears = true
     }
     private fun live(session: Session, generation: Int = session.generation) = !closed && active === session && generation == session.generation
-    private fun view(session: Session) = ChatSnapshot(session.state, session.record.entries,
-        session.refusal?.takeIf { it.first == session.state }?.second ?: session.notice, speech.status(), session.failure,
-        session.waiting?.takeIf { session.state == ChatState.AWAITING_YOU },
-        if (pageHears) hearingField() else null)
+    private fun view(session: Session): ChatSnapshot {
+        if (!session.understood.containsAll(session.record.runtimeIds())) throw BridgeUpdateRequiredException()
+        return ChatSnapshot(session.state, session.record.entries,
+            session.refusal?.takeIf { it.first == session.state }?.second ?: session.notice, speech.status(), session.failure,
+            session.waiting?.takeIf { session.state == ChatState.AWAITING_YOU },
+            if (pageHears) hearingField() else null)
+    }
 
     /** Present on this build. An older snapshot that omitted [ChatSnapshot.hearing] still decodes. */
     private fun hearingField(): ChatHearing {
@@ -1265,7 +1282,7 @@ private fun failureKind(failure: ChatFailure) = when (failure) {
     ChatFailure.ModelUnavailable -> ChatFailureKind.MODEL_UNAVAILABLE
     ChatFailure.Temporary -> ChatFailureKind.TEMPORARY
     ChatFailure.Lockdown -> ChatFailureKind.LOCKDOWN
-    ChatFailure.ConversationLost, ChatFailure.Unexpected -> ChatFailureKind.UNEXPECTED
+    ChatFailure.ConversationLost, ChatFailure.Unexpected, ChatFailure.ProjectTrustRequired, ChatFailure.ProjectTrustTooBroad -> ChatFailureKind.UNEXPECTED
 }
 
 /** A lost sign-in leaves the chat "disconnected"; every other failure is an error the person can retry. */
@@ -1284,6 +1301,9 @@ private fun couldNotComplete(runtime: RuntimeId) = "${runtime.copy.program} coul
 
 /** The person-facing reason a turn failed. Raw runtime output never reaches it. */
 internal fun failureNotice(runtime: RuntimeId, failure: ChatFailure, zone: ZoneId = ZoneId.systemDefault()): String = when (failure) {
+    ChatFailure.ProjectTrustRequired -> "Work did not start. ${runtime.copy.product} needs your approval to trust this project and load its instructions."
+    ChatFailure.ProjectTrustTooBroad -> "Work did not start. ${runtime.copy.program} treats your home folder, or a folder above it, " +
+        "as this project, and Hovel will not ask you to trust all of that. Choose a project folder that is its own repository."
     ChatFailure.SignedOut -> signedOutNotice(runtime)
     is ChatFailure.UsageLimit -> "You've reached your ${runtime.copy.product} usage limit. " +
         (failure.resetsAt?.let { "It resets at ${resetTime(it, zone)}." } ?: "Try again later.")

@@ -34,6 +34,9 @@ import org.formulagen.wrapper.workspace.NativeFilePicker
 import org.formulagen.wrapper.workspace.NativeFolderPicker
 import org.formulagen.wrapper.workspace.WorkspaceStore
 import org.formulagen.wrapper.chat.ClaudeChatRuntime
+import org.formulagen.wrapper.chat.GrokChatRuntime
+import org.formulagen.wrapper.chat.GrokWorkRuntime
+import org.formulagen.wrapper.chat.grok.NativeGrokWorkTrust
 import org.formulagen.wrapper.chat.CodexChatRuntime
 import org.formulagen.wrapper.chat.DesktopChat
 import org.formulagen.wrapper.chat.DesktopSpeech
@@ -65,7 +68,12 @@ import org.formulagen.wrapper.providers.ClaudeConnection
 import org.formulagen.wrapper.providers.ClaudeProvider
 import org.formulagen.wrapper.providers.ClaudeRuntime
 import org.formulagen.wrapper.providers.CodexProvider
+import org.formulagen.wrapper.providers.GrokProvider
+import org.formulagen.wrapper.providers.GrokConnection
+import org.formulagen.wrapper.providers.grokProviderEnabled
+import org.formulagen.wrapper.providers.grokWorkEnabled
 import org.formulagen.wrapper.providers.DesktopProviders
+import org.formulagen.wrapper.providers.ProviderInstallation
 import org.formulagen.wrapper.providers.claudeProviderEnabled
 import org.formulagen.wrapper.providers.codexWorkEnabled
 import org.formulagen.wrapper.providers.findClaudeExecutable
@@ -134,16 +142,22 @@ internal class DesktopServices private constructor(
                 // companion persona on a player's subscription is allowed; anything else fails closed.
                 val claudeOffered = claudeProviderEnabled(environment, release = System.getProperty("gamero.release") == "true",
                     development = System.getProperty("gamero.dev") == "true")
+                val grokOffered = grokProviderEnabled(environment, release = System.getProperty("gamero.release") == "true",
+                    development = System.getProperty("gamero.dev") == "true")
                 val claude = if (claudeOffered) findClaudeExecutable(environment)?.let { ClaudeRuntime(it, providerRoot, environment) } else null
                 // One reader of Claude Code's sign-in, for the Providers card and chat readiness alike.
                 val claudeSignIn = if (claudeOffered) ClaudeConnection(claude) else null
+                val grokConnection = if (grokOffered) GrokConnection(environment) else null
                 val runtimes = listOfNotNull(codex?.let { CodexChatRuntime(providerRoot, it) },
-                    claude?.let { ClaudeChatRuntime(it, checkNotNull(claudeSignIn)) })
-                val offered = setOfNotNull(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE.takeIf { claudeOffered })
+                    claude?.let { ClaudeChatRuntime(it, checkNotNull(claudeSignIn)) },
+                    grokConnection?.let { GrokChatRuntime(providerRoot, environment, it) })
+                val offered = setOfNotNull(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE.takeIf { claudeOffered }, RuntimeId.GROK_BUILD.takeIf { grokOffered })
                 // Which offered runtimes may work in a project folder: the page reads it from providers.list, the chat runs it.
                 // Codex's working protocol is read from its schema only, so it stays off until verified live.
                 val working = setOfNotNull(RuntimeId.CLAUDE_CODE.takeIf { claudeOffered }, RuntimeId.CODEX.takeIf {
                     codexWorkEnabled(environment, release = System.getProperty("gamero.release") == "true", development = System.getProperty("gamero.dev") == "true")
+                }, RuntimeId.GROK_BUILD.takeIf {
+                    grokWorkEnabled(environment, release = System.getProperty("gamero.release") == "true", development = System.getProperty("gamero.dev") == "true")
                 })
                 // Working members: only native dialogs answer, in front of this window.
                 val dialogs = ComposeDialogPresenter { window }
@@ -151,7 +165,8 @@ internal class DesktopServices private constructor(
                 val broker = DialogApprovalBroker(nativeDialogs)
                 val workspaces = WorkspaceStore(providerRoot, NativeFolderPicker { window })
                 val workers = listOfNotNull(claude?.takeIf { RuntimeId.CLAUDE_CODE in working }?.let { ClaudeWorkRuntime(it, checkNotNull(claudeSignIn), broker) },
-                    codex?.takeIf { RuntimeId.CODEX in working }?.let { CodexWorkRuntime(providerRoot, it, broker) })
+                    codex?.takeIf { RuntimeId.CODEX in working }?.let { CodexWorkRuntime(providerRoot, it, broker) },
+                    grokConnection?.takeIf { RuntimeId.GROK_BUILD in working }?.let { GrokWorkRuntime(providerRoot, environment, it, broker, NativeGrokWorkTrust(nativeDialogs)) })
                 val work = ChatWork(workspaces, StartOfWork(nativeDialogs), workers)
                 val brainStore = BrainStore(providerRoot)
                 val conversationOwnership = Any()
@@ -179,7 +194,7 @@ internal class DesktopServices private constructor(
                 ))
                 // Both runtimes sign in outside Hovel, on the player's own install, so a status check never signs a chat out.
                 val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),
-                    claudeSignIn?.let(::ClaudeProvider)), working))
+                    claudeSignIn?.let(::ClaudeProvider), grokConnection?.let(::GrokProvider)), working, ProviderInstallation(providerRoot, environment)))
                 brain = own(DesktopBrain(providerRoot, brainStore, runtimes, work, providers, nativeDialogs, NativeFilePicker { window },
                     DesktopSpeech(desktopVoiceConfig(environment), route::openLine), chat::invalidate, chat::whileIdle, conversationOwnership))
                 val pet = own(DesktopPetLauncher(environment, support.resolve("ember-pet.log")))

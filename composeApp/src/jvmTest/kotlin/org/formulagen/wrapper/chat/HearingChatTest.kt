@@ -959,6 +959,9 @@ private class RememberingSpeech : ChatSpeech {
     }
 }
 
+/** A runtime conversation handle as runtimes report them: histories keep only UUIDs. */
+private const val CONVERSATION = "5f0c2f4e-1d2b-4c3a-9e8f-7a6b5c4d3e2f"
+
 private class ScriptedRuntime(var completeOnStart: Boolean = false) : ChatRuntime {
     override val id = RuntimeId.CODEX
     val started = CountDownLatch(1)
@@ -975,9 +978,9 @@ private class ScriptedRuntime(var completeOnStart: Boolean = false) : ChatRuntim
         this.events = events
         lastText = turn.text
         turns += 1
-        events.opened("conv")
+        events.opened(CONVERSATION)
         events.accepted()
-        if (completeOnStart) events.completed("Ready.", "conv")
+        if (completeOnStart) events.completed("Ready.", CONVERSATION)
         else started.countDown()
         return TurnHandle {
             onStop()
@@ -991,7 +994,7 @@ private class ScriptedRuntime(var completeOnStart: Boolean = false) : ChatRuntim
 
     fun finish(text: String) {
         release.countDown()
-        events?.completed(text, "conv")
+        events?.completed(text, CONVERSATION)
     }
 
     override fun summarize(request: SummaryRequest) = "summary"
