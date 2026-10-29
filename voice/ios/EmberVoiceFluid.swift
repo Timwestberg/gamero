@@ -105,6 +105,7 @@ final class FluidBox {
     let seed: Int32
     var lastTtfaMs: Double = 0
     var lastSamples: Int32 = 0
+    private let gate = NSLock()
     private var manager: PocketTtsManager?
     private var voiceData: PocketTtsVoiceData?
     init(voiceWav: String, temperature: Float, seed: Int32) {
@@ -120,10 +121,12 @@ final class FluidBox {
         callback: EmberVoiceSamplesFn?,
         arg: UnsafeMutableRawPointer?
     ) -> Int32 {
+        // One speak at a time. Two overlapping calls would both miss the cache and clone twice.
+        gate.lock()
+        defer { gate.unlock() }
         let sem = DispatchSemaphore(value: 0)
         var produced = 0
         var failed = false
-        var errorText = ""
         let started = Date()
         var first: Date?
         let cap = maxFrames > 0 ? Int(maxFrames) * 1920 : Int.max
@@ -131,6 +134,8 @@ final class FluidBox {
         let temperature = self.temperature
         let cachedManager = manager
         let cachedVoice = voiceData
+        var createdManager: PocketTtsManager?
+        var createdVoice: PocketTtsVoiceData?
         Task.detached {
             defer { sem.signal() }
             do {
@@ -145,8 +150,8 @@ final class FluidBox {
                     // Clone the caller's clip once. Do not fall through to the
                     // bundled named voice; that clip is not the CC0 reference.
                     let cloned = try await created.cloneVoice(from: voiceURL)
-                    self.manager = created
-                    self.voiceData = cloned
+                    createdManager = created
+                    createdVoice = cloned
                     activeManager = created
                     activeVoice = cloned
                 }
@@ -179,12 +184,15 @@ final class FluidBox {
                 }
             } catch {
                 failed = true
-                errorText = String(describing: error)
             }
         }
         sem.wait()
+        if let createdManager, let createdVoice {
+            manager = createdManager
+            voiceData = createdVoice
+        }
         if failed {
-            let line = "ember voice: FluidAudio failed: \(errorText)\n"
+            let line = "ember voice: FluidAudio failed\n"
             FileHandle.standardError.write(Data(line.utf8))
         }
         lastSamples = Int32(clamping: produced)
