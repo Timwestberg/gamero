@@ -40,8 +40,11 @@ Otherwise there is no companion and its `companion.*` methods answer
 page can reach the shared bridge. When the product is `hovel` but there is no
 companion, the window shows a hint to set the two variables. On other products
 it shows nothing. The companion's data directory is
-`~/Library/Application Support/Gamero/hovel-<sha256 of the app URL>`, so each
-configured app URL gets its own registration, journal and output.
+`~/Library/Application Support/Gamero/hovel-<sha256 of the app origin>`
+(`hovelStateFolder` in `HovelStateFolder.kt`), so each site gets its own
+registration, journal and output, whichever page it opens (`/hovel` or the old
+`/hovel.html`). A directory from before, named by the full app URL, moves there
+once on launch.
 
 A new `NativeBridge` is attached each time the WebView is created, and the old
 one is closed first. On app close, `DesktopResources.close` closes the bridge,

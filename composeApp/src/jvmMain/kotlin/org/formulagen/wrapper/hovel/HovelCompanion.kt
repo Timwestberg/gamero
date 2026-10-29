@@ -45,7 +45,7 @@ class HovelCompanion(
     private var session: HovelHostSession? = null
     private var registration: HostRegistration? = null
     private val mutex = kotlinx.coroutines.sync.Mutex()
-    private val origin = URI(appUrl).let { URI(it.scheme, null, it.host, it.port, null, null, null).toASCIIString() }
+    private val origin = appOrigin(appUrl)
     private val json = Json
 
     suspend fun dispatch(method: String, args: JsonObject): JsonObject {

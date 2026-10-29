@@ -37,6 +37,14 @@ class SharedRulesTest {
         assertFalse(ChatMethods.SEND.accepts(send("Hi", "x".repeat(129))))
     }
 
+    @Test fun modelContextSuffixIsExactAndIncludedInTheLengthLimit() {
+        assertTrue(SharedRules.isModelId("claude-fable-5-1[1m]"))
+        assertTrue(SharedRules.isModelId("m".repeat(124) + "[1m]"))
+        for (model in listOf("m".repeat(125) + "[1m]", "sonnet[2m]", "sonnet[1m][1m]", "sonnet[]", "[1m]", "sonnet[1m]\n")) {
+            assertFalse(SharedRules.isModelId(model), model)
+        }
+    }
+
     @Test fun companionNamesAreRejectedRatherThanTrimmed() {
         assertTrue(SharedRules.isCompanionName("Ember"))
         assertTrue(SharedRules.isCompanionName("x".repeat(40)))

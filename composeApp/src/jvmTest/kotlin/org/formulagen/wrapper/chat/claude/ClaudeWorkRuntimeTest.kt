@@ -163,6 +163,10 @@ class ClaudeWorkRuntimeTest {
             while (fake.stdin().none { it.type() == "control_request" && it["request"]?.jsonObject?.get("subtype") == JsonPrimitive("interrupt") }) {
                 check(System.nanoTime() < until) { "Never interrupted" }; Thread.sleep(10)
             }
+            // The interrupt and the dialog's denial run on separate threads. Observe both before asserting.
+            while (broker.cancelled.isEmpty() || fake.stdin().none { it.type() == "control_response" }) {
+                check(System.nanoTime() < until) { "Dialog denial did not arrive" }; Thread.sleep(10)
+            }
             assertEquals(listOf(true), broker.cancelled.toList(), "Stop cancels the dialog")
             val deny = fake.stdin().single { it.type() == "control_response" }.getValue("response").jsonObject.getValue("response").jsonObject
             assertEquals(JsonPrimitive("deny"), deny["behavior"])
@@ -324,4 +328,24 @@ class ClaudeWorkRuntimeTest {
             assertTrue(events.seen.none { "/private/tmp" in it })
         }
     }
+    @Test fun changingEffortReplacesTheProcessAndResumesTheSameConversation() {
+        fake.turns(listOf(emit(init), emit(success)), listOf(emit(init), emit(success)))
+        runtime(Broker()).use { claude ->
+            val first = Events()
+            claude.startTurn(request().copy(effort = org.formulagen.wrapper.bridge.ModelEffort.HIGH), first)
+            assertEquals("completed", first.outcome())
+            val session = first.seen.first().removePrefix("opened ")
+            val second = Events()
+            claude.startTurn(request(NativeConversation(session, persona.hash, true)), second)
+            assertEquals("completed", second.outcome())
+            val calls = fake.calls()
+            assertEquals(2, calls.size)
+            val args = calls.map { call -> call.getValue("argv").jsonArray.map { it.jsonPrimitive.content } }
+            assertEquals("high", args[0][args[0].indexOf("--effort") + 1])
+            assertFalse("--effort" in args[1])
+            assertEquals(listOf("--resume", session), args[1].takeLast(2))
+            assertTrue(fake.exits().first().getValue("ended").jsonPrimitive.double <= calls[1].getValue("started").jsonPrimitive.double)
+        }
+    }
+
 }

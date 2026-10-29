@@ -5,9 +5,10 @@ import kotlinx.serialization.Serializable
 
 /** An AI runtime the host runs on the person's own subscription. The names are Hovel Brain's `runtimeId`. */
 @Serializable
-enum class RuntimeId(val providerId: RuntimeProviderId) {
-    @SerialName("codex") CODEX(RuntimeProviderId.OPENAI),
-    @SerialName("claude-code") CLAUDE_CODE(RuntimeProviderId.ANTHROPIC),
+enum class RuntimeId(val providerId: RuntimeProviderId, val wireName: String) {
+    @SerialName("codex") CODEX(RuntimeProviderId.OPENAI, "codex"),
+    @SerialName("claude-code") CLAUDE_CODE(RuntimeProviderId.ANTHROPIC, "claude-code"),
+    @SerialName("grok-build") GROK_BUILD(RuntimeProviderId.XAI, "grok-build"),
 }
 
 /** Hovel Brain's provider: the company behind a runtime. [RuntimeId.providerId] is `RUNTIME_PROVIDERS`. */
@@ -15,10 +16,43 @@ enum class RuntimeId(val providerId: RuntimeProviderId) {
 enum class RuntimeProviderId {
     @SerialName("openai") OPENAI,
     @SerialName("anthropic") ANTHROPIC,
+    @SerialName("xai") XAI,
+}
+
+/** Reasoning levels advertised by installed runtimes; omitted effort uses the runtime default. */
+@Serializable
+enum class ModelEffort(val value: String) {
+    @SerialName("none") NONE("none"),
+    @SerialName("minimal") MINIMAL("minimal"),
+    @SerialName("low") LOW("low"),
+    @SerialName("medium") MEDIUM("medium"),
+    @SerialName("high") HIGH("high"),
+    @SerialName("xhigh") XHIGH("xhigh"),
+    @SerialName("max") MAX("max"),
+    @SerialName("ultra") ULTRA("ultra"),
 }
 
 /** Rules more than one capability uses. Mirrors event-contracts `host-bridge/shared.ts`. */
 object SharedRules {
+    /** The runtime vocabulary understood by legacy bridge calls. */
+    val LEGACY_RUNTIMES = setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE)
+    /** Most runtime names a page declares it can decode. Mirrors `CLIENT_RUNTIME_LIMIT`. */
+    const val CLIENT_RUNTIME_LIMIT = 8
+    /** One declared runtime name, known or a future one. Mirrors `CLIENT_RUNTIME_PATTERN`. */
+    const val CLIENT_RUNTIME_PATTERN = "^[a-z][a-z0-9-]{0,63}$"
+    private val CLIENT_RUNTIME = Regex(CLIENT_RUNTIME_PATTERN)
+    /** Client declarations allow bounded future names, never duplicate names. */
+    fun validClientRuntimes(names: List<String>): Boolean =
+        names.size <= CLIENT_RUNTIME_LIMIT && names.distinct().size == names.size && names.all(CLIENT_RUNTIME::matches)
+    /** Recognized names only; advertising a name does not offer its runtime. */
+    fun clientRuntimes(names: List<String>): Set<RuntimeId> = RuntimeId.entries.filter { it.wireName in names }.toSet()
+    /** The runtimes a page decodes: those it declared, or [LEGACY_RUNTIMES] for a page that predates declaring them. */
+    fun understood(names: List<String>?): Set<RuntimeId> {
+        if (names == null) return LEGACY_RUNTIMES
+        require(validClientRuntimes(names))
+        return clientRuntimes(names)
+    }
+
     /** The profile of a person who is not signed in. */
     const val LOCAL_PROFILE = "local"
     const val COMPANION_NAME_LIMIT = 40
@@ -27,9 +61,10 @@ object SharedRules {
     /**
      * A model as its runtime names it, or [RUNTIME_DEFAULT_MODEL]: one lower-case token of at most
      * 128 characters. Native code hands it to Claude Code as a command-line argument, so it starts
-     * with a letter or digit and is never read as an option. Mirrors `MODEL_ID_PATTERN`.
+     * with a letter or digit and is never read as an option. Optional `[1m]` preserves Claude
+     * context selection. Mirrors `MODEL_ID_PATTERN`.
      */
-    const val MODEL_ID_PATTERN = "^[a-z0-9][a-z0-9._:/-]{0,127}$"
+    const val MODEL_ID_PATTERN = "^(?=.{1,128}$)[a-z0-9][a-z0-9._:/-]*(?:\\[1m\\])?$"
     private val MODEL_ID = Regex(MODEL_ID_PATTERN)
 
     /** Whether [value] is a model name by [MODEL_ID_PATTERN]. */
@@ -41,6 +76,9 @@ object SharedRules {
      */
     fun isProfileId(value: String): Boolean =
         value == LOCAL_PROFILE || (BridgeProtocol.UUID_PATTERN.matches(value) && value == value.lowercase())
+
+    /** An account record's id, such as a project's: a UUID in canonical lower case, since native code keys local stores by it. */
+    fun isRecordId(value: String): Boolean = BridgeProtocol.UUID_PATTERN.matches(value) && value == value.lowercase()
 
     /**
      * A companion's display name: untrusted text that native code places in model instructions,

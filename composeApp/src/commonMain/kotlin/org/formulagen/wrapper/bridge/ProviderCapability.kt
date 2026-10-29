@@ -4,8 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
- * A profile's runtime connections. Every action answers the connection's display status; tokens,
- * keys and the sign-in URL stay native.
+ * A profile's runtime connections and explicit provider-owned setup. Tokens, keys and login URLs stay native.
  */
 interface ProviderCapability {
     suspend fun perform(action: ProviderAction, scope: ProviderScope): ProviderStatus
@@ -13,8 +12,16 @@ interface ProviderCapability {
     /** The runtimes this host offers [profile]. A gated runtime is absent, so the page shows no card for it. */
     suspend fun list(profile: String): ProviderList
 
+    /** List runtimes the requesting page can decode. */
+    suspend fun listForClient(args: ProviderListForClientArgs): ProviderList
+
     /** The models a team member on [ProviderScope.runtimeId] may use. */
     suspend fun models(scope: ProviderScope): ProviderModels
+
+    /** Shared subscription limits, without starting a model turn. Missing windows mean unknown. */
+    suspend fun usage(scope: ProviderScope): ProviderUsage
+    suspend fun setup(scope: ProviderScope): ProviderSetup
+    suspend fun startLogin(scope: ProviderScope): ProviderLogin
 }
 
 /**
@@ -56,6 +63,9 @@ data class ProviderScope(val profile: String, val runtimeId: RuntimeId)
 @Serializable
 data class ProviderListArgs(val profile: String)
 
+@Serializable
+data class ProviderListForClientArgs(val profile: String, val supportedRuntimes: List<String>)
+
 /**
  * The case behind a state, so the page need not match message text: `not-installed`, `outdated` and
  * `not-offered` (this host gates the runtime off) with unavailable; `signed-out` with disconnected;
@@ -69,6 +79,8 @@ enum class ProviderDetail {
     @SerialName("api-key") API_KEY,
     @SerialName("unknown") UNKNOWN,
     @SerialName("not-offered") NOT_OFFERED,
+    /** Grok reports a saved login, but subscription access could not be verified. */
+    @SerialName("sign-in-detected") SIGN_IN_DETECTED,
 }
 
 /**
@@ -100,10 +112,46 @@ data class ProviderList(val runtimes: List<RuntimeId>, val working: List<Runtime
 
 /** One model a team member may use: the runtime's own [displayName], and whether it is the runtime's default. */
 @Serializable
-data class ProviderModel(val displayName: String, val isDefault: Boolean, val modelId: String)
+data class ProviderModel(val displayName: String, val isDefault: Boolean, val modelId: String,
+    val effortLevels: List<ModelEffort>? = null, val defaultEffort: ModelEffort? = null)
 
 @Serializable
 data class ProviderModels(val models: List<ProviderModel>, val runtimeId: RuntimeId)
+
+/** Subscription percentage used, with an optional reset time in Unix seconds. */
+@Serializable
+data class ProviderUsageWindow(val usedPercent: Double, val resetsAt: Long? = null) {
+    init {
+        require(usedPercent.isFinite() && usedPercent in 0.0..100.0)
+        require(resetsAt == null || resetsAt in 0..9_007_199_254_740_991L)
+    }
+}
+
+/** Checked at Unix milliseconds. Session is the five-hour quota; absent windows mean unavailable. */
+@Serializable
+data class ProviderUsage(
+    val runtimeId: RuntimeId,
+    val checkedAt: Long,
+    val session: ProviderUsageWindow? = null,
+    val weekly: ProviderUsageWindow? = null,
+) {
+    init { require(checkedAt in 0..9_007_199_254_740_991L) }
+}
+/** Installation support only; ready never implies account eligibility or chat availability. */
+@Serializable
+enum class ProviderSetupState {
+    @SerialName("ready") READY,
+    @SerialName("not-installed") NOT_INSTALLED,
+    @SerialName("outdated") OUTDATED,
+    @SerialName("unavailable") UNAVAILABLE,
+}
+
+@Serializable
+data class ProviderSetup(val runtimeId: RuntimeId, val state: ProviderSetupState)
+
+/** Opening Terminal is not proof of successful authentication. */
+@Serializable
+data class ProviderLogin(val runtimeId: RuntimeId, val launched: Boolean)
 
 /** Mirrors event-contracts/host-bridge/providers.ts. */
 object ProviderMethods {
@@ -116,7 +164,13 @@ object ProviderMethods {
     val REOPEN = method(ProviderAction.REOPEN)
     val DISCONNECT = method(ProviderAction.DISCONNECT)
     val LIST = BridgeMethod("providers.list", ProviderListArgs.serializer(), ProviderList.serializer()) { SharedRules.isProfileId(it.profile) }
+    val LIST_FOR_CLIENT = BridgeMethod("providers.listForClient", ProviderListForClientArgs.serializer(), ProviderList.serializer()) {
+        SharedRules.isProfileId(it.profile) && SharedRules.validClientRuntimes(it.supportedRuntimes)
+    }
     val MODELS = BridgeMethod("providers.models", ProviderScope.serializer(), ProviderModels.serializer()) { SharedRules.isProfileId(it.profile) }
+    val USAGE = BridgeMethod("providers.usage", ProviderScope.serializer(), ProviderUsage.serializer()) { SharedRules.isProfileId(it.profile) }
+    val SETUP = BridgeMethod("providers.setup", ProviderScope.serializer(), ProviderSetup.serializer()) { SharedRules.isProfileId(it.profile) }
+    val START_LOGIN = BridgeMethod("providers.startLogin", ProviderScope.serializer(), ProviderLogin.serializer()) { SharedRules.isProfileId(it.profile) }
 
     fun pack(providers: Capability<ProviderCapability>): CapabilityPack = binder.pack(providers)
 
@@ -124,6 +178,10 @@ object ProviderMethods {
         .zip(ProviderAction.entries)
         .map { (method, action) -> method.handle { providers: ProviderCapability, scope -> providers.perform(action, scope) } } + listOf(
         LIST.handle { providers: ProviderCapability, args -> providers.list(args.profile) },
+        LIST_FOR_CLIENT.handle { providers: ProviderCapability, args -> providers.listForClient(args) },
         MODELS.handle { providers: ProviderCapability, scope -> providers.models(scope) },
+        USAGE.handle { providers: ProviderCapability, scope -> providers.usage(scope) },
+        SETUP.handle { providers: ProviderCapability, scope -> providers.setup(scope) },
+        START_LOGIN.handle { providers: ProviderCapability, scope -> providers.startLogin(scope) },
     ))
 }

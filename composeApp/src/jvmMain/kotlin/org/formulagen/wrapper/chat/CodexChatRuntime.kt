@@ -94,6 +94,7 @@ internal class CodexChatRuntime(
             putJsonArray("input") { add(buildJsonObject { put("type", "text"); put("text", turn.input()) }) }
             // Codex keeps a turn's model for later turns, so an explicit model is sent with every turn.
             sent.takeIf { it.isNotEmpty() }?.let { put("model", it) }
+            turn.effort?.let { put("effort", it.value) }
         })
         val turnId = started.getValue("turn").jsonObject.getValue("id").jsonPrimitive.content
         synchronized(delivery) {
@@ -232,7 +233,7 @@ internal class CodexChatRuntime(
             return@synchronized
         }
         val thread = (params["threadId"] as? JsonPrimitive)?.contentOrNull
-        connection.summaries[thread]?.let { it.receive(method, params); return@synchronized }
+        thread?.let(connection.summaries::get)?.let { it.receive(method, params); return@synchronized }
         var overflow: Turn? = null
         val turn = synchronized(lock) {
             val turn = connection.turn?.takeIf { it.thread == thread } ?: return@synchronized null

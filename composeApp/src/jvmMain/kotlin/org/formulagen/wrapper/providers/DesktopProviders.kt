@@ -3,12 +3,17 @@ package org.formulagen.wrapper.providers
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.formulagen.wrapper.bridge.ProviderSetup
+import org.formulagen.wrapper.bridge.ProviderSetupState
+import org.formulagen.wrapper.bridge.ProviderLogin
 import org.formulagen.wrapper.bridge.ProviderAction
 import org.formulagen.wrapper.bridge.ProviderCapability
+import org.formulagen.wrapper.bridge.ProviderListForClientArgs
 import org.formulagen.wrapper.bridge.ProviderList
 import org.formulagen.wrapper.bridge.ProviderModels
 import org.formulagen.wrapper.bridge.ProviderScope
 import org.formulagen.wrapper.bridge.ProviderStatus
+import org.formulagen.wrapper.bridge.ProviderUsage
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.closeInReverse
@@ -19,7 +24,8 @@ import org.formulagen.wrapper.closeInReverse
  * it answers "not offered". [working] are those it lets work in a project folder, by the same
  * answer the chat runs on. Each runtime runs one call at a time.
  */
-internal class DesktopProviders(runtimes: List<RuntimeProvider>, private val working: Set<RuntimeId> = emptySet()) : ProviderCapability, AutoCloseable {
+internal class DesktopProviders(runtimes: List<RuntimeProvider>, private val working: Set<RuntimeId> = emptySet(),
+    private val installation: ProviderInstallation? = null) : ProviderCapability, AutoCloseable {
     private val runtimes = runtimes.associateBy { it.id }
     private val locks = runtimes.associate { it.id to Mutex() }
     @Volatile private var closed = false
@@ -31,10 +37,35 @@ internal class DesktopProviders(runtimes: List<RuntimeProvider>, private val wor
         return locks.getValue(runtime.id).withLock { check(!closed); runInterruptible { runtime.status(scope.profile, action) } }
     }
 
+    override suspend fun setup(scope: ProviderScope): ProviderSetup {
+        require(SharedRules.isProfileId(scope.profile))
+        val lock = locks[scope.runtimeId] ?: return ProviderSetup(scope.runtimeId, ProviderSetupState.UNAVAILABLE)
+        return lock.withLock {
+            check(!closed)
+            runInterruptible { installation?.setup(scope.runtimeId) ?: ProviderSetup(scope.runtimeId, ProviderSetupState.UNAVAILABLE) }
+        }
+    }
+
+    override suspend fun startLogin(scope: ProviderScope): ProviderLogin {
+        require(SharedRules.isProfileId(scope.profile))
+        val lock = locks[scope.runtimeId] ?: return ProviderLogin(scope.runtimeId, false)
+        return lock.withLock {
+            check(!closed)
+            runInterruptible { ProviderLogin(scope.runtimeId, installation?.startLogin(scope.runtimeId) == true) }
+        }
+    }
+
     /** The offered runtimes, in the contract's order, and those of them that may work. */
-    override suspend fun list(profile: String): ProviderList {
+    override suspend fun list(profile: String): ProviderList = listing(profile, SharedRules.LEGACY_RUNTIMES)
+
+    override suspend fun listForClient(args: ProviderListForClientArgs): ProviderList {
+        require(SharedRules.validClientRuntimes(args.supportedRuntimes))
+        return listing(args.profile, SharedRules.clientRuntimes(args.supportedRuntimes))
+    }
+
+    private fun listing(profile: String, understood: Set<RuntimeId>): ProviderList {
         require(SharedRules.isProfileId(profile)) { "Invalid profile" }
-        val offered = RuntimeId.entries.filter { it in runtimes }
+        val offered = RuntimeId.entries.filter { it in runtimes && it in understood }
         return ProviderList(offered, offered.filter { it in working })
     }
 
@@ -55,5 +86,19 @@ internal class DesktopProviders(runtimes: List<RuntimeProvider>, private val wor
         closed = true
         val held = locks.values.onEach { it.lock() }
         try { closeInReverse(runtimes.values.toList()) } finally { held.forEach { it.unlock() } }
+    }
+
+    /** Provider errors and older protocols leave quotas unknown; cancellation still stops the child. */
+    override suspend fun usage(scope: ProviderScope): ProviderUsage {
+        require(SharedRules.isProfileId(scope.profile)) { "Invalid profile" }
+        val runtime = runtimes[scope.runtimeId] ?: return ProviderUsage(scope.runtimeId, System.currentTimeMillis())
+        return locks.getValue(runtime.id).withLock {
+            check(!closed)
+            try { runInterruptible { runtime.usage(scope.profile) } }
+            catch (error: Exception) {
+                if (error is InterruptedException || error is kotlinx.coroutines.CancellationException) throw error
+                ProviderUsage(scope.runtimeId, System.currentTimeMillis())
+            }
+        }
     }
 }

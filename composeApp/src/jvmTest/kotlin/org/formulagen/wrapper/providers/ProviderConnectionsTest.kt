@@ -11,6 +11,19 @@ import org.formulagen.wrapper.bridge.*
 import kotlin.test.*
 
 class ProviderConnectionsTest {
+    @Test fun discoversUserInstallationWithoutDependingOnTheGuiAppsPath() {
+        val home = Files.createTempDirectory("codex-install")
+        try {
+            val executable = home.resolve(".local/bin/codex")
+            Files.createDirectories(executable.parent)
+            Files.writeString(executable, "#!/bin/sh\nexit 0\n")
+            executable.toFile().setExecutable(true)
+            val environment = mapOf("HOME" to home.toString(), "PATH" to "")
+            assertEquals(executable, findCodexExecutable(environment))
+            assertNull(findCodexExecutable(environment + ("GAMERO_CODEX_PATH" to "/missing/codex")))
+        } finally { home.toFile().deleteRecursively() }
+    }
+
     private open class Rpc : CodexAppServer {
         val calls = mutableListOf<String>()
         var account: JsonElement = JsonNull
@@ -170,7 +183,7 @@ class ProviderConnectionsTest {
         root.toFile().deleteRecursively()
     }
 
-    @Test fun modelsComeFromTheAccountProcessAndFromClaudesAliases() = runBlocking<Unit> {
+    @Test fun modelsComeFromTheAccountProcessAndMissingClaudeHasNoCatalog() = runBlocking<Unit> {
         val root = Files.createTempDirectory("hovel-provider-models")
         val processes = mutableListOf<Rpc>(); val events = mutableListOf<String>(); val clock = MutableClock()
         var fail = false
@@ -186,7 +199,7 @@ class ProviderConnectionsTest {
             assertEquals(1, processes.size); assertEquals(1, events.count { it == "model/list" })
             clock.now = clock.now.plusMillis(MODELS_TTL_MILLIS); fail = true
             assertEquals(ProviderModels(emptyList(), RuntimeId.CODEX), registry.models(ProviderScope(LOGIN_ID, RuntimeId.CODEX)), "Nothing known is an empty list")
-            assertEquals(ProviderModels(listOf(ProviderModel("Sonnet", true, "sonnet"), ProviderModel("Opus", false, "opus"), ProviderModel("Haiku", false, "haiku")),
+            assertEquals(ProviderModels(emptyList(),
                 RuntimeId.CLAUDE_CODE), registry.models(ProviderScope(LOGIN_ID, RuntimeId.CLAUDE_CODE)))
         } finally { registry.close() }
         DesktopProviders(listOf(CodexProvider(root, null))).use { assertEquals(ProviderModels(emptyList(), RuntimeId.CODEX), it.models(ProviderScope("local", RuntimeId.CODEX))) }

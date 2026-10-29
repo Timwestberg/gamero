@@ -1,11 +1,14 @@
 package org.formulagen.wrapper
 
 import java.awt.EventQueue
-import java.net.URI
 import java.nio.file.Path
 import javax.swing.JFrame
 import org.formulagen.wrapper.bridge.Capability
 import org.formulagen.wrapper.bridge.CapabilityPack
+import org.formulagen.wrapper.brain.BrainStore
+import org.formulagen.wrapper.brain.DesktopBrain
+import org.formulagen.wrapper.bridge.BrainCapability
+import org.formulagen.wrapper.bridge.BrainMethods
 import org.formulagen.wrapper.bridge.ChatCapability
 import org.formulagen.wrapper.bridge.ChatMethods
 import org.formulagen.wrapper.bridge.CompanionCapability
@@ -18,6 +21,10 @@ import org.formulagen.wrapper.bridge.ProviderCapability
 import org.formulagen.wrapper.bridge.ProviderMethods
 import org.formulagen.wrapper.bridge.WorkspaceCapability
 import org.formulagen.wrapper.bridge.WorkspaceMethods
+import org.formulagen.wrapper.bridge.ApprovalMethods
+import org.formulagen.wrapper.bridge.ConversationVoiceMethods
+import org.formulagen.wrapper.bridge.HostContractMethods
+import org.formulagen.wrapper.bridge.ProjectMethods
 import org.formulagen.wrapper.approvals.ComposeDialogPresenter
 import org.formulagen.wrapper.approvals.DialogApprovalBroker
 import org.formulagen.wrapper.approvals.NativeDialogs
@@ -26,16 +33,38 @@ import org.formulagen.wrapper.chat.ChatWork
 import org.formulagen.wrapper.chat.claude.ClaudeWorkRuntime
 import org.formulagen.wrapper.chat.codex.CodexWorkRuntime
 import org.formulagen.wrapper.workspace.DesktopWorkspace
+import org.formulagen.wrapper.workspace.NativeFilePicker
 import org.formulagen.wrapper.workspace.NativeFolderPicker
 import org.formulagen.wrapper.workspace.WorkspaceStore
 import org.formulagen.wrapper.chat.ClaudeChatRuntime
+import org.formulagen.wrapper.chat.grok.GrokChatRuntime
+import org.formulagen.wrapper.chat.grok.GrokWorkRuntime
+import org.formulagen.wrapper.chat.grok.NativeGrokWorkTrust
 import org.formulagen.wrapper.chat.CodexChatRuntime
 import org.formulagen.wrapper.chat.DesktopChat
 import org.formulagen.wrapper.chat.DesktopSpeech
+import org.formulagen.wrapper.chat.DesktopHearing
+import org.formulagen.wrapper.chat.HearingRoute
+import org.formulagen.wrapper.chat.VoicePickerModel
+import java.nio.file.Files
+import org.formulagen.wrapper.voice.EmberAudio
+import org.formulagen.wrapper.voice.chooseDuplex
+import org.formulagen.wrapper.voice.hearingBargeMs
+import org.formulagen.wrapper.voice.openHearingEngine
+import org.formulagen.wrapper.voice.readDuplexRequest
+import org.formulagen.wrapper.voice.readFillerSettings
+import org.formulagen.wrapper.voice.readSelfCheck
+import org.formulagen.wrapper.voice.selfCheckFile
 import org.formulagen.wrapper.chat.desktopVoiceConfig
+import org.formulagen.wrapper.chat.fillerChoiceFile
+import org.formulagen.wrapper.chat.hearingGuardMs
+import org.formulagen.wrapper.chat.hearingSilenceMs
+import org.formulagen.wrapper.chat.readSavedFillers
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.hovel.HovelCompanionCapability
+import org.formulagen.wrapper.hovel.appOrigin
+import org.formulagen.wrapper.hovel.hovelStateFolder
 import org.formulagen.wrapper.pet.DesktopPetLauncher
 import org.formulagen.wrapper.progression.embedded.DesktopGameLauncher
 import org.formulagen.wrapper.bridge.RuntimeId
@@ -43,7 +72,12 @@ import org.formulagen.wrapper.providers.ClaudeConnection
 import org.formulagen.wrapper.providers.ClaudeProvider
 import org.formulagen.wrapper.providers.ClaudeRuntime
 import org.formulagen.wrapper.providers.CodexProvider
+import org.formulagen.wrapper.providers.GrokProvider
+import org.formulagen.wrapper.providers.GrokConnection
+import org.formulagen.wrapper.providers.grokProviderEnabled
+import org.formulagen.wrapper.providers.grokWorkEnabled
 import org.formulagen.wrapper.providers.DesktopProviders
+import org.formulagen.wrapper.providers.ProviderInstallation
 import org.formulagen.wrapper.providers.claudeProviderEnabled
 import org.formulagen.wrapper.providers.codexWorkEnabled
 import org.formulagen.wrapper.providers.findClaudeExecutable
@@ -56,6 +90,7 @@ import org.formulagen.wrapper.providers.findCodexExecutable
  */
 internal class DesktopServices private constructor(
     val chat: DesktopChat,
+    val brain: DesktopBrain,
     val providers: DesktopProviders,
     val pet: DesktopPetLauncher,
     /** Each companion's project folder, chosen with the Mac's folder picker. */
@@ -66,15 +101,17 @@ internal class DesktopServices private constructor(
     val companion: HovelCompanion?,
     /** The embedded game; null without `HOVEL_GAME_PROJECT` or a window to host it. */
     val games: DesktopGameLauncher?,
+    val voicePicker: VoicePickerModel,
     private val owned: List<AutoCloseable>,
 ) : AutoCloseable {
     /** The product capability packs [product] registers with the bridge. */
     fun packs(product: String): List<CapabilityPack> =
-        desktopProductPacks(product, companion?.let(::HovelCompanionCapability), chat, providers, pet, games, workspace)
+        desktopProductPacks(product, companion?.let(::HovelCompanionCapability), chat, providers, pet, games, workspace, brain)
 
     /** The page's document context ended: end its chat view, close its game and void a pending approval. */
     fun invalidate() {
         companion?.invalidatePending()
+        brain.invalidate()
         chat.invalidate()
         games?.let { EventQueue.invokeLater(it::close) }
     }
@@ -103,22 +140,27 @@ internal class DesktopServices private constructor(
             fun <T : AutoCloseable> own(service: T): T = service.also { owned += it }
             try {
                 val codex = findCodexExecutable(environment)
-                val origin = URI(appUrl).let { URI(it.scheme, null, it.host, it.port, null, null, null).toASCIIString() }
-                val providerRoot = support.resolve("providers").resolve(HovelCompanion.sha256(origin))
+                val providerRoot = support.resolve("providers").resolve(HovelCompanion.sha256(appOrigin(appUrl)))
                 // Claude is offered only by a development build that asks for it, until Anthropic confirms a
                 // companion persona on a player's subscription is allowed; anything else fails closed.
                 val claudeOffered = claudeProviderEnabled(environment, release = System.getProperty("gamero.release") == "true",
                     development = System.getProperty("gamero.dev") == "true")
+                val grokOffered = grokProviderEnabled(environment, release = System.getProperty("gamero.release") == "true",
+                    development = System.getProperty("gamero.dev") == "true")
                 val claude = if (claudeOffered) findClaudeExecutable(environment)?.let { ClaudeRuntime(it, providerRoot, environment) } else null
                 // One reader of Claude Code's sign-in, for the Providers card and chat readiness alike.
                 val claudeSignIn = if (claudeOffered) ClaudeConnection(claude) else null
+                val grokConnection = if (grokOffered) GrokConnection(environment) else null
                 val runtimes = listOfNotNull(codex?.let { CodexChatRuntime(providerRoot, it) },
-                    claude?.let { ClaudeChatRuntime(it, checkNotNull(claudeSignIn)) })
-                val offered = setOfNotNull(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE.takeIf { claudeOffered })
+                    claude?.let { ClaudeChatRuntime(it, checkNotNull(claudeSignIn)) },
+                    grokConnection?.let { GrokChatRuntime(providerRoot, environment, it) })
+                val offered = setOfNotNull(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE.takeIf { claudeOffered }, RuntimeId.GROK_BUILD.takeIf { grokOffered })
                 // Which offered runtimes may work in a project folder: the page reads it from providers.list, the chat runs it.
                 // Codex's working protocol is read from its schema only, so it stays off until verified live.
                 val working = setOfNotNull(RuntimeId.CLAUDE_CODE.takeIf { claudeOffered }, RuntimeId.CODEX.takeIf {
                     codexWorkEnabled(environment, release = System.getProperty("gamero.release") == "true", development = System.getProperty("gamero.dev") == "true")
+                }, RuntimeId.GROK_BUILD.takeIf {
+                    grokWorkEnabled(environment, release = System.getProperty("gamero.release") == "true", development = System.getProperty("gamero.dev") == "true")
                 })
                 // Working members: only native dialogs answer, in front of this window.
                 val dialogs = ComposeDialogPresenter { window }
@@ -126,22 +168,48 @@ internal class DesktopServices private constructor(
                 val broker = DialogApprovalBroker(nativeDialogs)
                 val workspaces = WorkspaceStore(providerRoot, NativeFolderPicker { window })
                 val workers = listOfNotNull(claude?.takeIf { RuntimeId.CLAUDE_CODE in working }?.let { ClaudeWorkRuntime(it, checkNotNull(claudeSignIn), broker) },
-                    codex?.takeIf { RuntimeId.CODEX in working }?.let { CodexWorkRuntime(providerRoot, it, broker) })
+                    codex?.takeIf { RuntimeId.CODEX in working }?.let { CodexWorkRuntime(providerRoot, it, broker) },
+                    grokConnection?.takeIf { RuntimeId.GROK_BUILD in working }?.let { GrokWorkRuntime(providerRoot, environment, it, broker, NativeGrokWorkTrust(nativeDialogs)) })
                 val work = ChatWork(workspaces, StartOfWork(nativeDialogs), workers)
-                val chat = own(DesktopChat(providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment)), offered, work))
+                val brainStore = BrainStore(providerRoot)
+                val conversationOwnership = Any()
+                var brain: DesktopBrain? = null
+                val voicePicker = VoicePickerModel()
+                val selfCheck = readSelfCheck(runCatching { Files.readString(selfCheckFile(environment)) }.getOrNull())
+                val choice = chooseDuplex(readDuplexRequest(environment), EmberAudio.tryLoad(environment), selfCheck)
+                val route = HearingRoute(choice, environment)
+                val hearing = DesktopHearing(openHearingEngine(environment["HOVEL_HEARING_MODEL"].orEmpty()), route::openMic)
+                val fillerFile = fillerChoiceFile(environment)
+                val chat = own(DesktopChat(
+                    providerRoot, runtimes, DesktopSpeech(desktopVoiceConfig(environment), route::openLine), offered, work, voicePicker,
+                    fillers = readFillerSettings(environment, readSavedFillers(fillerFile)),
+                    fillerFile = fillerFile,
+                    silenceMs = hearingSilenceMs(environment),
+                    guardMs = hearingGuardMs(environment),
+                    hearing = hearing,
+                    route = route,
+                    duplexChoice = choice,
+                    bargeMs = hearingBargeMs(environment),
+                    product = product,
+                    isConverted = brainStore::converted,
+                    beforeOpen = { brain?.invalidate() },
+                    ownershipGate = conversationOwnership,
+                ))
                 // Both runtimes sign in outside Hovel, on the player's own install, so a status check never signs a chat out.
                 val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),
-                    claudeSignIn?.let(::ClaudeProvider)), working))
+                    claudeSignIn?.let(::ClaudeProvider), grokConnection?.let(::GrokProvider)), working, ProviderInstallation(providerRoot, environment)))
+                brain = own(DesktopBrain(providerRoot, brainStore, runtimes, work, providers, nativeDialogs, NativeFilePicker { window },
+                    DesktopSpeech(desktopVoiceConfig(environment), route::openLine), chat::invalidate, chat::whileIdle, conversationOwnership))
                 val pet = own(DesktopPetLauncher(environment, support.resolve("ember-pet.log")))
                 val workspace = environment["GAMERO_WORKSPACE"]?.let(Path::of)
                 val companion = if (product == HOVEL_PRODUCT && System.getProperty("os.name").contains("Mac") &&
                     codex != null && workspace != null) {
-                    own(HovelCompanion(appUrl, support.resolve("hovel-${HovelCompanion.sha256(appUrl)}"), codex, workspace))
+                    own(HovelCompanion(appUrl, hovelStateFolder(support, appUrl), codex, workspace))
                 } else null
                 val games = if (window != null && environment["HOVEL_GAME_PROJECT"] != null) {
                     DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }
                 } else null
-                return DesktopServices(chat, providers, pet, DesktopWorkspace(workspaces), dialogs, companion, games, owned.toList())
+                return DesktopServices(chat, brain, providers, pet, DesktopWorkspace(workspaces), dialogs, companion, games, voicePicker, owned.toList())
             } catch (error: Throwable) {
                 runCatching { closeInReverse(owned) }.exceptionOrNull()?.let(error::addSuppressed)
                 throw error
@@ -152,7 +220,9 @@ internal class DesktopServices private constructor(
 
 /**
  * The product packs a desktop host registers. Every desktop product has chat, providers, pet,
- * games and project folders; Hovel adds its companion. A missing implementation registers as
+ * games and project folders; Hovel adds its companion and the companion projects capabilities:
+ * `project`, `conversationVoice` and the `host.contract` handshake (`Unsupported` until the
+ * conversation runner implements them) and phone `approvals`, which desktop never supports. A missing implementation registers as
  * `Unsupported`, so its methods answer `unsupported` instead of `unknown-method`.
  */
 internal fun desktopProductPacks(
@@ -163,8 +233,16 @@ internal fun desktopProductPacks(
     pet: PetCapability?,
     games: GameCapability?,
     workspace: WorkspaceCapability?,
+    brain: BrainCapability? = null,
 ): List<CapabilityPack> = buildList {
-    if (product == HOVEL_PRODUCT) add(CompanionMethods.pack(supportedIfPresent(companion)))
+    if (product == HOVEL_PRODUCT) {
+        add(CompanionMethods.pack(supportedIfPresent(companion)))
+        add(ProjectMethods.pack(Capability.Unsupported))
+        add(ConversationVoiceMethods.pack(Capability.Unsupported))
+        add(ApprovalMethods.pack(Capability.Unsupported))
+        add(HostContractMethods.pack(Capability.Unsupported))
+    }
+    add(BrainMethods.pack(supportedIfPresent(brain)))
     add(ChatMethods.pack(supportedIfPresent(chat)))
     add(ProviderMethods.pack(supportedIfPresent(providers)))
     add(PetMethods.pack(supportedIfPresent(pet)))

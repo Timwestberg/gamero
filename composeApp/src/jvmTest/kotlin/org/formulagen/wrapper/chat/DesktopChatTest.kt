@@ -77,6 +77,28 @@ class DesktopChatTest {
     private fun chat(root: Path, speech: ChatSpeech, rpc: (receive: (String, JsonObject) -> Unit) -> CodexAppServer) =
         DesktopChat(root, listOf(CodexChatRuntime(root, Path.of("/usr/bin/true")) { _, receive -> rpc(receive) }), speech)
 
+    @Test fun accountNotificationsWithoutAThreadDoNotBreakReadinessOrAnActiveReply() = runBlocking {
+        val root = Files.createTempDirectory("chat-account-notification")
+        val created = java.util.concurrent.CompletableFuture<Rpc>()
+        try {
+            chat(root, Speech()) { receive -> Rpc(receive).also {
+                it.beforeAccount = { receive("account/rateLimits/updated", json("""{"rateLimits":{}}""")) }
+                created.complete(it)
+            } }.use { chat ->
+                val scope = scope()
+                chat.open(scope)
+                chat.send(send(scope, speak = false))
+                val rpc = created.get(5, TimeUnit.SECONDS)
+                await { rpc.calls.contains("turn/start") || state(chat, scope).state == ChatState.ERROR }
+                assertEquals(ChatState.RESPONDING, state(chat, scope).state)
+                rpc.notify("account/updated", json("""{"authMode":"chatgpt"}"""))
+                rpc.delta("Still connected"); rpc.complete()
+                assertEquals("Still connected", state(chat, scope).messages.last().text)
+                assertFalse(rpc.closed)
+            }
+        } finally { root.toFile().deleteRecursively() }
+    }
+
     @Test fun streamsPersistsDeduplicatesAndResumesOnlyItsCompanion() = runBlocking {
         val root = Files.createTempDirectory("chat-history")
         val speech = Speech(); val rpcs = CopyOnWriteArrayList<Rpc>()
@@ -421,14 +443,54 @@ class DesktopChatTest {
     }
 
     @Test fun voiceIsUnavailableUntilTheEngineAndFilesArePresent() {
-        val model = Files.createTempDirectory("voice-model")
-        val clip = Files.createTempFile(model, "voice", ".wav")
-        val env = mapOf("HOVEL_VOICE_MODEL" to model.toString(), "HOVEL_VOICE_REFERENCE" to clip.toString())
+        val root = Files.createTempDirectory("voice-model")
+        val kokoro = root.resolve("kokoro")
+        Files.createDirectories(kokoro)
+        for (name in listOf("model.onnx", "voices-blends.bin", "tokens.txt", "lexicon-us-en.txt")) {
+            Files.writeString(kokoro.resolve(name), "x")
+        }
+        val pocket = root.resolve("pocket")
+        Files.createDirectories(pocket)
+        val clip = Files.createTempFile(pocket, "voice", ".wav")
+        val choice = root.resolve("missing-choice.txt")
+        val kokoroEnv = mapOf(
+            "HOVEL_KOKORO_MODEL" to kokoro.toString(),
+            "HOVEL_KOKORO_VOICE_FILE" to choice.toString(),
+        )
+        val pocketEnv = mapOf(
+            "HOVEL_VOICE_BACKEND" to "sherpa",
+            "HOVEL_VOICE_MODEL" to pocket.toString(),
+            "HOVEL_VOICE_REFERENCE" to clip.toString(),
+        )
         try {
-            assertNotNull(desktopVoiceConfig(env, engineLinked = true))
-            assertNull(desktopVoiceConfig(env, engineLinked = false))
-            assertNull(desktopVoiceConfig(env - "HOVEL_VOICE_REFERENCE", engineLinked = true))
-            assertNull(desktopVoiceConfig(env + ("HOVEL_VOICE_MODEL" to model.resolve("missing").toString()), engineLinked = true))
-        } finally { model.toFile().deleteRecursively() }
+            val chat = checkNotNull(desktopVoiceConfig(kokoroEnv, engineLinked = true))
+            assertEquals(org.formulagen.wrapper.voice.VoiceConfig.KOKORO, chat.backend)
+            assertEquals("adam70-michael30", chat.kokoroVoiceId)
+            assertNull(desktopVoiceConfig(kokoroEnv, engineLinked = false))
+            assertNull(desktopVoiceConfig(kokoroEnv - "HOVEL_KOKORO_MODEL" + ("HOVEL_KOKORO_MODEL" to root.resolve("missing").toString()), engineLinked = true))
+            Files.delete(kokoro.resolve("voices-blends.bin"))
+            assertNull(desktopVoiceConfig(kokoroEnv, engineLinked = true))
+            val cloned = checkNotNull(desktopVoiceConfig(pocketEnv, engineLinked = true))
+            assertEquals(org.formulagen.wrapper.voice.VoiceConfig.SHERPA, cloned.backend)
+            assertNull(desktopVoiceConfig(pocketEnv - "HOVEL_VOICE_REFERENCE", engineLinked = true))
+            assertNull(desktopVoiceConfig(mapOf("HOVEL_VOICE_MODEL" to pocket.toString(), "HOVEL_VOICE_REFERENCE" to clip.toString()), engineLinked = true))
+        } finally { root.toFile().deleteRecursively() }
     }
+    @Test fun sendAndRetryCarryEffortWithoutChangingMemberIdentity() = runBlocking<Unit> {
+        val runtime = FakeRuntime()
+        val root = Files.createTempDirectory("chat-effort")
+        DesktopChat(root, listOf(runtime), Speech()).use { chat ->
+            val a = scope(); chat.open(a); await { state(chat, a).state == ChatState.READY }
+            val message = send(a, false).copy(effort = ModelEffort.HIGH)
+            chat.send(message); await { runtime.events.size == 1 }
+            assertEquals(ModelEffort.HIGH, runtime.requests[0].effort)
+            runtime.events[0].failed(ChatFailure.Temporary)
+            chat.retry(ChatRetry(a.profile, a.companionId, a.name, a.sessionId, message.requestId, codex, UUID.randomUUID().toString(), false, effort = ModelEffort.LOW))
+            await { runtime.events.size == 2 }
+            assertEquals(ModelEffort.LOW, runtime.requests[1].effort)
+            assertEquals(runtime.requests[0].model, runtime.requests[1].model)
+        }
+        root.toFile().deleteRecursively()
+    }
+
 }

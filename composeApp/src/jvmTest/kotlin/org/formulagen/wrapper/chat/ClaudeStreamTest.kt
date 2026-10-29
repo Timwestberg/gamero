@@ -73,14 +73,15 @@ class ClaudeStreamTest {
         assertEquals(ClaudeEvent.Other, ClaudeStream.parse("""{"type":"stream_event","parent_tool_use_id":"t","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"sub"}}}"""))
     }
 
-    @Test fun theTurnCommandIsLockedDownAndTheModelIsAnAlias() {
+    @Test fun theTurnCommandIsLockedDownAndAcceptsModelAliasesAndIds() {
         val persona = Persona.companion("Ember")
         assertEquals(listOf("-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
             "--safe-mode", "--disable-slash-commands", "--tools", "", "--disallowedTools", "mcp__*", "--strict-mcp-config",
             "--permission-mode", "dontAsk", "--permission-prompts", "none", "--max-turns", "1",
             "--model", "opus", "--system-prompt", persona.instructions), claudeTurnArguments("opus", persona))
         assertEquals("sonnet", claudeModel(null)); assertEquals("sonnet", claudeModel(RUNTIME_DEFAULT_MODEL))
-        assertEquals("haiku", claudeModel("haiku")); assertNull(claudeModel("claude-opus-5-5")); assertNull(claudeModel("--bare"))
+        assertEquals("haiku", claudeModel("haiku")); assertEquals("claude-opus-5-5", claudeModel("claude-opus-5-5"))
+        assertEquals("claude-fable-5-1[1m]", claudeModel("claude-fable-5-1[1m]")); assertNull(claudeModel("--bare"))
         val line = Json.parseToJsonElement(userMessage("Hi \"there\"\nfriend")).jsonObject
         assertEquals(buildJsonObject {
             put("type", "user"); putJsonObject("message") { put("role", "user"); put("content", "Hi \"there\"\nfriend") }; put("parent_tool_use_id", JsonNull)

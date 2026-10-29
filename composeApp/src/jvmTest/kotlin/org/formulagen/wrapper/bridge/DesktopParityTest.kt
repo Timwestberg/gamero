@@ -13,8 +13,16 @@ import java.nio.file.Files
 import kotlin.test.Test
 
 class DesktopParityTest {
-    /** Phase C of the host bridge plan ships these on desktop. */
-    private val pending = setOf("link.open", "lifecycle.pause", "lifecycle.resume")
+    /**
+     * Phase C of the host bridge plan ships the platform methods on desktop, and the conversation runner ships project
+     * folders, conversation voice and the contract handshake.
+     */
+    private val pending = setOf(
+        "link.open", "lifecycle.pause", "lifecycle.resume",
+        "project.chooseFolder", "project.folderStatus", "project.forgetFolder",
+        "conversationVoice.dictation", "conversationVoice.hearing", "conversationVoice.voiceStatus",
+        "host.contract",
+    )
 
     @Test
     fun hovelOnDesktopMatchesTheParityTable() {
@@ -29,7 +37,7 @@ class DesktopParityTest {
             product = HOVEL_PRODUCT,
             capabilities = desktopHostCapabilities(),
             products = desktopProductPacks(HOVEL_PRODUCT, HovelCompanionCapability(companion), FakeChatCapability(),
-                FakeProviderCapability(), FakePetCapability(), FakeGameCapability(), FakeWorkspaceCapability()),
+                FakeProviderCapability(), FakePetCapability(), FakeGameCapability(), FakeWorkspaceCapability(), FakeBrainCapability()),
             scope = scope,
             transport = {},
         )

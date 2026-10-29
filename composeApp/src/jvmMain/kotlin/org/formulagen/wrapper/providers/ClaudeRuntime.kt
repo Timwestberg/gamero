@@ -34,7 +34,7 @@ internal val CLAUDE_STATUS_TTL: Duration = 5.seconds
 
 internal data class ClaudeModel(val modelId: String, val displayName: String)
 
-/** The models a Claude team member may use, by Claude Code alias. */
+/** Familiar aliases used for labels and legacy selections; discovery comes from the installed runtime. */
 internal val CLAUDE_MODELS = listOf(ClaudeModel("sonnet", "Sonnet"), ClaudeModel("opus", "Opus"), ClaudeModel("haiku", "Haiku"))
 
 /** The model for a turn that names none; the page normally resolves "provider default" to the profile's choice first. */
@@ -47,8 +47,8 @@ private val CLAUDE_SETTINGS = mapOf("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" t
 
 /**
  * The player's installed Claude Code, run unmodified on its own sign-in. [workspaceRoot] is the
- * providers root; each profile's chats run in an empty folder under it. Hovel never runs sign-in
- * or sign-out, and never reads Claude Code's credentials.
+ * providers root; each profile's chats run in an empty folder under it. This runtime never runs sign-in
+ * or sign-out, and never reads Claude Code's credentials. Explicit setup uses ProviderInstallation.
  */
 internal class ClaudeRuntime(
     val executable: Path,

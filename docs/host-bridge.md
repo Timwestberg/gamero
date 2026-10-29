@@ -11,6 +11,26 @@ All Kotlin paths below are under `composeApp/src/`. In them, `.../` stands for
 `kotlin/org/formulagen/wrapper/bridge/` unless another package directory
 follows it, such as `.../hovel/` for `kotlin/org/formulagen/wrapper/hovel/`.
 
+## Subscription usage
+
+Desktop `providers.usage({profile, runtimeId})` reads the runtime's shared
+subscription quotas. It returns `{runtimeId, checkedAt, session?, weekly?}`;
+each window has `usedPercent` (0..100) and optional `resetsAt`. Check time is Unix
+milliseconds; reset time is Unix seconds. An omitted window is unavailable,
+never zero. Mobile hosts do not offer this method.
+
+`providers/ProviderUsage.kt` normalizes both runtimes. Codex reads
+`account/rateLimits/read` from its account process, uses the `codex` bucket and
+classifies windows by duration (300/10080 minutes), not primary/secondary order.
+See the [Codex app-server protocol](https://learn.chatgpt.com/docs/app-server).
+`providers/ClaudeUsage.kt` isolates Claude Code's experimental `get_usage`
+control protocol, verified on 2.1.304. It sends initialize and get_usage with
+`skip_behaviors`, using safe mode, no tools and no session persistence. It never
+sends a user message or reads credentials. A timeout/cancel stops its child.
+Null or unsupported quota data produces omitted windows. The web overlay
+refreshes on open/focus and once a minute while visible; no background poll runs
+when it is closed. These calls never consume a reset or purchase credits.
+
 ## The parts
 
 | Part | Where | Job |
@@ -260,3 +280,26 @@ rest. The full table is in the spec under "Consistency rules".
    for Android or iOS yet (`tools/ios-smoke.sh` only checks that the web app
    loads), so on a mobile platform use a page built on
    `@formulagen/host-bridge`.
+
+### Runtime model catalogs
+
+`providers.models` reads Codex `model/list` and Claude Code's `initialize.models`.
+Claude discovery uses a bounded safe-mode child with no user message, tools or
+session persistence, sharing the read-only control exchange used by quota reads.
+Each catalog is cached for one minute; disconnected Claude returns no models.
+Model IDs remain exact, including Claude's optional `[1m]` suffix within the
+128-character limit. The native chat and work runtimes pass valid IDs and aliases
+through to Claude Code, which checks availability. The UI does not maintain a
+production model whitelist.
+
+Each model may include `effortLevels` and `defaultEffort`. An absent list means
+unknown capabilities; an empty list means no selectable effort. Codex supplies
+`supportedReasoningEfforts` and `defaultReasoningEffort`; Claude supplies
+`supportsEffort` and `supportedEffortLevels`, with no assumed default.
+
+`chat.send`, `chat.retry` and `chat.hearing` accept optional `effort`
+separately from member identity; `chat.hearing`'s applies to the talk turns it
+hears. Talk and Work forward it to Codex `turn/start.effort` or Claude
+`--effort`. The page resolves Auto to the advertised default, when known, so
+Codex does not retain an earlier turn's override. Claude Work includes effort
+in its process-reuse key and resumes the conversation after changing it.

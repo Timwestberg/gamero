@@ -18,6 +18,7 @@ import org.formulagen.wrapper.approvals.ApprovalRelay
 import org.formulagen.wrapper.bridge.ActivityKind
 import org.formulagen.wrapper.bridge.ActivityStatus
 import org.formulagen.wrapper.bridge.ChatLimits
+import org.formulagen.wrapper.bridge.ModelEffort
 import org.formulagen.wrapper.bridge.ProviderState
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.TeamMember
@@ -32,6 +33,7 @@ import org.formulagen.wrapper.chat.TurnHandle
 import org.formulagen.wrapper.chat.TurnRequest
 import org.formulagen.wrapper.chat.WorkPaths
 import org.formulagen.wrapper.chat.WorkRuntime
+import org.formulagen.wrapper.chat.claudeEffortArguments
 import org.formulagen.wrapper.chat.claudeModel
 import org.formulagen.wrapper.chat.loggingDaemonThreads
 import org.formulagen.wrapper.chat.userMessage
@@ -101,11 +103,11 @@ internal class ClaudeWorkRuntime(
         check(!closed) { "Chat closed" }
         val started = epoch.get()
         val current = processes[work.lease]
-        val process = current?.takeIf { it.fits(work.folder, model, turn.persona, saved?.id) && it.ready(settle) } ?: run {
-            // Another model, folder or session, or a turn that would not end: the old process exits first.
+        val process = current?.takeIf { it.fits(work.folder, model, turn.persona, saved?.id, turn.effort) && it.ready(settle) } ?: run {
+            // Changed settings or an unsettled turn replace the process.
             current?.let { processes.remove(work.lease, it); it.closeAndWait() }
             val session = saved?.id ?: UUID.randomUUID().toString()
-            WorkProcess(work.folder, model, turn.persona, session, opens = saved == null, work.companion, work.member).also { fresh ->
+            WorkProcess(work.folder, model, turn.persona, session, opens = saved == null, work.companion, work.member, turn.effort).also { fresh ->
                 processes[work.lease] = fresh
                 try { fresh.start() } catch (error: Exception) {
                     processes.remove(work.lease, fresh); fresh.close()
@@ -143,6 +145,7 @@ internal class ClaudeWorkRuntime(
         private var opens: Boolean,
         private val companionName: String,
         private val member: TeamMember,
+        private val effort: ModelEffort?,
     ) {
         private val paths = WorkPaths(folder)
         private val relay = ApprovalRelay(broker)
@@ -158,8 +161,8 @@ internal class ClaudeWorkRuntime(
         @Volatile private var asked = false
         @Volatile private var current: WorkTurn? = null
 
-        fun fits(folder: Path, model: String, persona: Persona, session: String?) =
-            !ended.get() && process.isAlive && this.folder == folder && this.model == model && this.persona == persona && session == this.session
+        fun fits(folder: Path, model: String, persona: Persona, session: String?, effort: ModelEffort?) =
+            !ended.get() && process.isAlive && this.folder == folder && this.model == model && this.persona == persona && session == this.session && this.effort == effort
 
         /** No earlier turn still running: a stopped one gets [wait] to report its end. */
         fun ready(wait: Duration): Boolean {
@@ -169,7 +172,7 @@ internal class ClaudeWorkRuntime(
 
         fun start() {
             val conversation = if (opens) listOf("--session-id", session) else listOf("--resume", session)
-            process = ProcessBuilder(listOf(claude.executable.toString()) + claudeWorkArguments(model, persona) + conversation)
+            process = ProcessBuilder(listOf(claude.executable.toString()) + claudeWorkArguments(model, persona) + claudeEffortArguments(effort) + conversation)
                 .directory(folder.toFile()).redirectError(ProcessBuilder.Redirect.DISCARD)
                 .apply { environment().clear(); environment().putAll(this@ClaudeWorkRuntime.environment()) }
                 .start()
