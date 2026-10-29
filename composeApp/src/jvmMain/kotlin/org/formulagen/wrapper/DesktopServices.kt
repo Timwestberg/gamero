@@ -34,8 +34,8 @@ import org.formulagen.wrapper.workspace.NativeFilePicker
 import org.formulagen.wrapper.workspace.NativeFolderPicker
 import org.formulagen.wrapper.workspace.WorkspaceStore
 import org.formulagen.wrapper.chat.ClaudeChatRuntime
-import org.formulagen.wrapper.chat.GrokChatRuntime
-import org.formulagen.wrapper.chat.GrokWorkRuntime
+import org.formulagen.wrapper.chat.grok.GrokChatRuntime
+import org.formulagen.wrapper.chat.grok.GrokWorkRuntime
 import org.formulagen.wrapper.chat.grok.NativeGrokWorkTrust
 import org.formulagen.wrapper.chat.CodexChatRuntime
 import org.formulagen.wrapper.chat.DesktopChat
@@ -43,7 +43,6 @@ import org.formulagen.wrapper.chat.DesktopSpeech
 import org.formulagen.wrapper.chat.DesktopHearing
 import org.formulagen.wrapper.chat.HearingRoute
 import org.formulagen.wrapper.chat.VoicePickerModel
-import org.formulagen.wrapper.chat.openTargetMic
 import java.nio.file.Files
 import org.formulagen.wrapper.voice.EmberAudio
 import org.formulagen.wrapper.voice.chooseDuplex

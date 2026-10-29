@@ -3,7 +3,8 @@ package org.formulagen.wrapper.providers
 import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.grok.GrokAuthAvailability
+import org.formulagen.wrapper.providers.grok.GrokAuthAvailability
+import org.formulagen.wrapper.providers.grok.findGrokExecutable
 import kotlin.test.*
 
 class GrokProviderTest {
@@ -79,5 +80,13 @@ class GrokProviderTest {
         assertFalse(grokProviderEnabled(mapOf("HOVEL_GROK_PROVIDER" to "1"), release = true, development = true))
         assertFalse(grokProviderEnabled(mapOf("HOVEL_GROK_PROVIDER" to "1"), release = false, development = false))
         assertFalse(grokProviderEnabled(emptyMap(), release = false, development = true))
+    }
+
+    @Test fun workRequiresBothOptInsAndNeverRunsInRelease() {
+        val enabled = mapOf("HOVEL_GROK_PROVIDER" to "1", "HOVEL_GROK_WORK" to "1")
+        assertTrue(grokWorkEnabled(enabled, false, true))
+        assertFalse(grokWorkEnabled(enabled, true, true))
+        assertFalse(grokWorkEnabled(enabled, false, false))
+        for (key in enabled.keys) assertFalse(grokWorkEnabled(enabled - key, false, true))
     }
 }

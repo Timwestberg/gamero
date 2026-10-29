@@ -12,6 +12,7 @@ import org.formulagen.wrapper.approvals.ApprovalRequest
 import org.formulagen.wrapper.approvals.ApprovalSubject
 import org.formulagen.wrapper.chat.TurnEvents
 import org.formulagen.wrapper.chat.WorkScope
+import org.formulagen.wrapper.providers.grok.validGrokSessionId
 
 /** One ACP permission exchange; opaque IDs are returned unchanged and never treated as labels. */
 internal class GrokPermission private constructor(

@@ -1,4 +1,4 @@
-package org.formulagen.wrapper.chat
+package org.formulagen.wrapper.chat.grok
 
 import java.nio.file.Files
 import java.util.concurrent.CompletableFuture
@@ -8,15 +8,16 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.*
 import org.formulagen.wrapper.approvals.*
 import org.formulagen.wrapper.bridge.*
+import org.formulagen.wrapper.chat.*
 import org.formulagen.wrapper.providers.GrokConnection
-import org.formulagen.wrapper.chat.grok.GrokWorkTrust
-import org.junit.Assume.assumeTrue
+import org.formulagen.wrapper.providers.grok.GrokSmoke
 
 /** Opt-in acceptance of the actual work adapter, using only a disposable project and exact operations. */
 class GrokWorkRuntimeSmokeTest {
     @Test fun stopReleaseAndCloseReapForegroundWorkPastTheNormalBackgroundThreshold() {
-        val executable = System.getenv("HOVEL_GROK_WORK_CLEANUP_SMOKE")
-        assumeTrue("Set HOVEL_GROK_WORK_CLEANUP_SMOKE for bounded foreground cleanup checks", executable != null)
+        // Ordinary work in the player's own provider home; this test never grants folder trust.
+        val env = GrokSmoke.environment(GrokSmoke.turnsExecutable())
+        GrokSmoke.requireWorkAuthPin()
         for (action in listOf("stop", "release", "close")) {
             val root = Files.createTempDirectory("hovel-grok-cleanup-")
             val project = Files.createDirectory(root.resolve("project")).toRealPath()
@@ -25,7 +26,6 @@ class GrokWorkRuntimeSmokeTest {
             val command = "/usr/bin/printf '%s' \"\$\$\" > $marker; /bin/sleep 90; /usr/bin/printf FINISHED > $finished"
             val children = mutableSetOf<ProcessHandle>()
             val permissions = AtomicInteger()
-            val env = System.getenv() + ("GAMERO_GROK_PATH" to requireNotNull(executable))
             val broker = ApprovalBroker { request, _, shown ->
                 shown()
                 if ((request.subject as? ApprovalSubject.Command)?.command == command && permissions.incrementAndGet() == 1)
@@ -66,19 +66,15 @@ class GrokWorkRuntimeSmokeTest {
     }
 
     @Test fun workAdapterEditsWithNativeBrokerAndResumesAfterRestart() {
-        val executable = System.getenv("HOVEL_GROK_WORK_ADAPTER_SMOKE")
-        assumeTrue("Set HOVEL_GROK_WORK_ADAPTER_SMOKE to exercise project model turns", executable != null)
+        val executable = GrokSmoke.turnsExecutable()
+        GrokSmoke.requireWorkAuthPin()
         val root = Files.createTempDirectory("hovel-grok-work-adapter-")
         val project = Files.createDirectory(root.resolve("project")).toRealPath()
         val marker = project.resolve("test.txt")
         Files.writeString(marker, "BEFORE")
         Files.writeString(project.resolve("AGENTS.md"), "For this disposable test, end your final response with PROJECT_RULE_OK.")
         // A disposable provider home keeps this test's explicit folder-trust grant out of the player's store.
-        val provider = Files.createDirectory(root.resolve("grok-home"))
-        val realProvider = java.nio.file.Path.of(System.getenv("GROK_HOME") ?: System.getenv("HOME") + "/.grok")
-        Files.copy(realProvider.resolve("config.toml"), provider.resolve("config.toml"))
-        val env = System.getenv() + mapOf("GAMERO_GROK_PATH" to requireNotNull(executable), "GROK_HOME" to provider.toString(),
-            "GROK_AUTH_PATH" to realProvider.resolve("auth.json").toString())
+        val env = GrokSmoke.disposableHomeEnvironment(root, executable)
         val requests = AtomicInteger()
         val broker = ApprovalBroker { request, _, shown ->
             shown()

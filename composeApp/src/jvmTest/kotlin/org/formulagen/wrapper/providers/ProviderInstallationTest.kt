@@ -5,7 +5,7 @@ import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import kotlinx.coroutines.runBlocking
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.grok.GROK_VERIFIED_VERSION
+import org.formulagen.wrapper.providers.grok.GROK_VERIFIED_VERSION
 import kotlin.test.*
 
 class ProviderInstallationTest {

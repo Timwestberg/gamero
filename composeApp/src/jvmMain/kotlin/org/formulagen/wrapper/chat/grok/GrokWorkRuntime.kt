@@ -1,4 +1,4 @@
-package org.formulagen.wrapper.chat
+package org.formulagen.wrapper.chat.grok
 
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
@@ -15,12 +15,25 @@ import org.formulagen.wrapper.approvals.displayPath
 import org.formulagen.wrapper.bridge.ChatLimits
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
-import org.formulagen.wrapper.chat.grok.*
-import org.formulagen.wrapper.hovel.HovelCompanion
-import org.formulagen.wrapper.providers.GrokConnection
+import org.formulagen.wrapper.chat.ChatFailure
+import org.formulagen.wrapper.chat.Readiness
+import org.formulagen.wrapper.chat.TurnEvents
+import org.formulagen.wrapper.chat.TurnHandle
+import org.formulagen.wrapper.chat.TurnRequest
+import org.formulagen.wrapper.chat.WorkRuntime
+import org.formulagen.wrapper.chat.companionConversationIds
+import org.formulagen.wrapper.chat.loggingDaemonThreads
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.process.readLoginShellPath
+import org.formulagen.wrapper.providers.GrokConnection
+import org.formulagen.wrapper.providers.grok.GrokAuthAvailability
+import org.formulagen.wrapper.providers.grok.GrokCleanupUnconfirmed
+import org.formulagen.wrapper.providers.grok.GrokTransportFailure
+import org.formulagen.wrapper.providers.grok.GrokWorkAuthUnpinned
+import org.formulagen.wrapper.providers.grok.GrokWorkLaunch
+import org.formulagen.wrapper.providers.grok.grokWorkConfig
+import org.formulagen.wrapper.providers.grok.grokWorkEnvironment
 import org.formulagen.wrapper.util.shortened
 
 /** Grok project work through the existing native folder, lease, history, activity and approval seams. */
@@ -108,6 +121,8 @@ internal class GrokWorkRuntime(
                     check(!cleanupFailed.get())
                     if (active()) run()
                 } catch (error: Exception) {
+                    // A failed startup that could not reap its process quarantines this runtime like a failed close.
+                    if (error is GrokCleanupUnconfirmed) quarantine()
                     if (active()) log(LogLevel.Warn, "grok", "Grok work $stage failed (${(error as? GrokTransportFailure)?.issue ?: "check"})")
                     fail(when (error) {
                         is GrokWorkTrustDeclined -> ChatFailure.ProjectTrustRequired
@@ -116,10 +131,7 @@ internal class GrokWorkRuntime(
                     })
                 } finally {
                     approvals?.close()
-                    try { session?.close() } catch (_: Exception) {
-                        cleanupFailed.set(true)
-                        log(LogLevel.Warn, "grok", "Grok work cleanup was not confirmed; further work is disabled")
-                    }
+                    try { session?.close() } catch (_: Exception) { quarantine() }
                     if (acquired) owner.release()
                     running -= this
                     finished.complete(Unit)
@@ -130,48 +142,29 @@ internal class GrokWorkRuntime(
         /** Resume only the same account, persona, model and canonical project; never replay an ambiguous prompt. */
         private fun run() {
             val saved = request.conversation
-            if (saved != null && saved.personaHash != request.persona.hash) { fail(ChatFailure.ConversationLost); return }
-            val access = connection.check(fresh = true)
-            val account = access.account ?: run {
-                fail(if (access.auth == GrokAuthAvailability.SIGNED_OUT) ChatFailure.SignedOut else ChatFailure.Temporary); return
-            }
-            val executable = access.executable ?: run { fail(ChatFailure.Temporary); return }
-            val model = request.model?.takeUnless { it == SharedRules.RUNTIME_DEFAULT_MODEL } ?: account.defaultModel
-            if (account.models.none { it.modelId == model }) { fail(ChatFailure.ModelUnavailable); return }
-            val folder = work.folder.toRealPath()
-            val scope = GrokSessionScope(request.profile, request.companionId, GrokMode.WORK, model,
-                account.fingerprint, HovelCompanion.sha256(folder.toString()))
-            scope.validate()
-            companionConversationIds(root, request.profile, RuntimeId.GROK_BUILD)?.let { bindings.prune(request.profile, it + listOfNotNull(saved?.id)) }
-            val previous = saved?.let {
-                when (val lookup = bindings.find(it.id, scope)) {
-                    is GrokSessionLookup.Found -> lookup.binding
-                    GrokSessionLookup.Missing, GrokSessionLookup.ModelChanged -> { fail(ChatFailure.ConversationLost); return }
-                    else -> {
-                        log(LogLevel.Warn, "grok", "Grok work binding could not be resumed (${lookup::class.simpleName})")
-                        fail(ChatFailure.Unexpected); return
-                    }
-                }
+            // Retain the saved handle while pruning; it is looked up next.
+            val start = when (val resolved = resolveGrokWorkTurn(request, connection, bindings, beforeLookup = {
+                companionConversationIds(root, request.profile, RuntimeId.GROK_BUILD)
+                    ?.let { bindings.prune(request.profile, it + listOfNotNull(saved?.id)) }
+            })) {
+                is GrokTurnStart.Failed -> { fail(resolved.failure); return }
+                is GrokTurnStart.Ready -> resolved
             }
             if (!active()) return
-            val opened = try {
-                GrokWorkSession.open(executable, environment, folder, request.persona.instructions, model,
-                    account.fingerprint, previous?.providerSessionId, ::update, confirmTrust = { selected, root ->
+            val opened = bindings.openForgettingLost(start.previous) {
+                GrokWorkSession.open(start.executable, environment, start.folder, request.persona.instructions, start.model,
+                    start.account.fingerprint, start.previous?.providerSessionId, ::update, confirmTrust = { selected, root ->
                         active() && trust.ask(selected, root, startupCancel) && active()
                     }, loginPath = loginPath()) { params, respond ->
                     val relay = approvals
                     if (active() && relay != null) relay.receive(params, respond)
                     else respond(cancelledGrokPermission())
                 }
-            } catch (_: GrokSessionLost) {
-                // Grok refused the saved session before any prompt: start fresh rather than repeat the failing load.
-                previous?.let { bindings.forget(it.handle) }
-                fail(ChatFailure.ConversationLost); return
-            }
+            } ?: run { fail(ChatFailure.ConversationLost); return }
             session = opened
             if (!active()) { opened.abort(); return }
-            val binding = previous ?: bindings.create(opened.sessionId, scope)
-            synchronized(this) { activity = GrokWorkActivity(opened.sessionId, folder) }
+            val binding = start.previous ?: bindings.create(opened.sessionId, start.scope)
+            synchronized(this) { activity = GrokWorkActivity(opened.sessionId, start.folder) }
             approvals = GrokApprovals(opened.sessionId, work, events, broker)
             if (!active()) { approvals?.close(); opened.abort(); return }
             if (saved == null) deliver { events.opened(binding.handle) }
@@ -235,6 +228,11 @@ internal class GrokWorkRuntime(
 
         /** DesktopChat independently rejects callbacks that were already in flight when Stop was pressed. */
         private inline fun deliver(event: () -> Unit) { if (active()) event() }
+    }
+
+    /** Disable further work after an unconfirmed cleanup: a process from this runtime may still be running. */
+    private fun quarantine() {
+        if (cleanupFailed.compareAndSet(false, true)) log(LogLevel.Warn, "grok", "Grok work cleanup was not confirmed; further work is disabled")
     }
 
     private companion object {

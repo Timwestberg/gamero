@@ -14,6 +14,9 @@ import org.formulagen.wrapper.bridge.TeamMember
 import org.formulagen.wrapper.chat.ChatFailure
 import org.formulagen.wrapper.chat.TurnEvents
 import org.formulagen.wrapper.chat.WorkScope
+import org.formulagen.wrapper.providers.grok.FakeGrokAcp
+import org.formulagen.wrapper.providers.grok.GrokAcp
+import org.formulagen.wrapper.providers.grok.grokInitialize
 
 class GrokPermissionsTest {
     private val session = "provider/session"
@@ -184,5 +187,31 @@ class GrokPermissionsTest {
         override fun completed(text: String, conversation: String) = Unit
         override fun failed(failure: ChatFailure) = Unit
         override fun waiting(waiting: ChatWaiting?) { waitingCalls.incrementAndGet() }
+    }
+
+    @Test fun structuredPermissionsRoundTripThroughTheNativeBroker(): Unit = FakeGrokAcp("native-permission").use { fake ->
+        val observed = CompletableFuture<ApprovalSubject>()
+        val broker = ApprovalBroker { request, _, shown ->
+            observed.complete(request.subject); shown(); ApprovalDecision.ALLOW_ONCE
+        }
+        val events = object : TurnEvents {
+            override fun opened(conversation: String) = Unit
+            override fun accepted() = Unit
+            override fun partial(text: String) = Unit
+            override fun completed(text: String, conversation: String) = Unit
+            override fun failed(failure: ChatFailure) = Unit
+        }
+        val work = WorkScope(Path.of("/scratch/project"), "lease", "Ember", TeamMember(RuntimeId.GROK_BUILD, "grok-model"))
+        GrokApprovals("opaque/session", work, events, broker).use { approvals ->
+            val rpc = GrokAcp(fake.builder(), setOf("initialize", "session/new", "session/prompt"), onRequest = { _, params, answer -> approvals.receive(params, answer) })
+            try {
+                rpc.call("initialize", grokInitialize())
+                val reply = rpc.call("session/prompt")["permissionReply"]!!.jsonObject
+
+                assertEquals(JsonPrimitive("opaque-permission"), reply["id"])
+                assertEquals(JsonPrimitive("allow-23"), reply["result"]!!.jsonObject["outcome"]!!.jsonObject["optionId"])
+                assertEquals(ApprovalSubject.Command("echo hello", null, null, "Run example"), observed.get(2, TimeUnit.SECONDS))
+            } finally { rpc.close(); rpc.awaitClosed() }
+        }
     }
 }

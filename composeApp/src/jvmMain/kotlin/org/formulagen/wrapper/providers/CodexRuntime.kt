@@ -67,7 +67,8 @@ internal fun scrubCodexEnvironment(environment: MutableMap<String, String>) {
         (it.startsWith("CODEX_") && it !in KEPT_CODEX_VARIABLES) }
 }
 
-private val KEPT_CODEX_VARIABLES = setOf("CODEX_HOME", "CODEX_CA_CERTIFICATE")
+/** The only `CODEX_*` variables a Codex child or login keeps: the player's Codex home and network setup. */
+internal val KEPT_CODEX_VARIABLES = setOf("CODEX_HOME", "CODEX_CA_CERTIFICATE")
 
 /**
  * Hovel's old per-profile Codex home, `<providers root>/<profile>/codex`, from when Hovel signed
