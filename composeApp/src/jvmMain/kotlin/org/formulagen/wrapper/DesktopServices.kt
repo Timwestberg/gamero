@@ -1,7 +1,6 @@
 package org.formulagen.wrapper
 
 import java.awt.EventQueue
-import java.net.URI
 import java.nio.file.Path
 import javax.swing.JFrame
 import org.formulagen.wrapper.bridge.Capability
@@ -24,6 +23,7 @@ import org.formulagen.wrapper.bridge.WorkspaceCapability
 import org.formulagen.wrapper.bridge.WorkspaceMethods
 import org.formulagen.wrapper.bridge.ApprovalMethods
 import org.formulagen.wrapper.bridge.ConversationVoiceMethods
+import org.formulagen.wrapper.bridge.HostContractMethods
 import org.formulagen.wrapper.bridge.ProjectMethods
 import org.formulagen.wrapper.approvals.ComposeDialogPresenter
 import org.formulagen.wrapper.approvals.DialogApprovalBroker
@@ -63,6 +63,8 @@ import org.formulagen.wrapper.chat.readSavedFillers
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.hovel.HovelCompanionCapability
+import org.formulagen.wrapper.hovel.appOrigin
+import org.formulagen.wrapper.hovel.hovelStateFolder
 import org.formulagen.wrapper.pet.DesktopPetLauncher
 import org.formulagen.wrapper.progression.embedded.DesktopGameLauncher
 import org.formulagen.wrapper.bridge.RuntimeId
@@ -138,8 +140,7 @@ internal class DesktopServices private constructor(
             fun <T : AutoCloseable> own(service: T): T = service.also { owned += it }
             try {
                 val codex = findCodexExecutable(environment)
-                val origin = URI(appUrl).let { URI(it.scheme, null, it.host, it.port, null, null, null).toASCIIString() }
-                val providerRoot = support.resolve("providers").resolve(HovelCompanion.sha256(origin))
+                val providerRoot = support.resolve("providers").resolve(HovelCompanion.sha256(appOrigin(appUrl)))
                 // Claude is offered only by a development build that asks for it, until Anthropic confirms a
                 // companion persona on a player's subscription is allowed; anything else fails closed.
                 val claudeOffered = claudeProviderEnabled(environment, release = System.getProperty("gamero.release") == "true",
@@ -203,7 +204,7 @@ internal class DesktopServices private constructor(
                 val workspace = environment["GAMERO_WORKSPACE"]?.let(Path::of)
                 val companion = if (product == HOVEL_PRODUCT && System.getProperty("os.name").contains("Mac") &&
                     codex != null && workspace != null) {
-                    own(HovelCompanion(appUrl, support.resolve("hovel-${HovelCompanion.sha256(appUrl)}"), codex, workspace))
+                    own(HovelCompanion(appUrl, hovelStateFolder(support, appUrl), codex, workspace))
                 } else null
                 val games = if (window != null && environment["HOVEL_GAME_PROJECT"] != null) {
                     DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }
@@ -220,8 +221,8 @@ internal class DesktopServices private constructor(
 /**
  * The product packs a desktop host registers. Every desktop product has chat, providers, pet,
  * games and project folders; Hovel adds its companion and the companion projects capabilities:
- * `project` and `conversationVoice` (`Unsupported` until the conversation runner implements them)
- * and phone `approvals`, which desktop never supports. A missing implementation registers as
+ * `project`, `conversationVoice` and the `host.contract` handshake (`Unsupported` until the
+ * conversation runner implements them) and phone `approvals`, which desktop never supports. A missing implementation registers as
  * `Unsupported`, so its methods answer `unsupported` instead of `unknown-method`.
  */
 internal fun desktopProductPacks(
@@ -239,6 +240,7 @@ internal fun desktopProductPacks(
         add(ProjectMethods.pack(Capability.Unsupported))
         add(ConversationVoiceMethods.pack(Capability.Unsupported))
         add(ApprovalMethods.pack(Capability.Unsupported))
+        add(HostContractMethods.pack(Capability.Unsupported))
     }
     add(BrainMethods.pack(supportedIfPresent(brain)))
     add(ChatMethods.pack(supportedIfPresent(chat)))

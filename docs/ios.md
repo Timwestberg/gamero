@@ -20,7 +20,7 @@ WebView through `MainViewController()`.
 
 ## Serve Hovel locally
 
-Debug builds load `http://127.0.0.1:8080/hovel.html` by default. The simulator
+Debug builds load `http://127.0.0.1:8080/hovel` by default. The simulator
 shares the Mac's loopback, so serve the built web app with game-platform's
 production edge. It speaks HTTP and sends the COOP/COEP headers Hovel needs.
 From `game-platform`, with `tool-webkit` and `event-contracts` checked out next
@@ -66,13 +66,13 @@ lost, and retrying shows "No active PIN challenge for this phone".
    ```
 4. Launch the app with the HTTPS URL:
    ```sh
-   SIMCTL_CHILD_GAMERO_WEB_URL=https://localhost:8123/hovel.html \
+   SIMCTL_CHILD_GAMERO_WEB_URL=https://localhost:8123/hovel \
      xcrun simctl launch booted org.formulagen.wrapper.WestbergWrapper
    ```
    The URL applies only to that launch. Opening the app from the home screen
    or from Xcode's Run uses the Info.plist default, which is HTTP. To make HTTPS
    stick, set it in the scheme's environment variables or in `Config.xcconfig`
-   (`GAMERO_WEB_URL=https:/$()/localhost:8123/hovel.html`).
+   (`GAMERO_WEB_URL=https:/$()/localhost:8123/hovel`).
 5. Sign in with any E.164 phone number. With `PIN_PROVIDER=console`, no SMS is
    sent; the PIN is logged by identity:
    ```sh
@@ -99,7 +99,7 @@ xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator 
   -configuration Debug -derivedDataPath build/ios CODE_SIGNING_ALLOWED=NO build
 xcrun simctl boot "iPhone 17"   # any available iPhone simulator
 xcrun simctl install booted build/ios/Build/Products/Debug-iphonesimulator/WestbergWrapper.app
-SIMCTL_CHILD_GAMERO_WEB_URL=http://127.0.0.1:8080/hovel.html \
+SIMCTL_CHILD_GAMERO_WEB_URL=http://127.0.0.1:8080/hovel \
   xcrun simctl launch --console-pty booted org.formulagen.wrapper.WestbergWrapper
 ```
 
@@ -118,8 +118,8 @@ The app resolves the URL once at launch, in this order:
    Environment Variables.
 2. The `GameroWebURL` Info.plist key. It is fed from `GAMERO_WEB_URL` in
    `iosApp/Configuration/Config.xcconfig`. xcconfig treats `//` as a comment, so
-   write the scheme separator as `/$()/`, e.g. `https:/$()/example.com/hovel.html`.
-   Debug defaults to `http://127.0.0.1:8080/hovel.html`. Release keeps
+   write the scheme separator as `/$()/`, e.g. `https:/$()/example.com/hovel`.
+   Debug defaults to `http://127.0.0.1:8080/hovel`. Release keeps
    `https://web.worldwinner.com`, the URL the app loaded before Hovel, because
    loopback only works on a simulator.
 
@@ -188,7 +188,7 @@ certificate, extracted as in [Sign in (HTTPS)](#sign-in-https). curl and the
 throwaway simulator then both trust it:
 
 ```sh
-GAMERO_WEB_URL=https://localhost:8123/hovel.html \
+GAMERO_WEB_URL=https://localhost:8123/hovel \
 GAMERO_SMOKE_ROOT_CERT=/tmp/vite-dev-cert.pem tools/ios-smoke.sh
 ```
 

@@ -77,6 +77,9 @@ object SharedRules {
     fun isProfileId(value: String): Boolean =
         value == LOCAL_PROFILE || (BridgeProtocol.UUID_PATTERN.matches(value) && value == value.lowercase())
 
+    /** An account record's id, such as a project's: a UUID in canonical lower case, since native code keys local stores by it. */
+    fun isRecordId(value: String): Boolean = BridgeProtocol.UUID_PATTERN.matches(value) && value == value.lowercase()
+
     /**
      * A companion's display name: untrusted text that native code places in model instructions,
      * so it has no control characters and no whitespace at either end. A padded name is

@@ -99,7 +99,8 @@ class BridgeRouterTest {
         WorkspaceMethods.pack(supported(platform, "workspace.status", FakeWorkspaceCapability())),
         ProjectMethods.pack(supported(platform, "project.folderStatus", FakeProjectCapability())),
         ConversationVoiceMethods.pack(supported(platform, "conversationVoice.voiceStatus", FakeConversationVoiceCapability())),
-        ApprovalMethods.pack(supported(platform, "approvals.present", FakeApprovalsCapability())),
+        ApprovalMethods.pack(supported(platform, "approvals.present", FakeApprovalCapability())),
+        HostContractMethods.pack(supported(platform, "host.contract", FakeHostContractCapability())),
         CompanionMethods.pack(supported(platform, "companion.capabilities", object : CompanionCapability {
             override suspend fun prepareConnection(ownerId: String) = fakes.prepare(ownerId)
             override suspend fun activateConnection(ownerId: String, hostId: String) = JsonObject(emptyMap())

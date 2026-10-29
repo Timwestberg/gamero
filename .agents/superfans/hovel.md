@@ -184,7 +184,9 @@ and say so.
   `hovel.schemas.ts`, `hovelManager.ts`, `createHovelController.ts`,
   `conversations.ts`, `pendingTaskStore.ts`, `HovelView.tsx`, `BrainWorkspace.tsx`,
   `brainWorkspaceController.ts`, `brainWorkspaceService.ts`, `allowance/`,
-  `brain-feedback/`), `hovel.html`; edge route `/api/hovel` in `infra/edge/edge.ts`.
+  `brain-feedback/`), `hovel/hovelEntry.tsx` (the `/hovel` page of the app
+  document; `hovel.html` only redirects there); edge route `/api/hovel` in
+  `infra/edge/edge.ts`.
 - **Healthy looks like:** polling only reads and never starts tasks; one
   IndexedDB pending-task store per account that clears only its exact request
   and blocks new tasks if corrupt; a read started before a save never overwrites

@@ -1,10 +1,8 @@
 package org.formulagen.wrapper.bridge
 
-import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.descriptors.SerialDescriptor
-import kotlinx.serialization.descriptors.nullable
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlin.time.Duration
@@ -45,26 +43,15 @@ data class WorkspaceFolder(val exists: Boolean, val name: String) {
 @Serializable(with = WorkspaceStatusSerializer::class)
 data class WorkspaceStatus(val folder: WorkspaceFolder?)
 
-/** The bridge leaves out null fields, so the status is written through [Wire], whose `folder` writes its own `null`. */
+/** The status is written through [Wire], whose `folder` is an [ExplicitNull], so the key stays when there is none. */
 internal object WorkspaceStatusSerializer : KSerializer<WorkspaceStatus> {
     @Serializable
-    private class Wire(val folder: Chosen)
-
-    @Serializable(with = ChosenSerializer::class)
-    private class Chosen(val folder: WorkspaceFolder?)
-
-    @OptIn(ExperimentalSerializationApi::class)
-    private object ChosenSerializer : KSerializer<Chosen> {
-        override val descriptor: SerialDescriptor = WorkspaceFolder.serializer().descriptor.nullable
-        override fun serialize(encoder: Encoder, value: Chosen) =
-            value.folder?.let { encoder.encodeSerializableValue(WorkspaceFolder.serializer(), it) } ?: encoder.encodeNull()
-        override fun deserialize(decoder: Decoder) =
-            Chosen(if (decoder.decodeNotNullMark()) decoder.decodeSerializableValue(WorkspaceFolder.serializer()) else decoder.decodeNull())
-    }
+    private class Wire(val folder: ExplicitNull<WorkspaceFolder>)
 
     override val descriptor: SerialDescriptor = Wire.serializer().descriptor
-    override fun serialize(encoder: Encoder, value: WorkspaceStatus) = encoder.encodeSerializableValue(Wire.serializer(), Wire(Chosen(value.folder)))
-    override fun deserialize(decoder: Decoder) = WorkspaceStatus(decoder.decodeSerializableValue(Wire.serializer()).folder.folder)
+    override fun serialize(encoder: Encoder, value: WorkspaceStatus) =
+        encoder.encodeSerializableValue(Wire.serializer(), Wire(ExplicitNull(value.folder)))
+    override fun deserialize(decoder: Decoder) = WorkspaceStatus(decoder.decodeSerializableValue(Wire.serializer()).folder.value)
 }
 
 /** Mirrors event-contracts/host-bridge/workspace.ts. */
