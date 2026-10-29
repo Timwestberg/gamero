@@ -1,28 +1,12 @@
 <!doctype html>
 <html lang="en"><meta charset="utf-8"><title>Gamero native bridge smoke</title>
 <body><h1>Gamero embedded interface</h1><p id="agent"></p>
-<button id="probe">Check native bridge</button><button id="probe2">Check host bridge v2</button><button id="navigate">Reload this page</button>
+<button id="probe2">Check host bridge v2</button><button id="navigate">Reload this page</button>
 <pre id="result">No native request made.</pre>
 <iframe title="Untrusted child" sandbox="allow-scripts" srcdoc="<p>Opaque child frame</p>"></iframe>
 <script>
 document.querySelector('#agent').textContent = navigator.userAgent;
 const output = document.querySelector('#result');
-function query(method, args, contextId, persistent = false) {
-  return new Promise((resolve, reject) => {
-    if (typeof window.gameroQuery !== 'function') return reject(new Error('Native router unavailable'));
-    const request = {version: 1, method, args};
-    if (contextId) request.contextId = contextId;
-    window.gameroQuery({request: JSON.stringify(request), persistent,
-      onSuccess: value => resolve(JSON.parse(value)), onFailure: (code, message) => reject(new Error(code + ': ' + message))});
-  });
-}
-document.querySelector('#probe').onclick = async () => {
-  try {
-    const context = await query('watchContext', {}, null, true);
-    const capabilities = await query('capabilities', {}, context.contextId);
-    output.textContent = JSON.stringify({context, capabilities}, null, 2);
-  } catch (error) { output.textContent = String(error); }
-};
 // host-bridge.v2: one persistent watchContext query; every reply is an envelope.
 function query2(request, persistent, onEvent) {
   return new Promise((resolve, reject) => {
@@ -51,6 +35,8 @@ document.querySelector('#probe2').onclick = async () => {
     await call('link.close');
     await timed('stale context', {version: 2, contextId: '0b8e4b52-3c1d-4e2f-9a6b-7c8d9e0f1a2b', method: 'host.info', args: {}});
     await timed('non-persistent watch', {version: 2, method: 'watchContext', args: {}});
+    // Version 1 is gone: the old companion request gets the standard invalid envelope.
+    await timed('version 1', {version: 1, contextId, method: 'capabilities', args: {}});
   } catch (error) { lines.push(String(error)); }
   output.textContent = lines.join('\n');
   console.log('GAMERO_BRIDGE_V2_SMOKE\n' + output.textContent);

@@ -45,7 +45,7 @@ class JcefTransportContractTest : TransportContractTest() {
                 }
             }
             page.open += queryId
-            check(transport.onQuery(raw, persistent, mainFrame, url, queryId, callback)) { "a v2 request was not handled" }
+            transport.onQuery(raw, persistent, mainFrame, url, queryId, callback)
             return replies
         }
 
@@ -57,7 +57,7 @@ class JcefTransportContractTest : TransportContractTest() {
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
-/** Rules only the JCEF transport has: the frame check before parsing, and watch queries that JCEF cancels. */
+/** Rules only the JCEF transport has: the frame check before parsing, version 1 rejected, and watch queries that JCEF cancels. */
 class JcefHostBridgeTest {
     private class Answers : CefQueryCallback {
         val successes = mutableListOf<String>()
@@ -87,7 +87,7 @@ class JcefHostBridgeTest {
 
     private fun TestScope.ask(transport: JcefHostBridge, request: String, persistent: Boolean = false, main: Boolean = true, url: String = trusted, queryId: Long = 1): Answers {
         val answers = Answers()
-        assertTrue(transport.onQuery(request, persistent, main, url, queryId, answers), "the query went to version 1")
+        transport.onQuery(request, persistent, main, url, queryId, answers)
         settle()
         return answers
     }
@@ -99,10 +99,26 @@ class JcefHostBridgeTest {
             // A non-persistent watch is a misuse, but forbidden wins first.
             assertEquals("forbidden", ask(transport, watch, main = main, url = url).code())
             assertEquals("forbidden", ask(transport, call("6f1c2d3e-4a5b-4c6d-8e7f-901234567890"), persistent = true, main = main, url = url).code())
-            assertEquals(listOf(403), ask(transport, """{"version":1,"method":"watchContext","args":{}}""", persistent = true, main = main, url = url).failures)
-            val large = ask(transport, """{"version":2,"method":"watchContext","args":{"pad":"${"a".repeat(5000)}"}}""", main = main, url = url)
-            assertEquals(listOf(403), large.failures, "an untrusted frame got more than 4096 characters parsed")
+            assertEquals("forbidden", ask(transport, """{"version":1,"method":"watchContext","args":{}}""", persistent = true, main = main, url = url).code())
+            assertEquals("forbidden", ask(transport, "x".repeat(BridgeProtocol.MAX_REQUEST_CHARS + 1), main = main, url = url).code())
         }
+    }
+
+    @Test
+    fun versionOneIsRejectedWithTheStandardError() = runTest {
+        val transport = transport()
+        val contextId = Json.parseToJsonElement(ask(transport, watch, persistent = true).successes.single())
+            .jsonObject.getValue("contextId").jsonPrimitive.content
+        for ((request, persistent) in listOf(
+            """{"version":1,"method":"watchContext","args":{}}""" to true,
+            """{"version":1,"method":"capabilities","args":{},"contextId":"$contextId"}""" to false,
+            """{"version":1,"method":"prepareConnection","args":{"ownerId":"$contextId"},"contextId":"$contextId"}""" to false,
+        )) {
+            val answers = ask(transport, request, persistent = persistent, queryId = 2)
+            assertEquals(emptyList<Int>(), answers.failures, request)
+            assertEquals("invalid", answers.code(), request)
+        }
+        assertEquals(null, ask(transport, call(contextId), queryId = 3).code(), "a version 1 request ended the open v2 context")
     }
 
     @Test

@@ -22,9 +22,9 @@ export GAMERO_WORKSPACE="<existing-user-approved-read-only-workspace>"
 GAMERO_WEB_URL=http://127.0.0.1:8765/native-bridge-smoke.html ./gradlew :composeApp:run --console=plain
 ```
 
-Click Continue. Record visible HTML and Chromium user agent. Click Check native
-bridge: expect version1, connectComputer true, cloud false, sandbox read-only.
-Reload and repeat: expect a new context ID. Close; confirm JVM/browser termination.
+Click Continue. Record visible HTML and Chromium user agent. Run the host bridge
+v2 check below, then reload and run it again: expect a new context ID. Close;
+confirm JVM/browser termination.
 This fixture does not register a host, store credentials, sign in or execute Codex.
 
 Click Check host bridge v2. Each line shows the call, its round-trip time, and the
@@ -40,12 +40,11 @@ reply. With the companion configured, expect these replies:
 | `link.close` | `ok:false`, code `unknown-method` |
 | stale context | `ok:false`, code `expired` |
 | non-persistent watch | `ok:false`, code `invalid` |
+| `version 1` | `ok:false`, code `invalid` (version 1 was removed in task B4) |
 
 Without `GAMERO_CODEX_PATH` and `GAMERO_WORKSPACE`, the three `companion.*` methods
 are missing from `host.capabilities`, and `companion.capabilities` answers
-`unsupported`. Check native bridge (version 1) then fails with 403. That is the
-expected result, because only the companion uses version 1. The page also logs
-the whole result after `GAMERO_BRIDGE_V2_SMOKE`.
+`unsupported`. The page also logs the whole result after `GAMERO_BRIDGE_V2_SMOKE`.
 
 Require `GAMERO_JCEF_INITIALIZED` in the launch log before the browser appears.
 JCEF startup is asynchronous: Gamero now waits up to30seconds for its native
