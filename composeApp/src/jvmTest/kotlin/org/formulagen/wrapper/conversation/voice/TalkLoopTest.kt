@@ -254,6 +254,22 @@ class TalkLoopTest {
         assertTrue(talk.on && ear.listening, "so the next session can have it")
     }
 
+    @Test fun aStaleCaptureNeitherServesNorEndsANewerSession() {
+        val talk = loop()
+        assertTrue(synchronized(lock) { talk.pressLocked() })
+        // While that capture is still starting, Talk ends and a newer session arms and starts its own capture.
+        ear.beforeSession = {
+            ear.beforeSession = null
+            synchronized(lock) { talk.endLocked() }
+            talk.arm()
+        }
+        talk.startCapture()
+        assertTrue(talk.on, "the stale capture, refused the microphone, never turns the newer session off")
+        assertTrue(ear.listening)
+        assertEquals(HearingState.LISTENING, talk.hearing().state)
+        assertEquals(1, ear.sessions.get(), "one capture serves the session")
+    }
+
     @Test fun aCaptureThatCannotStartSaysTheMicrophoneIsBusy() {
         val talk = loop()
         ear.refuseSessions = true

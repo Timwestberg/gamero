@@ -148,6 +148,10 @@ internal class TalkLoop(
     var stageLatency: StageLatency? = null
         private set
     private var guardGeneration = 0
+    /** Counts every arm: a capture serves only the session of the arm it was launched for. */
+    private var arms = 0
+    /** The arm whose capture has not been launched yet, or 0: each arm's capture is launched once. */
+    private var unlaunched = 0
     private var resumePending = false
     private var hearingPartial = ""
     private var hearingNotice: String? = null
@@ -530,6 +534,7 @@ internal class TalkLoop(
 
     /** Opens one session, however it was started, and warms the voice for its first sentence. */
     private fun armLocked() {
+        unlaunched = ++arms
         speech.warm()
         warmFillersLocked()
         settings.route?.arm()
@@ -548,11 +553,18 @@ internal class TalkLoop(
      * Start the armed session's capture. A page's arm first waits briefly for a capture that is still letting go. A
      * capture that cannot start (the microphone is someone else's, or still letting go) ends the session as busy. One
      * that starts after the session ended (the row's icon, while a page's capture was starting) lets the microphone go.
+     * Each arm launches one capture, which acts only for that arm's session: one still starting when a newer session
+     * armed neither serves it nor turns it off.
      */
     private fun launchCapture(wait: Boolean) {
+        // The arm this capture is for. A later arm, made while this one was still starting, has a capture of its own, so
+        // this one then neither serves nor ends that newer session.
+        val arm = synchronized(lock) { unlaunched.also { unlaunched = 0 } }
+        if (arm == 0) return
         val ear = hearing
         if (ear == null) {
             synchronized(lock) {
+                if (arm != arms) return@synchronized
                 talkOn = false
                 hearingUnavailable = true
                 setPhaseLocked(TalkPhase.OFF)
@@ -566,28 +578,29 @@ internal class TalkLoop(
             settings.silenceMs,
             onPartial = { text ->
                 synchronized(lock) {
-                    if (talkOn && talkPhase == TalkPhase.LISTENING && text != hearingPartial) {
+                    if (arm == arms && talkOn && talkPhase == TalkPhase.LISTENING && text != hearingPartial) {
                         hearingPartial = text
                         host.changedLocked()
                     }
                 }
             },
-            onUtterance = { result -> synchronized(lock) { onUtteranceLocked(result) } },
+            onUtterance = { result -> synchronized(lock) { if (arm == arms) onUtteranceLocked(result) } },
             onFailed = { message ->
                 synchronized(lock) {
+                    if (arm != arms) return@synchronized
                     hearingNotice = if (message.contains("denied", ignoreCase = true)) VoiceCopy.MIC_SETTINGS_NOTICE else message
                     hearingUnavailable = true
                     if (talkOn) endLocked() else host.changedLocked()
                 }
             },
-            onFrame = { voicedMs, chunkMs, prob -> synchronized(lock) { onHearingFrameLocked(voicedMs, chunkMs, prob) } },
+            onFrame = { voicedMs, chunkMs, prob -> synchronized(lock) { if (arm == arms) onHearingFrameLocked(voicedMs, chunkMs, prob) } },
         )
         if (started) {
-            synchronized(lock) { if (!talkOn) ear.endSession() }
+            synchronized(lock) { if (!talkOn || arm != arms) ear.endSession() }
             return
         }
         synchronized(lock) {
-            if (!talkOn) return@synchronized
+            if (!talkOn || arm != arms) return@synchronized
             talkOn = false
             hearingNotice = MICROPHONE_IN_USE
             setPhaseLocked(TalkPhase.OFF)
