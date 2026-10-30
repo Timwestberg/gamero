@@ -84,6 +84,10 @@ internal class CoordinatorEngine(
                 }
                 system(failurePause(failure, "the coordinator"), message.threadId)
                 MessageState.FAILED
+            } catch (configuration: BrainConfigurationException) {
+                // The brain cannot run as configured: say what to change, since sending it again would fail the same way.
+                system(checkNotNull(configuration.message), message.threadId)
+                MessageState.FAILED
             } catch (error: Exception) {
                 log(LogLevel.Warn, "conversations", "A message could not run", error)
                 system("Hovel could not finish this message on this Mac. Try sending it again.", message.threadId)
@@ -569,11 +573,12 @@ internal class CoordinatorEngine(
         // ---- Roles and inputs ------------------------------------------------------------------
 
         fun coordinatorRole(): BrainRoleSnapshot = claim.brain.configuration.coordinator.snapshot()
-            ?: error("Assign a provider to the coordinator in Configure brain.")
+            ?: throw BrainConfigurationException.unassigned(BrainConfigurationException.COORDINATOR)
 
         fun specialistSnapshot(id: String): BrainRoleSnapshot {
             val role = claim.brain.configuration.specialists.first { it.id == id }
-            return BrainRoleSnapshot(role.id, role.name, checkNotNull(role.binding), role.instructions, role.mode)
+            val binding = role.binding ?: throw BrainConfigurationException.unassigned(role.name)
+            return BrainRoleSnapshot(role.id, role.name, binding, role.instructions, role.mode)
         }
 
         fun contextKey(role: BrainRoleSnapshot) = "${role.roleId}:${role.binding.runtimeId.wireName}"

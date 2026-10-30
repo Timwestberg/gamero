@@ -49,3 +49,17 @@ internal fun stagesFor(configuration: BrainConfiguration, role: BrainRoleSnapsho
 /** Whether [role]'s attempt at [step] asks before it starts ([stagesFor]). */
 internal fun asksBeforeStarting(configuration: BrainConfiguration, role: BrainRoleSnapshot, step: WorkflowStep?): Boolean =
     stagesFor(configuration, role, step).any { it.askBeforeStarting }
+
+/**
+ * The companion's brain asks for something this Mac cannot run as configured, such as a role with no provider. The
+ * person fixes it in Configure brain, so [message] is the line the conversation shows them, never a retry hint.
+ */
+internal class BrainConfigurationException(message: String) : IllegalStateException(message) {
+    companion object {
+        /** A role, the coordinator included, with no provider assigned. */
+        fun unassigned(roleName: String) = BrainConfigurationException("Assign a provider to $roleName in Configure brain.")
+
+        /** The coordinator's name in that line. */
+        const val COORDINATOR = "the coordinator"
+    }
+}

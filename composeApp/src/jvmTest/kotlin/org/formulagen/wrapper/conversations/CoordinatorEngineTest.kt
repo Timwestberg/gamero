@@ -506,6 +506,26 @@ class CoordinatorEngineTest {
         assertEquals(emptyList(), fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.ArtifactStored>(), "nothing new is stored")
     }
 
+    @Test fun aCoordinatorWithNoProviderSaysToAssignOneInsteadOfToRetry() {
+        // A new companion's brain: the coordinator has no binding yet, with or without specialists.
+        for (document in listOf(brain(), brain("Implementer" to MemberMode.WORK))) {
+            val configuration = document.configuration
+            val fixture = Fixture(document.copy(configuration = configuration.copy(coordinator = configuration.coordinator.copy(binding = null))))
+            assertEquals(MessageState.FAILED, fixture.send("Hi"))
+            assertEquals("Assign a provider to the coordinator in Configure brain.",
+                fixture.server.appended().last { it.author == MessageAuthor.SYSTEM }.text)
+            assertEquals(emptyList(), fixture.chat.requests, "no provider turn starts")
+        }
+    }
+
+    @Test fun anUnexpectedErrorStillSaysToTryAgain() {
+        val fixture = Fixture(brain())
+        fixture.chat.reply = { error("a bug in this build") }
+        assertEquals(MessageState.FAILED, fixture.send("Hi"))
+        assertEquals("Hovel could not finish this message on this Mac. Try sending it again.",
+            fixture.server.appended().last { it.author == MessageAuthor.SYSTEM }.text)
+    }
+
     @Test fun aSignedOutRuntimeFailsWithItsProvidersReason() {
         val fixture = Fixture(brain())
         fixture.chat.failure = ChatFailure.SignedOut

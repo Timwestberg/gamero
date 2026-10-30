@@ -301,7 +301,8 @@ internal fun RunRecord.resumed(rerun: Boolean, target: BrainDocument?, revision:
     val last = attempts.lastOrNull()
     val attempts = if (phase == BrainPhase.EXECUTE && last != null) {
         val specialist = configuration.specialists.first { it.id == last.role.roleId }
-        val role = last.role.copy(binding = checkNotNull(specialist.binding), instructions = specialist.instructions)
+        val binding = specialist.binding ?: throw BrainConfigurationException.unassigned(specialist.name)
+        val role = last.role.copy(binding = binding, instructions = specialist.instructions)
         val next = last.copy(
             state = BrainAttemptState.QUEUED,
             outputIds = emptyList(),
