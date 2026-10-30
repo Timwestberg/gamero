@@ -9,6 +9,7 @@ import org.formulagen.wrapper.conversations.ApprovalDeviceList
 import org.formulagen.wrapper.conversations.ApprovalDevicePairing
 import org.formulagen.wrapper.conversations.ApprovalDeviceState
 import org.formulagen.wrapper.conversations.DevicePairLookup
+import org.formulagen.wrapper.conversations.PairingRefusalCodes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -40,11 +41,11 @@ class PhonePairingTest {
             return when {
                 method == "GET" && route == "devices" -> data(ApprovalDeviceList.serializer(), ApprovalDeviceList(paired.map(::device)))
                 method == "POST" && (route == "devices/pair" || route == "devices/lookup") -> {
-                    if (wrong >= 5) throw HovelStatusException(429, "too-many-attempts")
+                    if (wrong >= 5) throw HovelStatusException(429, PairingRefusalCodes.TOO_MANY_ATTEMPTS)
                     val code = body!!.getValue("code").jsonPrimitive.content
                     val named = body["deviceId"]?.jsonPrimitive?.content
                     if (route == "devices/pair" && named == null) throw HovelStatusException(400)
-                    if (code == showing && named == phone && ranOut) throw HovelRejectedException("pairing-code-expired")
+                    if (code == showing && named == phone && ranOut) throw HovelRejectedException(PairingRefusalCodes.EXPIRED)
                     if (code != showing || (named != null && named != phone)) {
                         wrong++
                         throw HovelStatusException(404)

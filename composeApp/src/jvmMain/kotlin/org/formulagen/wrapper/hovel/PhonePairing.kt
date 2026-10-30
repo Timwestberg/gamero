@@ -9,6 +9,7 @@ import org.formulagen.wrapper.conversations.ApprovalDeviceList
 import org.formulagen.wrapper.conversations.DevicePairConfirm
 import org.formulagen.wrapper.conversations.DevicePairLookup
 import org.formulagen.wrapper.conversations.DevicePairRequest
+import org.formulagen.wrapper.conversations.PairingRefusalCodes
 import java.time.Duration
 import java.time.Instant
 
@@ -25,7 +26,7 @@ import java.time.Instant
  * [exchange] is the connected Mac's host transport, or null before this Mac is connected. Calls block on HTTP, so
  * callers run them off the UI thread.
  */
-internal class PhonePairing(private val exchange: () -> NativeExchange?, private val clock: () -> Instant = Instant::now) {
+internal class PhonePairing(private val exchange: () -> NativeExchange?, val clock: () -> Instant = Instant::now) {
     /** How looking up, pairing, unpairing or listing ended. */
     sealed interface Outcome {
         /** The phone showing the code, not paired yet: the window asks before it pairs. */
@@ -125,12 +126,12 @@ internal class PhonePairing(private val exchange: () -> NativeExchange?, private
         return try {
             block(native)
         } catch (refused: HovelRejectedException) {
-            if (refused.code == CODE_RAN_OUT) Outcome.Expired else Outcome.Failed
+            if (refused.code == PairingRefusalCodes.EXPIRED) Outcome.Expired else Outcome.Failed
         } catch (refused: HovelStatusException) {
-            when (refused.status) {
-                404 -> Outcome.WrongCode
-                429 -> Outcome.TooManyAttempts
-                401 -> Outcome.NotConnected
+            when {
+                refused.status == 404 -> Outcome.WrongCode
+                refused.status == 429 && refused.code == PairingRefusalCodes.TOO_MANY_ATTEMPTS -> Outcome.TooManyAttempts
+                refused.status == 401 -> Outcome.NotConnected
                 else -> Outcome.Failed
             }
         } catch (_: Exception) {
@@ -140,8 +141,6 @@ internal class PhonePairing(private val exchange: () -> NativeExchange?, private
 
     companion object {
         private val SEPARATORS = Regex("[\\s-]")
-        /** The 409 a confirmation gets when the asked-about phone's code ran out meanwhile. */
-        private const val CODE_RAN_OUT = "pairing-code-expired"
         private val PLATFORMS = mapOf("ios" to "iPhone", "android" to "Android")
 
         /** [typed] as a pairing code: its digits once spaces and dashes are taken out, or null. */

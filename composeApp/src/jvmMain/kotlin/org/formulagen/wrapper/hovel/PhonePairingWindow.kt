@@ -31,7 +31,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.formulagen.wrapper.conversations.DevicePairRequest
 import java.time.Duration
-import java.time.Instant
 
 /** What the "Pair a phone…" window says for each [PhonePairing.Outcome] that is not a success. */
 internal fun pairingMessage(outcome: PhonePairing.Outcome): String? = when (outcome) {
@@ -39,14 +38,14 @@ internal fun pairingMessage(outcome: PhonePairing.Outcome): String? = when (outc
     is PhonePairing.Outcome.Done -> outcome.paired?.let { "Paired with ${it.name}. It can now answer this Mac's approvals." }
     PhonePairing.Outcome.Malformed -> "Type the six digits the phone shows."
     PhonePairing.Outcome.WrongCode -> "No phone shows that code. Check it, or show a new code on the phone."
-    PhonePairing.Outcome.Expired -> CODE_RAN_OUT
+    PhonePairing.Outcome.Expired -> CODE_RAN_OUT_MESSAGE
     PhonePairing.Outcome.TooManyAttempts -> "Too many wrong codes on your Macs. Wait a few minutes, then show a new code on the phone."
     PhonePairing.Outcome.NotConnected -> "Connect this Mac to your account from Hovel first."
     PhonePairing.Outcome.Failed -> "Hovel could not reach the server. Try again."
 }
 
 /** What the window says when the code of the phone it asked about runs out. */
-private const val CODE_RAN_OUT = "That code ran out. Show a new code on the phone, then type it again."
+private const val CODE_RAN_OUT_MESSAGE = "That code ran out. Show a new code on the phone, then type it again."
 
 /** What the code field takes: the code's digits, and a space or dash a person may type between them. */
 private const val CODE_FIELD_LIMIT = DevicePairRequest.PAIRING_CODE_DIGITS + 2
@@ -84,10 +83,11 @@ internal fun PhonePairingWindow(pairing: PhonePairing, onClose: () -> Unit) {
     // the question lasts as long as its code
     LaunchedEffect(found) {
         val asked = found ?: return@LaunchedEffect
-        delay(Duration.between(Instant.now(), asked.codeExpiresAt).toMillis().coerceAtLeast(0))
+        // on the pairing's own clock, the one its "registered <n> min ago" reads
+        delay(Duration.between(pairing.clock(), asked.codeExpiresAt).toMillis().coerceAtLeast(0))
         if (found == asked) {
             found = null
-            message = CODE_RAN_OUT
+            message = CODE_RAN_OUT_MESSAGE
         }
     }
 

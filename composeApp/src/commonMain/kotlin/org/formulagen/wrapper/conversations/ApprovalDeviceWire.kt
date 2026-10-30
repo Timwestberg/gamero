@@ -37,6 +37,15 @@ internal data class ApprovalDevice(
 @Serializable
 internal data class ApprovalDeviceList(val devices: List<ApprovalDevice>)
 
+/** `PAIRING_REFUSAL_CODES`: why a Mac's lookup or pairing was refused, as the refusal body's `code` says. */
+internal object PairingRefusalCodes {
+    /** A confirmation whose code matched the named phone but ran out meanwhile (409). Not a wrong code. */
+    const val EXPIRED = "pairing-code-expired"
+
+    /** The account's Macs used up their wrong codes for the window (429). */
+    const val TOO_MANY_ATTEMPTS = "too-many-attempts"
+}
+
 /** `devicePairLookup`: the phone a typed code names, and when that code runs out. */
 @Serializable
 internal data class DevicePairLookup(val codeExpiresAt: String, val device: ApprovalDevice)
