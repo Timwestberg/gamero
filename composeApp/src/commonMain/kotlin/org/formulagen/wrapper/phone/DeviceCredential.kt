@@ -14,7 +14,7 @@ internal data class DeviceCredential(val id: String, val ownerId: String, val na
     /** True when every part has the form the server checks, so a damaged item reads as no device. */
     val valid: Boolean
         get() = SharedRules.isRecordId(id) && SharedRules.isRecordId(ownerId) && TOKEN.matches(token) &&
-            name.length in 1..DEVICE_NAME_LIMIT && SharedRules.isDisplayText(name) && platform in APPROVAL_DEVICE_PLATFORMS
+            name.length in 1..DEVICE_NAME_LIMIT && SharedRules.isDialogName(name) && platform in APPROVAL_DEVICE_PLATFORMS
 
     companion object {
         private val TOKEN = Regex("[0-9a-f]{64}")
@@ -66,14 +66,14 @@ internal fun DeviceCrypto.newId(): String {
 }
 
 /**
- * The name a device registers under: the platform's own name for it as event-contracts `displayText` takes it (one
+ * The name a device registers under: the platform's own name for it as event-contracts `dialogName` takes it (one
  * line, no control, format or separator characters, trimmed), cut to the limit without splitting a character, or
  * [fallback] when nothing is left.
  */
 internal fun deviceName(raw: String?, fallback: String): String {
-    val line = SharedRules.displayable(raw.orEmpty(), fallback)
+    val line = SharedRules.dialogName(raw.orEmpty(), fallback)
     val cut = if (line.length > DEVICE_NAME_LIMIT && line[DEVICE_NAME_LIMIT - 1].isHighSurrogate()) DEVICE_NAME_LIMIT - 1 else DEVICE_NAME_LIMIT
-    return SharedRules.displayable(line.take(cut), fallback)
+    return SharedRules.dialogName(line.take(cut), fallback)
 }
 
 private const val TOKEN_BYTES = 32

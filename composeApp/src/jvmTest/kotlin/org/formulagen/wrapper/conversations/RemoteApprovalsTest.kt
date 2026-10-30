@@ -130,12 +130,37 @@ class RemoteApprovalsTest {
             assertFailsWith<org.formulagen.wrapper.hovel.HovelRejectedException> { output.once(waiting) }
             val conflict = assertNotNull(approvals.conflict(waiting))
             assertEquals(thread, conflict.threadId)
-            assertTrue("“Allow once”" in conflict.text && "“Deny”" in conflict.text, conflict.text)
+            assertTrue("chose “Allow once”" in conflict.text && "answered “Deny”" in conflict.text, conflict.text)
+            assertTrue("went on with its own" in conflict.text, conflict.text)
+            // after a restart nothing is in memory: the outbox's own close still says what ran here
+            val restarted = RemoteApprovals(NativeDialogs(screen), server, server.hostId, clock)
+            assertNull(restarted.receipt(approval.id))
+            assertEquals(conflict, restarted.conflict(waiting))
             // when the record agrees with what ran, there is nothing to say
             server.approvals[approval.id] = server.approvals.getValue(approval.id).copy(
                 answer = ApprovalAnswerRecord(ApprovalSurface.PHONE, id(), ApprovalOption.ALLOW_ONCE))
             assertNull(approvals.conflict(waiting))
         }
+    }
+
+    @Test fun aConflictNoteUsesTheMacsOwnButtonsAndSaysWhenItWentOnWithNone() {
+        val restarted = RemoteApprovals(NativeDialogs(screen), server, server.hostId, clock)
+        val approval = AgentApproval(ApprovalAnswerRecord(ApprovalSurface.PHONE, id(), ApprovalOption.CONTINUE), server.hostId,
+            talk.id, "2026-10-29T12:10:00.000Z", id(), ApprovalKind.START_OF_WORK, listOf(ApprovalOption.CONTINUE, ApprovalOption.NOT_NOW),
+            ApprovalPresentation.Anywhere(listOf("Start work")), 1, ApprovalState.ANSWERED, thread)
+        server.approvals[approval.id] = approval
+        val chose = restarted.conflict(MessageCheckpoint.ApprovalClosed(approval.id, ApprovalOutcome.Answered(ApprovalOption.NOT_NOW)))
+        assertTrue("chose “Not now”" in assertNotNull(chose).text && "answered “Start working”" in chose.text, chose.text)
+        val none = restarted.conflict(MessageCheckpoint.ApprovalClosed(approval.id, ApprovalOutcome.Withdrawn))
+        assertTrue("went on with no answer" in assertNotNull(none).text, none.text)
+    }
+
+    @Test fun theMacsLabelsAreItsDialogsButtons() {
+        val permission = org.formulagen.wrapper.approvals.approvalDialog(request()).buttons.map { it.first }
+        assertTrue(MacApprovalLabels.of(ApprovalKind.PERMISSION, ApprovalOption.ALLOW_ONCE) in permission, permission.toString())
+        assertTrue(MacApprovalLabels.of(ApprovalKind.PERMISSION, ApprovalOption.DENY) in permission, permission.toString())
+        val start = org.formulagen.wrapper.approvals.startOfWorkDialog("Ember", working, member).buttons.map { it.first }
+        assertEquals(listOf(ApprovalOption.CONTINUE, ApprovalOption.NOT_NOW).map { MacApprovalLabels.of(ApprovalKind.START_OF_WORK, it) }, start)
     }
 
     @Test fun aMacAnswerToAnApprovalTheServerLetExpireStillStands() {

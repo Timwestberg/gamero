@@ -42,7 +42,10 @@ internal enum class NativeRoute(val method: String, val template: String) {
     /** → `approvalDeviceList`: the phones this Mac confirmed. */
     DEVICES("GET", "devices"),
 
-    /** `devicePairRequest` → `approvalDevice`: the code typed into this Mac's "Pair a phone…" window confirms that phone. */
+    /** `devicePairRequest` → `approvalDevice`, unchanged: the phone a typed code names, so the window asks first. */
+    DEVICE_LOOKUP("POST", "devices/lookup"),
+
+    /** `devicePairRequest` → `approvalDevice`: once the person confirmed it in "Pair a phone…", that phone is paired. */
     DEVICE_PAIR("POST", "devices/pair"),
 
     /** → `approvalDevice`: this Mac lets one phone go. */

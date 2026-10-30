@@ -14,7 +14,7 @@ import org.formulagen.wrapper.conversations.ShareableText
  * What the phone's approval dialogs say. An approval's message is only its lines, exactly as the server holds them
  * (the Mac built them with folder-relative paths), and only when every one passes [ShareableText]; anything else is
  * answered on the Mac. Where it comes from goes in the title, built from names cleaned to one line
- * ([SharedRules.displayable]), so no name can pass for a request line. This file adds only that, the kind, and the
+ * ([SharedRules.dialogName]), so no name can pass for a request line. This file adds only that, the kind, and the
  * buttons.
  */
 internal object PhoneApprovalCopy {
@@ -66,21 +66,19 @@ internal object PhoneApprovalCopy {
     fun label(option: ApprovalOption): String = OPTION_LABELS.getValue(option)
 
     /** The approval's Mac, cleaned to one line, for a title. */
-    fun computerOf(shown: DeviceApproval): String = SharedRules.displayable(shown.computerName, "your Mac")
+    fun computerOf(shown: DeviceApproval): String = SharedRules.dialogName(shown.computerName, "your Mac")
 
     /** The companion and project an approval comes from, each cleaned to one line. */
     private fun source(shown: DeviceApproval): String =
-        "${SharedRules.displayable(shown.companionName, "Your companion")} · ${SharedRules.displayable(shown.projectName, "a project")}"
+        "${SharedRules.dialogName(shown.companionName, "Your companion")} · ${SharedRules.dialogName(shown.projectName, "a project")}"
 
-    /** Where an approval comes from, for its title: the companion, the project and the Mac. */
-    private fun origin(shown: DeviceApproval): String = "${source(shown)} on ${computerOf(shown)}"
 
     /**
-     * An approval the phone may answer: the kind and where it comes from in the title, its exact folder-relative
-     * [lines] as the whole message, and one button per option it offers.
+     * An approval the phone may answer: its Mac first in the title (a narrow alert cuts a title at its end), then the
+     * kind and where it comes from; its exact folder-relative [lines] as the whole message; one button per option.
      */
     fun prompt(shown: DeviceApproval, lines: List<String>): ApprovalPrompt = ApprovalPrompt(
-        title = "${KIND_TITLES.getValue(shown.approval.kind)} · ${origin(shown)}",
+        title = "${computerOf(shown)}: ${KIND_TITLES.getValue(shown.approval.kind)} · ${source(shown)}",
         message = lines.joinToString("\n"),
         choices = shown.approval.options.map { ApprovalChoice(it, label(it), it in DESTRUCTIVE) },
         dismiss = LATER,
@@ -96,7 +94,7 @@ internal object PhoneApprovalCopy {
         val why = if (summary != null) "This request names something outside the project's folders"
             else "This request holds text this phone will not show"
         return ApprovalNotice(
-            title = "${source(shown)}: answer on ${computerOf(shown)}",
+            title = "Answer on ${computerOf(shown)} · ${source(shown)}",
             message = listOfNotNull(summary, "$why, so only that Mac can answer it.").joinToString("\n\n"),
             button = OK,
         )
@@ -104,7 +102,7 @@ internal object PhoneApprovalCopy {
 
     /** An approval of a Mac that has not confirmed this phone: answer it there, or pair the phone there. */
     fun unpaired(shown: DeviceApproval): ApprovalNotice = ApprovalNotice(
-        title = "${source(shown)}: answer on ${computerOf(shown)}",
+        title = "Answer on ${computerOf(shown)} · ${source(shown)}",
         message = "This phone is not paired with that Mac, so it can't answer this request. Answer it there, or pair " +
             "this phone on that Mac: choose Pair a phone… in its Hovel menu.",
         button = OK,

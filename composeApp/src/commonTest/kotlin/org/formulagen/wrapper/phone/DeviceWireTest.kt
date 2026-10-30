@@ -1,5 +1,9 @@
 package org.formulagen.wrapper.phone
 
+import org.formulagen.wrapper.conversations.ApprovalDevice
+import org.formulagen.wrapper.conversations.ApprovalDeviceList
+import org.formulagen.wrapper.conversations.ApprovalDeviceState
+import org.formulagen.wrapper.conversations.DevicePairRequest
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -131,7 +135,7 @@ class DeviceWireTest {
         // a cut never splits a character
         val emoji = deviceName("x".repeat(DEVICE_NAME_LIMIT - 1) + "\ud83d\udd25", "Phone")
         assertEquals("x".repeat(DEVICE_NAME_LIMIT - 1), emoji)
-        assertTrue(SharedRules.isDisplayText(deviceName("Pixel\u2029 9 ", "Phone")))
+        assertTrue(SharedRules.isDialogName(deviceName("Pixel\u2029 9 ", "Phone")))
     }
 
     @Test fun thePhonesLimitsAreTheContracts() {
@@ -141,6 +145,7 @@ class DeviceWireTest {
         assertEquals(companion.getValue("deviceName").jsonPrimitive.int, DEVICE_NAME_LIMIT)
         assertEquals(companion.getValue("pairingMs").jsonPrimitive.long, PAIRING_LIMIT.inWholeMilliseconds)
         assertEquals(limits.getValue("PAIRING_CODE_PATTERN").jsonPrimitive.content, "^${DevicePairRequest.PAIRING_CODE.pattern}$")
+        assertEquals(limits.getValue("PAIRING_CODE_DIGITS").jsonPrimitive.int, DevicePairRequest.PAIRING_CODE_DIGITS)
     }
 
     @Test fun aCredentialReadsOnlyInTheFormTheServerChecks() {

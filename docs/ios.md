@@ -208,15 +208,19 @@ without redirects, and `UIAlertController`.
 2. **Pair on each Mac.** "Pair with a Mac" calls `approvalDevice.pair`. The
    app fetches a six-digit code with its own token and shows it in a native
    alert; the page never sees it. On the Mac, Hovel → Pair a phone… takes the
-   code on that Mac's own host route. The phone then answers that Mac's
-   approvals, and only that Mac's; pair it on each Mac it should answer for.
+   code, asks "Pair <name> (iPhone, registered <n> min ago)?", and pairs on a
+   second click, on that Mac's own host route; every open page then says the
+   phone was paired. The phone then answers that Mac's approvals, and only that
+   Mac's; pair it on each Mac it should answer for. A phone that loses its last
+   Mac stays registered for 10 more minutes to be paired again.
    The alert closes once a Mac confirms it (`paired`), when the code runs out
    (`expired`), or when the person closes it.
 3. **Answer.** While a Hovel page runs, each open approval on the owner stream
    calls `approvals.present(id)`. The app reads it from
    `/api/hovel/v1/hovel/devices/<owner>/<device>/approvals/<id>` under the
-   configured web app's origin and shows it: where it comes from in the
-   alert's title (names cleaned to one line), and only the server's lines in
+   configured web app's origin and shows it: its Mac first in the alert's
+   title, then the kind and where it comes from (names cleaned to one line, so
+   a narrow alert cuts the end rather than the Mac), and only the server's lines in
    the message, each checked as `shareableText` checks it. A line it will not
    show, and anything outside a project's folders, is answered on the Mac
    (`mac-only`); an approval of a Mac that has not confirmed this phone says

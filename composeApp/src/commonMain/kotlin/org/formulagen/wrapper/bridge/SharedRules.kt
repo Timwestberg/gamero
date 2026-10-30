@@ -88,36 +88,42 @@ object SharedRules {
     fun isCompanionName(value: String): Boolean = value.length in 1..COMPANION_NAME_LIMIT && isDisplayText(value)
 
     /**
-     * Event-contracts `displayText`: one line with no control (Cc), format (Cf: bidirectional,
-     * zero-width, tags) or line and paragraph separator (Zl, Zp) characters, and no whitespace at
-     * either end, so a native dialog shows it as it reads.
+     * Event-contracts `displayText`, for names and titles a person types: one line with no C0
+     * control or DEL, and no whitespace at either end. Emoji stay whole, joiners included.
      */
-    fun isDisplayText(value: String): Boolean = value.unicodePoints().none(::isDisplayRefused) && value == value.trimEcma()
+    fun isDisplayText(value: String): Boolean = value.none { it.code < 0x20 || it.code == 0x7F } && value == value.trimEcma()
 
     /**
-     * [value] as a native dialog may show it: what [isDisplayText] refuses taken out, then trimmed;
-     * [fallback] when nothing is left.
+     * Event-contracts `dialogName`, for a computer's or phone's name a native dialog shows: one line
+     * with no control (Cc), format (Cf: bidirectional, zero-width and joiner characters, tags) or
+     * line and paragraph separator (Zl, Zp) characters, and no whitespace at either end.
      */
-    fun displayable(value: String, fallback: String): String {
+    fun isDialogName(value: String): Boolean = value.unicodePoints().none(::isDialogRefused) && value == value.trimEcma()
+
+    /**
+     * [value] as a native dialog shows a name: what [isDialogName] refuses taken out, then trimmed;
+     * [fallback] when nothing is left. Names are read as stored, so a dialog cleans each one.
+     */
+    fun dialogName(value: String, fallback: String): String {
         val kept = StringBuilder()
         var index = 0
         while (index < value.length) {
             val point = value.unicodePointAt(index)
             val width = if (point > 0xFFFF) 2 else 1
-            if (!isDisplayRefused(point)) kept.appendRange(value, index, index + width)
+            if (!isDialogRefused(point)) kept.appendRange(value, index, index + width)
             index += width
         }
         return kept.toString().trimEcma().ifEmpty { fallback }
     }
 
-    /** Cc, Cf, Zl and Zp, the categories `displayText` refuses, for one code point. */
-    private fun isDisplayRefused(point: Int): Boolean = if (point <= 0xFFFF) {
-        point.toChar().category in DISPLAY_REFUSED_CATEGORIES
+    /** Cc, Cf, Zl and Zp, the categories `dialogName` refuses, for one code point. */
+    private fun isDialogRefused(point: Int): Boolean = if (point <= 0xFFFF) {
+        point.toChar().category in DIALOG_REFUSED_CATEGORIES
     } else {
         ASTRAL_FORMAT.any { point in it }
     }
 
-    private val DISPLAY_REFUSED_CATEGORIES = setOf(
+    private val DIALOG_REFUSED_CATEGORIES = setOf(
         CharCategory.CONTROL, CharCategory.FORMAT, CharCategory.LINE_SEPARATOR, CharCategory.PARAGRAPH_SEPARATOR,
     )
 
@@ -127,7 +133,7 @@ object SharedRules {
         0xE0020..0xE007F,
     )
 
-    /** [this] string's code points; an unpaired surrogate is its own code point (Cs, which `displayText` lets through). */
+    /** [this] string's code points; an unpaired surrogate is its own code point (Cs, which `dialogName` lets through). */
     private fun String.unicodePoints(): Sequence<Int> = sequence {
         var index = 0
         while (index < length) {

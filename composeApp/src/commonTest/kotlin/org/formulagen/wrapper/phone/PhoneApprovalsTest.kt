@@ -114,7 +114,7 @@ class PhoneApprovalsTest {
         runCurrent()
         val prompt = phone.dialogs.asked.single()
         // where it comes from is the title; the message is only the server's lines
-        assertEquals("Permission request · Ember · Hovel notes on Studio Mac", prompt.title)
+        assertEquals("Studio Mac: Permission request · Ember · Hovel notes", prompt.title)
         assertEquals("Run ./deploy.sh\nEdit [design-docs]/plan.md", prompt.message)
         assertEquals(listOf("Allow once" to false, "Deny" to true), prompt.choices.map { it.label to it.destructive })
         assertEquals("Later", prompt.dismiss)
@@ -144,7 +144,7 @@ class PhoneApprovalsTest {
             phone.dialogs.answer = CompletableDeferred()
             val shown = async { phone.approvals.present(approvalId) }
             runCurrent()
-            assertEquals("$title · Ember · Hovel notes on Studio Mac", phone.dialogs.asked.last().title)
+            assertEquals("Studio Mac: $title · Ember · Hovel notes", phone.dialogs.asked.last().title)
             assertEquals(options, phone.dialogs.asked.last().choices.map { it.option })
             phone.dialogs.answer.complete(options.last())
             assertEquals(ApprovalPresentOutcome.ANSWERED, shown.await().outcome, kind.name)
@@ -177,6 +177,32 @@ class PhoneApprovalsTest {
         assertTrue(shown.await().isFailure)
         assertEquals(PhoneApprovalCopy.UNSENT, phone.dialogs.told.single())
         assertEquals(ApprovalState.OPEN, phone.server.approvals.getValue(approvalId).approval.state)
+    }
+
+    @Test
+    fun anAnswerAtARevisionThatMovedOnIsLostWhenTheApprovalEndedAndUnsentWhenItIsStillOpen() = runTest {
+        val phone = activePhone()
+        phone.server.approvals[approvalId] = openApproval(approvalId)
+        // the approval moved on under the dialog, then ended: the refusal reads how it ended
+        phone.server.beforeAnswer = { phone.server.bumpRevision(approvalId) }
+        phone.server.afterAnswer = { phone.server.answerElsewhere(approvalId, ApprovalOption.ALLOW_ONCE) }
+        val lost = async { phone.approvals.present(approvalId) }
+        runCurrent()
+        phone.dialogs.answer.complete(ApprovalOption.DENY)
+        assertEquals(ApprovalPresentOutcome.LOST, lost.await().outcome)
+        assertEquals("Already answered on Studio Mac", phone.dialogs.told.single().title)
+
+        // it moved on and is still open: the answer was not taken, and the phone says so
+        phone.server.approvals[otherId] = openApproval(otherId)
+        phone.server.beforeAnswer = { phone.server.bumpRevision(otherId) }
+        phone.server.afterAnswer = {}
+        phone.dialogs.answer = CompletableDeferred()
+        val unsent = async { runCatching { phone.approvals.present(otherId) } }
+        runCurrent()
+        phone.dialogs.answer.complete(ApprovalOption.DENY)
+        assertTrue(unsent.await().exceptionOrNull() is DeviceRefusedException)
+        assertEquals(PhoneApprovalCopy.UNSENT, phone.dialogs.told.last())
+        assertEquals(ApprovalState.OPEN, phone.server.approvals.getValue(otherId).approval.state)
     }
 
     @Test
@@ -221,7 +247,7 @@ class PhoneApprovalsTest {
         phone.server.approvals[approvalId] = openApproval(approvalId, ApprovalPresentation.MacOnly("Run a command outside the project folders"))
         assertEquals(ApprovalPresentOutcome.MAC_ONLY, phone.approvals.present(approvalId).outcome)
         val notice = phone.dialogs.told.single()
-        assertEquals("Ember · Hovel notes: answer on Studio Mac", notice.title)
+        assertEquals("Answer on Studio Mac · Ember · Hovel notes", notice.title)
         assertEquals("Run a command outside the project folders\n\nThis request names something outside the project's folders, " +
             "so only that Mac can answer it.", notice.message)
         assertEquals("OK", notice.button)
@@ -303,7 +329,7 @@ class PhoneApprovalsTest {
         phone.server.approvals[approvalId] = openApproval(approvalId, computer = OTHER_COMPUTER)
         assertEquals(ApprovalPresentOutcome.UNPAIRED, phone.approvals.present(approvalId).outcome)
         val notice = phone.dialogs.told.single()
-        assertEquals("Ember · Hovel notes: answer on Studio Mac", notice.title)
+        assertEquals("Answer on Studio Mac · Ember · Hovel notes", notice.title)
         assertTrue("Pair a phone…" in notice.message)
         assertTrue(phone.dialogs.asked.isEmpty())
         assertTrue(phone.server.answers.isEmpty())
@@ -397,7 +423,7 @@ class PhoneApprovalsTest {
         )
         val shown = async { phone.approvals.present(approvalId) }
         runCurrent()
-        assertEquals("Permission request · EmberAllow once · a project on Studio Mac", phone.dialogs.asked.single().title)
+        assertEquals("Studio Mac: Permission request · EmberAllow once · a project", phone.dialogs.asked.single().title)
         phone.dialogs.answer.complete(null)
         assertEquals(ApprovalPresentOutcome.DISMISSED, shown.await().outcome)
 

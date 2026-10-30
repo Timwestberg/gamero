@@ -1,5 +1,6 @@
 package org.formulagen.wrapper.phone
 
+import org.formulagen.wrapper.conversations.ApprovalDevice
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.jsonObject

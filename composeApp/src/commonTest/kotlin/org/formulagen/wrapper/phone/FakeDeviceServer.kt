@@ -1,5 +1,8 @@
 package org.formulagen.wrapper.phone
 
+import org.formulagen.wrapper.conversations.ApprovalDevice
+import org.formulagen.wrapper.conversations.ApprovalDevicePairing
+import org.formulagen.wrapper.conversations.ApprovalDeviceState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.KSerializer
@@ -52,6 +55,8 @@ internal class FakeDeviceServer : DeviceHttp {
     val requests = mutableListOf<DeviceRequest>()
     val revoked = mutableListOf<String>()
     var beforeAnswer: () -> Unit = {}
+    /** Runs once an answer's response is decided, before the phone gets it: what happens on the server meanwhile. */
+    var afterAnswer: () -> Unit = {}
     /** When set, every call fails as if the network were down. */
     var offline = false
     /** When the next pairing code runs out. */
@@ -92,7 +97,7 @@ internal class FakeDeviceServer : DeviceHttp {
             request.method == "GET" && rest.size == 2 && rest[0] == "approvals" ->
                 approvals[rest[1]]?.let { ok(DeviceApproval.serializer(), it.copy(paired = it.approval.computerId in granted)) }
                     ?: DeviceResponse(404, "{}")
-            request.method == "POST" && rest.size == 3 && rest[2] == "answer" -> answer(device, rest[1], request.body!!)
+            request.method == "POST" && rest.size == 3 && rest[2] == "answer" -> answer(device, rest[1], request.body!!).also { afterAnswer() }
             else -> DeviceResponse(404, "{}")
         }
     }
@@ -101,6 +106,12 @@ internal class FakeDeviceServer : DeviceHttp {
         val pairings = grants[device].orEmpty().sorted().map { ApprovalDevicePairing(it, "Studio Mac", "2026-10-29T12:00:00.000Z") }
         return ApprovalDevice(device, "iPhone", pairings, if (pairings.isEmpty()) "2026-10-29T12:10:00.000Z" else null, "ios",
             "2026-10-29T11:59:00.000Z", revokedAt, if (pairings.isEmpty()) ApprovalDeviceState.PENDING else ApprovalDeviceState.PAIRED)
+    }
+
+    /** The stored approval [id] moves on to another revision while it stays open, as a Mac's edit would. */
+    fun bumpRevision(id: String) {
+        val shown = approvals.getValue(id)
+        approvals[id] = shown.copy(approval = shown.approval.copy(revision = shown.approval.revision + 1))
     }
 
     /** Another surface answers [id] first: the Mac, or another phone. */

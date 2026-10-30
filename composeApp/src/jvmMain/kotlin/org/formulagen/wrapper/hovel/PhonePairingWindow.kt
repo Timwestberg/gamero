@@ -31,17 +31,19 @@ import kotlinx.coroutines.withContext
 
 /** What the "Pair a phone…" window says for each [PhonePairing.Outcome] that is not a success. */
 internal fun pairingMessage(outcome: PhonePairing.Outcome): String? = when (outcome) {
+    is PhonePairing.Outcome.Found -> outcome.phone.question
     is PhonePairing.Outcome.Done -> outcome.paired?.let { "Paired with ${it.name}. It can now answer this Mac's approvals." }
     PhonePairing.Outcome.Malformed -> "Type the six digits the phone shows."
     PhonePairing.Outcome.WrongCode -> "No phone shows that code. Check it, or show a new code on the phone."
-    PhonePairing.Outcome.TooManyAttempts -> "Too many wrong codes on this Mac. Wait a few minutes, then show a new code on the phone."
+    PhonePairing.Outcome.TooManyAttempts -> "Too many wrong codes on your Macs. Wait a few minutes, then show a new code on the phone."
     PhonePairing.Outcome.NotConnected -> "Connect this Mac to your account from Hovel first."
     PhonePairing.Outcome.Failed -> "Hovel could not reach the server. Try again."
 }
 
 /**
- * The "Pair a phone…" window, opened only from the Hovel menu: a field for the code the phone shows, and the phones
- * this Mac confirmed, each with Unpair. A phone appears here only once its code was typed here.
+ * The "Pair a phone…" window, opened only from the Hovel menu: a field for the code the phone shows, then the phone
+ * that code names with Pair and Cancel, and the phones this Mac confirms, each with Unpair. A phone is paired only on
+ * that second click.
  */
 @Composable
 internal fun PhonePairingWindow(pairing: PhonePairing, onClose: () -> Unit) {
@@ -50,12 +52,15 @@ internal fun PhonePairingWindow(pairing: PhonePairing, onClose: () -> Unit) {
     var phones by remember { mutableStateOf<List<PhonePairing.PairedPhone>>(emptyList()) }
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    /** The phone the typed code names, waiting for the person's Pair or Cancel. */
+    var found by remember { mutableStateOf<PhonePairing.Candidate?>(null) }
 
     fun run(call: () -> PhonePairing.Outcome) {
         if (busy) return
         busy = true
         scope.launch {
             val outcome = withContext(Dispatchers.IO) { call() }
+            found = (outcome as? PhonePairing.Outcome.Found)?.phone
             if (outcome is PhonePairing.Outcome.Done) {
                 phones = outcome.phones
                 if (outcome.paired != null) code = ""
@@ -79,14 +84,27 @@ internal fun PhonePairingWindow(pairing: PhonePairing, onClose: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = code,
-                        onValueChange = { typed -> code = typed.filter { it.isDigit() || it == ' ' || it == '-' }.take(8) },
+                        onValueChange = { typed ->
+                            code = typed.filter { it.isDigit() || it == ' ' || it == '-' }.take(8)
+                            // a new code asks again
+                            found = null
+                        },
                         label = { Text("Code") },
                         singleLine = true,
                         enabled = !busy,
                     )
-                    Button(onClick = { run { pairing.pair(code) } }, enabled = !busy && PhonePairing.codeOf(code) != null) { Text("Pair") }
+                    Button(onClick = { run { pairing.lookup(code) } }, enabled = !busy && found == null && PhonePairing.codeOf(code) != null) {
+                        Text("Find phone")
+                    }
                 }
                 message?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+                found?.let {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { run { pairing.pair(code) } }, enabled = !busy) { Text("Pair") }
+                        OutlinedButton(onClick = { found = null; message = null }, enabled = !busy) { Text("Cancel") }
+                    }
+                    Text("Pair only a phone you are holding. If you don't recognize it, Cancel.", style = MaterialTheme.typography.bodySmall)
+                }
                 Text("Phones paired with this Mac", style = MaterialTheme.typography.titleSmall)
                 if (phones.isEmpty()) Text("None yet.", style = MaterialTheme.typography.bodyMedium)
                 phones.forEach { phone ->

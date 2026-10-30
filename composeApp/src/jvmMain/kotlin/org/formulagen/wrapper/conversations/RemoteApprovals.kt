@@ -16,7 +16,6 @@ import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.approvalDialog
 import org.formulagen.wrapper.hovel.HovelRejectedException
 import org.formulagen.wrapper.logger.LogLevel
-import org.formulagen.wrapper.phone.PhoneApprovalCopy
 import org.formulagen.wrapper.logger.log
 
 /**
@@ -126,12 +125,14 @@ internal class RemoteApprovals(
     fun conflict(closed: MessageCheckpoint.ApprovalClosed): ApprovalConflict? {
         val stored = runCatching { api.approval(closed.approvalId) }.getOrNull() ?: return null
         val winner = stored.answer?.takeIf { stored.state == ApprovalState.ANSWERED && it.by != ApprovalSurface.MAC } ?: return null
-        val applied = receipt(closed.approvalId)?.option
+        // what ran here is the close itself, persisted with it, so the note survives a restart
+        val applied = (closed.outcome as? ApprovalOutcome.Answered)?.option
         if (applied == winner.option) return null
-        val mine = applied?.let { "“${PhoneApprovalCopy.label(it)}”" } ?: "no answer"
+        val label = { option: ApprovalOption -> "“${MacApprovalLabels.of(stored.kind, option)}”" }
+        val mine = applied?.let { "chose ${label(it)}" } ?: "went on with no answer"
         return ApprovalConflict(stored.threadId,
-            "This Mac could not reach Hovel and applied $mine to a request, but your phone answered " +
-                "“${PhoneApprovalCopy.label(winner.option)}” first. Hovel shows the phone's answer; this Mac went on with its own.")
+            "This Mac could not reach Hovel and $mine on a request, but your phone answered ${label(winner.option)} " +
+                "first. Hovel shows the phone's answer; this Mac went on with its own.")
     }
 
     /** How approval [id] ended, while it is among the most recent. */

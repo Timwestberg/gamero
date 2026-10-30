@@ -176,7 +176,7 @@ fun main(args: Array<String>) {
                         }
                         if (pairing) {
                             val companion = resources.services?.companion
-                            val phones = remember(companion) { PhonePairing { companion?.nativeExchange() } }
+                            val phones = remember(companion) { PhonePairing({ companion?.nativeExchange() }) }
                             MaterialTheme { PhonePairingWindow(phones, onClose = { pairing = false }) }
                         }
                     }
