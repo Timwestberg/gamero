@@ -1,6 +1,6 @@
 /**
  * The hands-free loop: microphone chunks in, session frames and turns out.
- * A port of desktop's DesktopHearing.startSession with DesktopChat's playback
+ * A port of desktop's DesktopHearing.startSession with TalkLoop's playback
  * sync, in the same order per 100 ms chunk:
  *   1. a pending restart starts a new utterance, fed with the 300 ms pre-roll
  *      after a barge-in, or with just this chunk otherwise

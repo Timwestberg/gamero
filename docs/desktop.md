@@ -31,8 +31,8 @@ API `2024.04.20.4`; compatibility with the selected installed runtime remains a
 Mac validation gate. Closing waits off the UI thread for up to 15 seconds, then
 explicitly exits with failure if native initialization/shutdown stalled.
 
-The app does not sign in to Codex, register a computer, or run tasks in this step.
-Do not use native launch alone as Hovel task/result/reconnect acceptance.
+The app does not sign in to Codex, register a computer, or run conversations in this step.
+Do not use native launch alone as Hovel conversation/reconnect acceptance.
 
 ## Build boundaries
 

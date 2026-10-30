@@ -18,12 +18,11 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory tools
 export GAMERO_BROWSER_JAVA_HOME="<verified-JBR-with-JCEF>/Contents/Home"
 export GAMERO_PRODUCT=hovel
 export GAMERO_CODEX_PATH="/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
-export GAMERO_WORKSPACE="<existing-user-approved-read-only-workspace>"
 GAMERO_WEB_URL=http://127.0.0.1:8765/native-bridge-smoke.html ./gradlew :composeApp:run --console=plain
 ```
 
 Click Continue. Record visible HTML and Chromium user agent. Click Check native
-bridge: expect version1, connectComputer true, cloud false, sandbox read-only.
+bridge: expect version 1 and connectComputer true, and nothing else.
 Reload and repeat: expect a new context ID. Close; confirm JVM/browser termination.
 This fixture does not register a host, store credentials, sign in or execute Codex.
 
@@ -35,15 +34,15 @@ reply. With the companion configured, expect these replies:
 | `watchContext` | `{"version":2,"contextId":"<uuid>"}` |
 | `host.capabilities` | `ok:true`, methods `host.capabilities`, `host.info` and the three `companion.*` methods, and no events |
 | `host.info` | `ok:true`, `platform` `desktop`, `bridgeVersion` 2 |
-| `companion.capabilities` | `ok:true`, `connectComputer` true, `cloud` false, `sandbox` `read-only` |
+| `companion.capabilities` | `ok:true`, `{"connectComputer":true}` and nothing else |
 | `haptic.play` | `ok:false`, code `unsupported` |
 | `link.close` | `ok:false`, code `unknown-method` |
 | stale context | `ok:false`, code `expired` |
 | non-persistent watch | `ok:false`, code `invalid` |
 
-Without `GAMERO_CODEX_PATH` and `GAMERO_WORKSPACE`, the three `companion.*` methods
-are missing from `host.capabilities`, and `companion.capabilities` answers
-`unsupported`. Check native bridge (version 1) then fails with 403. That is the
+Outside the Hovel product, or off a Mac, the three `companion.*` methods are
+missing from `host.capabilities`, and `companion.capabilities` answers
+`unsupported`. Registration needs no provider: Codex only adds memory jobs. Check native bridge (version 1) then fails with 403. That is the
 expected result, because only the companion uses version 1. The page also logs
 the whole result after `GAMERO_BRIDGE_V2_SMOKE`.
 
@@ -63,61 +62,46 @@ facts and a per-context UUID gate every operation. Context release cancels the
 persistent query and invalidates pending authorization. Actual injection and
 cancellation delivery must be verified against the installed runtime.
 
-## 2. Hovel registration and genuine task acceptance
+## 2. Hovel registration and conversation acceptance
 
-> Project conversations (companion projects step C) run beside Hovel tasks, which
-> stay until step E removes the web task UI; the task steps below still apply
-> with `GAMERO_WORKSPACE` set. The conversation run, against a hovel-service
-> with the conversation routes (server-platform main since step B): register
-> once, then quit and relaunch Hovel and confirm the status line reaches
-> "Connected · Conversations run on this Mac" with no page action. Then, from a
-> browser on the same Mac: send a message in a talk-only project (the reply
-> streams); choose a working folder with `project.chooseFolder` and send work to
-> a working specialist (the start of work asks natively, the thread fills in);
-> reply in the thread; quit mid-turn and relaunch (the message settles
-> `reconciliation-required` and does not run again); go offline, send, come
-> back (it runs once). See [hovel-companion.md](hovel-companion.md).
-
-Use the server-platform Hovel service PR stack, tool-webkit ConnectionCard stack,
-and game-platform Hovel/native-connection stack. Follow server-platform
-`docs/hovel/hovel.README.md` for PostgreSQL configuration, migration and explicit
-`pnpm start:hovel`; the service binds127.0.0.1:3007. Enable the existing optional
-edge Hovel proxy and serve the game host's `/hovel` page with its Godot export.
-Use the application's actual account sign-in; do not create substitute credentials.
+Use the server-platform Hovel service and the game-platform Hovel/companion pages.
+Follow server-platform `docs/hovel/hovel.README.md` for PostgreSQL configuration,
+migration and explicit `pnpm start:hovel`; the service binds 127.0.0.1:3007.
+Enable the existing optional edge Hovel proxy and serve the game host's `/hovel`
+page with its Godot export. Use the application's actual account sign-in; do not
+create substitute credentials.
 
 Set GAMERO_WEB_URL to that Hovel account UI and relaunch with the same native
 configuration above. The registered profile is scoped to this configured URL.
-Sign in to Codex on this Mac with `codex login` in Terminal, then open
-**Profile → Providers** in that same Hovel account and choose Check again until
-Codex shows Connected. Hovel uses the player's own Codex login (Codex's default
-home) for the Providers card, companion chat and the approved task adapter alike,
-and never signs in or out itself; no provider token enters the web view or Hovel
-service. Provider connection alone does not register this computer.
+Sign in to at least one runtime on this Mac (`codex login` or `claude auth login`
+in Terminal), then open **Profile → Providers** in that same Hovel account and
+choose Check again until it shows Connected. Hovel uses the player's own logins
+for the Providers card, conversation turns and memory jobs alike, and never signs
+in or out itself; no provider token enters the web view or Hovel service. Provider
+connection alone does not register this computer.
 
 **Approval gate for the coordinator:** the validator's read-only browser permission
-does not itself authorize storing a host credential or launching a provider task.
-Have Tim approve the concrete native computer-connection dialog before continuing.
-It identifies the account, server and workspace and explains Keychain persistence
-and read-only execution. Do not bypass Keychain/macOS prompts.
+does not itself authorize storing a host credential. Have Tim approve the concrete
+native computer-connection dialog before continuing. It identifies the account and
+server and explains Keychain persistence. Do not bypass Keychain/macOS prompts.
 
 After native approval, web registration sends only host identity and a SHA256
-digest. The native bearer stays in Keychain and native HTTP memory. The companion
-polls heartbeat every10seconds and executes one host-pinned local task at a time.
-Cloud capability remains false. No silent migration or automatic ambiguous retry.
+digest. The native bearer stays in Keychain and native HTTP memory. The heartbeat
+runs every 10 seconds; its `providerState` is `ready` once a runtime is ready.
 
-Submit one explicitly approved bounded prompt such as: `Reply with Hovel connection
-verified. Do not use tools or modify files.` Record server task ID, pinned host ID,
-claimed/running/succeeded states and actual result. Disconnect/reconnect the app
-and confirm the same task is not launched again. For a deliberately interrupted
-launch, expect reconciliation-required rather than automatic execution. Inspect
-another host selection/readiness separately. Use test accounts/data only as
-explicitly authorized by the coordinator.
+Register once, then quit and relaunch Hovel and confirm the status line reaches
+"Connected · Conversations run on this Mac" with no page action. Then, from a
+browser on the same Mac: send a message in a talk-only project (the reply
+streams); choose a working folder with `project.chooseFolder` and send work to a
+working specialist (the start of work asks natively, the thread fills in); reply
+in the thread; quit mid-turn and relaunch (the message settles
+`reconciliation-required` and does not run again); go offline, send, come back
+(it runs once). See [hovel-companion.md](hovel-companion.md).
 
-The existing native journals and output files retain reconciliation evidence.
-Closing stops polling and interrupts local execution; interrupted claims remain
-ambiguous. Restart requires the user's explicit Connect computer/native approval
-again and reuses the same persisted host identity. Native profile switching across
-accounts is intentionally rejected in this first slice.
+Closing stops the heartbeat and the stream and interrupts local turns; an
+interrupted claim settles `reconciliation-required`. Restart reconnects from the
+persisted registration and Keychain token. Native profile switching across
+accounts is intentionally rejected.
 
 ## 3. Memory: recalled notes and a memory job
 
@@ -129,24 +113,24 @@ settings with this computer as the extraction computer.
    installed version. Confirm `exec` takes `-m <model>` and that
    `-c model_reasoning_effort="low"` is accepted before `exec`. If not, change
    `codexExecArguments` in `companion/CodexCliProvider.kt` before going on.
-2. **A memory job.** Finish one approved task, then wait for the next local day
-   (or use a test account with an earlier finished day). Within 5 minutes the
-   companion calls `memory/consolidate`, the next heartbeat brings a memory job,
-   and it runs beside any running task. Confirm it reaches `succeeded` and the
+2. **A memory job.** Get one coordinator answer in a conversation, then wait for
+   the next local day (or use a test account with an earlier finished day).
+   Within 5 minutes the companion calls `memory/consolidate`, the next heartbeat
+   brings a memory job, and it runs beside any running conversation. Confirm it reaches `succeeded` and the
    day's notes appear in Hovel. Repeat with a named model and `high` effort in
    memory settings and confirm Codex used them.
-3. **No project instructions.** Put an `AGENTS.md` in the player's workspace
-   that asks for a different output. Confirm the memory job's result is still
-   memory JSON: memory jobs run in `memory-workspace-<hostId>`, not the
-   workspace. Repeat with one in `~/.codex/AGENTS.md`: memory jobs use the
+3. **No project instructions.** Put an `AGENTS.md` in a project's working
+   folder that asks for a different output. Confirm the memory job's result is
+   still memory JSON: memory jobs run in `memory-workspace-<hostId>`, not a
+   project folder. Repeat with one in `~/.codex/AGENTS.md`: memory jobs use the
    player's own Codex home, so if `--ignore-user-config` does not keep it out,
    record that here before release.
-4. **One login, two runs.** Start a long task, let a memory job run beside it,
-   then confirm `codex login status` still reports a ChatGPT login. Both runs
-   share one sign-in and may refresh it at the same time.
-5. **Recalled memory.** Submit an approved task for the same character. Confirm
-   the task's recalled notes appear in Codex's input in their own section,
-   between the character context and the task.
+4. **One login, two runs.** Start a long Codex turn in a conversation, let a
+   memory job run beside it, then confirm `codex login status` still reports a
+   ChatGPT login. Both runs share one sign-in and may refresh it at the same time.
+5. **Recalled memory.** Send a message to the same companion. Confirm the claim
+   carries recalled notes and the coordinator's input shows them in their own
+   section, apart from the person's message.
 
 Memory job receipts and output stay in `memory-journal-<hostId>` and
-`memory-output-<hostId>`, apart from the task journal.
+`memory-output-<hostId>`.
