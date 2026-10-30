@@ -49,6 +49,31 @@ class ExecutionCoordinatorTest {
         }
     }
 
+    @Test fun aRecordWrittenBeforeTasksWereRemovedReadsAsTheSameRequest() {
+        val dir = Files.createTempDirectory("journal")
+        val prepared = request().copy(choice = ProviderChoice("gpt-5.4-mini", "low"))
+        val launched = request()
+        val claimIds = listOf(UUID.randomUUID().toString(), UUID.randomUUID().toString())
+        // As the journal wrote a memory job's record when it still ran Hovel tasks too.
+        fun old(request: ExecutionRequest, claimId: String, phase: String) = buildString {
+            append("""{"request":{"id":"${request.id}","hostId":"$host","prompt":"${request.prompt}","context":"",""")
+            append(""""rawPrompt":true""")
+            request.choice?.let { append(""","choice":{"model":"${it.model}","effort":"${it.effort}"}""") }
+            append("""},"claimId":"$claimId","phase":"$phase","result":null}""")
+        }
+        Files.createDirectories(dir)
+        Files.writeString(dir.resolve("${prepared.id}.json"), old(prepared, claimIds[0], "PREPARED"))
+        Files.writeString(dir.resolve("${launched.id}.json"), old(launched, claimIds[1], "LAUNCHING"))
+        ExecutionJournal(dir, host).use { journal ->
+            assertEquals(ExecutionRecord(prepared, claimIds[0]), journal.read(prepared.id))
+            assertEquals(claimIds[0], journal.prepare(prepared).claimId)
+            val remote = Remote()
+            val result = ExecutionCoordinator(journal, { error("must not launch") }, remote).accept(launched)
+            assertEquals(ExecutionPhase.RECONCILIATION_REQUIRED, result.phase)
+            assertEquals(claimIds[1], result.claimId)
+        }
+    }
+
     @Test fun crashedLaunchNeverExecutesAfterRestart() {
         val dir = Files.createTempDirectory("journal")
         val task = request()

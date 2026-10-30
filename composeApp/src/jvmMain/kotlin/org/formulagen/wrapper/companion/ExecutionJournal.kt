@@ -63,7 +63,9 @@ data class ExecutionRecord(
 
 /** One process owns a host journal. Ambiguous launches are retained, never reset. */
 class ExecutionJournal(private val directory: Path, private val hostId: String) : AutoCloseable {
-    private val json = Json { encodeDefaults = true }
+    // Records written before Hovel tasks were removed also carry `context`, `recalledMemory` and `rawPrompt`; a
+    // memory job's record from then is the same request, so it reads as one rather than being offered forever.
+    private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
     private val lockChannel: FileChannel
     private val processLock: java.nio.channels.FileLock
     private var closed = false
