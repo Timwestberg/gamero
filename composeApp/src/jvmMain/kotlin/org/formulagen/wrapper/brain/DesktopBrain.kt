@@ -605,10 +605,6 @@ internal class DesktopBrain(
     }
 }
 
-/** The catalog model this binding runs on: the runtime's default for [SharedRules.RUNTIME_DEFAULT_MODEL], else the one named. */
-internal fun BrainBinding.model(models: List<ProviderModel>) =
-    models.find { if (modelId == SharedRules.RUNTIME_DEFAULT_MODEL) it.isDefault else it.modelId == modelId }
-
 /** UTF-8 text of any file name is text, Markdown by its extension in any case; anything else is a binary file. */
 internal fun inputMediaType(fileName: String, bytes: ByteArray): String {
     val text = runCatching {

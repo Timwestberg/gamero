@@ -904,25 +904,3 @@ private fun notReadyNotice(runtime: RuntimeId, readiness: Readiness) = when (rea
 private fun signedOutNotice(runtime: RuntimeId) = runtime.copy.signedOut
 
 private fun couldNotComplete(runtime: RuntimeId) = "${runtime.copy.program} could not complete the request. Reconnect or retry when ready."
-
-/** The person-facing reason a turn failed. Raw runtime output never reaches it. */
-internal fun failureNotice(runtime: RuntimeId, failure: ChatFailure, zone: ZoneId = ZoneId.systemDefault()): String = when (failure) {
-    ChatFailure.ProjectTrustRequired -> "Work did not start. ${runtime.copy.product} needs your approval to trust this project and load its instructions."
-    ChatFailure.ProjectTrustTooBroad -> "Work did not start. ${runtime.copy.program} treats your home folder, or a folder above it, " +
-        "as this project, and Hovel will not ask you to trust all of that. Choose a project folder that is its own repository."
-    ChatFailure.SignedOut -> signedOutNotice(runtime)
-    is ChatFailure.UsageLimit -> "You've reached your ${runtime.copy.product} usage limit. " +
-        (failure.resetsAt?.let { "It resets at ${resetTime(it, zone)}." } ?: "Try again later.")
-    ChatFailure.ModelUnavailable -> "${runtime.copy.product} can't use this model. Choose another model and try again."
-    ChatFailure.Temporary -> "The reply stopped. Try again when ${runtime.copy.product} is ready."
-    ChatFailure.ConversationLost -> "${runtime.copy.product} could not continue this conversation. Send your message again to start fresh."
-    ChatFailure.Lockdown -> "${runtime.copy.program} started with tools or plugins that companion chat does not allow, so the reply was stopped."
-    ChatFailure.Unexpected -> "${runtime.copy.product} could not finish this reply. Check Providers and try again."
-}
-
-/** "3:00 PM" today, otherwise the date too, in the Mac's time zone. */
-private fun resetTime(at: Instant, zone: ZoneId): String {
-    val local = at.atZone(zone)
-    return if (local.toLocalDate() == LocalDate.now(zone)) DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).format(local)
-    else DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).format(local)
-}

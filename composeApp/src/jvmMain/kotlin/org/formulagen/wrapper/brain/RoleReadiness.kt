@@ -7,6 +7,10 @@ import org.formulagen.wrapper.bridge.*
  * functions so they cannot drift apart.
  */
 
+/** The catalog model this binding runs on: the runtime's default for [SharedRules.RUNTIME_DEFAULT_MODEL], else the one named. */
+internal fun BrainBinding.model(models: List<ProviderModel>) =
+    models.find { if (modelId == SharedRules.RUNTIME_DEFAULT_MODEL) it.isDefault else it.modelId == modelId }
+
 /**
  * Why a role cannot run now, by the brain's readiness reasons: no binding; its provider not signed in ([connected]);
  * its model or effort not in the provider's [models] (null when they could not be read); and for a working role,

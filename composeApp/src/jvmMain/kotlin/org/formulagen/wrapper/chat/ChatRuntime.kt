@@ -4,6 +4,10 @@ import org.formulagen.wrapper.bridge.ModelEffort
 
 import java.nio.file.Path
 import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.Serializable
@@ -12,6 +16,7 @@ import org.formulagen.wrapper.bridge.ChatWaiting
 import org.formulagen.wrapper.bridge.HandoverLimits
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.TeamMember
+import org.formulagen.wrapper.providers.copy
 
 /**
  * A runtime's own conversation with one companion: Codex's thread id or Claude Code's session id.
@@ -196,3 +201,25 @@ internal fun summaryInstruction(transcript: String): String =
 
 /** A runtime's summary text, trimmed and bounded; a blank summary is no summary. */
 internal fun boundSummary(text: String): String = text.trim().take(SUMMARY_LIMIT).trim().also { require(it.isNotEmpty()) { "Empty summary" } }
+
+/** The person-facing reason a turn failed. Raw runtime output never reaches it. */
+internal fun failureNotice(runtime: RuntimeId, failure: ChatFailure, zone: ZoneId = ZoneId.systemDefault()): String = when (failure) {
+    ChatFailure.ProjectTrustRequired -> "Work did not start. ${runtime.copy.product} needs your approval to trust this project and load its instructions."
+    ChatFailure.ProjectTrustTooBroad -> "Work did not start. ${runtime.copy.program} treats your home folder, or a folder above it, " +
+        "as this project, and Hovel will not ask you to trust all of that. Choose a project folder that is its own repository."
+    ChatFailure.SignedOut -> runtime.copy.signedOut
+    is ChatFailure.UsageLimit -> "You've reached your ${runtime.copy.product} usage limit. " +
+        (failure.resetsAt?.let { "It resets at ${resetTime(it, zone)}." } ?: "Try again later.")
+    ChatFailure.ModelUnavailable -> "${runtime.copy.product} can't use this model. Choose another model and try again."
+    ChatFailure.Temporary -> "The reply stopped. Try again when ${runtime.copy.product} is ready."
+    ChatFailure.ConversationLost -> "${runtime.copy.product} could not continue this conversation. Send your message again to start fresh."
+    ChatFailure.Lockdown -> "${runtime.copy.program} started with tools or plugins that companion chat does not allow, so the reply was stopped."
+    ChatFailure.Unexpected -> "${runtime.copy.product} could not finish this reply. Check Providers and try again."
+}
+
+/** "3:00 PM" today, otherwise the date too, in the Mac's time zone. */
+private fun resetTime(at: Instant, zone: ZoneId): String {
+    val local = at.atZone(zone)
+    return if (local.toLocalDate() == LocalDate.now(zone)) DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).format(local)
+    else DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).format(local)
+}

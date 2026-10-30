@@ -13,6 +13,7 @@ import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.chat.ChatFailure
 import org.formulagen.wrapper.chat.failureNotice
 import org.formulagen.wrapper.providers.copy
+import org.formulagen.wrapper.storage.Artifacts
 
 /*
  * The text the controller gives a model or shows in a native dialog. Instructions are part of a role's persona digest,
@@ -123,7 +124,7 @@ internal fun handoffText(inputs: List<HandoffInput>): String {
         val artifact = input.artifact
         val header = "Artifact ${artifact.id} (${artifact.title}, digest ${artifact.digest})"
         val file = input.file?.let { " The complete immutable file is $it." } ?: ""
-        if (artifact.mediaType == BrainStore.BINARY) {
+        if (artifact.mediaType == Artifacts.BINARY) {
             "$header: a binary file of ${input.bytes.size} bytes, which cannot be shown as text.$file"
         } else {
             val text = input.bytes.toString(Charsets.UTF_8)
