@@ -42,9 +42,10 @@ class MemoryJobLane(
     }
 
     private fun offer(response: JsonObject) {
-        val ready = checkReadiness() == CodexCliProvider.Readiness.READY
+        // Asking Codex starts a process, so it is asked only once a queued job would need it, and at most once.
+        val ready by lazy { checkReadiness() == CodexCliProvider.Readiness.READY }
         val job = response["memoryJobs"]?.jsonArray?.map { it.jsonObject }
-            ?.firstOrNull { isRunnableMemoryJob(it) && needsWork(it, ready) } ?: return
+            ?.firstOrNull { isRunnableMemoryJob(it) && needsWork(it) { ready } } ?: return
         val request = hovelMemoryJobRequest(job, hostId)
         if (!working.compareAndSet(false, true)) return
         executor.execute {
@@ -83,9 +84,9 @@ class MemoryJobLane(
         val FEATURES = listOf("memory-extraction")
 
         /** Unfinished on the server; a queued job only once Codex is ready to launch it. */
-        private fun needsWork(item: JsonObject, ready: Boolean): Boolean {
+        private fun needsWork(item: JsonObject, ready: () -> Boolean): Boolean {
             val state = item.getValue("progress").jsonObject.getValue("state").jsonPrimitive.content
-            return state in setOf("queued", "claimed", "running") && (state != "queued" || ready)
+            return state in setOf("queued", "claimed", "running") && (state != "queued" || ready())
         }
     }
 }

@@ -56,8 +56,11 @@ class MemoryJobLaneTest {
 
     private val statuses = java.util.Collections.synchronizedList(mutableListOf<String>())
 
+    private val readinessChecks = java.util.concurrent.atomic.AtomicInteger()
+
     private fun lane(server: Server, provider: TaskProvider, readiness: CodexCliProvider.Readiness = CodexCliProvider.Readiness.READY) =
-        MemoryJobLane(host, ExecutionJournal(Files.createTempDirectory("memory-journal"), host), provider, { readiness }, server) { statuses += it }
+        MemoryJobLane(host, ExecutionJournal(Files.createTempDirectory("memory-journal"), host), provider,
+            { readinessChecks.incrementAndGet(); readiness }, server) { statuses += it }
 
     /** One heartbeat as the conversation runner sends it, its answer handed to the lane. */
     private fun MemoryJobLane.beat(server: Server) = heartbeat(server.post("heartbeat", JsonObject(emptyMap())))
@@ -106,6 +109,19 @@ class MemoryJobLaneTest {
             lane.beat(server)
             assertEquals(listOf("heartbeat"), server.routes())
             assertEquals("queued", server.jobState())
+        }
+    }
+
+    @Test fun codexIsAskedOnlyWhenAQueuedJobNeedsIt() {
+        val server = Server(jobItem = null)
+        lane(server, { error("must not launch") }).use { lane ->
+            repeat(3) { lane.beat(server) }
+            assertEquals(0, readinessChecks.get())
+        }
+        val queuedJob = Server()
+        lane(queuedJob, { error("must not launch") }, CodexCliProvider.Readiness.AUTH_REQUIRED).use { lane ->
+            lane.beat(queuedJob)
+            assertEquals(1, readinessChecks.get())
         }
     }
 
