@@ -497,7 +497,9 @@ class VoiceConversationTest {
         eventually("the page is told it waits") { status().hearing.notice == TALK_QUEUED }
         val waiting = heardId()
         hearing(HearingAction.OFF)
-        server.queue(talk.id, Queued(talk.message("start the build", messageId = waiting)) { claimId, claimed -> talk.claim(claimId, claimed, document) })
+        server.queue(talk.id, Queued(talk.message("start the build", messageId = waiting)) { claimId, claimed ->
+            talk.claim(claimId, claimed, document)
+        })
         mac.runner.wake(talk.id)
         eventually("it runs as the person's message") { server.settled(waiting) == MessageState.ANSWERED }
         assertFalse(mac.store.stopsOnClaim(talk.id, waiting))
@@ -517,7 +519,9 @@ class VoiceConversationTest {
         mac.close()
         voice.close()
         voice = voice()
-        server.queue(talk.id, Queued(talk.message("start the build", messageId = waiting)) { claimId, claimed -> talk.claim(claimId, claimed, document) })
+        server.queue(talk.id, Queued(talk.message("start the build", messageId = waiting)) { claimId, claimed ->
+            talk.claim(claimId, claimed, document)
+        })
         mac = Mac(root)
         mac.runner.wake(talk.id)
         eventually("it runs after the relaunch") { server.settled(waiting) == MessageState.ANSWERED }
