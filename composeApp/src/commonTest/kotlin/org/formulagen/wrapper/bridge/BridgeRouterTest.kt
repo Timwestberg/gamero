@@ -381,6 +381,21 @@ class BridgeRouterTest {
         router.close()
     }
 
+    /** The capability gets the launched game and the companion exactly as the page sent them, or no companion. */
+    @Test
+    fun aLaunchCarriesItsCompanionToTheGame() = runTest {
+        val fakes = Fakes()
+        val router = router(HostPlatform.DESKTOP, fakes)
+        call(router, watch)
+        val fixture = Json.parseToJsonElement(HostBridgeFixtures.ROUTER.getValue("games-launch-companion.json")).jsonObject
+        assertTrue(call(router, rawOf(fixture)).single().getValue("ok").jsonPrimitive.boolean)
+        assertTrue(call(router, request(GameMethods.LAUNCH.name, buildJsonObject { put("gameId", "ember-overclock") })).single()
+            .getValue("ok").jsonPrimitive.boolean)
+        val ember = PetCompanion(PetAppearance("#ffde9c", "#ed8f40", "#856b4e", "#b3a185"), "10000000-0000-4000-8000-000000000001", "Ember")
+        assertEquals(listOf(GameId.EMBER_TOWER to ember, GameId.EMBER_OVERCLOCK to null), fakes.games.launches)
+        router.close()
+    }
+
     @Test
     fun anUnsupportedGamesCapabilityNeverListensForClosedGames() = runTest {
         val fakes = Fakes()

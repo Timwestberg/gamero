@@ -17,16 +17,34 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.encodeToString
 import org.formulagen.wrapper.companion.terminateProcessTreeInBackground
 
-/** Private desktop adapter; the child game alone owns its progression save. */
+/**
+ * A game a desktop host starts: the [engine] script that resolves the pinned Godot, the [project] it runs and the
+ * [scene] it opens. Only a [presentation] game talks to the host over the companion presentation socket.
+ */
+data class GodotGame(val engine: Path, val project: Path, val scene: String, val presentation: Boolean) {
+    companion object {
+        /** The companions game's scene in the Tower project. */
+        const val COMPANIONS_SCENE = "res://companions/main.tscn"
+
+        /** The companions game in [project], a Tower project, run by the project's own engine script. */
+        fun companions(project: Path) = GodotGame(project.resolve("scripts/godot.sh"), project, COMPANIONS_SCENE, presentation = true)
+    }
+}
+
+/**
+ * Private desktop adapter: runs one [game] as a child process and, for a presentation game, its loopback
+ * presentation session. The child game alone owns its progression save.
+ */
 class DesktopCompanionHost(
-    private val project: Path,
+    private val game: GodotGame,
     private val scope: CoroutineScope,
     val controller: PresentationController,
     private val environment: Map<String, String> = System.getenv(),
     private val gameArguments: List<String> = emptyList(),
 ) : AutoCloseable {
     private val session = UUID.randomUUID().toString()
-    private val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+    /** Only a presentation game gets a socket, so only it can ever connect. */
+    private val server = if (game.presentation) ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")) else null
     private val outgoing = Channel<HostMessage>(Channel.UNLIMITED)
     private val input = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val controllerInput = input.asSharedFlow()
@@ -34,7 +52,7 @@ class DesktopCompanionHost(
     val exitCode = mutableExit.asStateFlow()
     private val mutableConnected = MutableStateFlow(false)
     val connected = mutableConnected.asStateFlow()
-    private var game: Process? = null
+    private var process: Process? = null
     private val lifecycle = Any()
     private var closed = false
     @Volatile private var socket: Socket? = null
@@ -43,35 +61,39 @@ class DesktopCompanionHost(
     /** Start accepting before launching the game so the first handshake cannot race. */
     fun start() {
         job = scope.launch {
-            launch(Dispatchers.IO) {
-                while (isActive && !server.isClosed) {
-                    try { serve(server.accept()) }
-                    catch (error: Exception) {
-                        if (error is CancellationException) throw error
-                        if (!server.isClosed) withContext(Dispatchers.Main) { controller.disconnected() }
+            server?.let { server ->
+                launch(Dispatchers.IO) {
+                    while (isActive && !server.isClosed) {
+                        try { serve(server.accept()) }
+                        catch (error: Exception) {
+                            if (error is CancellationException) throw error
+                            if (!server.isClosed) withContext(Dispatchers.Main) { controller.disconnected() }
+                        }
                     }
                 }
             }
             try {
                 val scenario = environment["HOVEL_PRESENTATION_SCENARIO"]
                 val command = buildList {
-                    add(project.resolve("scripts/godot.sh").toString())
+                    add(game.engine.toString())
                     addAll(gameArguments)
                     if (environment["HOVEL_PRESENTATION_HEADLESS"] == "1") add("--headless")
-                    addAll(listOf("--path", project.toString()))
-                    if (scenario != null) addAll(listOf("-s", scenario)) else add("res://companions/main.tscn")
+                    addAll(listOf("--path", game.project.toString()))
+                    if (scenario != null) addAll(listOf("-s", scenario)) else add(game.scene)
                 }
-                val process = withContext(Dispatchers.IO) {
+                val started = withContext(Dispatchers.IO) {
                     synchronized(lifecycle) {
                         check(!closed) { "Host already closed" }
-                        ProcessBuilder(command).directory(project.toFile()).inheritIO().apply {
+                        ProcessBuilder(command).directory(game.project.toFile()).inheritIO().apply {
                             environment().putAll(this@DesktopCompanionHost.environment)
-                            environment()["HOVEL_PRESENTATION_PORT"] = server.localPort.toString()
-                            environment()["HOVEL_PRESENTATION_SESSION"] = session
-                        }.start().also { game = it }
+                            server?.let { server ->
+                                environment()["HOVEL_PRESENTATION_PORT"] = server.localPort.toString()
+                                environment()["HOVEL_PRESENTATION_SESSION"] = session
+                            }
+                        }.start().also { process = it }
                     }
                 }
-                val code = withContext(Dispatchers.IO) { process.waitFor() }
+                val code = withContext(Dispatchers.IO) { started.waitFor() }
                 mutableExit.value = code
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
@@ -140,13 +162,13 @@ class DesktopCompanionHost(
      * process tree is signalled now and force-killed after the grace period in the background.
      */
     override fun close() {
-        val process = synchronized(lifecycle) {
+        val running = synchronized(lifecycle) {
             closed = true
-            game
+            process
         }
-        process?.let { terminateProcessTreeInBackground(it, "hovel-game-stop") }
+        running?.let { terminateProcessTreeInBackground(it, "hovel-game-stop") }
         socket?.close()
-        server.close()
+        server?.close()
         job?.cancel()
     }
 }

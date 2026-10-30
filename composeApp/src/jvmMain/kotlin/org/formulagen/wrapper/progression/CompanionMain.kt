@@ -5,7 +5,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
-import java.nio.file.Path
 import java.util.UUID
 import java.awt.Desktop
 import java.awt.event.ComponentAdapter
@@ -13,16 +12,18 @@ import java.awt.event.ComponentEvent
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import javax.swing.SwingUtilities
+import org.formulagen.wrapper.bridge.GameId
+import org.formulagen.wrapper.progression.embedded.desktopGame
 
 /** Standalone desktop entry into the same commonMain screens used by future hosts. */
 fun main() {
     var processExit = 0
     application {
-        val project = System.getenv("HOVEL_GAME_PROJECT")?.let(Path::of)
-            ?: error("Set HOVEL_GAME_PROJECT to games/ember-tower in the companion checkout.")
+        val game = desktopGame(System.getenv(), GameId.HOVEL_COMPANIONS)
+            ?: error("Set HOVEL_GAMES_ROOT to the games folder of the game-platform checkout.")
         val scope = rememberCoroutineScope()
         val controller = remember { PresentationController { UUID.randomUUID().toString() } }
-        val host = remember { DesktopCompanionHost(project, scope, controller) }
+        val host = remember { DesktopCompanionHost(game, scope, controller) }
         val state by controller.state.collectAsState()
         val exitCode by host.exitCode.collectAsState()
         val connected by host.connected.collectAsState()

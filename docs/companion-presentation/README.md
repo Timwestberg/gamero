@@ -6,7 +6,7 @@ For the macOS prototype with the game and these screens in **one window**, use [
 
 ```sh
 # Java 21; the companion prototype must already be imported by Godot.
-HOVEL_GAME_PROJECT=/absolute/game-platform/games/ember-tower ./gradlew :composeApp:runCompanions
+HOVEL_GAMES_ROOT=/absolute/game-platform/games ./gradlew :composeApp:runCompanions
 ```
 
 Use `games/ember-tower/scripts/play-companions-glass.sh` in the game checkout to handle import and launch together. `HOVEL_REDUCED_EFFECTS=1` starts with motion/transparency reduced. The normal Gamero WebView entry point is unchanged.
@@ -15,12 +15,12 @@ Use `games/ember-tower/scripts/play-companions-glass.sh` in the game checkout to
 - `PresentationController.kt`: preview, confirm, retry and refresh state.
 - `CompanionGlass.kt`: shared palette and small companion portrait.
 - `CompanionPresentation.kt`: responsive screens and semantic controls.
-- `DesktopCompanionHost.kt`: loopback session and game process.
+- `DesktopCompanionHost.kt`: the game process (`GodotGame`) and, for the companions game, its loopback session.
 - `CompanionMain.kt`: native prototype window lifecycle.
 
 [Behavior, architecture, usage and test guide](../../../game-platform/docs/hovel-companions/companion-presentation.README.md) live beside the authoritative game feature. Android/iOS hosting needs an adapter; both targets compile the same shared screens.
 
-Run `HOVEL_GAME_PROJECT=/absolute/game-platform/games/ember-tower ./gradlew :composeApp:jvmTest` for real game integration. Tests write disposable saves and UI captures under `composeApp/build/reports/companion-presentation`.
+Run `HOVEL_GAMES_ROOT=/absolute/game-platform/games ./gradlew :composeApp:jvmTest` for real game integration. Tests write disposable saves and UI captures under `composeApp/build/reports/companion-presentation`.
 
 `CompanionOneFloorTest` drives real arena combat through rendered Compose previews, confirmation, resume and the success receipt. Set `HOVEL_ONE_FLOOR_RENDERED=1` for native Godot captures. Add `--rerun-tasks` after external Godot changes. See the [one-floor playtest guide](../../../game-platform/docs/hovel-companions/one-floor-playtest.TEST.md) for evidence and human checks.
 
@@ -87,11 +87,11 @@ Every environment variable the desktop companion path reads. The launchers take 
 | `JAVA_HOME` | `/usr/libexec/java_home -v 21` | `dev-env.sh`, Gradle, the packaging scripts | JDK for builds, jpackage and the embed library's JNI headers; the runtime of the standalone embedded app. |
 | `GAMERO_BROWSER_JAVA_HOME` | none; Play From Catalog requires it | `build.gradle.kts`, `package-catalog-macos.sh` | JetBrains Runtime with JCEF that the catalog app bundles and runs on. |
 | `GAME_PLATFORM_SIBLING_ROOT` | the folder above this checkout | `dev-env.sh`, game-platform's Vite config | Folder that holds the `game-platform` and `server-platform` checkouts; base of the next two defaults. |
-| `HOVEL_GAME_PROJECT` | `$GAME_PLATFORM_SIBLING_ROOT/game-platform/games/ember-tower` | `dev-env.sh`, `main.kt`, `DesktopGameLauncher`, `EmbeddedCompanionWindow`, `CompanionMain`, tests | Companion game project. Its `scripts/godot.sh` must report Godot `4.8.beta1.official.4d10419ca`. Unset in the app, `games.launch` answers `unsupported`; unset in tests, real-Godot tests skip. |
+| `HOVEL_GAMES_ROOT` | `$GAME_PLATFORM_SIBLING_ROOT/game-platform/games` | `dev-env.sh`, `DesktopServices`, `DesktopGameLauncher` (`DesktopGames.kt`), `CompanionMain`, the standalone embedded app, tests | Folder of the game projects the app launches: Hovel Companions (`ember-tower`, `res://companions/main.tscn`), Ember Tower (`ember-tower`, `res://game/main.tscn`) and Ember: Overclock (`ember-overclock`, `res://game/main.tscn`). Every game runs through `ember-tower/scripts/godot.sh`, which must report Godot `4.8.beta1.official.4d10419ca`. Unset in the app, `games.launch` answers `unsupported`; unset in tests, real-Godot tests skip. It replaces `HOVEL_GAME_PROJECT`: `dev-env.sh` stops when only the old variable is set. |
 | `GAME_PLATFORM_CONTRACTS_ROOT` | `$GAME_PLATFORM_SIBLING_ROOT/server-platform/event-contracts` | `dev-env.sh`, the catalog's Vite server | Event-contracts checkout the web catalog builds against. Play From Catalog stops if it is missing. |
 | `GAMERO_CATALOG_PORT` | `8133` | Play From Catalog, game-platform `companionLauncher.ts` | Loopback port of the catalog server; Play From Catalog sets `GAMERO_WEB_URL` from it. |
 | `HOVEL_EMBED_LIBRARY` | `build/embedded-godot/libhovel_embed.dylib`, always | `DesktopGameLauncher`, `MacGameLayer` | JAWT layer bridge for the embedded game. A missing file fails the launch with a log line instead of a crash. |
-| `HOVEL_COMPANION_SAVE` | catalog: `~/Library/Application Support/Gamero/companions/save.json`; standalone: a new temporary file | `DesktopGameLauncher`, `EmbeddedCompanionWindow`, the game | Progression save the game owns. Never share one between running games. |
+| `HOVEL_COMPANION_SAVE` | catalog: `~/Library/Application Support/Gamero/companions/save.json`; standalone: a new temporary file | `DesktopGameLauncher`, `EmbeddedGameWindow`, the companions game | Progression save the companions game owns; Tower and Overclock never get it. Never share one between running games. |
 | `HOVEL_PET_PROJECT` | `<game-platform>/ember-desktop-pet` | Play From Catalog, `DesktopPetLauncher` | Ember desktop pet project. Missing build files report the pet unavailable. |
 | `HOVEL_PET_GODOT` | `/Applications/Godot.app/Contents/MacOS/Godot` | Play From Catalog, `DesktopPetLauncher` | Godot 4.7.2 executable for the pet. |
 | `HOVEL_KOKORO_MODEL` | `spikes/ember-voice/mac/models/kokoro-multi-lang-v1_0` | `dev-env.sh`, `desktopVoiceConfig` | Kokoro v1.0 folder for Mac voice. Needs `model.onnx`, `voices-blends.bin`, `tokens.txt`, and `lexicon-us-en.txt`. Missing, or sherpa-onnx not linked: voice is unavailable and conversations are text only. |
@@ -118,4 +118,4 @@ Every environment variable the desktop companion path reads. The launchers take 
 | `HOVEL_CHAT_CLAUDE_SMOKE` | unset | `TalkRuntimeSmokeTest` | Path to a signed-in `claude`; runs two short Haiku turns (a new session, then a resume) on that sign-in. |
 | `HOVEL_CLAUDE_WORK_SMOKE` | unset | `TalkRuntimeSmokeTest` | Path to a signed-in `claude`: runs one short Haiku working turn on the owner's full setup in a fresh scratch folder (never a real project); the test's broker allows only an edit of `notes.txt` and denies everything else. Prints states only. |
 
-The host sets some variables for its children rather than reading them: `HOVEL_PRESENTATION_PORT`, `HOVEL_PRESENTATION_SESSION` and `HOVEL_EMBEDDED` for the game, `HOVEL_COMPANION_APPEARANCE` for the pet, and nothing for Codex children: they keep the player's own `CODEX_HOME`.
+The host sets some variables for its children rather than reading them: `HOVEL_EMBEDDED` for every launched game, `HOVEL_PRESENTATION_PORT` and `HOVEL_PRESENTATION_SESSION` for the companions game only, `HOVEL_EMBER_PROFILE` for a game launched as a companion (the `EmberProfile` v1 it writes to `~/Library/Application Support/Gamero/companions/profiles/<companion id>.json`; without one the game plays its own Ember), `HOVEL_COMPANION_APPEARANCE` for the pet, and nothing for Codex children: they keep the player's own `CODEX_HOME`.

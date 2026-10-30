@@ -31,8 +31,18 @@ computer stays disabled. The full Hovel launch:
 GAMERO_PRODUCT=hovel \
 GAMERO_WEB_URL=http://127.0.0.1:8133/hovel \
 GAMERO_BROWSER_JAVA_HOME="<JBR with JCEF>/Contents/Home" \
+HOVEL_GAMES_ROOT=<game-platform>/games \
+HOVEL_EMBED_LIBRARY="$PWD/build/embedded-godot/libhovel_embed.dylib" \
 JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :composeApp:run
 ```
+
+`HOVEL_GAMES_ROOT` and `HOVEL_EMBED_LIBRARY` turn on the embedded games
+(Hovel Companions, Ember Tower, Ember: Overclock); build the library with
+`scripts/build-embedded-macos.sh`. Without them `games.launch` answers
+`unsupported`. A launch with a companion writes its `EmberProfile` to
+`~/Library/Application Support/Gamero/companions/profiles/<companion id>.json`
+and passes the path in `HOVEL_EMBER_PROFILE`. Every setting is in
+[Desktop companion settings](companion-presentation/README.md#desktop-companion-settings).
 
 `GAMERO_CODEX_PATH` is optional; without Codex the Mac runs conversations on the
 runtimes it has and takes no memory jobs.

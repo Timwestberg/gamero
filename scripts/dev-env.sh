@@ -20,10 +20,18 @@ export JAVA_HOME
 
 # Sibling checkouts, following game-platform's GAME_PLATFORM_SIBLING_ROOT
 # convention: the folder that holds game-platform and server-platform beside
-# this checkout. Point HOVEL_GAME_PROJECT or GAME_PLATFORM_CONTRACTS_ROOT at a
+# this checkout. Point HOVEL_GAMES_ROOT or GAME_PLATFORM_CONTRACTS_ROOT at a
 # worktree with another name.
 SIBLING_ROOT="${GAME_PLATFORM_SIBLING_ROOT:-$(cd "$GAMERO_ROOT/.." && pwd)}"
-export HOVEL_GAME_PROJECT="${HOVEL_GAME_PROJECT:-$SIBLING_ROOT/game-platform/games/ember-tower}"
+# HOVEL_GAMES_ROOT replaced the one-game HOVEL_GAME_PROJECT. Stop rather than
+# quietly launch the sibling checkout's games instead of the one it named.
+if [[ -n "${HOVEL_GAME_PROJECT:-}" && -z "${HOVEL_GAMES_ROOT:-}" ]]; then
+  echo "HOVEL_GAME_PROJECT is replaced by HOVEL_GAMES_ROOT, the games folder that holds ember-tower and ember-overclock. Set HOVEL_GAMES_ROOT=$(dirname "$HOVEL_GAME_PROJECT")." >&2
+  return 1
+fi
+# Every game the app launches (Hovel Companions, Ember Tower, Ember: Overclock)
+# is a project in this folder; DesktopGames.kt names each project and scene.
+export HOVEL_GAMES_ROOT="${HOVEL_GAMES_ROOT:-$SIBLING_ROOT/game-platform/games}"
 export GAME_PLATFORM_CONTRACTS_ROOT="${GAME_PLATFORM_CONTRACTS_ROOT:-$SIBLING_ROOT/server-platform/event-contracts}"
 
 # The native layer bridge that both embedded-game launchers build and load.
@@ -55,10 +63,11 @@ export HOVEL_VOICE_FILLER_MS="${HOVEL_VOICE_FILLER_MS:-450}"
 export HOVEL_HEARING_DUPLEX="${HOVEL_HEARING_DUPLEX:-auto}"
 export HOVEL_EMBER_AUDIO="${HOVEL_EMBER_AUDIO:-$VOICE_ROOT/deps/ember-audio/libember_audio.dylib}"
 
-# Stop unless the game project runs the pinned embedding engine.
+# Stop unless the games run the pinned embedding engine. Every game runs
+# through Tower's engine script (DESKTOP_GAME_ENGINE in DesktopGames.kt).
 require_embed_godot() {
   local found
-  found="$("$HOVEL_GAME_PROJECT/scripts/godot.sh" --version)"
+  found="$("$HOVEL_GAMES_ROOT/ember-tower/scripts/godot.sh" --version)"
   if [[ "$found" != "$EMBED_GODOT_VERSION" ]]; then
     echo "The embedded prototype requires Godot 4.8-beta1 ($EMBED_GODOT_VERSION); found $found." >&2
     return 1

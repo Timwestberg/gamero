@@ -7,26 +7,27 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.v2.runDesktopComposeUiTest
 import java.io.File
 import java.nio.file.Files
-import java.nio.file.Path
 import javax.imageio.ImageIO
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlin.test.*
+import org.formulagen.wrapper.bridge.GameId
+import org.formulagen.wrapper.progression.embedded.desktopGame
 import org.junit.Assume.assumeTrue
 
 @OptIn(ExperimentalTestApi::class)
 class CompanionOneFloorTest {
     /** Real arena rewards pass through rendered cards, confirmation and the success review. */
     @Test fun completeFloorThroughCompose() = runDesktopComposeUiTest(width = 1180, height = 820) {
-        val project = System.getenv("HOVEL_GAME_PROJECT")?.let(Path::of)
-        assumeTrue("Set HOVEL_GAME_PROJECT to run the actual one-floor playtest", project != null)
+        val game = desktopGame(System.getenv(), GameId.HOVEL_COMPANIONS)
+        assumeTrue("Set HOVEL_GAMES_ROOT to run the actual one-floor playtest", game != null)
         val save = Files.createTempDirectory("hovel-one-floor-ui-").resolve("save.json")
         val captures = File("build/reports/companion-presentation/one-floor").apply { mkdirs() }
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
         val controller = PresentationController { "floor-${System.nanoTime()}" }
-        val host = DesktopCompanionHost(requireNotNull(project), scope, controller, System.getenv() + mapOf(
+        val host = DesktopCompanionHost(requireNotNull(game), scope, controller, System.getenv() + mapOf(
             "HOVEL_COMPANION_SAVE" to save.toString(),
             "HOVEL_PRESENTATION_HEADLESS" to if (System.getenv("HOVEL_ONE_FLOOR_RENDERED") == "1") "0" else "1",
             "HOVEL_CAPTURE_DIR" to captures.absolutePath,
