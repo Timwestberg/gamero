@@ -17,10 +17,9 @@ All paths below are under
 
 | Part | File | Job |
 | --- | --- | --- |
-| `NativeBridge` | [companion/NativeBridge.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/companion/NativeBridge.kt) | JCEF message router. Checks browser, frame and origin, hands version 2 to `JcefHostBridge` and version 1 to `LegacyCompanionQueries`. |
-| `LegacyCompanionQueries` | [companion/LegacyCompanionQueries.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/companion/LegacyCompanionQueries.kt) | Version 1, kept only for the companion's legacy protocol until task B4 removes it: the watch, the context and the three companion methods. |
+| `NativeBridge` | [companion/NativeBridge.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/companion/NativeBridge.kt) | JCEF message router. Checks the browser and frame, and hands every query to `JcefHostBridge`, which answers version 2 and refuses anything else. |
 | `DesktopServices` | [DesktopServices.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt) | Builds the companion with the other desktop services, registers their v2 packs and closes them in reverse order. |
-| `NativeOriginPolicy` | same file, line 14 | Compares the frame's origin, read from JCEF, with the configured app URL. |
+| `TrustedOrigin` | [bridge/TrustedOrigin.kt](../composeApp/src/commonMain/kotlin/org/formulagen/wrapper/bridge/TrustedOrigin.kt) (commonMain) | Compares the frame's origin, read from JCEF, with the configured app URL's. Any path on that origin is trusted, so the page keeps the bridge between `/hovel` and `/companions/...`. |
 | `HovelCompanion` | [hovel/HovelCompanion.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelCompanion.kt) | Handles the bridge methods, shows the approval dialog, owns the registration file, starts the host session at activation and again at every launch. |
 | `MacHostCredentials` | [companion/MacHostCredentials.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/companion/MacHostCredentials.kt) | Stores and reads the host bearer token in the macOS Keychain. |
 | `HovelHttpTransport` | [hovel/HovelHostAdapter.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostAdapter.kt) | The only HTTP client that sends the host token to the server. |
@@ -42,8 +41,8 @@ else `codex` on `PATH` or an installed location) is optional: without it the
 Mac runs conversations on the runtimes it has, and no memory jobs. Codex's path
 is read only from the environment.
 
-Otherwise the companion's v2 methods answer `unsupported` and version 1 answers
-every query with `403`. On a product other than Hovel the window shows nothing.
+Otherwise the companion's v2 methods answer `unsupported`. On a product other
+than Hovel the window shows nothing.
 The companion's data directory is
 `~/Library/Application Support/Gamero/hovel-<sha256 of the app origin>`
 (`hovelStateFolder` in `HovelStateFolder.kt`), so each site gets its own
@@ -59,73 +58,55 @@ providers in that order.
 ## Bridge trust rules
 
 The page calls `window.gameroQuery({request, persistent, onSuccess, onFailure})`.
-The router names are `gameroQuery` and `gameroQueryCancel` (NativeBridge.kt line 95).
+The router names are `gameroQuery` and `gameroQueryCancel`.
 [tools/native-bridge-smoke.html](../tools/native-bridge-smoke.html) is a minimal
 working client.
 
-Every request goes through `NativeBridge.onQuery`, then (for version 1)
-`LegacyCompanionQueries.onQuery`, and is refused unless all of the following hold:
+Every request goes through `NativeBridge.onQuery`, then `JcefHostBridge.onQuery`
+(see [host-bridge.md](host-bridge.md)), and is refused unless all of the
+following hold:
 
 1. **Same browser, valid frame, main frame, trusted origin.** The browser id must
-   match, the frame must be valid and the main frame, and `NativeOriginPolicy`
-   must match the frame URL's scheme, host and port against the app URL. Default
+   match, the frame must be valid and the main frame, and `TrustedOrigin` must
+   match the frame URL's scheme, host and port against the app URL. Default
    ports are filled in, so `https://host` equals `https://host:443`. URLs with
    user info are rejected. The origin comes from JCEF's frame facts, never from
-   the request body. Failure returns `403`.
-2. **At most 4096 characters.** Longer requests get `403`.
-3. **Protocol version 1.** The body must be a JSON object with `"version": 1`,
-   or the request gets `400`. (Version 2 requests go to `JcefHostBridge`; see
-   [host-bridge.md](host-bridge.md).)
-4. **A live context.** The page first opens a persistent query with exactly
-   `{"version":1,"method":"watchContext","args":{}}`. Native code answers with a
-   fresh random `contextId` and remembers the calling frame id.
-   Every later call must be non-persistent, carry exactly the keys `version`,
-   `method`, `args` and `contextId`, use the current `contextId`, and come from
-   the same frame id. Anything else gets `403 Native context expired`.
-5. **A companion method.** Only `capabilities`, `prepareConnection` and
-   `activateConnection` are dispatched. Chat, providers, pet and games are v2
-   capabilities; their names, or any other, get `400 Unknown native method`.
+   the request body. An untrusted frame's version 2 request gets the
+   `forbidden` envelope; anything else from it gets `403`.
+2. **Version 2.** The body must be a host-bridge v2 message. Anything else,
+   the companion's old version 1 protocol included, gets `400 Invalid native
+   protocol` and reaches no capability.
+3. **A live context.** The page first opens a persistent `watchContext` query;
+   every call carries that context, and a navigation or reload ends it.
 
-A new `watchContext` call, a cancelled watch query (for example on reload or
-navigation), or `close()` end the version 1 context: the context and frame ids
-are cleared, every pending version 1 call is cancelled, and
-`HovelCompanion.invalidatePending` voids any open approval. Cancelling a single
-pending call cancels only that call and voids the approval; it never ends the
-page's version 2 context, so an open chat view or game stays open. The page's
-version 2 context ending (`JcefHostBridge`) calls `DesktopServices.invalidate`,
-which ends the chat view, closes the game and voids the approval. Errors inside
-a method never reach the page in detail: the page sees `400 Native action
-failed; inspect the companion status`.
+The page's version 2 context ending calls `DesktopServices.invalidate`, which
+closes the game and voids the connection approval
+(`HovelCompanion.invalidatePending`). Errors inside a method never reach the
+page in detail: it gets the `failed` envelope.
 
-`NativeOriginPolicy` has a unit test
-(`nativeOriginPolicyRejectsChildOpaqueAndLookalikeFrames` in
-[HovelAdapterTest.kt](../composeApp/src/jvmTest/kotlin/org/formulagen/wrapper/hovel/HovelAdapterTest.kt)).
-`LegacyCompanionQueriesTest` covers the context, frame and method checks and
-cancellation without JCEF. The browser and frame checks in `NativeBridge` and
-the size cap need a live JCEF, and the smoke page does not exercise them:
-[native-bridge-smoke.html](../tools/native-bridge-smoke.html) only opens
-`watchContext`, calls `capabilities` and offers a reload.
+`TrustedOriginTest` covers the origin rules, and `JcefHostBridgeTest` the
+frame check, the refusal of anything that is not version 2, and a page moving
+between `/hovel` and `/companions/...`. The browser check in `NativeBridge`
+needs a live JCEF.
 
 ## Bridge methods
 
-`HovelCompanion.dispatch` (HovelCompanion.kt lines 68-129) handles three methods.
-Any other name fails.
+`HovelCompanionCapability` serves `companion.*` through `HovelCompanion.dispatch`:
 
 | Method | Args | Returns |
 | --- | --- | --- |
-| `capabilities` | `{}` | `version` 1, `connectComputer` true, `cloud` false, `sandbox` `read-only` |
-| `prepareConnection` | `ownerId` (UUID) | host `id`, `name`, and `tokenHash` |
-| `activateConnection` | `ownerId`, `hostId` | host `id`, `connected` true |
+| `companion.capabilities` | `{}` | `connectComputer` true |
+| `companion.prepareConnection` | `ownerId` (UUID) | host `id`, `name`, and `tokenHash` |
+| `companion.activateConnection` | `ownerId`, `hostId` | host `id`, `connected` true |
 
-Only one non-`capabilities` call runs at a time. A second call while one is
-pending fails as busy (line 74). Each call
-records the companion's generation when it starts and fails if
-`invalidatePending` or `close` bumps it before the call finishes.
+Only one `prepareConnection` or `activateConnection` runs at a time; a second
+while one is pending answers `busy`. Each call records the companion's
+generation when it starts and fails if `invalidatePending` or `close` bumps it
+before the call finishes.
 
-`invalidatePending` also clears the approved registration
-(HovelCompanion.kt line 212). So after any reload, `activateConnection` fails
-with "Native approval is required" until the page calls `prepareConnection`
-again.
+`invalidatePending` also clears the approved registration. So after any reload,
+`activateConnection` fails with "Native approval is required" until the page
+calls `prepareConnection` again.
 
 ## Connecting a Mac
 
@@ -582,13 +563,11 @@ person can retry it.
 
 | Seen | Meaning |
 | --- | --- |
-| `403 Native request unavailable for this frame` | Wrong frame, wrong origin, closed bridge, or request over 4096 characters. |
-| `403 Native context expired` | Missing or old `contextId`, different frame, or a reload happened. |
-| `400 Invalid native protocol` | The request is not a JSON object with `"version": 1`. |
-| `400 Unknown native method` | A version 1 call for anything but the three companion methods. Providers, pet and games are host-bridge v2 only. |
-| `400 Native action failed; inspect the companion status` | A bridge method threw. The page never sees the reason. |
-| Status line "Connection failed. Check the native configuration, Keychain approval and server." | A `prepareConnection` or `activateConnection` failure, or an unknown method name, other than a cancellation (HovelCompanion.kt line 125). Failures before that point (bad `capabilities` args, a closed companion, "Another native operation is pending") leave the status line unchanged and reach the page only as the generic 400. This status replaces the specific error, so the causes below never reach the window. |
-| (not shown) "This native profile belongs to another account" | Thrown when `registration.json` has a different `ownerId` (HovelCompanion.kt line 190). Users see only the two generic messages above; check `registration.json` in the data directory. |
+| `403 Native request unavailable for this frame` | Wrong frame, wrong origin or closed bridge, for a request that is not version 2. |
+| `400 Invalid native protocol` | The request is not a host-bridge v2 message, such as the companion's old version 1. |
+| `failed` envelope | A bridge method threw. The page never sees the reason. |
+| Status line "Connection failed. Check the native configuration, Keychain approval and server." | A `prepareConnection` or `activateConnection` failure, or an unknown method name, other than a cancellation. Failures before that point (a closed companion, another call pending) leave the status line unchanged and reach the page only as an envelope. This status replaces the specific error, so the causes below never reach the window. |
+| (not shown) "This native profile belongs to another account" | Thrown when `registration.json` has a different `ownerId`. Users see only the two generic messages above; check `registration.json` in the data directory. |
 | Status line "Server unavailable; messages wait on the server" | A heartbeat failed. The runner keeps trying every 10 seconds; queued messages wait on the server. |
 | Status line "Update Hovel on this Mac to run every message in its conversations" | A claim answered `mac-update-required`: a message needs a newer contract. It stays queued until this Mac updates or it expires. |
 | A message settled `reconciliation-required` | Its turn may have started before a crash or an error the runner could not classify. It never runs again unless the person retries it. |

@@ -277,8 +277,6 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                     capabilities = desktopHostCapabilities(),
                     products = services.packs(product),
                     onContextEnded = services::invalidate,
-                    onCompanionCallEnded = { companion?.invalidatePending() },
-                    companion = companion?.let { it::dispatch },
                 )
             })
         }

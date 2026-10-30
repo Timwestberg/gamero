@@ -21,9 +21,9 @@ export GAMERO_CODEX_PATH="/Applications/ChatGPT.app/Contents/Resources/codex-cli
 GAMERO_WEB_URL=http://127.0.0.1:8765/native-bridge-smoke.html ./gradlew :composeApp:run --console=plain
 ```
 
-Click Continue. Record visible HTML and Chromium user agent. Click Check native
-bridge: expect version 1 and connectComputer true, and nothing else.
-Reload and repeat: expect a new context ID. Close; confirm JVM/browser termination.
+Click Continue. Record visible HTML and Chromium user agent. Click Check version 1
+is refused: expect `400: Invalid native protocol`, since the bridge answers only
+version 2. Close; confirm JVM/browser termination.
 This fixture does not register a host, store credentials, sign in or execute Codex.
 
 Click Check host bridge v2. Each line shows the call, its round-trip time, and the
@@ -42,9 +42,9 @@ reply. With the companion configured, expect these replies:
 
 Outside the Hovel product, or off a Mac, the three `companion.*` methods are
 missing from `host.capabilities`, and `companion.capabilities` answers
-`unsupported`. Registration needs no provider: Codex only adds memory jobs. Check native bridge (version 1) then fails with 403. That is the
-expected result, because only the companion uses version 1. The page also logs
-the whole result after `GAMERO_BRIDGE_V2_SMOKE`.
+`unsupported`. Registration needs no provider: Codex only adds memory jobs.
+Reload and repeat: expect a new context ID. The page also logs the whole result
+after `GAMERO_BRIDGE_V2_SMOKE`.
 
 Require `GAMERO_JCEF_INITIALIZED` in the launch log before the browser appears.
 JCEF startup is asynchronous: Gamero now waits up to30seconds for its native

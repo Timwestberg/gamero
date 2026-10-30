@@ -70,11 +70,8 @@ class HovelCompanion(
     private val origin = appOrigin(appUrl)
     private val json = Json
 
+    /** `companion.prepareConnection` and `companion.activateConnection`, one at a time ([HovelCompanionCapability]). */
     suspend fun dispatch(method: String, args: JsonObject): JsonObject {
-        if (method == "capabilities") {
-            require(args.isEmpty())
-            return buildJsonObject { put("connectComputer", true) }
-        }
         val authorizedGeneration = synchronized(lifecycle) { check(!closed); generation }
         if (!mutex.tryLock()) throw BridgeBusyException()
         try {
