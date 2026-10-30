@@ -13,6 +13,7 @@ import org.formulagen.wrapper.bridge.PetCapability
 import org.formulagen.wrapper.bridge.PetMethods
 import org.formulagen.wrapper.bridge.ProviderCapability
 import org.formulagen.wrapper.bridge.ProviderMethods
+import org.formulagen.wrapper.bridge.ApprovalDeviceMethods
 import org.formulagen.wrapper.bridge.ApprovalMethods
 import org.formulagen.wrapper.bridge.ConversationVoiceMethods
 import org.formulagen.wrapper.bridge.HostContractMethods
@@ -241,6 +242,7 @@ internal fun desktopProductPacks(
         add(ProjectMethods.pack(supportedIfPresent(projects)))
         add(ConversationVoiceMethods.pack(supportedIfPresent(conversationVoice)))
         add(ApprovalMethods.pack(Capability.Unsupported))
+        add(ApprovalDeviceMethods.pack(Capability.Unsupported))
         add(HostContractMethods.pack(supportedIfPresent(hostContract)))
     }
     add(ProviderMethods.pack(supportedIfPresent(providers)))

@@ -232,6 +232,48 @@ fixtures.usage = {
 // The contract each runtime arrived in, so the Mac leaves out the same runtimes for an older page.
 fixtures.contractRuntimes = { schema: 'HOVEL_CONTRACT_RUNTIMES', value: JSON.parse(canonical(c.HOVEL_CONTRACT_RUNTIMES)) };
 
+// A phone's approval device payloads (`device.*`), which the phone's native code reads and sends.
+if (c.deviceApproval) {
+  const answeredOnPhone = {
+    ...s.openApproval,
+    answer: { by: 'phone', deviceId: ids.device, option: 'deny' },
+    revision: 2,
+    state: 'answered'
+  };
+  const answeredOnMac = { ...answeredOnPhone, answer: { by: 'mac', deviceId: ids.computer, option: 'allow-once' } };
+  const macOnly = {
+    ...s.phoneApproval,
+    approval: { ...s.openApproval, presentation: { reach: 'mac-only', summary: 'Run a command outside the project folders' } }
+  };
+  add('device.registration', 'approvalDeviceRegistration', c.approvalDeviceRegistration, s.phone);
+  add('device.approval', 'deviceApproval', c.deviceApproval, s.phoneApproval);
+  add('device.approvalMacOnly', 'deviceApproval', c.deviceApproval, macOnly);
+  add('device.approvalUnpaired', 'deviceApproval', c.deviceApproval, { ...s.phoneApproval, paired: false });
+  add('device.list', 'deviceApprovalList', c.deviceApprovalList, { approvals: [s.phoneApproval, macOnly] });
+  add('device.answer', 'approvalAnswer', c.approvalAnswer, { expectedRevision: 1, option: 'deny' });
+  add('device.answered', 'approvalAnswerResult', c.approvalAnswerResult, { approval: answeredOnPhone, status: 'answered' });
+  add('device.lostToMac', 'approvalAnswerResult', c.approvalAnswerResult, { approval: answeredOnMac, status: 'lost' });
+  add('device.lostExpired', 'approvalAnswerResult', c.approvalAnswerResult, {
+    approval: { ...s.openApproval, revision: 2, state: 'expired' },
+    status: 'lost'
+  });
+  const pending = {
+    ...s.pairedPhone,
+    pairedWith: [],
+    pendingUntil: new Date(Date.parse(at) + c.COMPANION_LIMITS.pairingMs).toISOString(),
+    state: 'pending'
+  };
+  add('device.pending', 'approvalDevice', c.approvalDevice, pending);
+  add('device.paired', 'approvalDevice', c.approvalDevice, s.pairedPhone);
+  add('device.devices', 'approvalDeviceList', c.approvalDeviceList, { devices: [s.pairedPhone] });
+  add('device.pairingCode', 'devicePairingCode', c.devicePairingCode, { code: '042917', expiresAt: pending.pendingUntil });
+  add('device.pairRequest', 'devicePairRequest', c.devicePairRequest, { code: '042917' });
+  fixtures['routes.device'] = { schema: 'routeTable', value: JSON.parse(canonical(c.HOVEL_COMPANION_ROUTES.device)) };
+  fixtures['routes.deviceBase'] = { schema: 'routeBase', value: { base: c.HOVEL_DEVICE_BASE, tokenHeader: c.HOVEL_DEVICE_TOKEN_HEADER } };
+} else {
+  process.stderr.write('This server-platform predates approval devices; the phone fixtures are left out.\n');
+}
+
 // The native route table, so the Mac's own table is checked against the routes the server serves.
 if (!c.HOVEL_COMPANION_ROUTES) throw new Error('This server-platform predates HOVEL_COMPANION_ROUTES; update it first');
 fixtures['routes.native'] = { schema: 'routeTable', value: JSON.parse(canonical(c.HOVEL_COMPANION_ROUTES.native)) };

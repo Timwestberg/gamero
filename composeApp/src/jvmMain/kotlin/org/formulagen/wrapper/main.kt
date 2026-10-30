@@ -26,6 +26,8 @@ import org.formulagen.wrapper.approvals.NativeDialogHost
 import org.formulagen.wrapper.chat.KokoroVoicePicker
 import org.formulagen.wrapper.bridge.desktopHostCapabilities
 import org.formulagen.wrapper.companion.NativeBridge
+import org.formulagen.wrapper.hovel.PhonePairing
+import org.formulagen.wrapper.hovel.PhonePairingWindow
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.voice.runEchoSelfTest
 import org.formulagen.wrapper.hovel.HovelLaunchScreen
@@ -134,7 +136,14 @@ fun main(args: Array<String>) {
                                 withContext(Dispatchers.IO) { runEchoSelfTest() }
                             }
                         }
+                        var pairing by remember { mutableStateOf(false) }
                         MenuBar {
+                            if (isHovelProduct()) {
+                                // The one way a phone is confirmed: opened here by the person, never by a page.
+                                Menu("Hovel") {
+                                    Item("Pair a phone…", onClick = { pairing = true })
+                                }
+                            }
                             Menu("Develop") {
                                 Item("Echo self-test", onClick = {
                                     Thread({
@@ -152,6 +161,11 @@ fun main(args: Array<String>) {
                                 Item("Paste", onClick = { editActions.perform(BrowserEditAction.PASTE) })
                                 Item("Select All", onClick = { editActions.perform(BrowserEditAction.SELECT_ALL) })
                             }
+                        }
+                        if (pairing) {
+                            val companion = resources.services?.companion
+                            val phones = remember(companion) { PhonePairing({ companion?.nativeExchange() }) }
+                            MaterialTheme { PhonePairingWindow(phones, onClose = { pairing = false }) }
                         }
                     }
                     MaterialTheme {

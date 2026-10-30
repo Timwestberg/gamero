@@ -158,6 +158,8 @@ internal class ConversationRunner(
                 stream = lines
                 if (closed.get()) { lines.close(); return }
                 connected = true
+                // answers given while the stream was down close their dialogs now
+                later { approvals.catchUp() }
                 older.passed()
                 lastLine.set(now())
                 wait = firstBackoff.inWholeMilliseconds

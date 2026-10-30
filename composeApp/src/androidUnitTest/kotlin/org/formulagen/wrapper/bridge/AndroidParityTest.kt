@@ -5,12 +5,12 @@ import org.formulagen.wrapper.hovel.hovelBridgePacks
 import kotlin.test.Test
 
 class AndroidParityTest {
-    /** Phase C of the host bridge plan ships the platform methods on Android, and phone approvals ship `approvals.present`. */
-    private val pending = setOf("haptic.play", "link.open", "lifecycle.pause", "lifecycle.resume", "approvals.present")
+    /** Phase C of the host bridge plan ships the platform methods on Android. */
+    private val pending = setOf("haptic.play", "link.open", "lifecycle.pause", "lifecycle.resume")
 
     @Test
     fun hovelOnAndroidMatchesTheParityTable() {
-        val bridge = HostBridge(HOVEL_PRODUCT, "https://hovel.example/hovel.html", androidHostCapabilities("test"), hovelBridgePacks())
+        val bridge = HostBridge(HOVEL_PRODUCT, "https://hovel.example/hovel.html", androidHostCapabilities("test"), hovelBridgePacks(FakeApprovalCapability(), FakeApprovalDeviceCapability()))
         try {
             assertMatchesParity(HostPlatform.ANDROID, bridge.router, pending)
         } finally {

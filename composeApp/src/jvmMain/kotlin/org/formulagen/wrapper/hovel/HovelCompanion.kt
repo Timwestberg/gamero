@@ -63,6 +63,8 @@ class HovelCompanion(
     private var closed = false
     private var generation = 0L
     private var session: AutoCloseable? = null
+    /** The connected session's host transport: native calls of this Mac's own, such as "Pair a phone…". */
+    private var native: NativeExchange? = null
     private var registration: HostRegistration? = null
     private val mutex = kotlinx.coroutines.sync.Mutex()
     private val origin = appOrigin(appUrl)
@@ -165,6 +167,7 @@ class HovelCompanion(
             val memory = lane
             val runner = conversations(HostConnection(registered, transport, { status = it },
                 if (memory != null) MemoryJobLane.FEATURES else emptyList()) { response -> memory?.heartbeat(response) })
+            native = transport
             return AutoCloseable { closeInReverse(listOfNotNull(memory, runner)) }
         } catch (error: Exception) {
             lane?.close() ?: journal?.let { runCatching { it.close() } }
@@ -210,6 +213,12 @@ class HovelCompanion(
         return created
     }
 
+    /**
+     * The connected Mac's own host transport, for native windows such as "Pair a phone…", or null before this Mac is
+     * connected. A page never reaches it.
+     */
+    fun nativeExchange(): NativeExchange? = synchronized(lifecycle) { native.takeIf { !closed } }
+
     fun invalidatePending() = synchronized(lifecycle) {
         generation++
         registration = null
@@ -221,6 +230,7 @@ class HovelCompanion(
             if (closed) return
             closed = true
             invalidatePending()
+            native = null
             session.also { session = null }
         }
         active?.close()

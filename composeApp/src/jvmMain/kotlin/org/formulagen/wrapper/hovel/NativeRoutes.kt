@@ -39,6 +39,18 @@ internal enum class NativeRoute(val method: String, val template: String) {
     /** → `agentApproval`: the winner after `approval.answered`, or after the Mac's own close was refused. */
     APPROVAL("GET", "approvals/:approvalId"),
 
+    /** → `approvalDeviceList`: the phones this Mac confirmed. */
+    DEVICES("GET", "devices"),
+
+    /** `devicePairRequest` → `approvalDevice`, unchanged: the phone a typed code names, so the window asks first. */
+    DEVICE_LOOKUP("POST", "devices/lookup"),
+
+    /** `devicePairRequest` → `approvalDevice`: once the person confirmed it in "Pair a phone…", that phone is paired. */
+    DEVICE_PAIR("POST", "devices/pair"),
+
+    /** → `approvalDevice`: this Mac lets one phone go. */
+    DEVICE_UNPAIR("POST", "devices/:deviceId/unpair"),
+
     /** `?cursor=` → `artifactTextPage`: a message input's whole text, page by page. */
     ARTIFACT_TEXT("GET", "artifacts/:artifactId/text"),
 

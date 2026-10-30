@@ -186,9 +186,11 @@ prompt.
   record ids in place of its parameters: `POST heartbeat`, `GET stream`,
   `POST conversations/claim`, `POST messages/:id/checkpoints|deltas|progress`,
   `GET projects/:id`, `PUT projects/:id/folders`, `GET approvals/:id`,
-  `GET artifacts/:id/text?cursor=`, the task lane's `POST claim` and
-  `POST progress`, and `POST memory/claim|progress|consolidate`. The Mac never
-  answers an approval on a route of its own (see Approvals). The `brain/*`
+  `GET artifacts/:id/text?cursor=`, `GET devices`, `POST devices/lookup`,
+  `POST devices/pair`, `POST devices/:id/unpair` (Hovel → Pair a phone…, see
+  Approvals), the task lane's `POST claim` and `POST progress`, and
+  `POST memory/claim|progress|consolidate`. The Mac never answers an approval
+  on a route of its own (see Approvals). The `brain/*`
   routes are allowed only when `brainEnabled` is true, which defaults to false
   and is not set by `HovelCompanion`.
 - Redirects are never followed. Connect timeout 10 seconds, request timeout
@@ -362,12 +364,36 @@ answer wins:
 - Another surface answers first: `approval.answered` is read back with
   `GET approvals/:id` and closes the dialog as `answered-elsewhere`. If that read
   fails, the dialog stays open for the person.
-- Nobody answers, or the work stops: the approval is withdrawn.
+- The Mac was not listening (its host stream was down): on every reconnect of
+  the host stream it reads each approval still open here (`catchUp`), so an
+  answer it missed closes its dialog then.
+- Nobody answers, or the work stops: the approval is withdrawn. When that
+  withdrawal is refused because a phone's answer reached the server first, the
+  Mac reads the stored answer and applies the phone's answer instead of the
+  dialog's default.
+- A close the Mac could only queue while offline, and that the server later
+  refuses because a phone answered first: the Mac already went on with its own
+  answer (or with none), so it appends a system note to the conversation or
+  thread saying the phone's answer is what Hovel shows and this Mac went on with
+  its own. The note names options with the Mac's own buttons
+  (`MacApprovalLabels`, "Start working" rather than "Continue") and takes what
+  ran from the queued close itself, so it survives a restart.
 
 A late or repeated answer changes nothing, and each approval keeps a receipt.
 The server expiry allows three dialog timeouts, since dialogs show one at a time
 and the Mac withdraws an approval itself when its dialog ends unanswered. Folder
 trust stays a Mac-only dialog.
+
+**Pair a phone…** A phone answers this Mac's approvals only once this Mac
+confirms it. The person opens Hovel → Pair a phone… (the window never opens on
+its own) and types the code the phone shows in its own alert. The Mac looks the
+code up (`POST devices/lookup`) and asks "Pair <name> (<platform>, registered
+<n> min ago)?"; only on that second click does it pair (`POST devices/pair`).
+The window lists the phones this Mac confirms (`GET devices`), with Unpair for
+each (`POST devices/:id/unpair`). All of them go on this Mac's own host token
+(`PhonePairing`, `PhonePairingWindow`); no page reaches them. The server counts
+wrong codes across all the account's Macs, and tells the owner of every
+pairing.
 
 ### Voice
 
@@ -625,7 +651,10 @@ one microphone and one conversation at a time, the voice row, the filler
 choice across conversations and reloads), `TalkLoopTest` (the loop with a fake
 host), `ConversationVoiceLatencyTest` (with `HOVEL_VOICE_LATENCY=1`),
 `RemoteApprovalsTest` (races,
-refused closes and late answers), `PresentApprovalTest`, `ProjectFoldersTest`,
+refused closes and late answers, catch-up on reconnect, a refused withdrawal taking the
+phone's answer, and the conflict note across a restart in the Mac's own words),
+`PhonePairingTest` (lookup before pairing, one pairing per code, the attempt
+limit, unpairing), `PresentApprovalTest`, `ProjectFoldersTest`,
 `ContextFoldersTest`, `ConversationStoreTest` and the wire tests.
 `SharedCoordinatorRulesTest` pins the frozen brain's protocol and the shared
 readiness and stage rules.
