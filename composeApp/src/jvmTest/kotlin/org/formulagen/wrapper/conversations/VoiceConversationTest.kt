@@ -149,7 +149,7 @@ class VoiceConversationTest {
         private val approvals = RemoteApprovals(NativeDialogs(Screen()), server, server.hostId)
         private val turns = ProviderTurns(listOf(coordinator), emptyList(), ConnectedProviders(), approvals)
         private val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(NativeDialogs(Screen())), server)
-        private val beat = HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), listOf("memory-context"), "ready")
+        private val beat = HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), listOf("memory-extraction"), "ready")
         val runner = ConversationRunner(server, store, engine, approvals, folders,
             ProjectFolderPublisher(folders, server, account, server.hostId) { emptyList() }, { beat },
             heartbeatEvery = 50.milliseconds, firstBackoff = 10.milliseconds, maxBackoff = 40.milliseconds, replies = voice)
@@ -188,6 +188,9 @@ class VoiceConversationTest {
     private fun phase() = checkNotNull(voice.served).talk.phase
 
     private fun heardId() = server.sent.last().second.id
+
+    /** How the last heard turn settled; null before one was sent, so a wait can begin before the send lands. */
+    private fun heardSettled(): MessageState? = server.sent.lastOrNull()?.second?.id?.let(server::settled)
 
     /** The run delegates to a held talk specialist, then answers once it is released; [release] lets it finish. */
     private fun delegatingRun(): () -> Unit {
@@ -273,12 +276,12 @@ class VoiceConversationTest {
         val stops = speaker.stops.get()
         assertTrue(voice.escape(), "the window's Escape belongs to the voice conversation")
         assertTrue(speaker.stops.get() > stops, "the speaker flushes first")
-        eventually("Talk's own turn, not delegated, stops as Stop stops it") { server.settled(heardId()) == MessageState.STOPPED }
+        eventually("Talk's own turn, not delegated, stops as Stop stops it") { heardSettled() == MessageState.STOPPED }
         eventually("Talk listens again") { phase() == TalkPhase.LISTENING && ear.listening }
         assertTrue(checkNotNull(voice.served).talk.on)
         reply = { "Sure." }
         ear.hear("never mind, what time is it")
-        eventually { server.sent.size == 2 && server.settled(heardId()) == MessageState.ANSWERED }
+        eventually { server.sent.size == 2 && heardSettled() == MessageState.ANSWERED }
     }
 
     @Test fun bargeInOnceTheRunDelegatedOnlySilencesItAndTheRunContinues() {
@@ -292,7 +295,7 @@ class VoiceConversationTest {
         assertTrue(speaker.stops.get() > stops, "the speaker flushes")
         assertEquals(TALK_AGENTS_WORKING, status().hearing.notice, "and says why nothing stopped")
         release()
-        eventually("the agents' work goes on to its answer") { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually("the agents' work goes on to its answer") { heardSettled() == MessageState.ANSWERED }
         eventually("a later reply in the run is spoken") { speaker.pieces.contains("The review is done.") }
         eventually("the note goes with the run") { status().hearing.notice != TALK_AGENTS_WORKING }
         assertTrue(checkNotNull(voice.served).talk.on)
@@ -306,7 +309,7 @@ class VoiceConversationTest {
         assertEquals(HearingState.OFF, hearing(HearingAction.OFF).hearing.state)
         assertFalse(ear.listening)
         release()
-        eventually("the run continues to its answer") { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually("the run continues to its answer") { heardSettled() == MessageState.ANSWERED }
         assertFalse(speaker.pieces.contains("The review is done."), "nothing more is said once Talk ended: ${speaker.pieces}")
     }
 
@@ -321,7 +324,7 @@ class VoiceConversationTest {
         assertEquals(HearingState.UNAVAILABLE, status().hearing.state)
         assertEquals("The microphone did not open.", status().hearing.notice)
         coordinator.held.single().completed("Monday is busy. Tuesday is free.", id())
-        eventually("the reply finishes") { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually("the reply finishes") { heardSettled() == MessageState.ANSWERED }
         assertEquals(listOf("Monday is busy."), speaker.pieces, "the rest is not said")
         assertFalse(voice.escape(), "with Talk off, Escape goes on")
     }
@@ -335,7 +338,7 @@ class VoiceConversationTest {
         assertTrue(asked.await(5, TimeUnit.SECONDS))
         assertTrue(voice.escape())
         landing.countDown()
-        eventually { server.settled(heardId()) == MessageState.STOPPED }
+        eventually { heardSettled() == MessageState.STOPPED }
         assertTrue(coordinator.requests.isEmpty(), "no provider turn ran")
     }
 
@@ -428,7 +431,7 @@ class VoiceConversationTest {
         assertTrue(speaker.stops.get() > stops, "the speaker stops")
         assertEquals(HearingState.THINKING, quiet.hearing.state, "Talk stays on")
         coordinator.held.single().completed("Roses are red. Violets are blue.", id())
-        eventually("the reply is not stopped") { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually("the reply is not stopped") { heardSettled() == MessageState.ANSWERED }
         assertEquals(listOf("Roses are red."), speaker.pieces)
         eventually { phase() == TalkPhase.LISTENING && ear.listening }
         assertTrue(checkNotNull(voice.served).talk.on)
@@ -554,7 +557,7 @@ class VoiceConversationTest {
         hearing(HearingAction.HANDS_FREE)
         ear.hear("review my draft")
         release()
-        eventually("answered") { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually("answered") { heardSettled() == MessageState.ANSWERED }
         eventually { speaker.pieces.contains("The review is done.") }
         assertFalse(speaker.pieces.any { "Reviewed" in it }, "threads are text only: ${speaker.pieces}")
         assertTrue(server.appended().any { it.threadId != null && it.text == "Reviewed." }, "the specialist's reply is in its thread")
@@ -573,14 +576,14 @@ class VoiceConversationTest {
         server.sendFailures = 2
         ear.hear("what time is it now")
         eventually("sent on its third try") { server.sent.size == 1 }
-        eventually { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually { heardSettled() == MessageState.ANSWERED }
     }
 
     @Test fun aResendAfterALostAnswerKeepsOneMessage() {
         server.lostSendAnswers = 1
         hearing(HearingAction.HANDS_FREE)
         ear.hear("what time is it")
-        eventually { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually { heardSettled() == MessageState.ANSWERED }
         assertEquals(1, server.sent.size, "the retry named the same id, and the server kept one message")
         assertEquals(1, coordinator.requests.size, "it ran once")
     }
@@ -696,7 +699,7 @@ class VoiceConversationTest {
         assertNull(status().conversationId)
         assertNull(server.settled(heardId()), "the conversation's message keeps running")
         coordinator.held.single().completed("Done.", id())
-        eventually { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually { heardSettled() == MessageState.ANSWERED }
         assertTrue(speaker.pieces.isEmpty(), "nobody is served, so nothing is read aloud")
     }
 
