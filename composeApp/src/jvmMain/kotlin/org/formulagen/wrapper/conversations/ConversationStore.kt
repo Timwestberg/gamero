@@ -104,9 +104,9 @@ internal data class ClaimEntry(
 
 /**
  * The account's conversations on this Mac, at `<root>/<accountId>/conversations/<id>/`: each one's
- * [ConversationRecord], its claim journal and its artifacts (outputs, and inputs whose bytes stay
- * here). Folders and files are private and every record is replaced atomically; reading never creates
- * anything. [open] takes the account's runner lock, so only one Hovel runs this account's conversations,
+ * [ConversationRecord], its claim journal, its artifacts (outputs, and inputs whose bytes stay
+ * here), and the messages to stop as soon as they are claimed ([stopOnClaim]). Folders and files are
+ * private and every record is replaced atomically; reading never creates anything. [open] takes the account's runner lock, so only one Hovel runs this account's conversations,
  * and loads the journal into memory: [pendingClaims] and [claims] answer from it, and every change is
  * written through.
  */
@@ -163,6 +163,29 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
         writeDurably(file, brainJson.encodeToString(ClaimEntry.serializer(), entry).toByteArray())
         pending[entry.claimId] = entry
         entry
+    }
+
+    /**
+     * Stop [messageId] as soon as this Mac claims it: a heard voice turn given up on before its claim landed. Durable,
+     * so the turn never runs, even when Hovel restarts before the claim. The project runs only on this Mac, so this
+     * Mac's own record is the whole rule.
+     */
+    fun stopOnClaim(conversationId: String, messageId: String) = gated(conversationId) {
+        require(SharedRules.isRecordId(messageId))
+        writeDurably(privateFolder(folder(conversationId).resolve(STOPS)).resolve("$messageId.json"), STOP_MARK)
+    }
+
+    /** Whether [messageId] is to stop as soon as it is claimed. */
+    fun stopsOnClaim(conversationId: String, messageId: String): Boolean = gated(conversationId) {
+        require(SharedRules.isRecordId(messageId))
+        Files.exists(folder(conversationId).resolve(STOPS).resolve("$messageId.json"), NOFOLLOW_LINKS)
+    }
+
+    /** [messageId]'s stop is journaled as its outcome: the mark has done its work. */
+    fun clearStopOnClaim(conversationId: String, messageId: String) = gated(conversationId) {
+        require(SharedRules.isRecordId(messageId))
+        Files.deleteIfExists(folder(conversationId).resolve(STOPS).resolve("$messageId.json"))
+        Unit
     }
 
     /** The claim is settled or never happened: forget it. */
@@ -233,6 +256,8 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
         private const val RECORD = "conversation.json"
         private const val JOURNAL = "journal"
         private const val ARTIFACTS = "artifacts"
+        private const val STOPS = "stop-on-claim"
+        private val STOP_MARK = "{}".toByteArray()
         private const val RECORD_BYTES = 16_000_000L
         private const val ENTRY_BYTES = 16_384L
 

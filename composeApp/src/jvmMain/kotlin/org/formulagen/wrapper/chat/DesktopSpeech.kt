@@ -39,6 +39,8 @@ internal interface ChatSpeech : AutoCloseable {
     fun previewVoice(id: String) {}
     /** Called after the spoken state changes, and never while this speech object holds its own lock. */
     fun onVoice(listener: () -> Unit) {}
+    /** Load the voice ahead of the first sentence, off the caller's thread, whatever the filler choice. */
+    fun warm() {}
     fun setFillersEnabled(enabled: Boolean) {}
     /** Synthesize [lines] for every Kokoro blend and keep the PCM. A later play does not call the model. */
     fun warmFillers(lines: List<String>) {}
@@ -89,6 +91,22 @@ internal class DesktopSpeech(
 
     override fun onVoice(listener: () -> Unit) {
         synchronized(gate) { onVoice = listener }
+    }
+
+    /** Load the engine on the voice worker, so Talk's first sentence does not wait for it. A failure waits for the first speak. */
+    override fun warm() = synchronized(gate) {
+        if (closed || voiceConfig == null || unavailable != null) return@synchronized
+        runCatching {
+            worker.execute {
+                runCatching {
+                    synchronized(gate) {
+                        val active = voiceConfig
+                        if (!closed && engine == null && active != null) engine = EmberVoice(openEngine(active), active)
+                    }
+                }.onFailure { if (it is VirtualMachineError) throw it }
+            }
+        }
+        Unit
     }
 
     override fun setFillersEnabled(enabled: Boolean) = synchronized(gate) {
@@ -325,9 +343,13 @@ internal class DesktopSpeech(
         }
     }
 
-    /** Caller holds [gate]. A stream already open for this generation is left alone. */
+    /**
+     * Caller holds [gate]. A stream already open for this generation is left alone. A new one picks up a voice chosen
+     * meanwhile in the voice file, by another speaker included; the old engine is released after any synthesis queued.
+     */
     private fun ensureStreamLocked() {
         if (playQueue != null && streamTicket == generation) return
+        refreshKokoroChoiceLocked()?.let { stale -> runCatching { worker.execute { runCatching { stale.release() } } } }
         val ticket = generation
         streamTicket = ticket
         streamIndex = 0

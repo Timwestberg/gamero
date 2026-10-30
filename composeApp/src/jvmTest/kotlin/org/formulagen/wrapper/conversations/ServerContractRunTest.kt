@@ -161,6 +161,7 @@ class ServerContractRunTest {
                     Answer.Data(buildJsonObject {})
                 }
                 "messageDelta" -> { expect("replyDeltaRequest"); Answer.Data(buildJsonObject { put("relayed", true) }) }
+                "messageSend" -> { expect("messageSend"); Answer.Data(value("message.queued")) }
                 "artifactText" -> Answer.Data(if (exchange.requestURI.query == "cursor=0") value("artifactText.page") else value("artifactText.last"))
                 "projectRead" -> Answer.Data(value("project"))
                 "projectFolders" -> { expect("projectFoldersSave"); Answer.Data(value("project")) }
@@ -189,9 +190,9 @@ class ServerContractRunTest {
         val chat = ScriptedRuntime(RuntimeId.CODEX) { "{\"kind\":\"answer\"}\nSign-in is on its way." }
         val statuses = CopyOnWriteArrayList<String>()
         val runner: ConversationRunner
+        val api = HttpConversationApi(served.transport, served.transport::openStream)
 
         init {
-            val api = HttpConversationApi(served.transport, served.transport::openStream)
             val dialogs = NativeDialogs(Screen())
             val approvals = RemoteApprovals(dialogs, api, host)
             val turns = ProviderTurns(listOf(chat), emptyList(), ConnectedProviders(), approvals)
@@ -225,10 +226,16 @@ class ServerContractRunTest {
                 eventually("the message settled and the lane looked again") {
                     served.claims.get() >= 2 && served.bodies("messageProgress").any { it["state"]?.jsonPrimitive?.content == "answered" }
                 }
+                // A heard voice turn goes out on the server's own route, and its conversation is claimed again at once.
+                val heard = heardTurns(mac.api, mac.runner)
+                heard.send(conversationId, id(), "What time is it?")
+                val before = served.claims.get()
+                heard.claimNow(conversationId)
+                eventually("the heard turn's conversation was claimed at once") { served.claims.get() > before }
                 mac.runner.close()
                 assertEquals(emptyList(), served.violations)
                 assertTrue(served.called.containsAll(setOf("heartbeat", "stream", "conversationClaim", "messageProgress", "messageCheckpoint",
-                    "messageDelta", "artifactText", "projectFolders")), "routes called: ${served.called}")
+                    "messageDelta", "artifactText", "projectFolders", "messageSend")), "routes called: ${served.called}")
                 val reply = served.bodies("messageCheckpoint").map { it.getValue("checkpoint").jsonObject }
                     .last { it.getValue("kind").jsonPrimitive.content == "message.appended" }
                 assertEquals("Sign-in is on its way.", reply.getValue("message").jsonObject.getValue("text").jsonPrimitive.content)

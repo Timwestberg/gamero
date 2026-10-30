@@ -23,6 +23,12 @@ internal interface ConversationApi {
 
     fun claim(request: ClaimRequest): ClaimResponse
 
+    /**
+     * Sends a heard voice turn as the owner's message in [conversationId], which must be in this computer's
+     * projects. Answers it as stored (queued), or null when this build cannot read the answer.
+     */
+    fun send(conversationId: String, request: MessageSend): ConversationMessage?
+
     fun checkpoint(messageId: String, request: MessageCheckpointRequest)
 
     fun delta(messageId: String, request: ReplyDeltaRequest)
@@ -51,6 +57,11 @@ internal class HttpConversationApi(private val exchange: NativeExchange, private
 
     override fun claim(request: ClaimRequest): ClaimResponse = fromWire(ClaimResponse.serializer(),
         send(NativeRoute.CONVERSATION_CLAIM, NativeRoute.CONVERSATION_CLAIM.path(), wire(ClaimRequest.serializer(), request)))
+
+    override fun send(conversationId: String, request: MessageSend): ConversationMessage? {
+        val data = send(NativeRoute.MESSAGE_SEND, NativeRoute.MESSAGE_SEND.path(conversationId), wire(MessageSend.serializer(), request))
+        return runCatching { fromWire(ConversationMessage.serializer(), data) }.getOrNull()
+    }
 
     override fun checkpoint(messageId: String, request: MessageCheckpointRequest) {
         send(NativeRoute.MESSAGE_CHECKPOINT, NativeRoute.MESSAGE_CHECKPOINT.path(messageId), wire(MessageCheckpointRequest.serializer(), request))

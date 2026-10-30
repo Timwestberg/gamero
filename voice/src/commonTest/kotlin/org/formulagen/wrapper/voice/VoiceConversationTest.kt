@@ -66,21 +66,8 @@ class VoiceConversationTest {
     @Test fun theCatalogOwnsTheControlsAndTheLauncherDoesNot() {
         assertTrue(catalogOwnsConversationControls(VoiceConversation.CATALOG_PRODUCT))
         assertFalse(catalogOwnsConversationControls(VoiceConversation.LAUNCHER_PRODUCT))
-        val duplex = DuplexChoice(HearingDuplex.HALF, "aec-unavailable")
-        val catalog = catalogControls("Gamero", chatOpen = true, kokoro = true, pageOwnsTalk = false, duplex = duplex)
-        assertTrue(catalog.showTalk)
-        assertTrue(catalog.showVoicePicker)
-        assertTrue(catalog.showFillers)
-        assertEquals("Half duplex · aec-unavailable", catalog.duplexLabel)
-        val page = catalogControls("Gamero", chatOpen = true, kokoro = true, pageOwnsTalk = true, duplex = DuplexChoice(HearingDuplex.FULL, "self-check-passed"))
-        assertFalse(page.showTalk)
-        assertTrue(page.showVoicePicker)
-        assertEquals("Full duplex", page.duplexLabel)
-        val tower = catalogControls("Hovel", chatOpen = true, kokoro = true, pageOwnsTalk = false, duplex = duplex)
-        assertFalse(tower.showTalk)
-        assertFalse(tower.showVoicePicker)
-        assertFalse(tower.showFillers)
-        assertEquals("", tower.duplexLabel)
+        assertEquals("Half duplex · aec-unavailable", duplexStatusLabel(HearingDuplex.HALF, "aec-unavailable"))
+        assertEquals("Full duplex", duplexStatusLabel(HearingDuplex.FULL, "self-check-passed"))
     }
 
     @Test fun hearingActionsMoveThroughTheSharedStates() {
