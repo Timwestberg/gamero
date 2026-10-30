@@ -15,9 +15,10 @@ internal fun iosHostCapabilities(appVersion: String): HostCapabilities = HostCap
 
 /**
  * Hovel's capability packs on iOS. iOS has none of the desktop product capabilities, so their methods answer
- * `unsupported`. Phone approvals are iOS's own; they answer `unsupported` until phone approvals ship.
+ * `unsupported`. Phone approvals are iOS's own: [approvals] shows an approval natively and [devices] registers
+ * this phone as an approval device (both `PhoneApprovals` in the app).
  */
-internal fun iosHovelBridgePacks(): List<CapabilityPack> = listOf(
+internal fun iosHovelBridgePacks(approvals: ApprovalCapability, devices: ApprovalDeviceCapability): List<CapabilityPack> = listOf(
     CompanionMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.BrainMethods.pack(Capability.Unsupported),
     ChatMethods.pack(Capability.Unsupported),
@@ -27,6 +28,7 @@ internal fun iosHovelBridgePacks(): List<CapabilityPack> = listOf(
     WorkspaceMethods.pack(Capability.Unsupported),
     ProjectMethods.pack(Capability.Unsupported),
     ConversationVoiceMethods.pack(Capability.Unsupported),
-    ApprovalMethods.pack(Capability.Unsupported),
+    ApprovalMethods.pack(Capability.Supported(approvals)),
+    ApprovalDeviceMethods.pack(Capability.Supported(devices)),
     HostContractMethods.pack(Capability.Unsupported),
 )

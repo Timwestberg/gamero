@@ -187,6 +187,57 @@ GAMERO_SMOKE_ROOT_CERT=/tmp/vite-dev-cert.pem tools/ios-smoke.sh
 fires when the page finishes loading, and again when its title arrives, so the
 first line may show `title=null`.
 
+## Phone approvals
+
+In the Hovel product the iPhone app is an **approval device**: it answers a
+working agent's permission requests, start-of-work confirmations, stage
+approvals and resume reviews in a native dialog. The code is
+`commonMain/.../phone/PhoneApprovals.kt`, with the iOS pieces in
+`iosMain/.../phone/IosPhoneApprovals.kt`: the Keychain item
+(`org.formulagen.gamero.approval-device`, readable only while the phone is
+unlocked, this device only), CommonCrypto, an ephemeral `NSURLSession`
+without redirects, and `UIAlertController`.
+
+1. **Register.** Hovel → Settings → Approval devices → "Use this phone for
+   approvals". The page calls `approvalDevice.prepare`; the app asks
+   natively, makes a device id and token, and gives the page only the token's
+   SHA-256. The page registers it with the account, then
+   `approvalDevice.activate` reads the device's own status with the new token
+   and keeps it in the Keychain. The device is now **pending**: it reads its
+   status and pairing code, and nothing else, for 10 minutes.
+2. **Pair on each Mac.** "Pair with a Mac" calls `approvalDevice.pair`. The
+   app fetches a six-digit code with its own token and shows it in a native
+   alert; the page never sees it. On the Mac, Hovel → Pair a phone… takes the
+   code, asks "Pair <name> (iPhone, registered <n> min ago)?", and pairs on a
+   second click, on that Mac's own host route; every open page then says the
+   phone was paired. The phone then answers that Mac's approvals, and only that
+   Mac's; pair it on each Mac it should answer for. A phone that loses its last
+   Mac stays registered for 10 more minutes to be paired again.
+   The alert closes once a Mac confirms it (`paired`), when the code runs out
+   (`expired`), or when the person closes it.
+3. **Answer.** While a Hovel page runs, each open approval on the owner stream
+   calls `approvals.present(id)`. The app reads it from
+   `/api/hovel/v1/hovel/devices/<owner>/<device>/approvals/<id>` under the
+   configured web app's origin and shows it: its Mac first in the alert's
+   title, then the kind and where it comes from (names cleaned to one line, so
+   a narrow alert cuts the end rather than the Mac), and only the server's lines in
+   the message, each checked as `shareableText` checks it. A line it will not
+   show, and anything outside a project's folders, is answered on the Mac
+   (`mac-only`); an approval of a Mac that has not confirmed this phone says
+   to answer or pair there (`unpaired`). The app posts the answer itself, and
+   the page learns only how the dialog ended. Nothing stays up longer than 10
+   minutes.
+4. **Forget.** Signing out, or this phone's own Revoke, calls
+   `approvalDevice.forget`: the app revokes the device on its own token, then
+   clears the Keychain item. A device the server refuses (revoked elsewhere,
+   or a pending one that ran out) is cleared on its next call.
+
+The simulator reaches the local edge over HTTP loopback
+(`NSAllowsLocalNetworking`). The iOS test binary runs outside an app bundle,
+where the Keychain answers `errSecNotAvailable`, so
+`IosPhoneApprovalsTest` checks CommonCrypto and ids there and marks the
+Keychain test `@Ignore` with that reason.
+
 ## Known limitations
 
 - **Connect computer is unavailable on iOS.** The Mac-only Codex companion
@@ -199,5 +250,7 @@ first line may show `title=null`.
   `Secure` cookies. See [Sign in (HTTPS)](#sign-in-https).
 - `iosApp/iosApp/GoogleService-Info.plist` must stay in place, because
   `FirebaseApp.configure()` runs at launch.
+- **Approvals need the page open.** There are no push notifications yet, so
+  the phone shows an approval only while a Hovel page runs.
 
 See [TEST.md](../TEST.md) for manual test cases.

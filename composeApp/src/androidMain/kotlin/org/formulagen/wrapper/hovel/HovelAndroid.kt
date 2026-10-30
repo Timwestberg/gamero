@@ -1,6 +1,8 @@
 package org.formulagen.wrapper.hovel
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import androidx.compose.runtime.Composable
@@ -16,11 +18,16 @@ import org.formulagen.wrapper.App
 import org.formulagen.wrapper.R
 import org.formulagen.wrapper.bridge.AndroidHostBridge
 import org.formulagen.wrapper.bridge.AndroidLinkOpener
+import org.formulagen.wrapper.bridge.ApprovalCapability
+import org.formulagen.wrapper.bridge.ApprovalDeviceCapability
+import org.formulagen.wrapper.bridge.ApprovalDeviceMethods
+import org.formulagen.wrapper.bridge.ApprovalMethods
 import org.formulagen.wrapper.bridge.Capability
 import org.formulagen.wrapper.bridge.CapabilityPack
 import org.formulagen.wrapper.bridge.CompanionMethods
 import org.formulagen.wrapper.bridge.HostBridge
 import org.formulagen.wrapper.bridge.androidHostCapabilities
+import org.formulagen.wrapper.phone.androidPhoneApprovals
 
 /** Launch extra or string resource that selects the Hovel product, as GAMERO_PRODUCT does on desktop. */
 internal const val PRODUCT_KEY = "GAMERO_PRODUCT"
@@ -54,9 +61,10 @@ internal fun hovelWebUrl(intent: Intent?, context: Context): String? {
 
 /**
  * Hovel's capability packs for the host bridge. Android has none of the desktop product capabilities, so their methods
- * answer `unsupported`. Phone approvals are Android's own; they answer `unsupported` until phone approvals ship.
+ * answer `unsupported`. Phone approvals are Android's own: [approvals] shows an approval natively and [devices]
+ * registers this phone as an approval device (both `PhoneApprovals` in the app); without them they answer `unsupported`.
  */
-internal fun hovelBridgePacks(): List<CapabilityPack> = listOf(
+internal fun hovelBridgePacks(approvals: ApprovalCapability? = null, devices: ApprovalDeviceCapability? = null): List<CapabilityPack> = listOf(
     CompanionMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.BrainMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.ChatMethods.pack(Capability.Unsupported),
@@ -66,7 +74,8 @@ internal fun hovelBridgePacks(): List<CapabilityPack> = listOf(
     org.formulagen.wrapper.bridge.WorkspaceMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.ProjectMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.ConversationVoiceMethods.pack(Capability.Unsupported),
-    org.formulagen.wrapper.bridge.ApprovalMethods.pack(Capability.Unsupported),
+    ApprovalMethods.pack(approvals?.let { Capability.Supported(it) } ?: Capability.Unsupported),
+    ApprovalDeviceMethods.pack(devices?.let { Capability.Supported(it) } ?: Capability.Unsupported),
     org.formulagen.wrapper.bridge.HostContractMethods.pack(Capability.Unsupported),
 )
 
@@ -83,10 +92,27 @@ fun HovelAndroidApp(url: String, onPageLoaded: (url: String, title: String?) -> 
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "dev"
     }
     val attached = remember { arrayOfNulls<AndroidHostBridge>(1) }
-    DisposableEffect(Unit) { onDispose { attached[0]?.close() } }
+    // One approval device for the activity's lifetime, so a dialog outlives a page reload.
+    val approvals = remember(context) { context.activity()?.let { androidPhoneApprovals(it, url) } }
+    DisposableEffect(Unit) {
+        onDispose {
+            attached[0]?.close()
+            approvals?.close()
+        }
+    }
     // Like the desktop host, Hovel talks to the host bridge, not the legacy native bridge.
     App(url, enableLegacyBridge = false, onPageLoaded = onPageLoaded, onWebViewCreated = { webView ->
         attached[0]?.close()
-        attached[0] = AndroidHostBridge.attach(webView, HostBridge(HOVEL_PRODUCT, url, androidHostCapabilities(appVersion, AndroidLinkOpener(context)), hovelBridgePacks()))
+        // a registration an earlier page prepared is never finished by this one
+        approvals?.invalidatePending()
+        val packs = hovelBridgePacks(approvals, approvals)
+        attached[0] = AndroidHostBridge.attach(webView, HostBridge(HOVEL_PRODUCT, url, androidHostCapabilities(appVersion, AndroidLinkOpener(context)), packs))
     })
+}
+
+/** The activity this context belongs to, which shows the approval dialogs. */
+private tailrec fun Context.activity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.activity()
+    else -> null
 }

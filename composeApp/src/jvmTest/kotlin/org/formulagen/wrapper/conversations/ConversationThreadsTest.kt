@@ -25,6 +25,19 @@ class ConversationThreadsTest {
         assertTrue(long.length <= 120 && long.startsWith("Implementer · x"))
     }
 
+    @Test fun aTitleKeepsJoinedEmojiAndIsAlwaysOneTheServerTakes() {
+        val coder = "\ud83d\udc69\u200d\ud83d\udcbb"
+        val fire = "\u2764\ufe0f\u200d\ud83d\udd25"
+        assertEquals("Implementer · ship the $coder page $fire", threadTitle("Implementer", "ship the $coder page $fire"))
+        // a cut at the limit never leaves half a character
+        for (pad in 100..112) {
+            val title = threadTitle("Implementer", "x".repeat(pad) + coder.repeat(5))
+            assertTrue(title.length <= CompanionLimits.THREAD_TITLE, title)
+            assertTrue(SharedRules.isDisplayText(title), title)
+            assertTrue(title.indices.none { title[it].isHighSurrogate() && (it + 1 >= title.length || !title[it + 1].isLowSurrogate()) }, title)
+        }
+    }
+
     @Test fun aNewTaskOpensAThreadUnderAnAnnouncement() {
         val first = attempt(implementer)
         var ids = 0
