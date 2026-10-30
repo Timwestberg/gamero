@@ -37,7 +37,17 @@ internal data class ApprovalDevice(
 @Serializable
 internal data class ApprovalDeviceList(val devices: List<ApprovalDevice>)
 
-/** `devicePairRequest`: what the person typed into a Mac's "Pair a phone…" dialog. */
+/** `devicePairLookup`: the phone a typed code names, and when that code runs out. */
+@Serializable
+internal data class DevicePairLookup(val codeExpiresAt: String, val device: ApprovalDevice)
+
+/** `devicePairConfirm`: the person's confirmation, naming the phone the lookup found, so only that phone pairs. */
+@Serializable
+internal data class DevicePairConfirm(val code: String, val deviceId: String) {
+    init { require(DevicePairRequest.PAIRING_CODE.matches(code)) { "A pairing code is ${DevicePairRequest.PAIRING_CODE_DIGITS} digits" } }
+}
+
+/** `devicePairRequest`: what the person typed into a Mac's "Pair a phone…" dialog, to look the phone up. */
 @Serializable
 internal data class DevicePairRequest(val code: String) {
     init { require(PAIRING_CODE.matches(code)) { "A pairing code is $PAIRING_CODE_DIGITS digits" } }

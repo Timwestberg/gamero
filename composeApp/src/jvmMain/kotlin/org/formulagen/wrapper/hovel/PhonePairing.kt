@@ -6,6 +6,8 @@ import org.formulagen.wrapper.bridge.brainJson
 import org.formulagen.wrapper.bridge.brainWire
 import org.formulagen.wrapper.conversations.ApprovalDevice
 import org.formulagen.wrapper.conversations.ApprovalDeviceList
+import org.formulagen.wrapper.conversations.DevicePairConfirm
+import org.formulagen.wrapper.conversations.DevicePairLookup
 import org.formulagen.wrapper.conversations.DevicePairRequest
 import java.time.Duration
 import java.time.Instant
@@ -14,7 +16,8 @@ import java.time.Instant
  * "Pair a phone…", the one way a phone comes to answer this Mac's approvals. The person opens it from the Hovel menu
  * (never on its own) and types the code the phone shows on its own native screen. This Mac first looks the code up
  * ([NativeRoute.DEVICE_LOOKUP]) and asks "Pair <name> (<platform>, registered <n> min ago)?"; only on that second
- * confirmation does it pair ([NativeRoute.DEVICE_PAIR]). Both go on this Mac's own host route with its host token, so
+ * confirmation does it pair ([NativeRoute.DEVICE_PAIR]), naming the phone it asked about, so the code pairs that phone
+ * or none. Both go on this Mac's own host route with its host token, so
  * neither a page nor the owner's web session can confirm a phone, and each Mac confirms a phone for itself: the phone
  * then answers this Mac's approvals only. The server counts wrong codes across all the account's Macs, then makes
  * them wait, and tells the owner of every pairing.
@@ -37,6 +40,9 @@ internal class PhonePairing(private val exchange: () -> NativeExchange?, private
         /** No phone shows that code (or it ran out). It counts toward the account's attempt limit. */
         data object WrongCode : Outcome
 
+        /** The phone the window asked about had that code, but it ran out before the person confirmed. Not counted. */
+        data object Expired : Outcome
+
         /** Too many wrong codes on the account's Macs for now. */
         data object TooManyAttempts : Outcome
 
@@ -50,8 +56,11 @@ internal class PhonePairing(private val exchange: () -> NativeExchange?, private
     /** A phone this Mac confirms, with its name cleaned to one line for the window. */
     data class PairedPhone(val id: String, val name: String)
 
-    /** The phone a code names, as the window asks about it: "Pair iPhone (iPhone, registered 3 min ago)?". */
-    data class Candidate(val id: String, val name: String, val platform: String, val minutesAgo: Long) {
+    /**
+     * The phone a code names, as the window asks about it: "Pair iPhone (iPhone, registered 3 min ago)?", until its code
+     * runs out at [codeExpiresAt].
+     */
+    data class Candidate(val id: String, val name: String, val platform: String, val minutesAgo: Long, val codeExpiresAt: Instant) {
         val question: String get() = "Pair $name (${PLATFORMS[platform] ?: platform}, registered ${ago()})?"
 
         private fun ago() = when (minutesAgo) {
@@ -66,16 +75,20 @@ internal class PhonePairing(private val exchange: () -> NativeExchange?, private
 
     /** The phone showing [typed], once it is a code (spaces and dashes aside), without pairing it. */
     fun lookup(typed: String): Outcome {
-        val body = requestOf(typed) ?: return Outcome.Malformed
+        val code = codeOf(typed) ?: return Outcome.Malformed
+        val body = brainWire(DevicePairRequest.serializer(), DevicePairRequest(code)) as JsonObject
         return call { native ->
-            val device = device(native.exchange("POST", NativeRoute.DEVICE_LOOKUP.path(), body))
-            Outcome.Found(Candidate(device.id, displayName(device), device.platform, minutesSince(device.registeredAt)))
+            val found = brainJson.decodeFromJsonElement(DevicePairLookup.serializer(), native.exchange("POST", NativeRoute.DEVICE_LOOKUP.path(), body))
+            val device = found.device
+            Outcome.Found(Candidate(device.id, displayName(device), device.platform, minutesSince(device.registeredAt),
+                Instant.parse(found.codeExpiresAt)))
         }
     }
 
-    /** Pairs the phone showing [typed]; the window calls it only once the person confirmed that phone. */
-    fun pair(typed: String): Outcome {
-        val body = requestOf(typed) ?: return Outcome.Malformed
+    /** Pairs [phone], the one the window asked about for [typed]; the window calls it only once the person confirmed. */
+    fun pair(typed: String, phone: Candidate): Outcome {
+        val code = codeOf(typed) ?: return Outcome.Malformed
+        val body = brainWire(DevicePairConfirm.serializer(), DevicePairConfirm(code, phone.id)) as JsonObject
         return call { native ->
             val paired = device(native.exchange("POST", NativeRoute.DEVICE_PAIR.path(), body))
             val phones = list(native)
@@ -92,9 +105,6 @@ internal class PhonePairing(private val exchange: () -> NativeExchange?, private
         }
         Outcome.Done(list(native))
     }
-
-    private fun requestOf(typed: String): JsonObject? =
-        codeOf(typed)?.let { brainWire(DevicePairRequest.serializer(), DevicePairRequest(it)) as JsonObject }
 
     private fun list(native: NativeExchange): List<PairedPhone> {
         val devices = brainJson.decodeFromJsonElement(ApprovalDeviceList.serializer(), native.exchange("GET", NativeRoute.DEVICES.path(), null))
@@ -114,6 +124,8 @@ internal class PhonePairing(private val exchange: () -> NativeExchange?, private
         val native = exchange() ?: return Outcome.NotConnected
         return try {
             block(native)
+        } catch (refused: HovelRejectedException) {
+            if (refused.code == CODE_RAN_OUT) Outcome.Expired else Outcome.Failed
         } catch (refused: HovelStatusException) {
             when (refused.status) {
                 404 -> Outcome.WrongCode
@@ -128,6 +140,8 @@ internal class PhonePairing(private val exchange: () -> NativeExchange?, private
 
     companion object {
         private val SEPARATORS = Regex("[\\s-]")
+        /** The 409 a confirmation gets when the asked-about phone's code ran out meanwhile. */
+        private const val CODE_RAN_OUT = "pairing-code-expired"
         private val PLATFORMS = mapOf("ios" to "iPhone", "android" to "Android")
 
         /** [typed] as a pairing code: its digits once spaces and dashes are taken out, or null. */

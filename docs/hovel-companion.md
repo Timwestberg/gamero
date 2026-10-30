@@ -388,7 +388,10 @@ trust stays a Mac-only dialog.
 confirms it. The person opens Hovel → Pair a phone… (the window never opens on
 its own) and types the code the phone shows in its own alert. The Mac looks the
 code up (`POST devices/lookup`) and asks "Pair <name> (<platform>, registered
-<n> min ago)?"; only on that second click does it pair (`POST devices/pair`).
+<n> min ago)?" until that code runs out; only on that second click does it pair
+(`POST devices/pair`, naming that phone, so the code pairs it or none). A
+confirmation that comes after the code ran out is said so and is not counted as
+a wrong code.
 The window lists the phones this Mac confirms (`GET devices`), with Unpair for
 each (`POST devices/:id/unpair`). All of them go on this Mac's own host token
 (`PhonePairing`, `PhonePairingWindow`); no page reaches them. The server counts

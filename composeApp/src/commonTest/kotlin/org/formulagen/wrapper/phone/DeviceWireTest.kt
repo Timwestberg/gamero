@@ -3,6 +3,8 @@ package org.formulagen.wrapper.phone
 import org.formulagen.wrapper.conversations.ApprovalDevice
 import org.formulagen.wrapper.conversations.ApprovalDeviceList
 import org.formulagen.wrapper.conversations.ApprovalDeviceState
+import org.formulagen.wrapper.conversations.DevicePairConfirm
+import org.formulagen.wrapper.conversations.DevicePairLookup
 import org.formulagen.wrapper.conversations.DevicePairRequest
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
@@ -56,6 +58,8 @@ class DeviceWireTest {
             "approvalDeviceList" to ApprovalDeviceList.serializer(),
             "devicePairingCode" to DevicePairingCode.serializer(),
             "devicePairRequest" to DevicePairRequest.serializer(),
+            "devicePairLookup" to DevicePairLookup.serializer(),
+            "devicePairConfirm" to DevicePairConfirm.serializer(),
         )
         val payloads = DeviceContractFixtures.PAYLOADS.keys.filter { it.startsWith("device.") }
         assertTrue(payloads.size >= 14)
