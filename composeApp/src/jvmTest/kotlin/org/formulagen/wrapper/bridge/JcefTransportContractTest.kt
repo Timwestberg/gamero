@@ -190,6 +190,21 @@ class JcefHostBridgeTest {
         assertEquals(null, ask(transport, call(contextId), queryId = 3).code())
     }
 
+    @Test
+    fun thePageMovesBetweenTheRoomAndCompanionsOnTheSameOrigin() = runTest {
+        // The app opens /hovel; the room links to /companions/... and back. Every same-origin document gets the bridge.
+        val transport = transport()
+        var queryId = 1L
+        for (url in listOf("https://hovel.example/hovel", "https://hovel.example/companions/6f1c2d3e?conversation=1", "https://hovel.example/hovel")) {
+            val watchId = queryId++
+            val watchAnswers = ask(transport, watch, persistent = true, url = url, queryId = watchId)
+            val contextId = Json.parseToJsonElement(watchAnswers.successes.single()).jsonObject.getValue("contextId").jsonPrimitive.content
+            assertEquals(null, ask(transport, call(contextId), url = url, queryId = queryId++).code(), url)
+            // Navigating away cancels the document's open watch, as JCEF does.
+            assertTrue(transport.onQueryCanceled(watchId))
+        }
+    }
+
     private fun TestScope.assertContextOpen(transport: JcefHostBridge, watchAnswers: Answers) {
         val contextId = Json.parseToJsonElement(watchAnswers.successes.single()).jsonObject.getValue("contextId").jsonPrimitive.content
         assertEquals(null, ask(transport, call(contextId), queryId = 3).code(), "the cancelled watch ended the newer context")
