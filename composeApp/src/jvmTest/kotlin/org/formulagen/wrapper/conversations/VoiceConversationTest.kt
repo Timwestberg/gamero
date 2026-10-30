@@ -679,9 +679,11 @@ class VoiceConversationTest {
         assertTrue(shown.showTalk, "its icon can end a session the page started")
         assertEquals(TalkPhase.LISTENING, shown.phase)
         voice.converseClick()
-        eventually { status().hearing.state == HearingState.OFF }
+        voice.awaitRowClicks()
+        assertEquals(HearingState.OFF, status().hearing.state)
         assertFalse(row.state.value.showTalk, "with Talk off, the page owns starting it")
         voice.converseClick()
+        voice.awaitRowClicks()
         timersDue(100)
         assertEquals(HearingState.OFF, status().hearing.state, "the icon never starts a session the page owns")
     }

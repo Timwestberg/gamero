@@ -118,6 +118,11 @@ internal class DesktopConversationVoice(
         runCatching { row.execute { voice.talk.click() } }
     }
 
+    /** Waits until every row click made so far has run: the row's thread runs them in order. */
+    internal fun awaitRowClicks() {
+        row.submit {}.get(5, java.util.concurrent.TimeUnit.SECONDS)
+    }
+
     internal fun toggleFillers() { current?.talk?.toggleFillers() }
 
     /** Escape from the native window: interrupts or ends Talk in the served conversation. False when Talk is off. */

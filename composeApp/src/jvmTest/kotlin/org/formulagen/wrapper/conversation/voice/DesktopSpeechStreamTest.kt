@@ -3,6 +3,9 @@ package org.formulagen.wrapper.conversation.voice
 import org.formulagen.wrapper.voice.PieceAudio
 import org.formulagen.wrapper.voice.PieceEngine
 import org.formulagen.wrapper.voice.VoiceConfig
+import org.formulagen.wrapper.voice.FILLER_LINES
+import org.formulagen.wrapper.voice.SpeechCancelled
+import org.formulagen.wrapper.conversation.VoiceState
 import java.nio.file.Files
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -339,6 +342,76 @@ class DesktopSpeechStreamTest {
         } finally {
             root.toFile().deleteRecursively()
         }
+    }
+
+    @Test
+    fun stopFlushesACachedClip() {
+        val started = CountDownLatch(1)
+        val flushed = CountDownLatch(1)
+        val line = object : PcmLine {
+            override fun start() { started.countDown() }
+            override fun write(pcm: ByteArray) { Thread.sleep(1_000) }
+            override fun drain() {}
+            override fun flush() { flushed.countDown() }
+            override fun stop() {}
+            override fun close() {}
+        }
+        DesktopSpeech(VoiceConfig(fillersEnabled = false), { line }).use { speech ->
+            speech.playClip(ByteArray(4800), 24000) {}
+            assertTrue(started.await(2, TimeUnit.SECONDS), "clip reached the speaker")
+            speech.stop()
+            assertTrue(flushed.await(2, TimeUnit.SECONDS), "stop flushed the filler")
+        }
+    }
+
+    @Test
+    fun aCancelledWarmKeepsGoingForTheSelectedVoice() {
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean()
+        val engine = object : PieceEngine {
+            override val sampleRate = 24000
+            override fun synthesize(text: String, maxFrames: Int, seed: Int) = PieceAudio(floatArrayOf(0.2f), 24000, 1.0, 1.0)
+            override fun synthesizeLine(text: String, voiceId: String): PieceAudio {
+                if (voiceId == "heart60-adam40" && cancelled.compareAndSet(false, true)) {
+                    throw SpeechCancelled()
+                }
+                return PieceAudio(floatArrayOf(0.2f), 24000, 1.0, 1.0)
+            }
+            override fun release() {}
+        }
+        val config = VoiceConfig(backend = VoiceConfig.KOKORO, kokoroVoiceId = "heart60-adam40", fillersEnabled = true)
+        DesktopSpeech(config, { SilentLine() }, { engine }).use { speech ->
+            speech.warmFillers(FILLER_LINES)
+            assertTrue(waitFor { cancelled.get() })
+            speech.warmFillers(FILLER_LINES)
+            assertTrue(waitFor { speech.fillerPcm("heart60-adam40", "Hmm,") != null })
+            assertTrue(speech.fillerPcm("heart60-adam40", "Let me think,") != null)
+            assertTrue(speech.fillerPcm("heart60-adam40", "Okay, so") != null)
+        }
+    }
+
+    @Test
+    fun tenSpeaksThatAreCancelledReturnTheVoiceToIdle() {
+        val engine = object : PieceEngine {
+            override val sampleRate = 24000
+            override fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio {
+                if (text.startsWith("fail")) throw SpeechCancelled()
+                return PieceAudio(FloatArray(400), 24000, 1.0, 1.0)
+            }
+            override fun release() {}
+        }
+        val updates = CopyOnWriteArrayList<VoiceState>()
+        DesktopSpeech(VoiceConfig(backend = VoiceConfig.KOKORO, fillersEnabled = false), { SilentLine() }, { engine }).use { speech ->
+            speech.onVoice { updates += speech.status().state }
+            repeat(10) {
+                speech.speak("Hello there.")
+                assertTrue(waitFor { speech.status().state == VoiceState.IDLE })
+                speech.speak("fail this take")
+                assertTrue(waitFor { speech.status().state == VoiceState.IDLE })
+                speech.stop()
+                assertEquals(VoiceState.IDLE, speech.status().state)
+            }
+        }
+        assertTrue(updates.isNotEmpty())
     }
 }
 
