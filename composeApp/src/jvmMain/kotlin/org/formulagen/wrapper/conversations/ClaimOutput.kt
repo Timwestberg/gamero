@@ -2,6 +2,7 @@ package org.formulagen.wrapper.conversations
 
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import org.formulagen.wrapper.bridge.BrainAttemptState
 import org.formulagen.wrapper.bridge.CompanionLimits
 import org.formulagen.wrapper.chat.loggingDaemonThreads
 import org.formulagen.wrapper.hovel.HovelRejectedException
@@ -17,6 +18,10 @@ import org.formulagen.wrapper.logger.log
  * Once the person asked to stop the message, the server refuses every new step with `stop-requested`
  * (a lost `stop.requested` event included); any such refusal calls [onStopRequested] first, so the
  * message stops as the person's Stop does and settles `stopped`.
+ *
+ * [listener], when this Mac speaks the message's replies, hears each main-conversation delta, each
+ * coordinator reply the run writes, and the first sign of a delegated task, as it happens and before
+ * any of it reaches the server.
  */
 internal class ClaimOutput(
     private val api: ConversationApi,
@@ -26,6 +31,7 @@ internal class ClaimOutput(
     private val backoffMillis: Long = 500,
     private val sleep: (Long) -> Unit = Thread::sleep,
     private val onStopRequested: () -> Unit = {},
+    private val listener: ReplyListener? = null,
 ) : AutoCloseable {
     private val sender = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-conversation-deltas"))
     private val pending = LinkedHashMap<Pair<String, String?>, StringBuilder>()
@@ -65,12 +71,28 @@ internal class ClaimOutput(
     /** Stream [text] as the next piece of reply [replyId] in [threadId] (null: the main conversation). */
     fun delta(replyId: String, threadId: String?, text: String) {
         if (text.isEmpty()) return
+        listener?.let { runCatching { if (threadId == null) it.delta(replyId, text) else it.threadStarted() } }
         synchronized(pending) {
             pending.getOrPut(replyId to threadId) { StringBuilder() }.append(text)
             if (flushing) return
             flushing = true
         }
         runCatching { sender.execute(::flush) }.onFailure { synchronized(pending) { flushing = false } }
+    }
+
+    /**
+     * The run wrote [checkpoint], to be stored next: a coordinator reply in the main conversation, and a thread queued
+     * or working (not one a crash left behind, which recovery marks interrupted), reach [listener].
+     */
+    fun wrote(checkpoint: MessageCheckpoint) {
+        val heard = listener ?: return
+        when (checkpoint) {
+            is MessageCheckpoint.MessageAppended -> checkpoint.message
+                .takeIf { it.author == MessageAuthor.COORDINATOR && it.threadId == null }
+                ?.let { runCatching { heard.appended(it.id, it.text) } }
+            is MessageCheckpoint.ThreadUpserted -> if (checkpoint.thread.state in WORKING) runCatching { heard.threadStarted() }
+            else -> Unit
+        }
     }
 
     /** Wait until every piece queued so far was sent or dropped. */
@@ -105,6 +127,9 @@ internal class ClaimOutput(
 
     companion object {
         private const val MAX_BACKOFF_MILLIS = 8_000L
+
+        /** A thread in these states is a delegated task under way. */
+        private val WORKING = setOf(BrainAttemptState.QUEUED, BrainAttemptState.AWAITING_APPROVAL, BrainAttemptState.RUNNING)
 
         /** The contract's refusal of a step on a message the person asked to stop. */
         const val STOP_REQUESTED = "stop-requested"

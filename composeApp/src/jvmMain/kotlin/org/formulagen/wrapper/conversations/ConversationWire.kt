@@ -95,6 +95,17 @@ internal data class ConversationMessage(
     val threadId: String?,
 )
 
+/** `artifactInput`: a text a sent message attaches. A heard voice turn attaches none. */
+@Serializable
+internal data class ArtifactInput(val id: String, val mediaType: String, val text: String, val title: String)
+
+/**
+ * `messageSend`: the owner's message, which the Mac sends only for a heard voice turn, in the main
+ * conversation. Its `id` is the client's; a retry with the same id must be deep-equal.
+ */
+@Serializable
+internal data class MessageSend(val id: String, val inputs: List<ArtifactInput>, val text: String, val threadId: String?)
+
 /** `messageAppend`: a reply or note the Mac appends; never a user message. */
 @Serializable
 internal data class MessageAppend(

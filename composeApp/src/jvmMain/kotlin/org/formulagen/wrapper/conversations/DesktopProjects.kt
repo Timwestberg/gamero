@@ -21,7 +21,8 @@ import org.formulagen.wrapper.hovel.HovelStatusException
  * page sees each folder's display name, role, whether it exists and which runtimes may read it,
  * never a path. Each change is published to the account ([changed]). One picker at a time: a second
  * Choose while one is open answers the current status. The picker runs on its own thread and is never
- * interrupted, so a choice made after the bridge call timed out is still kept.
+ * interrupted, so a choice made after the bridge call timed out is still kept. [folderStatus] answers only
+ * for a project of this Mac's ([owns]), which is how a page knows it runs on the project's own Mac.
  */
 internal class DesktopProjects(
     private val store: ProjectFolderStore,
@@ -29,6 +30,8 @@ internal class DesktopProjects(
     /** The runtimes this Mac lets read context folders: those whose `ContextFolderSupport` is readable. */
     private val readableBy: () -> List<RuntimeId>,
     private val changed: (accountId: String, projectId: String) -> Unit,
+    /** Whether the account says the project runs on this Mac; null when it cannot be asked now. */
+    private val owns: (accountId: String, projectId: String) -> Boolean? = { _, _ -> null },
 ) : ProjectCapability {
     private val picking = AtomicBoolean()
 
@@ -58,7 +61,9 @@ internal class DesktopProjects(
 
     override suspend fun folderStatus(scope: ProjectScope): ProjectFoldersStatus = runInterruptible(Dispatchers.IO) {
         val accountId = registered()
-        check(!store.isForeign(accountId, scope.projectId)) { "This project runs on another computer" }
+        // The account's word, else what this Mac last learned.
+        val ours = owns(accountId, scope.projectId) ?: !store.isForeign(accountId, scope.projectId)
+        check(ours) { "This project runs on another computer" }
         status(store.folders(accountId, scope.projectId))
     }
 
