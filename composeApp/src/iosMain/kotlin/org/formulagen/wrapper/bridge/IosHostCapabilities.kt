@@ -1,14 +1,14 @@
 package org.formulagen.wrapper.bridge
 
 /**
- * The iOS column of `HOST_BRIDGE_PARITY` for the platform set. Haptics, links
- * and lifecycle arrive in phase C of the host bridge plan; until then they
- * answer `unsupported`. Product capabilities come from the product.
+ * The iOS column of `HOST_BRIDGE_PARITY` for the platform set. Haptics and
+ * lifecycle arrive in phase C of the host bridge plan; until then they answer
+ * `unsupported`. Product capabilities come from the product.
  */
 internal fun iosHostCapabilities(appVersion: String): HostCapabilities = HostCapabilities(
     platform = HostPlatform.IOS,
     appVersion = appVersion,
-    links = Capability.Unsupported,
+    links = Capability.Supported(IosLinkOpener()),
     haptics = Capability.Unsupported,
     lifecycle = Capability.Unsupported,
 )

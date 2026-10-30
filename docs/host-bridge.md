@@ -174,7 +174,12 @@ event: `games.launch` opens a game and `games.closed` says the player is back.
 4. **Platforms.** In each platform factory, pass `Capability.Supported(impl)`
    where the platform can do it and `Capability.Unsupported` where it cannot.
    Write each implementation in that platform's source set. Follow the
-   consistency rules below.
+   consistency rules below. `link.open` is the worked example:
+   `DesktopLinkOpener.kt`, `AndroidLinkOpener.kt` and `IosLinkOpener.kt`. An
+   implementation that needs a platform object the factory cannot build, such
+   as an Android `Context`, becomes a factory parameter that the start code
+   fills, as `androidHostCapabilities(appVersion, links)` does, so the parity
+   test can pass a fake.
 
 5. **Router tests.** `BridgeRouterTest` builds its own set from the parity
    table, with one fake per capability. Add a fake to its `Fakes` class and

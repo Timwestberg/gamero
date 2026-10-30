@@ -17,7 +17,7 @@ class DesktopParityTest {
      * Phase C of the host bridge plan ships the platform methods on desktop. Project folders, the contract
      * handshake and conversation voice are the conversation runner's.
      */
-    private val pending = setOf("link.open", "lifecycle.pause", "lifecycle.resume")
+    private val pending = setOf("lifecycle.pause", "lifecycle.resume")
 
     private class FakeProjects : ProjectCapability {
         override suspend fun chooseFolder(args: ProjectChooseFolderArgs) = ProjectFoldersStatus(emptyList())

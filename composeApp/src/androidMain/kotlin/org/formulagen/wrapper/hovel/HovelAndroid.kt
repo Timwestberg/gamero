@@ -17,6 +17,7 @@ import java.net.URI
 import org.formulagen.wrapper.App
 import org.formulagen.wrapper.R
 import org.formulagen.wrapper.bridge.AndroidHostBridge
+import org.formulagen.wrapper.bridge.AndroidLinkOpener
 import org.formulagen.wrapper.bridge.ApprovalCapability
 import org.formulagen.wrapper.bridge.ApprovalDeviceCapability
 import org.formulagen.wrapper.bridge.ApprovalDeviceMethods
@@ -105,7 +106,7 @@ fun HovelAndroidApp(url: String, onPageLoaded: (url: String, title: String?) -> 
         // a registration an earlier page prepared is never finished by this one
         approvals?.invalidatePending()
         val packs = hovelBridgePacks(approvals, approvals)
-        attached[0] = AndroidHostBridge.attach(webView, HostBridge(HOVEL_PRODUCT, url, androidHostCapabilities(appVersion), packs))
+        attached[0] = AndroidHostBridge.attach(webView, HostBridge(HOVEL_PRODUCT, url, androidHostCapabilities(appVersion, AndroidLinkOpener(context)), packs))
     })
 }
 
