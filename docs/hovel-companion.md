@@ -419,14 +419,17 @@ it themselves.
   conversations whose project runs on this Mac.". After the post the runner
   claims the conversation's next message at once (`ConversationRunner.wake`),
   with the same claim, journal and fencing as `work.available`. A stored turn
-  not claimed within 30 seconds (this Mac is busy) lets Talk listen again; it
-  still runs when it is claimed.
+  not claimed within 30 seconds (this Mac is busy) lets Talk listen again, and
+  Talk says "What you said is waiting in the conversation. It runs when this
+  Mac is free." From then on it is the person's message in the conversation:
+  ending Talk, moving the voice or quitting never gives it up, and it runs when
+  claimed. Stop on the page still cancels it.
 - **The reply in progress** is the conversation's claimed main message, from
   its claim to its end (`ReplyListeners`, asked once the claim lands; a thread
   reply's claim is not one). Its coordinator replies are spoken as they stream
   (`ClaimOutput.delta` and `ClaimOutput.wrote`, before either reaches the
-  server) when the message was heard, Talk is on, or the conversation's `speak`
-  is on; never while the page dictates. A non-streamed coordinator message (a
+  server) when it is this Talk session's heard turn, Talk is on, or the
+  conversation's `speak` is on; never while the page dictates. A non-streamed coordinator message (a
   question, a delegation's announcement) is spoken whole, and each new reply
   cuts off what is left of the previous one. Threads are never spoken. A
   claimed message of a conversation the voice does not serve is read aloud
@@ -445,9 +448,11 @@ it themselves.
   the run ends: the microphone stays closed in half duplex, and in full duplex
   what is heard is not sent.
 - **Ending Talk**, a microphone failure included, flushes the speaker,
-  abandons heard turns not claimed yet, and says nothing more of the run. It
-  never stops a claimed message, and it ends the microphone session only when
-  one was on, so a dictation holding the microphone goes on.
+  abandons a heard turn not claimed yet (not one Talk said is waiting), and
+  says nothing more of the run. It never stops a claimed message, and it ends
+  the microphone session only when one was on, so a dictation holding the
+  microphone goes on. A capture that starts after Talk ended (the row's icon,
+  while the page's capture was starting) lets the microphone go.
 - **The page's actions** keep `ember-hearing.v1`'s words, with these meanings
   in a conversation: `handsFree` arms Talk (or interrupts a reply when it is
   on); `press` interrupts a reply and never arms (the page's Escape); `release`
@@ -461,9 +466,12 @@ it themselves.
   claim in `ConversationStore` (`stop-on-claim/<message id>.json`). Whenever it
   is claimed, after the voice moved, the page went away or Hovel restarted, it
   settles `stopped` with no provider turn, and the mark is cleared once that
-  outcome is journaled. At quit or sign-out the voice gives up its heard turns
-  while the account link is still up (`connected(null)`), so those are
-  journaled too; one given up with no link is logged and held in memory only.
+  outcome is journaled. At quit or sign-out the voice gives up its heard turn
+  not claimed yet while the account link is still up (`connected(null)`), so it
+  is journaled too; one given up with no link is logged and held in memory
+  only. A mark older than a queued message lives (24 hours,
+  `CompanionLimits.QUEUED_MESSAGE_MS`) is dropped at startup, unless its
+  message has a claim journaled.
   The project runs on one Mac, so this Mac's journal is the whole rule; no
   server route is involved.
 - **The microphone** is one `SharedHearing`: team chat holds one share and each

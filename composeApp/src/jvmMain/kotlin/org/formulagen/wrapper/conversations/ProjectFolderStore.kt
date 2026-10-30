@@ -29,6 +29,9 @@ internal data class LocalFolder(val id: String, val name: String, val path: Path
  * whether its folders still need publishing (`PUT /projects/:id/folders`).
  */
 internal class ProjectFolderStore(private val root: Path, private val picker: FolderPicker) {
+    /** How many times each `accountId/projectId` was marked foreign since launch: see [claimedUnlessMarked]. */
+    private val foreignMarks = HashMap<String, Long>()
+
     /** [projectId]'s folders, working first. */
     @Synchronized fun folders(accountId: String, projectId: String): List<LocalFolder> =
         read(accountId).projects[key(projectId)]?.folders.orEmpty().map { it.local() }.sortedBy { it.role != FolderRole.WORKING }
@@ -108,8 +111,22 @@ internal class ProjectFolderStore(private val root: Path, private val picker: Fo
     /** The account refused [projectId] to this Mac: its folders here answer `failed` until a claim says otherwise. */
     @Synchronized fun foreign(accountId: String, projectId: String) {
         val id = key(projectId)
+        foreignMarks.merge("$accountId/$id", 1L, Long::plus)
         val record = read(accountId)
         write(accountId, record.with(id, (record.projects[id] ?: StoredProject()).copy(foreign = true)))
+    }
+
+    /** The count [claimedUnlessMarked] compares: read it before asking the account. */
+    @Synchronized fun foreignMark(accountId: String, projectId: String): Long = foreignMarks["$accountId/${key(projectId)}"] ?: 0L
+
+    /**
+     * [claimed], from an answer asked for when [foreignMark] was [mark]. A foreign mark made since is the newer word, so
+     * the answer changes nothing then. True when [project] is recorded as this Mac's.
+     */
+    @Synchronized fun claimedUnlessMarked(accountId: String, project: CompanionProject, mark: Long): Boolean {
+        if (foreignMark(accountId, project.id) != mark) return !isForeign(accountId, project.id)
+        claimed(accountId, project)
+        return true
     }
 
     /** Whether [projectId] runs on another computer, as far as this Mac knows. */

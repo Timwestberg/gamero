@@ -108,7 +108,10 @@ internal class VoiceConversation(
     internal val talk = TalkLoop(gate, this, speech, hearing, settings, timer, CompanionLimits.MESSAGE, rowEndsPageTalk = true, now = now)
     /** The heard turn on its way: posted or posting, and not claimed yet. */
     private var pending: Pending? = null
-    /** Heard turns stored but not claimed in time: still this session's own when their claim lands. */
+    /**
+     * Heard turns stored but not claimed in time, which Talk told the person are waiting: visible messages now, so
+     * nothing here gives them up (Stop on the page still does). Talk's own when their claim lands in their session.
+     */
     private val overdue = LinkedHashMap<String, Pending>()
     /** The conversation's main message running on this Mac. */
     private var running: Running? = null
@@ -276,7 +279,7 @@ internal class VoiceConversation(
             log(LogLevel.Info, "hearing", "latency endpoint_to_claimed_ms=$claimedMs")
         }
         val own = heard != null && heard.session == session
-        val run = Running(messageId, heard != null || talk.on || claim.conversation.speak, own, stop)
+        val run = Running(messageId, own || talk.on || claim.conversation.speak, own, stop)
         running = run
         changedLocked()
         listener(run)
@@ -349,7 +352,7 @@ internal class VoiceConversation(
         }
     }
 
-    /** Talk ended: flush, abandon heard turns not claimed yet, and say nothing more of the run, which goes on. */
+    /** Talk ended: flush, abandon a heard turn not claimed yet, and say nothing more of the run, which goes on. */
     override fun endReplyLocked(): Boolean {
         session++
         val busy = pending != null || running != null
@@ -367,14 +370,15 @@ internal class VoiceConversation(
         changedLocked()
     }
 
-    /** Give up on every heard turn not claimed yet: each stops on arrival, durably while this Mac's link is up. */
+    /**
+     * Give up on the heard turn not claimed yet: it stops on arrival, durably while this Mac's link is up. A turn Talk
+     * said is waiting ([overdue]) is the person's message in the conversation now, and runs.
+     */
     private fun releaseHeardTurnsLocked() {
         pending?.let(::abandonLocked)
-        overdue.values.toList().forEach(::abandonLocked)
-        overdue.clear()
     }
 
-    /** This Mac is leaving the account (or quitting): its heard turns are given up while the link can still journal them. */
+    /** This Mac is leaving the account (or quitting): a heard turn not claimed yet is given up while the link can journal it. */
     fun releaseHeardTurns() = synchronized(gate) { releaseHeardTurnsLocked() }
 
     override fun lastReplyLocked(): String = lastReply
