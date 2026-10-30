@@ -219,4 +219,35 @@ class HovelAdapterTest {
             assertTrue(System.nanoTime() - started < java.util.concurrent.TimeUnit.SECONDS.toNanos(2))
         } finally { release.countDown(); server.stop(0) }
     }
+
+    @Test fun plainHttpNeverAsksToUpgradeSoTheDevelopmentEdgeAnswers() {
+        // As the Vite edge does: a request asking for `Upgrade: h2c` is never answered; HTTP/1.1 is.
+        val server = java.net.ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress())
+        val held = java.util.concurrent.CopyOnWriteArrayList<java.net.Socket>()
+        val requests = java.util.concurrent.CopyOnWriteArrayList<List<String>>()
+        val accepting = Thread.ofPlatform().daemon().start {
+            while (!server.isClosed) {
+                val socket = runCatching { server.accept() }.getOrNull() ?: break
+                val input = socket.getInputStream().bufferedReader(Charsets.ISO_8859_1)
+                val head = generateSequence { input.readLine() }.takeWhile { it.isNotEmpty() }.toList()
+                requests += head
+                val length = head.firstOrNull { it.startsWith("content-length:", ignoreCase = true) }?.substringAfter(':')?.trim()?.toInt() ?: 0
+                repeat(length) { input.read() }
+                if (head.any { it.equals("upgrade: h2c", ignoreCase = true) }) { held += socket; continue }
+                val body = """{"data":{"host":{}}}"""
+                socket.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" +
+                    "Content-Length: ${body.length}\r\nConnection: close\r\n\r\n$body").toByteArray())
+                socket.close()
+            }
+        }
+        try {
+            assertEquals(java.net.http.HttpClient.Version.HTTP_1_1, hovelHttpClient("http").version())
+            assertEquals(java.net.http.HttpClient.Version.HTTP_2, hovelHttpClient("https").version(), "https negotiates by ALPN")
+            val transport = HovelHttpTransport(java.net.URI("http://127.0.0.1:${server.localPort}/api/hovel/v1/hovel"), owner, host, "0".repeat(64), 2_000)
+            assertEquals(buildJsonObject { putJsonObject("host") {} }, transport.post("heartbeat", buildJsonObject { put("providerState", "ready") }))
+            assertTrue(requests.single().none { it.startsWith("upgrade", ignoreCase = true) }, requests.toString())
+        } finally {
+            server.close(); held.forEach { it.close() }; accepting.join(2_000)
+        }
+    }
 }

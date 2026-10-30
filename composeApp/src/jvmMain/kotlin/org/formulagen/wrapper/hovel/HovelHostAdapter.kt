@@ -41,13 +41,24 @@ class HovelStatusException(val status: Int, val code: String? = null) : IllegalS
 }
 
 /**
+ * The JDK client every call of this Mac to hovel-service goes through. Over plain `http` (the loopback development
+ * edge) it speaks HTTP/1.1 only: the JDK's default asks to upgrade to cleartext HTTP/2 (`Upgrade: h2c`), which the
+ * Vite edge never answers, so every heartbeat, claim and stream would hang. Over `https`, HTTP/2 is negotiated by
+ * ALPN and never asked for that way. No redirects; a connection gets 10 seconds.
+ */
+internal fun hovelHttpClient(scheme: String): HttpClient = HttpClient.newBuilder()
+    .version(if (scheme == "http") HttpClient.Version.HTTP_1_1 else HttpClient.Version.HTTP_2)
+    .connectTimeout(Duration.ofSeconds(10))
+    .followRedirects(HttpClient.Redirect.NEVER)
+    .build()
+
+/**
  * Host bearer stays in native memory and is sent only to the configured server. Every request names
  * this build's companion contract ([HovelContract.HEADER]).
  */
 class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val token: String, private val timeoutMillis: Long = 15_000) : HovelTransport, NativeExchange {
     private val endpoint: String
-    private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
-        .followRedirects(HttpClient.Redirect.NEVER).build()
+    private val client = hovelHttpClient(base.scheme)
     init {
         require(UUID.fromString(ownerId).toString() == ownerId && UUID.fromString(hostId).toString() == hostId)
         require(token.matches(Regex("[0-9a-f]{64}")))
