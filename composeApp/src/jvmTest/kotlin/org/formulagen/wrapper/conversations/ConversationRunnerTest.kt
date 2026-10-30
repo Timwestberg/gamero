@@ -659,7 +659,10 @@ class ConversationRunnerTest {
             val message = queue(talk)
             server.claimBody = kotlinx.serialization.json.buildJsonObject { put("status", "stop-later") }
             lane.dispatch(HostStreamEvent.WorkAvailable(talk.id))
-            eventually { server.claimRequests.size == 1 && store.pendingClaims().size == 1 }
+            // Each wait starts when the lane reads the answer, so the clock moves only after it has.
+            fun waited(claims: Int) = eventually { server.claimRequests.size == claims && lane.unreadableClaims.get() == claims }
+            waited(1)
+            assertEquals(1, store.pendingClaims().size)
             val claimId = store.pendingClaims().single().claimId
             fun quiet(claims: Int) { Thread.sleep(100); assertEquals(claims, server.claimRequests.size) }
             fun later(millis: Long) = clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(millis))
@@ -667,12 +670,12 @@ class ConversationRunnerTest {
             lane.beat(); lane.dispatch(HostStreamEvent.StopRequested(talk.id))
             quiet(1)
             later(50); lane.beat()
-            eventually { server.claimRequests.size == 2 }
+            waited(2)
             // The wait doubles.
             later(50); lane.beat()
             quiet(2)
             later(50); lane.beat()
-            eventually { server.claimRequests.size == 3 }
+            waited(3)
             // The lane is idle again (a Stop while the claim is on its way would apply to that claim instead).
             quiet(3)
             assertEquals(listOf(claimId), server.claimRequests.map { it.claimId }.distinct(), "one claim id throughout")

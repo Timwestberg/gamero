@@ -11,6 +11,7 @@ import java.util.concurrent.Semaphore
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -112,6 +113,12 @@ internal class ConversationRunner(
 
     /** Lanes waiting for a slot to claim in. */
     internal val waitingForSlot: Int get() = slots.queueLength
+
+    /**
+     * Claim answers this build could not read, each counted once its lane has set the wait before the next claim. A
+     * test that moves the clock waits on it, so the wait starts from the time the answer came.
+     */
+    internal val unreadableClaims = AtomicInteger()
 
     /** The conversations with a lane now; an idle lane is let go. */
     internal val lanes: Set<String> get() = sessions.keys.toSet()
@@ -406,6 +413,7 @@ internal class ConversationRunner(
                 // refusal says that. The claim id stays journaled, so the server's claim is never orphaned, and the
                 // lane waits longer each time before it asks again; the first in a row is logged.
                 if (unreadable.failed()) log(LogLevel.Warn, "conversations", "A claim answer could not be read; claiming waits", error)
+                unreadableClaims.incrementAndGet()
                 return false
             } catch (error: Exception) {
                 // Unreachable: the journaled claim id is tried again after the next heartbeat.
