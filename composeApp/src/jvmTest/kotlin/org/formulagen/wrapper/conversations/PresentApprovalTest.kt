@@ -7,6 +7,11 @@ import org.formulagen.wrapper.approvals.ApprovalRequest
 import org.formulagen.wrapper.approvals.ApprovalSubject
 import org.formulagen.wrapper.approvals.startOfWorkDialog
 import org.formulagen.wrapper.bridge.*
+import org.formulagen.wrapper.conversation.Activity
+import org.formulagen.wrapper.conversation.ActivityKind
+import org.formulagen.wrapper.conversation.ActivityStatus
+import org.formulagen.wrapper.conversation.ActivityStep
+import org.formulagen.wrapper.conversation.TeamMember
 
 class PresentApprovalTest {
     private val root = folder("present")

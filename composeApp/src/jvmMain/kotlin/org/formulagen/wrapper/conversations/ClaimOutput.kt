@@ -4,7 +4,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.formulagen.wrapper.bridge.BrainAttemptState
 import org.formulagen.wrapper.bridge.CompanionLimits
-import org.formulagen.wrapper.chat.loggingDaemonThreads
+import org.formulagen.wrapper.util.loggingDaemonThreads
 import org.formulagen.wrapper.hovel.HovelRejectedException
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log

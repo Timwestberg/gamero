@@ -1,8 +1,8 @@
 # Run the Mac desktop foundation
 
-Use this guide to build and open Gamero's existing Compose/JVM WebView host.
-Agent registration and execution are a later integration, not part of this
-foundation. The legacy mobile bridge is disabled on desktop.
+Use this guide to build and open Gamero's Compose/JVM WebView host. Registering
+the Mac and running conversations are in [hovel-companion.md](hovel-companion.md).
+The legacy mobile bridge is disabled on desktop.
 
 ## Prerequisites
 
@@ -14,8 +14,28 @@ From the repository root:
 
 ```sh
 ./gradlew :composeApp:jvmTest :composeApp:jvmJar --console=plain
-GAMERO_WEB_URL=https://127.0.0.1:8123/hovel ./gradlew :composeApp:run
 ```
+
+### Run Hovel
+
+Set `GAMERO_PRODUCT=hovel`. Without it the app runs as the games
+product: the companion pack and the conversation runner are off, and Connect
+computer stays disabled. The full Hovel launch:
+
+```sh
+# game-platform: serve the app over loopback HTTP on 8133 (GAMERO_CATALOG_PORT changes it).
+# JCEF rejects the dev server's basic-ssl certificate, so use this launcher, not the HTTPS dev server.
+(cd <game-platform>/apps/game-bridge-host && node --import tsx tools/companionLauncher.ts)
+
+# gamero, from the repository root (Gradle on JDK 21):
+GAMERO_PRODUCT=hovel \
+GAMERO_WEB_URL=http://127.0.0.1:8133/hovel \
+GAMERO_BROWSER_JAVA_HOME="<JBR with JCEF>/Contents/Home" \
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :composeApp:run
+```
+
+`GAMERO_CODEX_PATH` is optional; without Codex the Mac runs conversations on the
+runtimes it has and takes no memory jobs.
 
 For launch, set `GAMERO_BROWSER_JAVA_HOME` to an independently installed and
 verified JetBrains Runtime with JCEF (`Contents/Home` on Mac). Keep Gradle's
@@ -31,8 +51,9 @@ API `2024.04.20.4`; compatibility with the selected installed runtime remains a
 Mac validation gate. Closing waits off the UI thread for up to 15 seconds, then
 explicitly exits with failure if native initialization/shutdown stalled.
 
-The app does not sign in to Codex, register a computer, or run tasks in this step.
-Do not use native launch alone as Hovel task/result/reconnect acceptance.
+The app never signs in to Codex or any other runtime. Do not use native launch
+alone as Hovel conversation or reconnect acceptance; follow
+[hovel-native-validation.md](hovel-native-validation.md).
 
 ## Build boundaries
 

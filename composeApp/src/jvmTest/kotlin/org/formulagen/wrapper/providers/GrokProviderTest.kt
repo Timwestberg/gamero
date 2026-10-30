@@ -11,12 +11,11 @@ class GrokProviderTest {
     @Test fun unavailableQuotaDoesNotProbeCredentialsOrInventUsage() {
         val provider = GrokProvider(GrokConnection(emptyMap(), probe = { error("Quota must not probe authentication") }))
         val before = System.currentTimeMillis()
-        val usage = provider.usage("local")
+        val usage = provider.usage()
         assertEquals(RuntimeId.GROK_BUILD, usage.runtimeId)
         assertTrue(usage.checkedAt in before..System.currentTimeMillis())
         assertNull(usage.session)
         assertNull(usage.weekly)
-        assertFailsWith<IllegalArgumentException> { provider.usage("../profile") }
     }
 
     @Test fun theContractFixtureShowsTheSignInDetectedCopyThisHostSends() {
@@ -39,7 +38,7 @@ class GrokProviderTest {
                 assertEquals(executable, it); checks++; GrokAccess(it, auth)
             }))
             for (action in ProviderAction.entries) {
-                val status = provider.status("local", action)
+                val status = provider.status(action)
                 assertEquals(ProviderState.UNAVAILABLE, status.state)
                 assertEquals(ProviderDetail.SIGN_IN_DETECTED, status.detail)
                 assertEquals(RuntimeProviderId.XAI, status.providerId)
@@ -48,33 +47,29 @@ class GrokProviderTest {
             }
             assertEquals(ProviderAction.entries.size, checks)
             auth = GrokAuthAvailability.SIGNED_OUT
-            assertEquals(ProviderDetail.SIGNED_OUT, provider.status("local", ProviderAction.STATUS).detail)
+            assertEquals(ProviderDetail.SIGNED_OUT, provider.status(ProviderAction.STATUS).detail)
             auth = GrokAuthAvailability.API_KEY
-            assertEquals(ProviderDetail.API_KEY, provider.status("local", ProviderAction.STATUS).detail)
+            assertEquals(ProviderDetail.API_KEY, provider.status(ProviderAction.STATUS).detail)
             auth = GrokAuthAvailability.UNKNOWN
-            assertEquals(ProviderState.ERROR, provider.status("local", ProviderAction.STATUS).state)
-            assertEquals(ProviderDetail.UNKNOWN, provider.status("local", ProviderAction.STATUS).detail)
-            assertTrue(provider.status("local", ProviderAction.STATUS).message.orEmpty().contains("supports Grok Build 1.0.70."))
+            assertEquals(ProviderState.ERROR, provider.status(ProviderAction.STATUS).state)
+            assertEquals(ProviderDetail.UNKNOWN, provider.status(ProviderAction.STATUS).detail)
+            assertTrue(provider.status(ProviderAction.STATUS).message.orEmpty().contains("supports Grok Build 1.0.70."))
             val beforeInvalid = checks
-            assertFailsWith<IllegalArgumentException> { provider.status("../profile", ProviderAction.STATUS) }
             assertEquals(beforeInvalid, checks)
-            assertTrue(provider.models("local").isEmpty())
+            assertTrue(provider.models().isEmpty())
             assertFalse(Files.exists(marker))
             assertNull(findGrokExecutable(mapOf("GAMERO_GROK_PATH" to "/missing/grok", "PATH" to root.toString()), emptyList()))
             assertEquals(executable, findGrokExecutable(mapOf("PATH" to root.toString()), emptyList()))
             assertNull(findGrokExecutable(mapOf("GAMERO_GROK_PATH" to "grok"), emptyList()))
             assertEquals(ProviderDetail.NOT_INSTALLED, GrokProvider(GrokConnection(mapOf("GAMERO_GROK_PATH" to "/missing/grok"), probe = {
                 error("Missing executable must never be probed")
-            })).status("local", ProviderAction.STATUS).detail)
+            })).status(ProviderAction.STATUS).detail)
         } finally { root.toFile().deleteRecursively() }
     }
 
-    @Test fun onlyOptedInClientsSeeGrokAndWorkRemainsUnavailable() = runBlocking {
+    @Test fun anOfferedGrokIsListedAndWorkRemainsUnavailable() = runBlocking {
         DesktopProviders(listOf(GrokProvider(mapOf("GAMERO_GROK_PATH" to "/missing/grok")))).use { providers ->
-            assertEquals(ProviderList(emptyList(), emptyList()), providers.list("local"))
-            assertEquals(ProviderList(listOf(RuntimeId.GROK_BUILD), emptyList()),
-                providers.listForClient(ProviderListForClientArgs("local", listOf("grok-build", "future-runtime"))))
-            assertEquals(ProviderList(emptyList(), emptyList()), providers.listForClient(ProviderListForClientArgs("local", listOf("codex"))))
+            assertEquals(ProviderList(listOf(RuntimeId.GROK_BUILD), emptyList()), providers.list())
         }
         assertTrue(grokProviderEnabled(mapOf("HOVEL_GROK_PROVIDER" to "1"), release = false, development = true))
         assertFalse(grokProviderEnabled(mapOf("HOVEL_GROK_PROVIDER" to "1"), release = true, development = true))

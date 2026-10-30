@@ -9,7 +9,7 @@ import org.formulagen.wrapper.bridge.SharedRules
  * `HOVEL_COMPANION_ROUTES.native`; each payload is named by its `hovel/companions` schema.
  */
 internal enum class NativeRoute(val method: String, val template: String) {
-    /** The hovel heartbeat body (`providerState`, `features`) plus `computerHeartbeat`'s directory and usage. */
+    /** The hovel heartbeat body (`providerState`, `features`) plus `computerHeartbeat`'s directory and usage; answers `{ host }` and, for a memory-extraction computer, `memoryJobs`. */
     HEARTBEAT("POST", "heartbeat"),
 
     /** Server-sent events whose payload is a `hostStreamEvent`. */
@@ -53,10 +53,6 @@ internal enum class NativeRoute(val method: String, val template: String) {
 
     /** `?cursor=` → `artifactTextPage`: a message input's whole text, page by page. */
     ARTIFACT_TEXT("GET", "artifacts/:artifactId/text"),
-
-    /** Hovel tasks, until step E removes them with the web task UI. */
-    TASK_CLAIM("POST", "claim"),
-    TASK_PROGRESS("POST", "progress"),
 
     /** Memory jobs. */
     MEMORY_CLAIM("POST", "memory/claim"),

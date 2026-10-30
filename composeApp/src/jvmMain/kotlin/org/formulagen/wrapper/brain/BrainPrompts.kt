@@ -10,9 +10,10 @@ import kotlinx.serialization.json.put
 import org.formulagen.wrapper.approvals.NativeDialog
 import org.formulagen.wrapper.approvals.memberLabel
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.ChatFailure
-import org.formulagen.wrapper.chat.failureNotice
+import org.formulagen.wrapper.runtimes.ChatFailure
+import org.formulagen.wrapper.runtimes.failureNotice
 import org.formulagen.wrapper.providers.copy
+import org.formulagen.wrapper.storage.Artifacts
 
 /*
  * The text the controller gives a model or shows in a native dialog. Instructions are part of a role's persona digest,
@@ -45,22 +46,6 @@ internal val COORDINATOR_DECISION_SHAPES = listOf(
     """{"kind":"skip-step","stepId":"UUID","reason":"why unnecessary"}""",
     """{"kind":"step-result","attemptId":"UUID","outcome":"ready|changes-needed|blocked","explanation":"evidence"}""",
 )
-
-/** The brain's coordinator protocol: every decision, the answer included, is one JSON object. */
-internal val COORDINATOR_PROTOCOL = (listOf(
-    "You are the user's companion coordinator. Respond with exactly one JSON object, no markdown.",
-    "The entire JSON response must be at most ${BrainLimits.OUTPUT} characters.",
-    "Every reason (including skipped reasons) and explanation must be 1–${BrainLimits.DESCRIPTION} characters.",
-    "Tasks must be 1–${BrainLimits.STEP_INSTRUCTIONS} characters; text and question must be nonempty and fit the total response limit.",
-) + COORDINATOR_EVIDENCE_RULES + "Only delegate tasks the user requested. Ordinary conversation uses answer. Never invent role or artifact IDs." +
-    COORDINATOR_WORKFLOW_RULES + "Do not claim work has run merely because it was configured. Never print your private JSON to the user." +
-    "Decision shapes:" + """{"kind":"answer","text":"user-facing response"}""" + COORDINATOR_DECISION_SHAPES).joinToString("\n")
-
-/** The coordinator's persona: the fixed protocol, then the person's own instructions. */
-internal fun coordinatorInstructions(instructions: String) = COORDINATOR_PROTOCOL + "\nUser's coordinator instructions:\n" + instructions
-
-/** Appended to the request for the one repair attempt after an invalid decision. */
-internal const val DECISION_REPAIR = "\nYour last response was invalid. Return exactly one allowed JSON decision."
 
 /**
  * The coordinator's turn input: the decision's identity and [allowed] kinds, the pinned run as data, the handoff text
@@ -123,7 +108,7 @@ internal fun handoffText(inputs: List<HandoffInput>): String {
         val artifact = input.artifact
         val header = "Artifact ${artifact.id} (${artifact.title}, digest ${artifact.digest})"
         val file = input.file?.let { " The complete immutable file is $it." } ?: ""
-        if (artifact.mediaType == BrainStore.BINARY) {
+        if (artifact.mediaType == Artifacts.BINARY) {
             "$header: a binary file of ${input.bytes.size} bytes, which cannot be shown as text.$file"
         } else {
             val text = input.bytes.toString(Charsets.UTF_8)

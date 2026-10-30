@@ -15,12 +15,12 @@ class DesktopServicesTest {
         val closed = mutableListOf<String>()
         val failure = assertFailsWith<IllegalStateException> {
             closeInReverse(listOf(
-                AutoCloseable { closed += "chat" },
+                AutoCloseable { closed += "pet" },
                 AutoCloseable { closed += "providers"; error("providers failed") },
                 AutoCloseable { closed += "games"; error("games failed") },
             ))
         }
-        assertEquals(listOf("games", "providers", "chat"), closed)
+        assertEquals(listOf("games", "providers", "pet"), closed)
         assertEquals("games failed", failure.message)
         assertEquals(listOf("providers failed"), failure.suppressed.map { it.message })
     }
@@ -31,7 +31,7 @@ class DesktopServicesTest {
             GAMERO_PRODUCT_NAME, window = null)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
-            val product = listOf("chat.open", "providers.status", "pet.configure", "pet.show", "games.launch", "workspace.choose", "workspace.status")
+            val product = listOf("providers.status", "providers.list", "pet.configure", "pet.show", "games.launch")
             val gamero = BridgeRouter(GAMERO_PRODUCT_NAME, desktopHostCapabilities(), services.packs(GAMERO_PRODUCT_NAME), scope, {})
             assertTrue(gamero.knownMethods.containsAll(product))
             assertTrue("companion.capabilities" !in gamero.knownMethods, "the companion is Hovel's product")
@@ -41,7 +41,8 @@ class DesktopServicesTest {
             assertTrue("companion.capabilities" in hovel.knownMethods)
             assertNull(services.companion, "the Gamero product never starts Hovel's companion")
             assertNull(services.games)
-            assertEquals(ProviderState.UNAVAILABLE, services.providers.perform(ProviderAction.STATUS, ProviderScope("local", RuntimeId.CODEX)).state)
+            assertEquals(ProviderState.UNAVAILABLE, services.providers.perform(ProviderAction.STATUS, ProviderScope(RuntimeId.CODEX)).state)
+            assertTrue(listOf("chat.open", "brain.read", "workspace.status", "providers.listForClient").none { it in hovel.knownMethods })
             gamero.close(); hovel.close()
         } finally { services.close(); scope.cancel(); support.toFile().deleteRecursively() }
         assertFails { services.pet.status() }
@@ -51,7 +52,7 @@ class DesktopServicesTest {
         val support = Files.createTempDirectory("desktop-services-claude")
         val gateOn = mapOf("GAMERO_CODEX_PATH" to "/missing/codex", "GAMERO_CLAUDE_PATH" to "/missing/claude", "HOVEL_CLAUDE_PROVIDER" to "1")
         suspend fun runtimes(environment: Map<String, String>) = DesktopServices.create("http://127.0.0.1:8133/", support, environment,
-            GAMERO_PRODUCT_NAME, window = null).use { it.providers.list("local").runtimes }
+            GAMERO_PRODUCT_NAME, window = null).use { it.providers.list().runtimes }
         try {
             assertEquals(listOf(RuntimeId.CODEX), runtimes(gateOn), "An unmarked build fails closed")
             System.setProperty("gamero.dev", "true")

@@ -5,12 +5,17 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import org.formulagen.wrapper.conversation.ChatVoice
+import org.formulagen.wrapper.conversation.DictationAction
+import org.formulagen.wrapper.conversation.DictationState
+import org.formulagen.wrapper.conversation.HearingAction
+import org.formulagen.wrapper.conversation.HearingState
+import org.formulagen.wrapper.conversation.ChatLimits
 
 /**
  * Voice in a conversation on the Mac: dictation fills the page's draft, and Talk is a voice
  * conversation with the coordinator. The microphone serves one conversation and one use at a time.
- * Desktop only; the conversation runner brings the implementation, replacing `chat.dictation` and
- * `chat.hearing`.
+ * Desktop only; the conversation runner brings the implementation.
  */
 interface ConversationVoiceCapability {
     suspend fun dictation(args: ConversationDictationArgs): ConversationVoiceStatus

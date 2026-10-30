@@ -64,6 +64,17 @@ class CapabilityPack internal constructor(internal val bound: BoundCapability)
 internal fun <T> CapabilityBinder<T>.pack(capability: Capability<T>): CapabilityPack = CapabilityPack(bind(capability))
 
 /**
+ * This pack with [check] run before each of its methods, after the router has checked the arguments. A [check] that
+ * throws answers the call as the router answers that exception, such as [BridgeUpdateRequiredException]. Its events
+ * and an unsupported pack are unchanged.
+ */
+internal fun CapabilityPack.guardedBy(check: () -> Unit): CapabilityPack = with(bound) {
+    CapabilityPack(BoundCapability(name, methods, events,
+        handlers?.map { handler -> MethodHandler(handler.method, handler.accepts) { args -> check(); handler.invoke(args) } },
+        observe))
+}
+
+/**
  * The platform set: every capability that each platform must decide on, as a
  * constructor parameter without a default. A platform that forgets one does
  * not compile; a platform without one passes [Capability.Unsupported].

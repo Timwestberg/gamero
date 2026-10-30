@@ -2,7 +2,7 @@
   "name": "@gamero/hearing",
   "private": true,
   "type": "module",
-  "description": "Reusable browser hearing loop. Intended for tool-webkit. No catalog copy and no chat.send.",
+  "description": "Reusable browser hearing loop. Intended for tool-webkit. No catalog copy, and it sends nothing.",
   "scripts": {
     "test": "node --test",
     "fetch-voice": "node scripts/fetch-web-voice.mjs",

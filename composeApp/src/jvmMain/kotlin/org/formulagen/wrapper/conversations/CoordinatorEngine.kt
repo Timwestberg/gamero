@@ -6,12 +6,16 @@ import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.approvals.startOfWorkDialog
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.brain.*
-import org.formulagen.wrapper.chat.*
+import org.formulagen.wrapper.runtimes.*
+import org.formulagen.wrapper.conversation.voice.*
+import org.formulagen.wrapper.util.*
 import org.formulagen.wrapper.hovel.HovelRejectedException
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.storage.Artifacts
 import org.formulagen.wrapper.storage.sha256
+import org.formulagen.wrapper.conversation.Activity
+import org.formulagen.wrapper.conversation.MemberMode
 
 /**
  * Runs one claimed message of a conversation through the companion's brain: the coordinator, its specialists
@@ -80,6 +84,10 @@ internal class CoordinatorEngine(
                 }
                 system(failurePause(failure, "the coordinator"), message.threadId)
                 MessageState.FAILED
+            } catch (configuration: BrainConfigurationException) {
+                // The brain cannot run as configured: say what to change, since sending it again would fail the same way.
+                system(checkNotNull(configuration.message), message.threadId)
+                MessageState.FAILED
             } catch (error: Exception) {
                 log(LogLevel.Warn, "conversations", "A message could not run", error)
                 system("Hovel could not finish this message on this Mac. Try sending it again.", message.threadId)
@@ -94,7 +102,7 @@ internal class CoordinatorEngine(
 
         /** A brain with no specialists: the coordinator answers as a plain, streaming talk turn. */
         fun direct(): MessageState {
-            val role = turns.resolved(call, coordinatorRole())
+            val role = turns.resolved(call, coordinatorRole(), coordinator = true)
             val persona = Persona.role(companion, role.name, roleInstructions(role), false)
             val key = contextKey(role)
             val conversation = record.brain.coordinatorContexts[key]?.takeIf { it.personaHash == persona.hash }
@@ -145,7 +153,7 @@ internal class CoordinatorEngine(
             // The newer of this Mac's thread and the server's: another Mac may have moved it on.
             val thread = listOfNotNull(record.threads[threadId], claim.thread?.takeIf { it.id == threadId }?.let(::localThread))
                 .maxByOrNull { it.revision } ?: error("Unknown thread")
-            val coordinator = turns.resolved(call, coordinatorRole())
+            val coordinator = turns.resolved(call, coordinatorRole(), coordinator = true)
             val (decision, replyId) = decide(coordinator, THREAD_REPLY_DECISIONS, threadId) { allowed ->
                 threadReplyRequest(uuid(), allowed, threadId, thread, message.text, claim.brain.configuration.specialists,
                     record.brain.messages.takeLast(10), claim.recalledMemory)
@@ -203,7 +211,7 @@ internal class CoordinatorEngine(
         /** Ask the coordinator what the run does next, and apply its validated decision. */
         fun decideRun() {
             val current = currentRun()
-            val coordinator = turns.resolved(call, coordinatorRole())
+            val coordinator = turns.resolved(call, coordinatorRole(), coordinator = true)
             val allowed = allowedDecisions(current)
             val (decision, replyId) = decide(coordinator, allowed, null) { kinds ->
                 val input = handoff(current.artifacts.filter { it.id in current.inputs }.map { it.id }, files = false)
@@ -401,11 +409,14 @@ internal class CoordinatorEngine(
             return null
         }
 
-        /** Whether [decision] names what exists: this thread for a forward, a bound specialist for a delegation. */
+        /**
+         * Whether [decision] names what exists: this thread for a forward, a specialist of this brain for a delegation.
+         * One with no provider fits; delegating to it then says to assign one ([specialistSnapshot]), as a run does.
+         */
         fun fits(decision: CoordinatorDecision, threadId: String?): Boolean = when (decision) {
             is CoordinatorDecision.Forward -> decision.threadId == threadId
             is CoordinatorDecision.Delegate -> threadId == null ||
-                claim.brain.configuration.specialists.any { it.id == decision.specialistId && it.binding != null }
+                claim.brain.configuration.specialists.any { it.id == decision.specialistId }
             else -> true
         }
 
@@ -565,11 +576,12 @@ internal class CoordinatorEngine(
         // ---- Roles and inputs ------------------------------------------------------------------
 
         fun coordinatorRole(): BrainRoleSnapshot = claim.brain.configuration.coordinator.snapshot()
-            ?: error("Assign a provider to the coordinator in Configure brain.")
+            ?: throw BrainConfigurationException.unassigned(BrainConfigurationException.COORDINATOR)
 
         fun specialistSnapshot(id: String): BrainRoleSnapshot {
             val role = claim.brain.configuration.specialists.first { it.id == id }
-            return BrainRoleSnapshot(role.id, role.name, checkNotNull(role.binding), role.instructions, role.mode)
+            val binding = role.binding ?: throw BrainConfigurationException.unassigned(role.name)
+            return BrainRoleSnapshot(role.id, role.name, binding, role.instructions, role.mode)
         }
 
         fun contextKey(role: BrainRoleSnapshot) = "${role.roleId}:${role.binding.runtimeId.wireName}"

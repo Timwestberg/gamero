@@ -8,7 +8,7 @@ import kotlinx.serialization.json.JsonClassDiscriminator
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
-import org.formulagen.wrapper.bridge.ActivityStep
+import org.formulagen.wrapper.conversation.ActivityStep
 import org.formulagen.wrapper.bridge.BrainAttemptOutcome
 import org.formulagen.wrapper.bridge.BrainAttemptState
 import org.formulagen.wrapper.bridge.BrainDocument
@@ -320,7 +320,17 @@ internal data class ProviderRuntime(val canWork: Boolean, val models: List<Provi
 
 /** `providerDirectory`: what this computer publishes about its runtimes. */
 @Serializable
-internal data class ProviderDirectory(val observedAt: String, val runtimes: List<ProviderRuntime>)
+internal data class ProviderDirectory(val observedAt: String, val runtimes: List<ProviderRuntime>) {
+    /**
+     * The heartbeat's `providerState` for this directory: `ready` when a runtime is ready, else `auth-required` when one
+     * is signed out, else `unavailable`.
+     */
+    fun providerState(): String = when {
+        runtimes.any { it.readiness == ProviderReadiness.READY } -> "ready"
+        runtimes.any { it.readiness == ProviderReadiness.SIGNED_OUT } -> "auth-required"
+        else -> "unavailable"
+    }
+}
 
 /** `runtimeAllowance`: a runtime's usage as an `allowanceSnapshot`, built by [allowanceSnapshot]. */
 @Serializable
@@ -335,7 +345,7 @@ internal data class HostHeartbeat(
     val allowances: List<RuntimeAllowance>,
     val directory: ProviderDirectory,
     val features: List<String>,
-    /** `ready`, `auth-required` or `unavailable`: the task lane's Codex, and `unavailable` without a task lane. */
+    /** `ready`, `auth-required` or `unavailable`, from [directory] ([ProviderDirectory.providerState]). */
     val providerState: String,
 )
 

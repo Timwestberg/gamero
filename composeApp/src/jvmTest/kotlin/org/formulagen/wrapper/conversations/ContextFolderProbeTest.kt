@@ -10,10 +10,12 @@ import kotlin.test.*
 import org.formulagen.wrapper.approvals.ApprovalBroker
 import org.formulagen.wrapper.approvals.ApprovalDecision
 import org.formulagen.wrapper.bridge.RuntimeId
-import org.formulagen.wrapper.bridge.TeamMember
-import org.formulagen.wrapper.chat.*
-import org.formulagen.wrapper.chat.claude.ClaudeWorkRuntime
-import org.formulagen.wrapper.chat.codex.CodexWorkRuntime
+import org.formulagen.wrapper.conversation.TeamMember
+import org.formulagen.wrapper.runtimes.*
+import org.formulagen.wrapper.conversation.voice.*
+import org.formulagen.wrapper.util.*
+import org.formulagen.wrapper.runtimes.claude.ClaudeWorkRuntime
+import org.formulagen.wrapper.runtimes.codex.CodexWorkRuntime
 import org.formulagen.wrapper.providers.ClaudeConnection
 import org.formulagen.wrapper.providers.ClaudeRuntime
 import org.junit.Assume.assumeTrue
@@ -45,7 +47,7 @@ class ContextFolderProbeTest {
 
         fun turn(runtime: WorkRuntime, member: TeamMember): String {
             val done = CompletableFuture<String>()
-            runtime.startTurn(TurnRequest("local", UUID.randomUUID().toString(), Persona.working("Ember"), member.modelId, null, null, prompt,
+            runtime.startTurn(TurnRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(), Persona.working("Ember"), member.modelId, null, prompt,
                 WorkScope(ProjectFolders(working, listOf(context)), "probe", "Ember", member)), object : TurnEvents {
                 override fun opened(conversation: String) = Unit
                 override fun accepted() = Unit

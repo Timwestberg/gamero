@@ -6,15 +6,15 @@ import java.util.concurrent.TimeUnit
 import org.formulagen.wrapper.providers.codexProcess
 
 /**
- * Hovel tasks on the player's own Codex sign-in (Codex's default home). Authentication stays
- * wholly in the player's installed Codex: Hovel checks `codex login status` before every task and
- * runs one only on a ChatGPT login. The task itself ignores the player's `config.toml`
- * (`--ignore-user-config`), so its read-only lockdown is the same whatever the player configured.
+ * Memory jobs on the player's own Codex sign-in (Codex's default home), read-only in an empty private [workspace].
+ * Authentication stays wholly in the player's installed Codex: Hovel checks `codex login status` before every job and
+ * runs one only on a ChatGPT login. The job itself ignores the player's `config.toml` (`--ignore-user-config`), so its
+ * read-only lockdown is the same whatever the player configured.
  *
  * Ignoring the configuration would also ignore where the player keeps the login
  * (`cli_auth_credentials_store`, `file` by default): a keyring-only login that `login status`
- * reports would be invisible to the task. So readiness asks under each store explicitly (the file,
- * then the keyring) and the task runs with the store its login was found in.
+ * reports would be invisible to the job. So readiness asks under each store explicitly (the file,
+ * then the keyring) and the job runs with the store its login was found in.
  */
 class CodexCliProvider(private val executable: Path, workspace: Path, outputDirectory: Path) : TaskProvider {
     private val outputDirectory = outputDirectory.toAbsolutePath().normalize()
@@ -28,7 +28,7 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
 
     enum class Readiness { UNAVAILABLE, AUTH_REQUIRED, READY }
 
-    /** Where the ChatGPT login was last found (`file` or `keyring`), which the task then reads. */
+    /** Where the ChatGPT login was last found (`file` or `keyring`), which the job then reads. */
     @Volatile private var credentialStore: String? = null
 
     fun readiness(): Readiness {
@@ -88,7 +88,7 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
                 val writer = Thread.ofPlatform().daemon().start {
                     try {
                         process.outputStream.bufferedWriter().use {
-                            it.write(providerPrompt(request))
+                            it.write(request.prompt)
                         }
                     } catch (error: Exception) { inputFailure.set(error) }
                 }
@@ -118,16 +118,6 @@ class CodexCliProvider(private val executable: Path, workspace: Path, outputDire
     /** The player's own Codex login; [codexProcess] owns the rules. */
     internal fun builder(arguments: List<String>): ProcessBuilder = codexProcess(executable, arguments, workspace)
 }
-
-/**
- * The text a provider is given on stdin. A task's is byte for byte event-contracts `hovelProviderPrompt`:
- * the character section, then recalled memory when there is some, then the task (pinned by
- * HovelProviderPromptTest). A raw prompt, such as a memory job's input, is already the whole text.
- */
-internal fun providerPrompt(request: ExecutionRequest): String =
-    if (request.rawPrompt) request.prompt
-    else "Platform-owned character context (user-authored):\n${request.context}\n\n" +
-        request.recalledMemory?.let { "$it\n\n" }.orEmpty() + "User task:\n${request.prompt}"
 
 /**
  * Arguments for `codex exec`, deliberately read-only, reading the login from [store] (`file` or

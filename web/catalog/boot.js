@@ -11,19 +11,10 @@ import { createSpeaker } from "../hearing/src/speaker.js";
 
 const params = new URLSearchParams(location.search);
 const scripted = params.get("scripted") === "1";
-const hostMode = params.get("host") === "1";
 // voice=stub keeps the recorder from the first web build: no download, nothing audible.
 const voiceMode = params.get("voice") === "stub" ? "stub" : "kokoro";
 const voiceBase = new URL(params.get("voiceBase") || "../voice-assets/", location.href).href;
 const VOICE_KEY = "ember.voiceId";
-
-const host = hostMode ? {
-  chatState: "ready",
-  calls: [],
-  hearing(action) { this.calls.push(["hearing", action]); },
-  send(text) { this.calls.push(["send", text]); },
-  stop() { this.calls.push(["stop"]); },
-} : null;
 
 let aecAvailable = true;
 let selfCheck = "pass";
@@ -108,7 +99,7 @@ function hearingStatus() {
   return "Ember's hearing loads when you first talk.";
 }
 
-const composer = createComposer({ host, speaker, hearing, micStream, aecAvailable, selfCheck, onChange: repaint });
+const composer = createComposer({ speaker, hearing, micStream, aecAvailable, selfCheck, onChange: repaint });
 const voice = {
   voices: KOKORO_VOICE_LIST,
   selected: () => speaker.voiceId,
@@ -140,20 +131,19 @@ window.__app = {
   feed(frame) {
     const event = composer.session.feed(frame);
     view.paint();
-    return { event, phase: composer.session.phase, partial: composer.session.partial, line: lastLine(), calls: host?.calls || [] };
+    return { event, phase: composer.session.phase, partial: composer.session.partial, line: lastLine() };
   },
   state() {
     return {
       phase: composer.session.phase,
       partial: composer.session.partial,
       notice: document.querySelector("#notice").textContent,
-      chat: document.querySelector("#chat-status").textContent,
       duplex: document.querySelector("#duplex").textContent,
       voiceStatus: document.querySelector("#voice-status")?.textContent || "",
       hearingStatus: document.querySelector("#hearing-status")?.textContent || "",
       logs: composer.session.logs.slice(-20),
       line: lastLine(),
-      calls: host?.calls || [],
+      heard: composer.heard,
     };
   },
   say(text) {

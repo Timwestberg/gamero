@@ -12,8 +12,6 @@ contract fixture changes:
 - bridge/HostBridgeFixtures.kt from event-contracts/src/host-bridge/fixtures (the
   router and envelope fixtures, the parity table, the shared limits and the text
   rules' cases), for the host-bridge tests.
-- hovel/HovelProviderPromptFixture.kt from
-  event-contracts/src/hovel/fixtures/provider-prompt.json, for HovelProviderPromptTest.
 - bridge/EmberHearingFixture.kt from
   event-contracts/src/voice/fixtures/hearing/ember-hearing.v1.json, so HearingContractTest
   checks the hearing states and actions against the contract.
@@ -79,16 +77,6 @@ internal object HostBridgeFixtures {{
     const val LIMITS = {kotlin_string(compact(fixtures / "limits.json"))}
 
     const val TEXT = {kotlin_string(compact(fixtures / "text.json"))}
-}}
-"""
-
-
-def provider_prompt(server: Path) -> str:
-    source = "event-contracts/src/hovel/fixtures/provider-prompt.json"
-    return HEADER.format(source, source_commit(server, source)) + f"""package org.formulagen.wrapper.hovel
-
-internal object HovelProviderPromptFixture {{
-    val JSON = {kotlin_string(compact(server / source))}
 }}
 """
 
@@ -163,7 +151,6 @@ internal object DeviceContractFixtures {{
 
 OUTPUTS = {
     ROOT / TEST.format("commonTest") / "bridge/HostBridgeFixtures.kt": host_bridge,
-    ROOT / TEST.format("jvmTest") / "hovel/HovelProviderPromptFixture.kt": provider_prompt,
     ROOT / TEST.format("commonTest") / "bridge/EmberHearingFixture.kt": ember_hearing,
     ROOT / TEST.format("jvmTest") / "conversations/CompanionContractFixtures.kt": companion_payloads,
     ROOT / TEST.format("commonTest") / "phone/DeviceContractFixtures.kt": device_payloads,

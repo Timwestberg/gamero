@@ -15,7 +15,7 @@ import org.formulagen.wrapper.hovel.NativeRoute
  * committed request.
  */
 internal interface ConversationApi {
-    /** Reports readiness, the provider directory and usage. Answers the heartbeat's data, which carries tasks and memory jobs. */
+    /** Reports readiness, the provider directory and usage. Answers the heartbeat's data, which carries memory jobs. */
     fun heartbeat(beat: HostHeartbeat): JsonObject
 
     /** Opens the host event stream; reading its lines blocks until the server ends it or it is closed. */

@@ -10,8 +10,14 @@ import org.formulagen.wrapper.approvals.CancelSignal
 import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.*
-import org.formulagen.wrapper.workspace.FolderPicker
+import org.formulagen.wrapper.runtimes.*
+import org.formulagen.wrapper.conversation.voice.*
+import org.formulagen.wrapper.util.*
+import org.formulagen.wrapper.conversation.Activity
+import org.formulagen.wrapper.conversation.ActivityKind
+import org.formulagen.wrapper.conversation.ActivityStatus
+import org.formulagen.wrapper.conversation.ActivityStep
+import org.formulagen.wrapper.conversation.MemberMode
 
 class CoordinatorEngineTest {
     /** One engine on a fake server, with a coordinator and specialists the test scripts. */
@@ -33,7 +39,7 @@ class CoordinatorEngineTest {
         val dialogs = NativeDialogs(screen)
         val approvals = RemoteApprovals(dialogs, server, server.hostId)
         val turns = ProviderTurns(listOf(chat), listOf(worker), ConnectedProviders(), approvals)
-        val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(dialogs), server)
+        val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), server)
 
         init {
             if (workingFolder) { picked = working; folders.choose(account, talk.projectId, FolderRole.WORKING) }
@@ -498,6 +504,54 @@ class CoordinatorEngineTest {
         assertEquals(MessageState.STOPPED, fixture.send("Add sign-in", messageId = messageId))
         assertEquals(BrainRunState.CANCELLED, fixture.record().brain.run?.summary?.state, "cancelled, not left for review")
         assertEquals(emptyList(), fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.ArtifactStored>(), "nothing new is stored")
+    }
+
+    @Test fun aCoordinatorWithNoProviderSaysToAssignOneInsteadOfToRetry() {
+        // A new companion's brain: the coordinator has no binding yet, with or without specialists.
+        for (document in listOf(brain(), brain("Implementer" to MemberMode.WORK))) {
+            val configuration = document.configuration
+            val fixture = Fixture(document.copy(configuration = configuration.copy(coordinator = configuration.coordinator.copy(binding = null))))
+            assertEquals(MessageState.FAILED, fixture.send("Hi"))
+            assertEquals("Assign a provider to the coordinator in Configure brain.",
+                fixture.server.appended().last { it.author == MessageAuthor.SYSTEM }.text)
+            assertEquals(emptyList(), fixture.chat.requests, "no provider turn starts")
+        }
+    }
+
+    @Test fun aCoordinatorOnARuntimeThisMacDoesNotRunSaysToChooseAnother() {
+        // This Mac runs Codex only; the coordinator is bound to Claude Code.
+        for (document in listOf(brain(), brain("Implementer" to MemberMode.WORK))) {
+            val configuration = document.configuration
+            val claude = configuration.coordinator.copy(binding = BrainBinding(RuntimeId.CLAUDE_CODE, SharedRules.RUNTIME_DEFAULT_MODEL))
+            val fixture = Fixture(document.copy(configuration = configuration.copy(coordinator = claude)))
+            assertEquals(MessageState.FAILED, fixture.send("Hi"))
+            assertEquals("Claude doesn't run on this Mac. Choose another provider for the coordinator in Configure brain.",
+                fixture.server.appended().last { it.author == MessageAuthor.SYSTEM }.text)
+            assertEquals(emptyList(), fixture.chat.requests, "no provider turn starts")
+        }
+    }
+
+    @Test fun aThreadReplyDelegatedToASpecialistWithNoProviderSaysToAssignOne() {
+        val document = brain("Implementer" to MemberMode.WORK, "Reviewer" to MemberMode.TALK)
+        val configuration = document.configuration
+        val fixture = Fixture(document.copy(configuration = configuration.copy(
+            specialists = configuration.specialists.map { if (it.name == "Reviewer") it.copy(binding = null) else it })))
+        fixture.delegateThenAnswer()
+        fixture.send("Add sign-in")
+        val threadId = fixture.server.threads().last().id
+        val reviewer = fixture.document.configuration.specialists[1]
+        fixture.decide = { delegate(reviewer, "review the sign-in page") }
+        assertEquals(MessageState.FAILED, fixture.send("Can someone review it?", threadId))
+        assertEquals("Assign a provider to Reviewer in Configure brain.", fixture.server.appended().last { it.author == MessageAuthor.SYSTEM }.text)
+        assertEquals(listOf(threadId), fixture.server.threads().map { it.id }.distinct(), "no thread opens for it")
+    }
+
+    @Test fun anUnexpectedErrorStillSaysToTryAgain() {
+        val fixture = Fixture(brain())
+        fixture.chat.reply = { error("a bug in this build") }
+        assertEquals(MessageState.FAILED, fixture.send("Hi"))
+        assertEquals("Hovel could not finish this message on this Mac. Try sending it again.",
+            fixture.server.appended().last { it.author == MessageAuthor.SYSTEM }.text)
     }
 
     @Test fun aSignedOutRuntimeFailsWithItsProvidersReason() {

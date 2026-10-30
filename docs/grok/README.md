@@ -1,29 +1,29 @@
 # Grok Build integration
 
-Development companion chat and project work are implemented for **Grok Build 1.0.70 (f50904eaee6c)**. Launch Hovel with `HOVEL_GROK_PROVIDER=1`; optionally select an absolute executable with `GAMERO_GROK_PATH`. Release and unmarked builds keep Grok off. Project work has a separate development opt-in, `HOVEL_GROK_WORK=1`. Grok Bot remains unavailable.
+Development companion conversations (talk roles) and project work are implemented for **Grok Build 1.0.70 (f50904eaee6c)**. Launch Hovel with `HOVEL_GROK_PROVIDER=1`; optionally select an absolute executable with `GAMERO_GROK_PATH`. Release and unmarked builds keep Grok off. Project work has a separate development opt-in, `HOVEL_GROK_WORK=1`. Grok Bot remains unavailable.
 
-## Sign in and chat
+## Sign in and talk
 
 Use Manage subscriptions → Grok → installation instructions or **Sign in to Grok Build**. The explicit button opens the installed runtime's `grok login` in Terminal. Return to Hovel and choose **Check again**. Hovel checks the runtime without a model prompt or interactive login. A verified personal OIDC subscription shows **Connected** and supplies its model catalog. A saved credential without verified access shows **Sign-in detected**. It does not ask you to sign in repeatedly.
 
-Add Grok to a companion's team through the existing member picker. Conversation history, switching, bounded handover, Stop and explicit Retry use the existing `DesktopChat` flow. Status cannot establish that a future remote request will succeed; the adapter rechecks account access and isolation before each prompt. Unsupported versions or managed policies remain unavailable.
+Bind a brain role to Grok in the companion's brain editor. Its turns run in the companion's conversations on this Mac, through the conversation runner, with Stop and explicit Retry. Status cannot establish that a future remote request will succeed; the adapter rechecks account access and isolation before each prompt. Unsupported versions or managed policies remain unavailable.
 
 ## Native composition
 
 ```kotlin
 val connection = GrokConnection(environment)
 val provider = GrokProvider(connection)
-val talk = GrokChatRuntime(providerRoot, environment, connection)
-val work = GrokWorkRuntime(providerRoot, environment, connection, broker, NativeGrokWorkTrust(dialogs))
+val talk = GrokChatRuntime(grokRoot, environment, connection, retained)
+val work = GrokWorkRuntime(grokRoot, environment, connection, broker, retained, NativeGrokWorkTrust(dialogs))
 ```
 
-`DesktopServices` registers these only behind the development gate. No Grok-specific web chat transport is needed. `GrokConnection` owns no-prompt subscription/model checks. `GrokLaunch` (talk isolation) and `GrokWorkLaunch` (the player's own setup) are the two `GrokLaunchPolicy` launches. `GrokSession` owns one ACP session's open, prompt, Stop and teardown for both modes; `GrokTalkSession` and `GrokWorkSession` add only how each revalidates before a prompt. `GrokChatRuntime` and `GrokWorkRuntime` adapt the existing turn and summary interfaces and share one turn start (`resolveGrokTalkTurn`/`resolveGrokWorkTurn`). Pure protocol/account/tool parsers and the private binding store are independently tested.
+`DesktopServices` builds these for the conversation runner only behind the development gate; `retained` reads the bindings the account's conversations can still resume (`ConversationStore.bindingHandles`). No Grok-specific web transport is needed. `GrokConnection` owns no-prompt subscription/model checks. `GrokLaunch` (talk isolation) and `GrokWorkLaunch` (the player's own setup) are the two `GrokLaunchPolicy` launches. `GrokSession` owns one ACP session's open, prompt, Stop and teardown for both modes; `GrokTalkSession` and `GrokWorkSession` add only how each revalidates before a prompt. `GrokChatRuntime` and `GrokWorkRuntime` adapt the existing turn interfaces and share one turn start (`resolveGrokTalkTurn`/`resolveGrokWorkTurn`). Pure protocol/account/tool parsers and the private binding store are independently tested.
 
-The transport (`GrokAcp`), both launch policies, account and handshake parsing, and the release pin live in `providers/grok`; sessions, turns, approvals and activity live in `chat/grok`, which also holds both runtimes.
+The transport (`GrokAcp`), both launch policies, account and handshake parsing, and the release pin live in `providers/grok`; sessions, turns, approvals and activity live in `runtimes/grok`, which also holds both runtimes.
 
 Every chat process uses a fresh private HOME/GROK_HOME and the supported `GROK_AUTH_PATH` reference to the runtime-owned login. Hovel never reads or copies credential contents. Only provider session data survives through a native-owned directory link; configuration, downloaded bundles and preference changes are discarded after process teardown. Chat launches do not modify the user's Grok config. See the [source audit](source-audit.md) for the profile, reload exclusion and narrowly accepted internal watcher replies.
 
-Only Hovel UUID handles enter shared native history. Sidecars bind the raw provider ID to account fingerprint, profile, companion, concrete model and mode. Persona/model changes or missing mappings can request context recovery before submission. Foreign/corrupt mappings and ambiguous transport failures never automatically replay a prompt. Bounded orphan cleanup uses all readable histories plus active handles; incomplete snapshots delete nothing. Summary sessions are disposable.
+Only Hovel UUID handles enter a conversation's record. Sidecars bind the raw provider ID to account fingerprint, account, companion, concrete model and mode. A persona or model change, or a missing mapping, loses the conversation before submission, and the role's next turn starts fresh. Foreign/corrupt mappings and ambiguous transport failures never automatically replay a prompt. Bounded orphan cleanup keeps every binding a conversation can still resume (each coordinator's, each thread's specialist) plus active handles; an unreadable record deletes nothing.
 
 ## Validation
 
@@ -32,9 +32,9 @@ Only Hovel UUID handles enter shared native history. Sidecars bind the raw provi
 Checks against the installed runtime are in `*SmokeTest` classes and skip unless explicitly enabled. `HOVEL_GROK_SMOKE=/absolute/path/to/grok` runs the checks that send no model turn; several of them still authenticate with the player's account, and the work ones need the [player's OIDC setting](#player-requirement-for-work), so narrow the selection with `--tests` when that is not wanted. `HOVEL_GROK_SMOKE_TURNS=1` also runs the checks that send controlled model turns on the subscription. Checks that sign in find the player's provider home from `GROK_HOME` (default `~/.grok`) and reference the login at `GROK_AUTH_PATH` (default in that home), never reading it. Work checks that create sessions directly or grant folder trust copy only `config.toml` into a disposable provider home, so the player's session and trust stores stay untouched; the cleanup check alone runs ordinary work in the player's own provider home, and never grants trust. Live work checks fail rather than skip when the OIDC setting is missing. The rules are in `GrokSmoke.kt`.
 
 ```sh
-# Local fake peers, bridge/provider/history and approval regressions.
+# Local fake peers, bridge/provider/conversation-store and approval regressions.
 ./gradlew :composeApp:jvmTest --tests '*Grok*' --tests '*bridge*' \
-  --tests '*ChatHistoryTest*' --tests '*DesktopChat*' --tests '*Provider*' --tests '*approvals*'
+  --tests '*ConversationStoreTest*' --tests '*Provider*' --tests '*approvals*'
 
 # Live talk checks, including controlled model turns.
 HOVEL_GROK_SMOKE=/absolute/path/to/grok HOVEL_GROK_SMOKE_TURNS=1 \
@@ -48,7 +48,7 @@ The work continuation passed its focused regression and two separate real adapte
 
 ## Project work
 
-Enable both development flags, select Grok in a companion's team, choose its project folder, and select Work. Hovel uses its existing native start confirmation, activity feed, Stop, history and handover flow.
+Enable both development flags, bind a working brain role to Grok, and choose the project's working folder. Hovel uses its existing native start confirmation, the thread's activity, Stop and the conversation's history.
 
 Work runs in the player's own environment with their login-shell `PATH` (Grok's folder first), minus inherited `XAI_*` and `GROK_*` variables. It preserves the selected HOME/GROK_HOME and uses the runtime-owned credential reference. It requires the [player's OIDC setting](#player-requirement-for-work); a bounded TOML parser checks the actual setting, and Hovel never writes it. Runtime inspection accepts ordinary user preferences, skills and project instructions, and refuses extra configuration layers, hooks/plugins/MCP/LSP, managed policy, custom models/endpoints/auth providers, config overrides and command prefixes. Unsupported configurations remain unavailable rather than being silently ignored.
 
@@ -67,10 +67,10 @@ HOVEL_GROK_SMOKE=/absolute/path/to/grok HOVEL_GROK_SMOKE_TURNS=1 \
 
 # Deterministic regressions, with unrelated live checks skipped unless explicitly enabled.
 ./gradlew :composeApp:jvmTest --tests '*Grok*' --tests '*approvals*' \
-  --tests '*DesktopChat*' --tests '*DesktopServicesTest*'
+  --tests '*CoordinatorEngineTest*' --tests '*DesktopServicesTest*'
 ```
 
-The older direct protocol probes remain in `GrokWorkAuthSmokeTest`: `HOVEL_GROK_SMOKE` runs its authentication checks, and `HOVEL_GROK_SMOKE_TURNS=1` adds its permission and lifecycle turns. See the [source audit](source-audit.md). Mixed-provider Work handover passes through the production coordinator and native UI, and explicit Retry passes (see [Profile and Retry lifecycle](#profile-and-retry-lifecycle)). Release activation, unsupported integrations, arbitrary detached/remote work, actual authenticated profile switching and modal-approval Stop remain separate acceptance work.
+The older direct protocol probes remain in `GrokWorkAuthSmokeTest`: `HOVEL_GROK_SMOKE` runs its authentication checks, and `HOVEL_GROK_SMOKE_TURNS=1` adds its permission and lifecycle turns. See the [source audit](source-audit.md). Release activation, unsupported integrations, arbitrary detached/remote work, actual authenticated profile switching and modal-approval Stop remain separate acceptance work.
 
 ### Player requirement for work
 
@@ -81,7 +81,7 @@ Grok work signs in only with the player's Grok account, never an API key. Grok h
 preferred_method = "oidc"
 ```
 
-This setting is global: it also changes how Grok Build signs in outside Hovel, for every project, until the player removes it. Hovel never writes or edits this file; when the setting is missing, work readiness names the exact setting, the file and this effect. Companion chat does not need it, because each chat process pins its own disposable config.
+This setting is global: it also changes how Grok Build signs in outside Hovel, for every project, until the player removes it. Hovel never writes or edits this file; when the setting is missing, work readiness names the exact setting, the file and this effect. Talk roles do not need it, because each talk process pins its own disposable config.
 
 ## Integrated main acceptance
 
@@ -90,33 +90,21 @@ The feature is combined with main's usage/model-effort interfaces, and the match
 The native suite passes with only opt-in checks skipped; contract tests, focused web and Storybook tests, typecheck and contract/Kotlin fixture parity pass. Six broad-web failures also reproduce on the main baseline and remain outside this feature. The macOS package was rebuilt and launched with the matching sources.
 
 ```sh
-# Live Work handovers; requires signed-in providers and the supported OIDC Grok config.
-# Uses a disposable project/config home; only the exact test edit is approved.
-HOVEL_GROK_SMOKE=/absolute/path/to/grok HOVEL_GROK_SMOKE_TURNS=1 \
-HOVEL_CLAUDE_HANDOVER_SMOKE=/absolute/path/to/claude \
-  ./gradlew :composeApp:jvmTest --tests '*GrokHandoverSmokeTest'
-
 # Live Codex readiness/configuration, without a model turn.
 HOVEL_CHAT_CODEX_SMOKE=/absolute/path/to/codex \
-  ./gradlew :composeApp:jvmTest --tests '*DesktopChatSmokeTest'
+  ./gradlew :composeApp:jvmTest --tests '*TalkRuntimeSmokeTest'
 ```
 
-The real coordinator test verifies Grok Work → Claude Work → Grok Work, edited-file work logs, read activity and retained conversation context. Native Mac checks also completed Grok/Claude Work handovers, Grok → Codex talk with a context-based reply, and a return to Grok. Codex Work stays disabled. A separate fake-process test verifies profile-switch cancellation, late-approval rejection and history/workspace isolation; it does not claim an authenticated profile-switch UI pass. See [sanitized evidence](work-1.0.70.json). Release gates remain closed.
+The team chat and profile checks this section once listed (Work handovers between members, profile-lease switching) went with team chat; conversations run one coordinator and its threads for the signed-in account. Codex Work stays disabled. See [sanitized evidence](work-1.0.70.json). Release gates remain closed.
 
-## Profile and Retry lifecycle
+## Retry lifecycle
 
 ```sh
-# Real Grok, two disposable Hovel profile leases, no Hovel account-service dependency.
-HOVEL_GROK_SMOKE=/absolute/path/to/grok HOVEL_GROK_SMOKE_TURNS=1 \
-  ./gradlew :composeApp:jvmTest --tests '*GrokProfileSmokeTest'
-
-# Dropped-turn Retry, duplicate suppression and pending-approval cancellation.
+# Pending-approval cancellation and a lost session's binding.
 ./gradlew :composeApp:jvmTest --tests '*GrokWorkRuntimeTest' --tests '*approvals*'
 ```
 
-The real profile check passes cancellation and process cleanup, rejects a late Allow, keeps histories/workspaces separate, and restores the first profile's context. It references the existing credential store and grants trust only in a disposable configuration home. It does not authenticate Hovel accounts. Native Retry after a forced work-process failure also passes: reconnect does not resend, explicit Retry obtains a real reply, and the saved user message is not duplicated.
-
-Native dialogs now use modeless presentation so the main chat can receive Stop/Close. The desktop Stop-with-approval-open run is still unverified: its edit was applied and the action taken needs clarification. Authenticated Hovel account-switch UI acceptance requires the currently unavailable local identity service and test accounts. Release gates remain closed.
+Native dialogs now use modeless presentation so the main window can receive Stop. The desktop Stop-with-approval-open run is still unverified: its edit was applied and the action taken needs clarification. Authenticated Hovel account-switch UI acceptance requires the currently unavailable local identity service and test accounts. Release gates remain closed.
 
 ## Bumping the supported Grok version
 
@@ -125,11 +113,10 @@ Hovel accepts exactly one Grok Build release. Talk, work, the setup card and the
 1. Review the new release against the [source audit](source-audit.md): auth fallback, folder trust, the talk and work profiles, permission metadata, watcher replies and the `inspect --json` fields Hovel checks. Pin the audit to the new source commit and record anything that moved.
 2. Set `GROK_VERIFIED_VERSION` to the new release's exact `grok --version` output. The player-facing version and messages derive from it.
 3. Run the deterministic suite: `./gradlew :composeApp:jvmTest`.
-4. On a Mac signed in to a test Grok subscription, with the [player's OIDC setting](#player-requirement-for-work) and a signed-in Claude Code, run every live smoke with the new binary. These send controlled model turns, and none may skip:
+4. On a Mac signed in to a test Grok subscription, with the [player's OIDC setting](#player-requirement-for-work) run every live smoke with the new binary. These send controlled model turns, and none may skip:
    ```sh
    HOVEL_GROK_SMOKE=/absolute/path/to/grok HOVEL_GROK_SMOKE_TURNS=1 \
-   HOVEL_CLAUDE_HANDOVER_SMOKE=/absolute/path/to/claude \
      ./gradlew :composeApp:jvmTest --tests '*Grok*SmokeTest'
    ```
 5. Refresh the evidence: rerun `python3 tools/probe-grok-initialize.py` for `initialize-<version>.json`, replace `startup-`, `talk-` and `work-<version>.json` with the new sanitized results, and update the links here and in the audit.
-6. Repeat the native Mac checks under [Project work](#project-work): trust dialog, edit approval and denial, activity, Stop and Close chat.
+6. Repeat the native Mac checks under [Project work](#project-work): trust dialog, edit approval and denial, activity and Stop.

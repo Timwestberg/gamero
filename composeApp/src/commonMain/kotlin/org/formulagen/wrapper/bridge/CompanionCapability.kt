@@ -13,14 +13,11 @@ interface CompanionCapability {
     suspend fun activateConnection(ownerId: String, hostId: String): JsonObject
 }
 
-/**
- * `companion.capabilities`. [sandbox] is the page contract's literal `read-only` (host-bridge `capabilities.ts`, read
- * strictly by pages): it describes the Hovel task lane's Codex sandbox, not conversation work, whose working specialists
- * write in the project's working folder after the start-of-work approval. The value is revisited with the host-bridge
- * cleanup in step E, since changing it needs a contract change with version skew for older pages.
- */
+/** `companion.capabilities`: this host can register the Mac as one of the account's computers. */
 @Serializable
-data class CompanionCapabilitiesResult(val connectComputer: Boolean = true, val cloud: Boolean = false, val sandbox: String = "read-only")
+data class CompanionCapabilitiesResult(val connectComputer: Boolean = true) {
+    init { require(connectComputer) { "The contract's connectComputer is the literal true" } }
+}
 
 @Serializable
 data class CompanionPrepareArgs(val ownerId: String)

@@ -25,12 +25,12 @@ class HostDirectoryTest {
     @Test fun everyRuntimeIsListedWithItsReadinessAndOnlyReadyOnesWork() {
         val providers = Counting(ConnectedProviders(setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE)))
         val clock = MutableClock(Instant.parse("2026-10-29T12:00:00Z"))
-        val features = listOf("provider-input", "memory-context", "memory-extraction")
-        val directory = HostDirectory(providers, id(), id(), offered = setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE),
+        val features = listOf("memory-extraction")
+        val directory = HostDirectory(providers, id(), offered = setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE),
             working = setOf(RuntimeId.CLAUDE_CODE), features = features, clock = clock, directoryEvery = 60.seconds, usageEvery = 300.seconds)
         val beat = directory.heartbeat()
         assertEquals(features, beat.features)
-        assertEquals("unavailable", beat.providerState, "ready runtimes, but no task lane: no task is queued here")
+        assertEquals("ready", beat.providerState, "a runtime is ready")
         assertEquals("2026-10-29T12:00:00Z", beat.directory.observedAt)
         assertEquals(listOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE, RuntimeId.GROK_BUILD), beat.directory.runtimes.map { it.runtimeId })
         assertEquals(listOf(ProviderReadiness.READY, ProviderReadiness.READY, ProviderReadiness.UNAVAILABLE), beat.directory.runtimes.map { it.readiness })
@@ -49,26 +49,23 @@ class HostDirectoryTest {
 
     @Test fun aSignedOutRuntimeHasNoModelsAndNoUsage() {
         val providers = ConnectedProviders().apply { connected = false }
-        val beat = HostDirectory(providers, id(), id(), setOf(RuntimeId.CODEX), setOf(RuntimeId.CODEX), listOf("memory-context")).heartbeat()
+        val beat = HostDirectory(providers, id(), setOf(RuntimeId.CODEX), setOf(RuntimeId.CODEX), emptyList()).heartbeat()
         val codex = beat.directory.runtimes.first()
         assertEquals(ProviderRuntime(false, emptyList(), ProviderReadiness.SIGNED_OUT, RuntimeId.CODEX), codex)
         assertEquals(emptyList(), beat.allowances)
-        assertEquals("unavailable", beat.providerState)
+        assertEquals("auth-required", beat.providerState, "none is ready and one is signed out")
     }
 
-    @Test fun providerStateIsTheTaskLanesCodexAndUnavailableWithoutOne() {
-        val ready = ConnectedProviders()
-        var codex: String? = "auth-required"
-        val directory = HostDirectory(ready, id(), id(), setOf(RuntimeId.CODEX), emptySet(), listOf("provider-input"),
-            taskProviderState = { codex })
-        val beat = directory.heartbeat()
-        assertEquals("auth-required", beat.providerState, "the task lane's own Codex, though the directory's Codex is ready")
-        assertEquals(ProviderReadiness.READY, beat.directory.runtimes.first { it.runtimeId == RuntimeId.CODEX }.readiness,
-            "conversation readiness stays in the directory")
-        codex = "ready"
-        assertEquals("ready", directory.heartbeat().providerState)
-        val noTasks = HostDirectory(ready, id(), id(), RuntimeId.entries.toSet(), RuntimeId.entries.toSet(), listOf("memory-context"))
-        assertEquals("unavailable", noTasks.heartbeat().providerState, "a Mac without a task lane is never offered a task")
+    @Test fun providerStateIsReadyWhenARuntimeIsElseAuthRequiredWhenOneIsSignedOut() {
+        fun directory(vararg readiness: ProviderReadiness) =
+            ProviderDirectory("2026-10-29T12:00:00Z", readiness.mapIndexed { index, it -> ProviderRuntime(false, emptyList(), it, RuntimeId.entries[index]) })
+        assertEquals("ready", directory(ProviderReadiness.SIGNED_OUT, ProviderReadiness.READY).providerState())
+        assertEquals("auth-required", directory(ProviderReadiness.NOT_INSTALLED, ProviderReadiness.SIGNED_OUT).providerState())
+        assertEquals("unavailable", directory(ProviderReadiness.NOT_INSTALLED, ProviderReadiness.UNAVAILABLE).providerState())
+        assertEquals("unavailable", directory().providerState(), "a Mac with no runtime offered")
+        // Codex is not needed: a Mac with Claude Code alone is ready.
+        val claudeOnly = HostDirectory(ConnectedProviders(setOf(RuntimeId.CLAUDE_CODE)), id(), setOf(RuntimeId.CLAUDE_CODE), emptySet(), emptyList())
+        assertEquals("ready", claudeOnly.heartbeat().providerState)
     }
 
     @Test fun usageIsAnAllowanceSnapshotWithAStableOpaqueAccount() {

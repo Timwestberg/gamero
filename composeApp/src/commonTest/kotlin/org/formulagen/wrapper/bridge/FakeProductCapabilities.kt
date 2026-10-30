@@ -1,4 +1,6 @@
 package org.formulagen.wrapper.bridge
+import org.formulagen.wrapper.conversation.DictationState
+import org.formulagen.wrapper.conversation.HearingState
 
 /** Protocol fixtures exercise dispatch without starting a provider, pet or game process. */
 class FakeProviderCapability : ProviderCapability {
@@ -7,12 +9,8 @@ class FakeProviderCapability : ProviderCapability {
     override suspend fun startLogin(scope: ProviderScope) = ProviderLogin(scope.runtimeId, true)
 
     override suspend fun perform(action: ProviderAction, scope: ProviderScope) =
-        ProviderStatus(scope.runtimeId, if (action == ProviderAction.CONNECT) ProviderState.SIGNING_IN else ProviderState.DISCONNECTED)
-    override suspend fun list(profile: String) = ProviderList(SharedRules.LEGACY_RUNTIMES.toList(), listOf(RuntimeId.CLAUDE_CODE))
-    override suspend fun listForClient(args: ProviderListForClientArgs): ProviderList {
-        val understood = SharedRules.clientRuntimes(args.supportedRuntimes).toList()
-        return ProviderList(understood, understood.filter { it == RuntimeId.CLAUDE_CODE })
-    }
+        ProviderStatus(scope.runtimeId, if (action == ProviderAction.CONNECT) ProviderState.CONNECTED else ProviderState.DISCONNECTED)
+    override suspend fun list() = ProviderList(listOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE), listOf(RuntimeId.CLAUDE_CODE))
     override suspend fun models(scope: ProviderScope) = ProviderModels(listOf(ProviderModel("Sonnet", true, "sonnet")), scope.runtimeId)
 }
 
@@ -31,12 +29,6 @@ class FakeGameCapability : GameCapability {
         closed = onClosed
         return AutoCloseable { closed = null }
     }
-}
-
-class FakeWorkspaceCapability : WorkspaceCapability {
-    override suspend fun choose(scope: WorkspaceScope) = WorkspaceStatus(WorkspaceFolder(true, "hovel-notes"))
-    override suspend fun clear(scope: WorkspaceScope) = WorkspaceStatus(null)
-    override suspend fun status(scope: WorkspaceScope) = WorkspaceStatus(WorkspaceFolder(true, "hovel-notes"))
 }
 
 class FakeProjectCapability : ProjectCapability {

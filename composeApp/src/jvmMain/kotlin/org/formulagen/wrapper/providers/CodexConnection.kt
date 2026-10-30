@@ -48,7 +48,7 @@ internal class CodexConnection(private val rpc: CodexAppServer) : ProviderConnec
 /** What every non-status Codex action answers with: Hovel never signs Codex in or out. */
 internal const val CODEX_SIGN_IN_ELSEWHERE = "Sign in and out with `codex login` in Terminal."
 
-/** An API-key login is never used: companion chat and tasks run only on the player's ChatGPT subscription. */
+/** An API-key login is never used: conversations and memory jobs run only on the player's ChatGPT subscription. */
 internal const val CODEX_API_KEY = "Codex is using an API key. Sign in with your ChatGPT subscription to use it here."
 
 /**

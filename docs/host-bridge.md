@@ -13,7 +13,7 @@ follows it, such as `.../hovel/` for `kotlin/org/formulagen/wrapper/hovel/`.
 
 ## Subscription usage
 
-Desktop `providers.usage({profile, runtimeId})` reads the runtime's shared
+Desktop `providers.usage({runtimeId})` reads the runtime's shared
 subscription quotas. It returns `{runtimeId, checkedAt, session?, weekly?}`;
 each window has `usedPercent` (0..100) and optional `resetsAt`. Check time is Unix
 milliseconds; reset time is Unix seconds. An omitted window is unavailable,
@@ -39,13 +39,13 @@ when it is closed. These calls never consume a reset or purchase credits.
 | Router | `commonMain/.../BridgeRouter.kt`, `BridgeCheck.kt` | Every protocol rule: frame and origin, size, envelope, context, method, arguments, error codes. No platform imports. |
 | Method types | `commonMain/.../BridgeMethods.kt` | `BridgeMethod`, `BridgeEvent`, and the router's own `host.*` methods. |
 | Platform set | `commonMain/.../HostCapabilities.kt` | One constructor parameter per platform capability: `Capability.Supported(impl)` or `Capability.Unsupported`. |
-| Capabilities | Platform: `commonMain/.../LinkOpener.kt`, `Haptics.kt`, `Lifecycle.kt`. Product: `CompanionCapability.kt`, `ChatCapability.kt`, `ProviderCapability.kt`, `PetCapability.kt`, `GameCapability.kt`; `SharedRules.kt` holds rules several use | One file each: the interface, its argument and result types, its methods and its `CapabilityBinder`. |
-| Desktop product services | `jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt` | Builds the desktop implementations (`DesktopChat`, `DesktopProviders`, `DesktopPetLauncher`, `DesktopGameLauncher`, `HovelCompanion`), registers their packs, ends them per page context and closes them in reverse order. |
+| Capabilities | Platform: `commonMain/.../LinkOpener.kt`, `Haptics.kt`, `Lifecycle.kt`. Product: `CompanionCapability.kt`, `ProviderCapability.kt`, `PetCapability.kt`, `GameCapability.kt`, `ProjectCapability.kt`, `ConversationVoiceCapability.kt`, `HostContractCapability.kt`, `ApprovalCapability.kt`; `SharedRules.kt` holds rules several use, and `BrainTypes.kt` the brain types conversations read | One file each: the interface, its argument and result types, its methods and its `CapabilityBinder`. |
+| Desktop product services | `jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt` | Builds the desktop implementations (`DesktopProviders`, `DesktopPetLauncher`, `DesktopGameLauncher`, `HovelCompanion`, `ConversationHost`, `DesktopConversationVoice`), registers their packs, ends them per page context and closes them in reverse order. |
 | Platform factories | `jvmMain/.../DesktopHostCapabilities.kt`, `androidMain/.../AndroidHostCapabilities.kt`, `iosMain/.../IosHostCapabilities.kt` | Each platform's choice for every capability. |
 | Shared transport half | `commonMain/.../HostBridge.kt` | What every transport shares: the router, the trusted origin, the document counter, the event channel and the failure log. A platform transport calls its `receive`, and `documentChanged` or `endContext` to end a context. |
 | Transport helpers | `commonMain/.../MessagePortTransport.kt` (Android), `iosMain/.../WebKitHostTransport.kt` (iOS) | The mobile transport rules with no WebView types, so tests can drive them: port frames on Android, document-start messages and events on iOS. |
 | Platform transports | `jvmMain/.../JcefHostBridge.kt`, `androidMain/.../AndroidHostBridge.kt`, `iosMain/.../IosHostBridge.kt` | Move strings between the WebView and the shared half, and report frame facts read from the platform. Nothing else. |
-| Desktop receiver | `jvmMain/kotlin/org/formulagen/wrapper/companion/NativeBridge.kt` | The JCEF message router. It receives each query first, answers a query from another browser or an invalid frame with a 403 failure, and hands version 2 requests to `JcefHostBridge`. The only version 1 traffic left is the Hovel companion's legacy protocol (`LegacyCompanionQueries.kt`). See [hovel-companion.md](hovel-companion.md). |
+| Desktop receiver | `jvmMain/kotlin/org/formulagen/wrapper/companion/NativeBridge.kt` | The JCEF message router. It receives each query first, answers a query from another browser or an invalid frame with a 403 failure, and hands every other query to `JcefHostBridge`, which refuses anything that is not version 2 with `400 Invalid native protocol`. See [hovel-companion.md](hovel-companion.md). |
 | Web client | game-platform `packages/host-bridge` (`@formulagen/host-bridge`) | `capabilities()`, `call(method, args)`, `on(event, handler)`. |
 
 ## Ask before you call: `host.info` and `host.capabilities`
@@ -91,12 +91,12 @@ capability; `Lifecycle.kt` is the example of an event capability.
 event: `games.launch` opens a game and `games.closed` says the player is back.
 
 1. **Contract (server-platform).** Give the capability its own file,
-   `event-contracts/src/host-bridge/<capability>.ts`, as `chat.ts` does: its
-   zod schemas and one method map (`CHAT_METHODS`), each entry with `args` and
+   `event-contracts/src/host-bridge/<capability>.ts`, as `project.ts` does: its
+   zod schemas and one method map (`PROJECT_METHODS`), each entry with `args` and
    `result` (`z.strictObject`) and a `capability` name. A capability with
    events adds an event map to the same file, as `games.ts` does with
    `GAME_EVENTS`: each entry has a `capability` name and a `data` schema. Rules
-   that several capabilities share, such as the profile ID and companion name,
+   that several capabilities share, such as the runtime ID and companion name,
    live in `shared.ts`. Spread the method map into `HOST_BRIDGE_METHODS` and the
    event map into `HOST_BRIDGE_EVENTS`, both in `capabilities.ts`. Every
    existing entry has a `capability` key, but the type does not require one, so
@@ -160,10 +160,15 @@ event: `games.launch` opens a game and `games.closed` says the player is back.
      binder.pack(capability)` to the object, as `CompanionMethods.pack` does.
      Then add the pack to each platform's Hovel pack list, `Unsupported` where
      the platform has none. There are three lists, with different names:
-     - desktop: `desktopProductPacks(product, companion, chat, providers, pet, games)`
-       in `jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt`. Every
-       desktop product registers chat, providers, pet and games (the catalog
-       app is the Gamero product); Hovel adds its companion;
+     - desktop: `desktopProductPacks(product, companion, providers, pet, games,
+       projects, hostContract, conversationVoice, pageCheck)` in
+       `jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt`. Every
+       desktop product registers providers, pet and games (the catalog app is
+       the Gamero product); Hovel adds its companion, `project`,
+       `conversationVoice`, `host.contract` and the unsupported phone
+       approvals. A method whose answer a contract changed goes behind
+       `pageCheck` (`guardedBy`), as `companion.*`, `project.*` and
+       `providers.*` do for contract 3;
      - Android: `hovelBridgePacks()` in
        `androidMain/kotlin/org/formulagen/wrapper/hovel/HovelAndroid.kt`;
      - iOS: `iosHovelBridgePacks()` in `iosMain/.../IosHostCapabilities.kt`.
@@ -297,9 +302,8 @@ unknown capabilities; an empty list means no selectable effort. Codex supplies
 `supportedReasoningEfforts` and `defaultReasoningEffort`; Claude supplies
 `supportsEffort` and `supportedEffortLevels`, with no assumed default.
 
-`chat.send`, `chat.retry` and `chat.hearing` accept optional `effort`
-separately from member identity; `chat.hearing`'s applies to the talk turns it
-hears. Talk and Work forward it to Codex `turn/start.effort` or Claude
+A brain role's binding carries an optional `effort` separately from its model.
+Talk and Work turns forward it to Codex `turn/start.effort` or Claude
 `--effort`. The page resolves Auto to the advertised default, when known, so
 Codex does not retain an earlier turn's override. Claude Work includes effort
 in its process-reuse key and resumes the conversation after changing it.

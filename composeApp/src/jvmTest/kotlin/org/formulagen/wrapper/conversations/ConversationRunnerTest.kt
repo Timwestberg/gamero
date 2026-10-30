@@ -10,7 +10,6 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.serialization.json.put
 import org.formulagen.wrapper.approvals.CancelSignal
 import org.formulagen.wrapper.approvals.NativeDialogs
-import org.formulagen.wrapper.workspace.FolderPicker
 
 class ConversationRunnerTest {
     private val server = FakeServer()
@@ -21,7 +20,7 @@ class ConversationRunnerTest {
     private val folders = ProjectFolderStore(root, FolderPicker { _, _ -> picked })
     private val statuses = CopyOnWriteArrayList<String>()
     private val heartbeats = CopyOnWriteArrayList<kotlinx.serialization.json.JsonObject>()
-    private val beat = HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), listOf("memory-context"), "ready")
+    private val beat = HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), listOf("memory-extraction"), "ready")
 
     /** An engine the test drives: [behave] runs each claimed message; every run is recorded with its Stop. */
     private inner class Engine : MessageEngine {
@@ -250,6 +249,20 @@ class ConversationRunnerTest {
         assertEquals(beat, server.heartbeats.first())
         server.offline = true
         eventually { statuses.lastOrNull() == ConversationRunner.OFFLINE }
+    }
+
+    @Test fun aHeartbeatTheServerSaysIsTooOldAsksForAnUpdateAndConversationsGoOn() {
+        server.heartbeatUpdateRequired = true
+        runner.start(); waitConnected()
+        eventually { server.heartbeats.size >= 2 }
+        eventually { statuses.lastOrNull() == ConversationRunner.MAC_TOO_OLD }
+        assertTrue(ConversationRunner.OFFLINE !in statuses, "the server answered; it is not unavailable")
+        assertEquals(emptyList(), heartbeats, "a refused heartbeat brings no memory jobs")
+        // Its companion routes still serve this Mac.
+        val talk = TestConversation()
+        val message = queue(talk)
+        server.emit(HostStreamEvent.WorkAvailable(talk.id))
+        eventually { server.settled(message) == MessageState.ANSWERED }
     }
 
     @Test fun theStreamReconnectsAfterAFailure() {
@@ -646,7 +659,10 @@ class ConversationRunnerTest {
             val message = queue(talk)
             server.claimBody = kotlinx.serialization.json.buildJsonObject { put("status", "stop-later") }
             lane.dispatch(HostStreamEvent.WorkAvailable(talk.id))
-            eventually { server.claimRequests.size == 1 && store.pendingClaims().size == 1 }
+            // Each wait starts when the lane reads the answer, so the clock moves only after it has.
+            fun waited(claims: Int) = eventually { server.claimRequests.size == claims && lane.unreadableClaims.get() == claims }
+            waited(1)
+            assertEquals(1, store.pendingClaims().size)
             val claimId = store.pendingClaims().single().claimId
             fun quiet(claims: Int) { Thread.sleep(100); assertEquals(claims, server.claimRequests.size) }
             fun later(millis: Long) = clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(millis))
@@ -654,12 +670,12 @@ class ConversationRunnerTest {
             lane.beat(); lane.dispatch(HostStreamEvent.StopRequested(talk.id))
             quiet(1)
             later(50); lane.beat()
-            eventually { server.claimRequests.size == 2 }
+            waited(2)
             // The wait doubles.
             later(50); lane.beat()
             quiet(2)
             later(50); lane.beat()
-            eventually { server.claimRequests.size == 3 }
+            waited(3)
             // The lane is idle again (a Stop while the claim is on its way would apply to that claim instead).
             quiet(3)
             assertEquals(listOf(claimId), server.claimRequests.map { it.claimId }.distinct(), "one claim id throughout")

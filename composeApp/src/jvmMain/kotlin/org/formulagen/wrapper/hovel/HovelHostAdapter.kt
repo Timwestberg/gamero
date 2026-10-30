@@ -41,13 +41,24 @@ class HovelStatusException(val status: Int, val code: String? = null) : IllegalS
 }
 
 /**
+ * The JDK client every call of this Mac to hovel-service goes through. Over plain `http` (the loopback development
+ * edge) it speaks HTTP/1.1 only: the JDK's default asks to upgrade to cleartext HTTP/2 (`Upgrade: h2c`), which the
+ * Vite edge never answers, so every heartbeat, claim and stream would hang. Over `https`, HTTP/2 is negotiated by
+ * ALPN and never asked for that way. No redirects; a connection gets 10 seconds.
+ */
+internal fun hovelHttpClient(scheme: String): HttpClient = HttpClient.newBuilder()
+    .version(if (scheme == "http") HttpClient.Version.HTTP_1_1 else HttpClient.Version.HTTP_2)
+    .connectTimeout(Duration.ofSeconds(10))
+    .followRedirects(HttpClient.Redirect.NEVER)
+    .build()
+
+/**
  * Host bearer stays in native memory and is sent only to the configured server. Every request names
  * this build's companion contract ([HovelContract.HEADER]).
  */
-class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val token: String, private val timeoutMillis: Long = 15_000, private val brainEnabled: Boolean = false) : HovelTransport, NativeExchange {
+class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val token: String, private val timeoutMillis: Long = 15_000) : HovelTransport, NativeExchange {
     private val endpoint: String
-    private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
-        .followRedirects(HttpClient.Redirect.NEVER).build()
+    private val client = hovelHttpClient(base.scheme)
     init {
         require(UUID.fromString(ownerId).toString() == ownerId && UUID.fromString(hostId).toString() == hostId)
         require(token.matches(Regex("[0-9a-f]{64}")))
@@ -58,7 +69,7 @@ class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val
     override fun post(route: String, body: JsonObject): JsonObject = exchange("POST", route, body)
 
     override fun exchange(method: String, route: String, body: JsonObject?): JsonObject {
-        require(allowed(method, route)) { "Route not allowed: $method $route" }
+        require(NativeRoute.allows(method, route)) { "Route not allowed: $method $route" }
         require((method == "GET") == (body == null))
         val publisher = body?.let { HttpRequest.BodyPublishers.ofString(it.toString()) } ?: HttpRequest.BodyPublishers.noBody()
         val request = builder(route).timeout(Duration.ofSeconds(15)).header("Content-Type", "application/json")
@@ -96,9 +107,6 @@ class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val
     private fun builder(route: String): HttpRequest.Builder = HttpRequest.newBuilder(URI(endpoint + route))
         .header("X-Hovel-Host-Token", token).header(HovelContract.HEADER, HovelContract.CURRENT.toString())
 
-    private fun allowed(method: String, route: String) = NativeRoute.allows(method, route) ||
-        (brainEnabled && method == "POST" && route in setOf("brain/admit", "brain/authorize", "brain/outcome", "brain/presentation-claim", "brain/presentation"))
-
     /** A refusal body's `code`, when it names one. */
     private fun refusalCode(body: ByteArray): String? =
         runCatching { (Json.parseToJsonElement(body.toString(Charsets.UTF_8)).jsonObject["code"] as? JsonPrimitive)?.contentOrNull }.getOrNull()
@@ -110,14 +118,14 @@ interface HovelEventLines : AutoCloseable {
 }
 
 /**
- * Hovel's revision protocol for one claimed item: claim with the journal's claim ID, then report each
- * state at the revision last seen. Launch decisions remain in the generic journal.
+ * Hovel's revision protocol for one claimed item, such as a memory job: claim with the journal's claim ID, then report
+ * each state at the revision last seen. Launch decisions remain in the generic journal.
  */
 abstract class HovelRevisionRemote(private val transport: HovelTransport, initial: JsonObject) : ExecutionRemote {
     private var item = initial
     protected abstract val claimRoute: String
     protected abstract val progressRoute: String
-    /** The key naming the item in a claim or report: `taskId` or `jobId`. */
+    /** The key naming the item in a claim or report, such as `jobId`. */
     protected abstract val idKey: String
     protected abstract fun idOf(item: JsonObject): String
 
@@ -153,21 +161,13 @@ abstract class HovelRevisionRemote(private val transport: HovelTransport, initia
     }
 }
 
-/** A user task on the task routes, until step E removes Hovel tasks with the web task UI. */
-class HovelTaskRemote(transport: HovelTransport, initial: JsonObject) : HovelRevisionRemote(transport, initial) {
-    override val claimRoute = "claim"
-    override val progressRoute = "progress"
-    override val idKey = "taskId"
-    override fun idOf(item: JsonObject) = item.getValue("request").jsonObject.getValue("id").jsonPrimitive.content
-}
-
 /**
  * A memory job on the `memory/claim` and `memory/progress` routes. The server closes a job that was replaced or taken back and
  * answers 409 to its reports, so the job stops there and is never offered again.
  */
 class HovelMemoryJobRemote(transport: HovelTransport, initial: JsonObject) : HovelRevisionRemote(transport, initial) {
-    override val claimRoute = "memory/claim"
-    override val progressRoute = "memory/progress"
+    override val claimRoute = NativeRoute.MEMORY_CLAIM.path()
+    override val progressRoute = NativeRoute.MEMORY_PROGRESS.path()
     override val idKey = "jobId"
     override fun idOf(item: JsonObject) = item.getValue("id").jsonPrimitive.content
 
@@ -183,35 +183,12 @@ class HovelMemoryJobRemote(transport: HovelTransport, initial: JsonObject) : Hov
 /** event-contracts `HOVEL_MEMORY_LIMITS.jobOutput`: the longest successful result a memory job reports. */
 const val HOVEL_MEMORY_JOB_OUTPUT_CHARS = 65_536
 
-/**
- * What this companion can run, declared on every heartbeat: `provider-input` with the task lane, `memory-context`
- * (recalled memory as its own section) whenever it runs tasks or conversations, and `memory-extraction` with the
- * memory lane. The server sends follow-ups, recalled memory and memory jobs only to a computer that lists them.
- */
-fun hovelHostFeatures(tasks: Boolean, memory: Boolean): List<String> =
-    listOfNotNull("provider-input".takeIf { tasks }, "memory-context", "memory-extraction".takeIf { memory })
-
-/** A follow-up runs the server-built `providerInput` (earlier exchanges, then the new prompt) in place of its bare prompt. */
-fun hovelExecutionRequest(task: JsonObject, hostId: String): ExecutionRequest {
-    val request = task.getValue("request").jsonObject
-    require(request.getValue("hostId").jsonPrimitive.content == hostId)
-    require(request.getValue("mode").jsonPrimitive.content == "local") { "Cloud execution is unavailable" }
-    // An explicit null or a non-string is malformed, not absent: it would otherwise run as the text "null".
-    val providerInput = task.optionalText("providerInput")
-    val followUp = request["followUp"]?.also { require(it is JsonObject) { "Follow-up must be an object" } }
-    // The contract pairs them; one without the other would run a reply without its conversation.
-    require((followUp == null) == (providerInput == null)) { "Follow-up and its provider input must arrive together" }
-    val prompt = providerInput ?: request.getValue("prompt").jsonPrimitive.content
-    return ExecutionRequest(request.getValue("id").jsonPrimitive.content, hostId, prompt,
-        task.getValue("characterMemory").jsonPrimitive.content, recalledMemory = task.optionalText("recalledMemory"))
-}
-
 private val EXTRACT_KIND = JsonPrimitive("extract")
 private val CODEX_RUNTIME = JsonPrimitive("codex")
 
 /**
- * Whether a memory job is this companion's to run. A job naming another `kind` or host-bridge
- * `runtimeId` is left for a companion that runs it. A job missing either field is not someone else's:
+ * Whether a memory job is this Mac's to run. A job naming another `kind` or host-bridge
+ * `runtimeId` is left for a computer that runs it. A job missing either field is not someone else's:
  * it is offered, refused by [hovelMemoryJobRequest] and shown as unreadable, so a renamed field
  * asks for an update instead of being skipped in silence.
  */
@@ -219,8 +196,7 @@ fun isRunnableMemoryJob(job: JsonObject) =
     job["kind"].let { it == null || it == EXTRACT_KIND } && job["runtimeId"].let { it == null || it == CODEX_RUNTIME }
 
 /**
- * A memory job runs its server-built `input` alone, with no character section, on the job's own model and
- * effort. It is checked here as the journal would check it, so a job this version cannot run is refused
+ * A memory job runs its server-built `input` as it is, on the job's own model and effort. It is checked here as the journal would check it, so a job this version cannot run is refused
  * before it is offered, never left failing quietly on the worker.
  */
 fun hovelMemoryJobRequest(job: JsonObject, hostId: String): ExecutionRequest {
@@ -230,7 +206,7 @@ fun hovelMemoryJobRequest(job: JsonObject, hostId: String): ExecutionRequest {
     val input = job.text("input").also {
         require(it.isNotBlank() && it.length <= ExecutionRequest.MAX_PROMPT_CHARS) { "Memory job input is empty or too long" }
     }
-    return ExecutionRequest(id, hostId, input, rawPrompt = true, choice = ProviderChoice(job.text("model"), job.text("effort")))
+    return ExecutionRequest(id, hostId, input, ProviderChoice(job.text("model"), job.text("effort")))
 }
 
 private fun JsonObject.text(key: String): String = optionalText(key) ?: error("$key is missing")

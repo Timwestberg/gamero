@@ -17,36 +17,35 @@ All paths below are under
 
 | Part | File | Job |
 | --- | --- | --- |
-| `NativeBridge` | [companion/NativeBridge.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/companion/NativeBridge.kt) | JCEF message router. Checks browser, frame and origin, hands version 2 to `JcefHostBridge` and version 1 to `LegacyCompanionQueries`. |
-| `LegacyCompanionQueries` | [companion/LegacyCompanionQueries.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/companion/LegacyCompanionQueries.kt) | Version 1, kept only for the companion's legacy protocol until task B4 removes it: the watch, the context and the three companion methods. |
+| `NativeBridge` | [companion/NativeBridge.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/companion/NativeBridge.kt) | JCEF message router. Checks the browser and frame, and hands every query to `JcefHostBridge`, which answers version 2 and refuses anything else. |
 | `DesktopServices` | [DesktopServices.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt) | Builds the companion with the other desktop services, registers their v2 packs and closes them in reverse order. |
-| `NativeOriginPolicy` | same file, line 14 | Compares the frame's origin, read from JCEF, with the configured app URL. |
+| `TrustedOrigin` | [bridge/TrustedOrigin.kt](../composeApp/src/commonMain/kotlin/org/formulagen/wrapper/bridge/TrustedOrigin.kt) (commonMain) | Compares the frame's origin, read from JCEF, with the configured app URL's. Any path on that origin is trusted, so the page keeps the bridge between `/hovel` and `/companions/...`. |
 | `HovelCompanion` | [hovel/HovelCompanion.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelCompanion.kt) | Handles the bridge methods, shows the approval dialog, owns the registration file, starts the host session at activation and again at every launch. |
 | `MacHostCredentials` | [companion/MacHostCredentials.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/companion/MacHostCredentials.kt) | Stores and reads the host bearer token in the macOS Keychain. |
 | `HovelHttpTransport` | [hovel/HovelHostAdapter.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostAdapter.kt) | The only HTTP client that sends the host token to the server. |
-| `HovelHostSession` | [hovel/HovelHostSession.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/HovelHostSession.kt) | The Codex lanes fed by the runner's heartbeat: one Hovel task (with `GAMERO_WORKSPACE`, until step E) and one memory job at a time, and the consolidation timer. |
+| `MemoryJobLane` | [hovel/MemoryJobLane.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/MemoryJobLane.kt) | The Codex memory lane fed by the runner's heartbeat: one memory job at a time, and the consolidation timer. |
 | `ConversationHost` | [conversations/ConversationHost.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/ConversationHost.kt) | Builds the runner for the registered account, with runtime instances of its own, and owns `project.*`. |
 | `ConversationRunner` | [conversations/ConversationRunner.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/ConversationRunner.kt) | The host stream and its watchdog, the heartbeat, claims, the claim journal and one serial lane per conversation. Also defines `MessageEngine`. |
 | `CoordinatorEngine` | [conversations/CoordinatorEngine.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/CoordinatorEngine.kt) | Runs one claimed message through the companion brain: coordinator, threads, workflow, and the outbox of checkpoints. |
 | `ProviderTurns` | [conversations/ProviderTurns.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/ProviderTurns.kt) | The engine's provider turns: readiness, model resolution, talk permits, work leases and Stop. |
 | `ConversationPrompts` | [conversations/ConversationPrompts.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/ConversationPrompts.kt) | `CONVERSATION_PROTOCOL` and the coordinator's and specialists' inputs. |
 | `NativeRoute` | [hovel/NativeRoutes.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/NativeRoutes.kt) | Every route a registered Mac calls: one table of method, path template and builder, which is also what the transport allows. |
-| `DesktopBrain` | [brain/DesktopBrain.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/brain/DesktopBrain.kt) | Frozen: serves the page's `brain.*` methods only and is removed in step E. See below. |
 
 `DesktopServices.create` builds the services; [main.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/main.kt) attaches them to the WebView.
 
 ## When the companion exists
 
+Launch it for Hovel with `GAMERO_PRODUCT=hovel`, as
+[desktop.md](desktop.md#run-hovel) shows.
+
 `DesktopServices.create` creates a `HovelCompanion` when `GAMERO_PRODUCT` (or
 `-Dgamero.product`) is `hovel` and the OS is macOS. Codex (`GAMERO_CODEX_PATH`,
 else `codex` on `PATH` or an installed location) is optional: without it the
-Mac runs conversations on the runtimes it has, and no memory jobs. With Codex
-and `GAMERO_WORKSPACE` set, the Mac also runs web Hovel's read-only Codex tasks
-in that workspace (the task lane), which stays until step E removes the web
-task UI. Both are read only from the environment.
+Mac runs conversations on the runtimes it has, and no memory jobs. Codex's path
+is read only from the environment.
 
-Otherwise the companion's v2 methods answer `unsupported` and version 1 answers
-every query with `403`. On a product other than Hovel the window shows nothing.
+Otherwise the companion's v2 methods answer `unsupported`. On a product other
+than Hovel the window shows nothing.
 The companion's data directory is
 `~/Library/Application Support/Gamero/hovel-<sha256 of the app origin>`
 (`hovelStateFolder` in `HovelStateFolder.kt`), so each site gets its own
@@ -56,79 +55,61 @@ once on launch.
 
 A new `NativeBridge` is attached each time the WebView is created, and the old
 one is closed first. On app close, `DesktopResources.close` closes the bridge,
-then `DesktopServices`, which closes the game, the companion, the pet,
-providers and chat in that order.
+then `DesktopServices`, which closes the game, the companion, the pet and
+providers in that order.
 
 ## Bridge trust rules
 
 The page calls `window.gameroQuery({request, persistent, onSuccess, onFailure})`.
-The router names are `gameroQuery` and `gameroQueryCancel` (NativeBridge.kt line 95).
+The router names are `gameroQuery` and `gameroQueryCancel`.
 [tools/native-bridge-smoke.html](../tools/native-bridge-smoke.html) is a minimal
 working client.
 
-Every request goes through `NativeBridge.onQuery`, then (for version 1)
-`LegacyCompanionQueries.onQuery`, and is refused unless all of the following hold:
+Every request goes through `NativeBridge.onQuery`, then `JcefHostBridge.onQuery`
+(see [host-bridge.md](host-bridge.md)), and is refused unless all of the
+following hold:
 
 1. **Same browser, valid frame, main frame, trusted origin.** The browser id must
-   match, the frame must be valid and the main frame, and `NativeOriginPolicy`
-   must match the frame URL's scheme, host and port against the app URL. Default
+   match, the frame must be valid and the main frame, and `TrustedOrigin` must
+   match the frame URL's scheme, host and port against the app URL. Default
    ports are filled in, so `https://host` equals `https://host:443`. URLs with
    user info are rejected. The origin comes from JCEF's frame facts, never from
-   the request body. Failure returns `403`.
-2. **At most 4096 characters.** Longer requests get `403`.
-3. **Protocol version 1.** The body must be a JSON object with `"version": 1`,
-   or the request gets `400`. (Version 2 requests go to `JcefHostBridge`; see
-   [host-bridge.md](host-bridge.md).)
-4. **A live context.** The page first opens a persistent query with exactly
-   `{"version":1,"method":"watchContext","args":{}}`. Native code answers with a
-   fresh random `contextId` and remembers the calling frame id.
-   Every later call must be non-persistent, carry exactly the keys `version`,
-   `method`, `args` and `contextId`, use the current `contextId`, and come from
-   the same frame id. Anything else gets `403 Native context expired`.
-5. **A companion method.** Only `capabilities`, `prepareConnection` and
-   `activateConnection` are dispatched. Chat, providers, pet and games are v2
-   capabilities; their names, or any other, get `400 Unknown native method`.
+   the request body. An untrusted frame's version 2 request gets the
+   `forbidden` envelope; anything else from it gets `403`.
+2. **Version 2.** The body must be a host-bridge v2 message. Anything else,
+   the companion's old version 1 protocol included, gets `400 Invalid native
+   protocol` and reaches no capability.
+3. **A live context.** The page first opens a persistent `watchContext` query;
+   every call carries that context, and a navigation or reload ends it.
 
-A new `watchContext` call, a cancelled watch query (for example on reload or
-navigation), or `close()` end the version 1 context: the context and frame ids
-are cleared, every pending version 1 call is cancelled, and
-`HovelCompanion.invalidatePending` voids any open approval. Cancelling a single
-pending call cancels only that call and voids the approval; it never ends the
-page's version 2 context, so an open chat view or game stays open. The page's
-version 2 context ending (`JcefHostBridge`) calls `DesktopServices.invalidate`,
-which ends the chat view, closes the game and voids the approval. Errors inside
-a method never reach the page in detail: the page sees `400 Native action
-failed; inspect the companion status`.
+The page's version 2 context ending calls `DesktopServices.invalidate`, which
+closes the game and voids the connection approval
+(`HovelCompanion.invalidatePending`). Errors inside a method never reach the
+page in detail: it gets the `failed` envelope.
 
-`NativeOriginPolicy` has a unit test
-(`nativeOriginPolicyRejectsChildOpaqueAndLookalikeFrames` in
-[HovelAdapterTest.kt](../composeApp/src/jvmTest/kotlin/org/formulagen/wrapper/hovel/HovelAdapterTest.kt)).
-`LegacyCompanionQueriesTest` covers the context, frame and method checks and
-cancellation without JCEF. The browser and frame checks in `NativeBridge` and
-the size cap need a live JCEF, and the smoke page does not exercise them:
-[native-bridge-smoke.html](../tools/native-bridge-smoke.html) only opens
-`watchContext`, calls `capabilities` and offers a reload.
+`TrustedOriginTest` covers the origin rules, and `JcefHostBridgeTest` the
+frame check, the refusal of anything that is not version 2, and a page moving
+between `/hovel` and `/companions/...`. The browser check in `NativeBridge`
+needs a live JCEF.
 
 ## Bridge methods
 
-`HovelCompanion.dispatch` (HovelCompanion.kt lines 68-129) handles three methods.
-Any other name fails.
+`HovelCompanionCapability` serves `companion.*` through `HovelCompanion.dispatch`:
 
 | Method | Args | Returns |
 | --- | --- | --- |
-| `capabilities` | `{}` | `version` 1, `connectComputer` true, `cloud` false, `sandbox` `read-only` |
-| `prepareConnection` | `ownerId` (UUID) | host `id`, `name`, and `tokenHash` |
-| `activateConnection` | `ownerId`, `hostId` | host `id`, `connected` true |
+| `companion.capabilities` | `{}` | `connectComputer` true |
+| `companion.prepareConnection` | `ownerId` (UUID) | host `id`, `name`, and `tokenHash` |
+| `companion.activateConnection` | `ownerId`, `hostId` | host `id`, `connected` true |
 
-Only one non-`capabilities` call runs at a time. A second call while one is
-pending fails as busy (line 74). Each call
-records the companion's generation when it starts and fails if
-`invalidatePending` or `close` bumps it before the call finishes.
+Only one `prepareConnection` or `activateConnection` runs at a time; a second
+while one is pending answers `busy`. Each call records the companion's
+generation when it starts and fails if `invalidatePending` or `close` bumps it
+before the call finishes.
 
-`invalidatePending` also clears the approved registration
-(HovelCompanion.kt line 212). So after any reload, `activateConnection` fails
-with "Native approval is required" until the page calls `prepareConnection`
-again.
+`invalidatePending` also clears the approved registration. So after any reload,
+`activateConnection` fails with "Native approval is required" until the page
+calls `prepareConnection` again.
 
 ## Connecting a Mac
 
@@ -154,9 +135,7 @@ again.
    approved registration. It reads the token from Keychain and starts the host
    session: the conversation runner (below) and, with Codex, the memory lane, a
    memory-job journal (`memory-journal-<hostId>`) and a Codex provider writing
-   to `memory-output-<hostId>` on the player's own login. With
-   `GAMERO_WORKSPACE` too, the task lane: a task journal (`journal-<hostId>`)
-   and a Codex provider writing to `output-<hostId>`. Memory jobs run in an
+   to `memory-output-<hostId>` on the player's own login. Memory jobs run in an
    empty private folder, `memory-workspace-<hostId>`, never a project folder, so
    a project's `AGENTS.md` cannot change their output. A second activation
    reuses the running session.
@@ -185,14 +164,12 @@ prompt.
 - Routes allowed: exactly the `NativeRoute` table, each with its method and
   record ids in place of its parameters: `POST heartbeat`, `GET stream`,
   `POST conversations/claim`, `POST messages/:id/checkpoints|deltas|progress`,
-  `GET projects/:id`, `PUT projects/:id/folders`, `GET approvals/:id`,
+  `POST conversations/:id/messages`, `GET projects/:id`,
+  `PUT projects/:id/folders`, `GET approvals/:id`,
   `GET artifacts/:id/text?cursor=`, `GET devices`, `POST devices/lookup`,
   `POST devices/pair`, `POST devices/:id/unpair` (Hovel → Pair a phone…, see
-  Approvals), the task lane's `POST claim` and `POST progress`, and
-  `POST memory/claim|progress|consolidate`. The Mac never answers an approval
-  on a route of its own (see Approvals). The `brain/*`
-  routes are allowed only when `brainEnabled` is true, which defaults to false
-  and is not set by `HovelCompanion`.
+  Approvals), and `POST memory/claim|progress|consolidate`. The Mac never
+  answers an approval on a route of its own (see Approvals).
 - Redirects are never followed. Connect timeout 10 seconds, request timeout
   15 seconds, and the whole exchange including the body is bounded by
   `timeoutMillis` (default 15 seconds).
@@ -207,7 +184,7 @@ prompt.
 ## Conversations
 
 `ConversationRunner` makes the Mac the worker for its projects' conversations.
-The task lane and the memory lane ride its heartbeat.
+The memory lane rides its heartbeat.
 
 ### Connection
 
@@ -218,17 +195,17 @@ The task lane and the memory lane ride its heartbeat.
   seconds, so a silently dead connection reconnects.
 - **Heartbeat:** every 10 seconds, hovel-service's heartbeat body plus
   `computerHeartbeat`:
-  - `providerState`: the task lane's own Codex readiness (`ready`,
-    `auth-required`, `unavailable`), and `unavailable` without a task lane.
-    Only hovel-service's task routing reads it, so web Hovel never queues a
-    task to a Mac that cannot run it; conversation routing reads `directory`;
-  - `features`: `provider-input` with the task lane, and `memory-context` and
-    `memory-extraction` with the memory lane (`hovelHostFeatures`);
+  - `providerState`: from the directory (`ProviderDirectory.providerState`):
+    `ready` when a runtime is ready, else `auth-required` when one is signed
+    out, else `unavailable`; conversation routing reads `directory`;
+  - `features`: `memory-extraction` with the memory lane
+    (`MemoryJobLane.FEATURES`), and none without it;
   - `directory`: the readiness and models of Codex, Claude Code and Grok Build;
   - `allowances`: each ready runtime's usage as an `allowanceSnapshot`.
 
   `HostDirectory` refreshes the directory every minute and usage every 5
-  minutes. The answer goes to the task and memory lanes. Whether the heartbeat
+  minutes. The answer (`{ host }`, plus `memoryJobs` for the memory-extraction
+  computer) goes to the memory lane. Whether the heartbeat
   gets through or not, claims and outcomes that waited for the server are tried
   again and project folders are published; nothing in a round stops the
   schedule.
@@ -401,11 +378,10 @@ pairing.
 ### Voice
 
 Mac voice runs in project conversations through `conversationVoice.*`
-(`DesktopConversationVoice`). The talk loop is the one team chat uses:
-`chat/TalkLoop.kt` holds the hands-free state machine, fillers, barge-in, the
-reply spoken sentence by sentence through `SentenceCursor`, dictation and the
-latency marks, and its host (`TalkHost`) is the conversation. `DesktopChat`
-hosts the same loop for team chat until step E removes it. A `…Locked` member
+(`DesktopConversationVoice`). `conversation/voice/TalkLoop.kt` holds the
+hands-free state machine, fillers, barge-in, the reply spoken sentence by
+sentence through `SentenceCursor`, dictation and the latency marks, and its host
+(`TalkHost`) is the conversation. A `…Locked` member
 of the loop needs its host's lock; `click`, `escape` and `toggleFillers` take
 it themselves.
 
@@ -414,7 +390,7 @@ it themselves.
   the voice to the conversation it names, unless Talk or dictation is on in
   another; the answer then names the conversation the voice serves, and the
   page shows its own controls as waiting.
-- **A heard turn** is decided as in team chat (empty text and noise under
+- **A heard turn** is decided by the talk loop (empty text and noise under
   240 ms send nothing; a reply in progress ignores it) and posted, off the
   lock, as the owner's message through `POST conversations/:id/messages`
   (`messageSend`, at most 16,000 characters, no inputs). An unreachable server
@@ -477,8 +453,8 @@ it themselves.
   message has a claim journaled.
   The project runs on one Mac, so this Mac's journal is the whole rule; no
   server route is involved.
-- **The microphone** is one `SharedHearing`: team chat holds one share and each
-  conversation its own, and only one captures at a time. The other, or a
+- **The microphone** is one `SharedHearing`: each conversation holds its own
+  share, and only one captures at a time. Another, or a
   capture that cannot start, is told "The microphone is in use. Try again in a
   moment.".
 - **This Mac's projects only.** `project.folderStatus` asks the account
@@ -491,14 +467,14 @@ it themselves.
   reached, what this Mac last learned stands.
 - **Escape.** The page owns Escape for conversations: it sends `press` only
   when it has no other use for the key and the key is not ending a
-  composition. No page Escape reaches conversation voice natively: the JCEF
-  keyboard hook (`BrowserEditKeyboard`) and the window's key handler are team
-  chat's, as before, and the conversation's voice row hears Escape only while
-  it has focus, where it interrupts or ends that conversation's Talk.
+  composition. No page Escape reaches conversation voice natively: the
+  conversation's voice row hears Escape only while it has focus, where it
+  interrupts or ends that conversation's Talk.
 - **The voice row** shows the served conversation in Hovel too (its page has no
   voice choice or filler toggle). Its icon ends a session the page started and
-  never starts one the page owns.
-- **Settings** are one `TalkSettings` for team chat and every conversation:
+  never starts one the page owns. Its first arm, which starts the microphone,
+  runs off the window's thread.
+- **Settings** are one `TalkSettings` for every conversation:
   the filler choice (remembered in `~/.gamero/voice-fillers`), the duplex mode
   (the hearing route's, which falls back to half duplex when the graph fails),
   and the timings. A choice made anywhere holds in the next conversation and
@@ -508,69 +484,57 @@ it themselves.
 - **The page going away** lets go of the microphone and stops speaking; the
   conversation's messages keep running.
 
-Known limits until step E, when team chat's speaker goes away: team chat and
-conversations each have their own `DesktopSpeech`, so the two can talk over
-each other and using both loads Kokoro twice. In full duplex both play into one
-voice-processing graph, so a flush by one (`EmberAudio.flush`) also cuts the
-other's audio.
+One `DesktopSpeech` speaks for every conversation. Its engine loads only on its
+voice worker thread (`hovel-voice`).
 
 Latency, measured hermetically (`ConversationVoiceLatencyTest`, run with
 `HOVEL_VOICE_LATENCY=1`: an instant provider and a fake server). Endpoint to
-the first sentence queued at the speaker is about 1 ms in team chat and about
-35 to 40 ms in a conversation. The difference is the claim journal's four
-durable writes before the provider turn (claiming, claimed, launching,
-running), each a file and folder sync. A real server adds three round trips
-(send, claim, running) before the provider's own first token. The log lines are
-`latency endpoint_to_posted_ms` and `latency endpoint_to_claimed_ms`, beside
-team chat's stage latencies.
+the first sentence queued at the speaker is about 35 to 40 ms in a
+conversation, and the test fails a median of 150 ms or more. Most of it is the
+claim journal's four durable writes before the provider turn (claiming,
+claimed, launching, running), each a file and folder sync. A real server adds
+three round trips (send, claim, running) before the provider's own first
+token. The log lines are `latency endpoint_to_posted_ms` and
+`latency endpoint_to_claimed_ms`, beside the talk loop's stage latencies.
 
 ### `host.contract`
 
 `DesktopHostContract` answers the page's contract with `HovelContract.CURRENT`
-and keeps the page's for its context. Every runtime arrived in the first
-contract, so nothing is filtered by it yet.
+(3) and keeps the page's for its context. A page below contract 3
+(`HovelContract.COMPANIONS_ONLY`, the contract's
+`HOVEL_CONTRACT_FEATURES.companionsOnly`) is from before step E: the handshake
+answers it `failed` with the update message (`BridgeUpdateRequiredException`),
+and so does every `companion.*`, `project.*` and `providers.*` call in that
+context (`requireCurrentPage`, through `desktopProductPacks`' `pageCheck`). A
+context that never traded contracts is not refused. `providers.list` leaves out any runtime
+newer than the page's contract (`HovelContract.runtimesFor`, from
+`HovelContract.RUNTIMES`, which mirrors the server's `HOVEL_CONTRACT_RUNTIMES`).
+Every runtime arrived in the first contract, so nothing is left out yet.
 
-`companion.capabilities` still answers `sandbox: "read-only"`, the page
-contract's literal. It describes the task lane's Codex sandbox, not
-conversation work, whose working specialists write in the project's working
-folder after the start-of-work approval. It is revisited with the host-bridge
-cleanup in step E, since changing it needs a contract change with version skew
-for older pages.
+`companion.capabilities` answers only `{ "connectComputer": true }`.
 
-### DesktopBrain is frozen
+### Coordinator rules
 
-`DesktopBrain` serves the page's `brain.*` methods only and is removed in step
-E. Fixes to how a coordinator runs go in `CoordinatorEngine`. The rules both
-must apply alike are shared, so they cannot drift:
+Fixes to how a coordinator runs go in `CoordinatorEngine`. Its rules live in
+`brain/`:
 
 - `brain/BrainTransitions.kt`: the run state machine.
 - `brain/RoleReadiness.kt`: role readiness (`roleIssues`) and stage selection
   (`stagesFor`, `asksBeforeStarting`).
-- `brain/BrainPrompts.kt`: the protocol lines both coordinators send
+- `brain/BrainPrompts.kt`: the protocol lines the coordinator sends
   (`COORDINATOR_EVIDENCE_RULES`, `COORDINATOR_WORKFLOW_RULES`,
   `COORDINATOR_DECISION_SHAPES`) and the handoff of run inputs
-  (`RunRecord.handoffInputs`). The brain's own protocol text is pinned by
-  `SharedCoordinatorRulesTest`.
-
-## Tasks
-
-`HovelHostSession` takes the heartbeat answer the runner hands it. With the task
-lane, its `tasks` are offered one at a time, as before: the first in `queued`,
-`claimed` or `running` (`queued` only when Codex is ready), pinned to this host
-in `local` mode (`hovelExecutionRequest`), through `ExecutionCoordinator` on
-`claim` and `progress` (`HovelTaskRemote`). A follow-up runs the server's
-`providerInput`, and recalled memory goes in its own section, byte for byte the
-server's `hovelProviderPrompt` (`HovelProviderPromptTest`). Any failure accepting
-a task sets "Task needs reconciliation on this computer; no automatic host
-change". Step E removes this lane with the web task UI.
+  (`RunRecord.handoffInputs`). `SharedCoordinatorRulesTest` checks that
+  `CONVERSATION_PROTOCOL` carries every rule line.
 
 ## Memory jobs
 
-From the same heartbeat answer, `memoryJobs` are this computer's open jobs,
+`MemoryJobLane` takes the heartbeat answer the runner hands it. Its
+`memoryJobs` are this computer's open jobs,
 oldest first. If no memory job is running, it
 picks the first one in `queued`, `claimed` or `running` (`queued` only when
 Codex is ready) whose `kind` is `extract` and host-bridge `runtimeId` is
-`codex`. A job naming another kind or runtime is left for a companion that runs
+`codex`. A job naming another kind or runtime is left for a computer that runs
 it. A job missing either field is treated as unreadable (below), so a renamed
 field asks for an update instead of being skipped in silence.
 
@@ -598,8 +562,8 @@ consolidate; any other computer gets 403. Every failure waits for the next call.
 
 ### Closing
 
-`close()` stops the runner, the stream, the heartbeat and the lanes, then the
-task and memory lanes and their journals, and waits at most 5 seconds. Quitting is not the
+`close()` stops the runner, the stream, the heartbeat and the conversation
+lanes, then the memory lane and its journal, and waits at most 5 seconds. Quitting is not the
 person's Stop: a running message's run pauses for review and the message settles
 `reconciliation-required` (or does at the next launch, from the journal), so the
 person can retry it.
@@ -608,16 +572,17 @@ person can retry it.
 
 | Seen | Meaning |
 | --- | --- |
-| `403 Native request unavailable for this frame` | Wrong frame, wrong origin, closed bridge, or request over 4096 characters. |
-| `403 Native context expired` | Missing or old `contextId`, different frame, or a reload happened. |
-| `400 Invalid native protocol` | The request is not a JSON object with `"version": 1`. |
-| `400 Unknown native method` | A version 1 call for anything but the three companion methods. Chat, providers, pet and games are host-bridge v2 only. |
-| `400 Native action failed; inspect the companion status` | A bridge method threw. The page never sees the reason. |
-| Status line "Connection failed. Check the native configuration, Keychain approval and server." | A `prepareConnection` or `activateConnection` failure, or an unknown method name, other than a cancellation (HovelCompanion.kt line 125). Failures before that point (bad `capabilities` args, a closed companion, "Another native operation is pending") leave the status line unchanged and reach the page only as the generic 400. This status replaces the specific error, so the causes below never reach the window. |
-| (not shown) "This native profile belongs to another account" | Thrown when `registration.json` has a different `ownerId` (HovelCompanion.kt line 190). Users see only the two generic messages above; check `registration.json` in the data directory. |
+| `403 Native request unavailable for this frame` | Wrong frame, wrong origin or closed bridge, for a request that is not version 2. |
+| `400 Invalid native protocol` | The request is not a host-bridge v2 message, such as the companion's old version 1. |
+| `failed` envelope | A bridge method threw. The page never sees the reason. |
+| Status line "Connection failed. Check the native configuration, Keychain approval and server." | A `prepareConnection` or `activateConnection` failure, or an unknown method name, other than a cancellation. Failures before that point (a closed companion, another call pending) leave the status line unchanged and reach the page only as an envelope. This status replaces the specific error, so the causes below never reach the window. |
+| (not shown) "This native profile belongs to another account" | Thrown when `registration.json` has a different `ownerId`. Users see only the two generic messages above; check `registration.json` in the data directory. |
 | Status line "Server unavailable; messages wait on the server" | A heartbeat failed. The runner keeps trying every 10 seconds; queued messages wait on the server. |
-| Status line "Task needs reconciliation on this computer; no automatic host change" | Accepting a Hovel task failed, including network errors and a server 409. See the task journal before retrying. |
+| Status line "Update Hovel on this Mac: the server needs a newer version" | The heartbeat answered 409 `update-required`: the server stored the beat, so this Mac reads as online and the page asks the person to update, but sends no memory jobs. The runner keeps beating, and conversation routes keep working while the server serves them. |
 | Status line "Update Hovel on this Mac to run every message in its conversations" | A claim answered `mac-update-required`: a message needs a newer contract. It stays queued until this Mac updates or it expires. |
+| System note "Assign a provider to the coordinator in Configure brain." (or to a named role) | The companion's brain has a role with no provider (`BrainConfigurationException`); the message settles `failed`. Assign one in Configure brain, then send the message again. |
+| System note "Claude doesn't run on this Mac. Choose another provider for the coordinator in Configure brain." (or "can't work in projects on this Mac" for a working role) | The role is bound to a runtime this Mac does not offer for it, so retrying cannot help. Choose another provider in Configure brain. |
+| System note "Hovel could not finish this message on this Mac. Try sending it again." | An unexpected error on this Mac; the log has it as "A message could not run". |
 | A message settled `reconciliation-required` | Its turn may have started before a crash or an error the runner could not classify. It never runs again unless the person retries it. |
 
 ## Tests
@@ -628,12 +593,10 @@ person can retry it.
 
 `HovelAdapterTest` covers registration reuse and that the token is not in
 `registration.json`, invalidation during a blocked activation, the transport
-deadline on a stalled body, the origin policy, the heartbeat's features, tasks
-and memory jobs: their request, routes, output limit and refusals.
-`HovelHostSessionTest` covers both lanes fed by a heartbeat, one item per lane,
-unreadable and other providers' items, the task provider state and
-consolidation. `HovelProviderPromptTest` checks the provider text against the
-server fixture.
+deadline on a stalled body, the origin policy, and memory jobs: their request,
+routes, output limit and refusals. `MemoryJobLaneTest` covers the lane fed by a
+heartbeat, one job at a time, unreadable and other providers' jobs, the
+declared feature and consolidation.
 
 The `conversations` tests run against a fake hovel-service (`FakeServer`):
 `ConversationRunnerTest` (parallel conversations, the cap, crash and journal
@@ -659,7 +622,7 @@ phone's answer, and the conflict note across a restart in the Mac's own words),
 `PhonePairingTest` (lookup before pairing, one pairing per code, the attempt
 limit, unpairing), `PresentApprovalTest`, `ProjectFoldersTest`,
 `ContextFoldersTest`, `ConversationStoreTest` and the wire tests.
-`SharedCoordinatorRulesTest` pins the frozen brain's protocol and the shared
+`SharedCoordinatorRulesTest` pins the coordinator's protocol lines and the
 readiness and stage rules.
 `CompanionContractFixtureTest` reads and writes back every payload in
 `CompanionContractFixtures.kt`, which `tools/sync-server-fixtures.py` builds

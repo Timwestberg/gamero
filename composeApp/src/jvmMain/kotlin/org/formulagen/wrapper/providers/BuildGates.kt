@@ -10,10 +10,10 @@ internal fun claudeProviderEnabled(env: Map<String, String>, release: Boolean, d
     development && !release && env["HOVEL_CLAUDE_PROVIDER"] == "1"
 
 /**
- * Codex team members may work in a project folder only when a development build asks for it with
+ * Roles bound to Codex may work in a project folder only when a development build asks for it with
  * `HOVEL_CODEX_WORK=1`: Codex's approval protocol is read from its schema only until it is verified
  * live. A release build never enables it; anything else fails closed. The page learns the result
- * from `providers.list.working`, and the chat's working runtimes come from the same answer.
+ * from `providers.list.working`, and the conversations' working runtimes come from the same answer.
  */
 internal fun codexWorkEnabled(env: Map<String, String>, release: Boolean, development: Boolean): Boolean =
     development && !release && env["HOVEL_CODEX_WORK"] == "1"

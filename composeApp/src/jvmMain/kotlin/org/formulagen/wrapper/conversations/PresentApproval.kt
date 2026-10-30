@@ -5,12 +5,12 @@ import org.formulagen.wrapper.approvals.ApprovalKind as RequestKind
 import org.formulagen.wrapper.approvals.ApprovalRequest
 import org.formulagen.wrapper.approvals.ApprovalSubject
 import org.formulagen.wrapper.approvals.NativeDialog
-import org.formulagen.wrapper.bridge.Activity
-import org.formulagen.wrapper.bridge.ActivityLimits
-import org.formulagen.wrapper.bridge.ActivityStep
+import org.formulagen.wrapper.conversation.Activity
+import org.formulagen.wrapper.conversation.ActivityLimits
+import org.formulagen.wrapper.conversation.ActivityStep
 import org.formulagen.wrapper.bridge.CompanionLimits
 import org.formulagen.wrapper.bridge.FolderRole
-import org.formulagen.wrapper.chat.wholePath
+import org.formulagen.wrapper.runtimes.wholePath
 import org.formulagen.wrapper.util.shortened
 
 /**

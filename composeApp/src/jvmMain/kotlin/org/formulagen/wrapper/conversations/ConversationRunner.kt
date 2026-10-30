@@ -11,6 +11,7 @@ import java.util.concurrent.Semaphore
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -18,7 +19,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonObject
 import org.formulagen.wrapper.approvals.CancelSignal
-import org.formulagen.wrapper.chat.loggingDaemonThreads
+import org.formulagen.wrapper.util.loggingDaemonThreads
 import org.formulagen.wrapper.hovel.HovelEventLines
 import org.formulagen.wrapper.hovel.HovelRejectedException
 import org.formulagen.wrapper.hovel.HovelStatusException
@@ -41,7 +42,9 @@ internal fun interface MessageEngine {
  *
  * - **Connection:** it holds the host event stream, reconnecting with backoff, and after [idle] with no line
  *   (the server's own heartbeats included); and sends a heartbeat every [heartbeatEvery] (readiness, the
- *   provider directory and usage), whose answer goes to [onHeartbeat] (tasks and memory jobs ride it).
+ *   provider directory and usage), whose answer goes to [onHeartbeat] (memory jobs ride it). A heartbeat the server
+ *   answers 409 `update-required` was still stored, so this Mac reads as online and the page asks the person to
+ *   update; [status] says so, no memory job arrives, and the schedule and the conversation routes go on.
  * - **Claiming:** `work.available` wakes that conversation's [Session], which claims its next message with a
  *   claim id journaled first ([ConversationStore.journal]), runs it through the [engine], and settles it. One
  *   message runs at a time per conversation; at most [maxRunning] conversations run at once, and the others
@@ -111,6 +114,12 @@ internal class ConversationRunner(
     /** Lanes waiting for a slot to claim in. */
     internal val waitingForSlot: Int get() = slots.queueLength
 
+    /**
+     * Claim answers this build could not read, each counted once its lane has set the wait before the next claim. A
+     * test that moves the clock waits on it, so the wait starts from the time the answer came.
+     */
+    internal val unreadableClaims = AtomicInteger()
+
     /** The conversations with a lane now; an idle lane is let go. */
     internal val lanes: Set<String> get() = sessions.keys.toSet()
 
@@ -134,8 +143,8 @@ internal class ConversationRunner(
                 // hovel-service's own heartbeat answers a newer Mac; its companion routes do not.
                 status(when { older.failing -> SERVICE_OLDER; connected -> CONNECTED; else -> CONNECTING })
                 runCatching { onHeartbeat(response) }
-                    .onFailure { log(LogLevel.Warn, "conversations", "A heartbeat's tasks could not run", it) }
-            }.onFailure { status(OFFLINE) }
+                    .onFailure { log(LogLevel.Warn, "conversations", "A heartbeat's memory jobs could not run", it) }
+            }.onFailure { status(if (it is HovelRejectedException && it.code == UPDATE_REQUIRED_CODE) MAC_TOO_OLD else OFFLINE) }
             // A service older than this Mac answers none of it: everything waits, journaled, until the wait ends.
             if (!older.blocked) {
                 pendingInOrder().forEach { session(it.conversationId).retry(it) }
@@ -157,11 +166,12 @@ internal class ConversationRunner(
                 val lines = api.openStream()
                 stream = lines
                 if (closed.get()) { lines.close(); return }
+                // The watchdog's clock starts before the stream reads as connected, so it never measures from an older line.
+                lastLine.set(now())
                 connected = true
                 // answers given while the stream was down close their dialogs now
                 later { approvals.catchUp() }
                 older.passed()
-                lastLine.set(now())
                 wait = firstBackoff.inWholeMilliseconds
                 status(CONNECTED)
                 lines.use { open -> HostEvents.read(open.lines().onEach { lastLine.set(now()) }, ::dispatch) }
@@ -404,6 +414,7 @@ internal class ConversationRunner(
                 // refusal says that. The claim id stays journaled, so the server's claim is never orphaned, and the
                 // lane waits longer each time before it asks again; the first in a row is logged.
                 if (unreadable.failed()) log(LogLevel.Warn, "conversations", "A claim answer could not be read; claiming waits", error)
+                unreadableClaims.incrementAndGet()
                 return false
             } catch (error: Exception) {
                 // Unreachable: the journaled claim id is tried again after the next heartbeat.
@@ -576,6 +587,8 @@ internal class ConversationRunner(
         const val OFFLINE = "Server unavailable; messages wait on the server"
         const val UPDATE_REQUIRED = "Update Hovel on this Mac to run every message in its conversations"
         const val SERVICE_OLDER = "Hovel's service is older than this Mac; messages wait until it updates"
+        /** The heartbeat answered `update-required`: the server needs a newer contract than this Mac's. */
+        const val MAC_TOO_OLD = "Update Hovel on this Mac: the server needs a newer version"
         /** The longest wait before asking again: after claim answers this build cannot read, or a service older than it. */
         val MAX_RETRY_WAIT = 10.minutes
         /** The contract's refusal code for a client too old for what it asked for. */

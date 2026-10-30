@@ -3,10 +3,8 @@ package org.formulagen.wrapper.approvals
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
-import org.formulagen.wrapper.bridge.ActivityLimits
-import org.formulagen.wrapper.bridge.ChatLimits
-import org.formulagen.wrapper.bridge.TeamMember
-import org.formulagen.wrapper.chat.WorkPaths
+import org.formulagen.wrapper.conversation.ActivityLimits
+import org.formulagen.wrapper.conversation.TeamMember
 import org.formulagen.wrapper.providers.copy
 import org.formulagen.wrapper.util.shortened
 
@@ -76,37 +74,22 @@ internal data class ApprovalRequest(
         is ApprovalSubject.Connector -> it.input
         is ApprovalSubject.Other -> it.description
     }.shortened(ApprovalLimits.PREVIEW)
-
-    /**
-     * What the page may show while the dialog is up ("Ember wants to run a command: npm test"), with
-     * paths relative to the project folder and the home folder as `~`, bounded like a notice.
-     */
-    fun summary(): String {
-        val paths = WorkPaths(folder)
-        val what = when (val it = subject) {
-            is ApprovalSubject.Edit -> "${it.verb} ${it.files.joinToString(", ") { file -> paths.label(file.toString()) }}"
-            is ApprovalSubject.Command -> paths.scrub(it.command)
-            is ApprovalSubject.Connector -> "${it.server} · ${it.tool}"
-            is ApprovalSubject.Other -> it.name
-        }
-        return "$companionName wants to ${verb(kind)}: $what".shortened(ApprovalLimits.WAITING_SUMMARY)
-    }
 }
 
 /** The person's answer. Anything but an explicit allow (a closed dialog, a timeout, a stopped reply) is [DENY]. */
 internal enum class ApprovalDecision { ALLOW_ONCE, ALLOW_FOR_CONVERSATION, DENY }
 
 /**
- * The seam between a working member's runtime and the native dialog. Blocks until the person
- * answers, [cancel] fires (the reply was stopped or the chat closed), or the dialog times out; the
- * last two are [ApprovalDecision.DENY]. [shown] runs when the dialog is on screen (a request may wait
+ * The seam between a working role's runtime and the native dialog. Blocks until the person
+ * answers, [cancel] fires (the run was stopped, or the phone answered first), or the dialog times
+ * out; the last two are [ApprovalDecision.DENY]. [shown] runs when the dialog is on screen (a request may wait
  * behind another dialog first). Only native code can answer: the page never sees the dialog.
  */
 internal fun interface ApprovalBroker {
     fun ask(request: ApprovalRequest, cancel: CancelSignal, shown: () -> Unit): ApprovalDecision
 }
 
-/** Fires once, from any thread: a stopped reply, a closed chat or a provider withdrawing its request. */
+/** Fires once, from any thread: a stopped run, an answer from elsewhere or a provider withdrawing its request. */
 internal class CancelSignal {
     private val fired = AtomicBoolean()
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
@@ -121,12 +104,6 @@ internal class CancelSignal {
         if (fired.get() && listeners.remove(action)) action()
         return AutoCloseable { listeners.remove(action) }
     }
-}
-
-/** The broker behind the native dialog: one approval at a time, in the order asked, denied after the dialogs' timeout. */
-internal class DialogApprovalBroker(private val dialogs: NativeDialogs) : ApprovalBroker {
-    override fun ask(request: ApprovalRequest, cancel: CancelSignal, shown: () -> Unit): ApprovalDecision =
-        dialogs.ask(approvalDialog(request), cancel, shown) ?: ApprovalDecision.DENY
 }
 
 /**
@@ -180,8 +157,6 @@ private fun verb(kind: ApprovalKind) = when (kind) {
 
 /** Bounds of what approvals show: the page's from the contract, the dialog's own. */
 internal object ApprovalLimits {
-    /** The page's "waiting for your approval" summary is bounded like a notice (the contract's `waiting.summary`). */
-    const val WAITING_SUMMARY = ChatLimits.NOTICE
     /** How much of a change or a provider's description the native dialog shows. Native only. */
     const val PREVIEW = 4_000
     /** A label the page sees in activity (the contract's `ACTIVITY_LIMITS.label`). */

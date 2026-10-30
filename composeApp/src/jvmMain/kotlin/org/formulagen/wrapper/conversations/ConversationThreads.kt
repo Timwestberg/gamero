@@ -1,6 +1,6 @@
 package org.formulagen.wrapper.conversations
 
-import org.formulagen.wrapper.bridge.ActivityStep
+import org.formulagen.wrapper.conversation.ActivityStep
 import org.formulagen.wrapper.bridge.BrainArtifact
 import org.formulagen.wrapper.bridge.BrainAttempt
 import org.formulagen.wrapper.bridge.BrainAuthor

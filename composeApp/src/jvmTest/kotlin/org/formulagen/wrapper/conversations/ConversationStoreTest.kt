@@ -5,7 +5,8 @@ import java.nio.file.attribute.PosixFilePermissions
 import kotlin.test.*
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.brain.BrainRecord
-import org.formulagen.wrapper.chat.NativeConversation
+import org.formulagen.wrapper.brain.RunRecord
+import org.formulagen.wrapper.runtimes.NativeConversation
 
 class ConversationStoreTest {
     private val root = folder("conversation-store")
@@ -81,6 +82,28 @@ class ConversationStoreTest {
         } finally { reopened.close() }
     }
 
+    @Test fun aClaimStillBeingMadeKeepsEveryStopMarkOfItsConversation() {
+        val claiming = id()
+        val other = id()
+        val marks = listOf(id(), id())
+        marks.forEach { store.stopOnClaim(claiming, it) }
+        store.stopOnClaim(other, marks.first())
+        store.open()
+        // Hovel stopped mid-claim: the server may have claimed any queued message, so its id is not known yet.
+        store.journal(ClaimEntry(id(), claiming, ClaimPhase.CLAIMING))
+        store.close()
+        val old = java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - CompanionLimits.QUEUED_MESSAGE_MS - 60_000)
+        for ((conversation, message) in marks.map { claiming to it } + (other to marks.first())) {
+            val folder = root.resolve(account).resolve("conversations").resolve(conversation).resolve("stop-on-claim")
+            Files.setLastModifiedTime(folder.resolve("$message.json"), old)
+        }
+        val reopened = ConversationStore(root, account).open()
+        try {
+            for (message in marks) assertTrue(reopened.stopsOnClaim(claiming, message), "a claim being made may land on it")
+            assertFalse(reopened.stopsOnClaim(other, marks.first()), "another conversation's stale mark goes")
+        } finally { reopened.close() }
+    }
+
     @Test fun onlyOneHovelRunsAnAccountsConversations() {
         store.open()
         try {
@@ -102,15 +125,19 @@ class ConversationStoreTest {
         assertFails { store.bytes(conversation, artifact) }
     }
 
-    @Test fun grokPruningKeepsEveryConversationsBindings() {
-        val coordinator = id(); val thread = id()
-        store.write(conversation, ConversationRecord(brain = BrainRecord(coordinatorContexts = mapOf("c:grok-build" to NativeConversation(coordinator, "h"))),
+    @Test fun grokPruningKeepsEveryBindingAConversationCanResume() {
+        val coordinator = id(); val thread = id(); val run = id()
+        val document = brain()
+        val running = RunRecord(BrainRun(id(), 1, document.revision, null, BrainRunState.RUNNING, null), document.configuration, null, "Ship it",
+            emptyList(), contexts = mapOf("writer:grok-build" to NativeConversation(run, "h")))
+        store.write(conversation, ConversationRecord(brain = BrainRecord(run = running,
+            coordinatorContexts = mapOf("c:grok-build" to NativeConversation(coordinator, "h"))),
             threadContexts = mapOf(id() to NativeConversation(thread, "h"))))
         store.write(id(), ConversationRecord())
-        assertEquals(setOf(coordinator, thread), ConversationStore.bindingHandles(root, account))
-        assertEquals(emptySet(), ConversationStore.bindingHandles(root, id()))
-        assertEquals(emptySet(), ConversationStore.bindingHandles(root, "local"))
+        assertEquals(setOf(coordinator, thread, run), store.bindingHandles(), "a coordinator's, a thread's and a run's")
+        assertEquals(emptySet(), ConversationStore(root, id()).bindingHandles(), "another account holds none of them")
+        assertNull(store.bindingHandles(limit = 1), "more conversations than the limit prune nothing")
         Files.writeString(root.resolve(account).resolve("conversations").resolve(conversation).resolve("conversation.json"), "{broken")
-        assertNull(ConversationStore.bindingHandles(root, account), "an unreadable record prunes nothing")
+        assertNull(store.bindingHandles(), "an unreadable record prunes nothing")
     }
 }

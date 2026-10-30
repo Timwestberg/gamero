@@ -25,14 +25,13 @@ async function openPage(port, query) {
   return { browser, page, posts };
 }
 
-test("a headless browser shows a partial, plays the local line, and can send through the host", async () => {
+test("a headless browser shows a partial and plays the local line", async () => {
   const server = await serve();
   const { port } = server;
   try {
     const local = await openPage(port, "scripted=1");
     const permission = await local.page.locator("#notice").textContent();
     assert.match(permission, /recording is not saved/);
-    assert.match(await local.page.locator("#chat-status").textContent(), /Open Hovel on your Mac/);
     await local.page.locator("#talk").click();
     assert.equal(await local.page.locator("#talk").textContent(), "Listening");
     for (let i = 0; i < 4; i += 1) {
@@ -52,19 +51,6 @@ test("a headless browser shows a partial, plays the local line, and can send thr
     assert.deepEqual(local.posts, []);
     await local.browser.close();
 
-    const hosted = await openPage(port, "scripted=1&host=1");
-    await hosted.page.locator("#talk").click();
-    for (let i = 0; i < 4; i += 1) {
-      await hosted.page.evaluate(() => window.__app.feed({ frameMs: 100, vadProb: 0.92, rms: 0.3, text: "hello there" }));
-    }
-    let calls = [];
-    for (let i = 0; i < 12; i += 1) {
-      calls = await hosted.page.evaluate(() => window.__app.feed({ frameMs: 100, vadProb: 0, rms: 0.001, text: "hello there" }).calls);
-      if (calls.some((call) => call[0] === "send")) break;
-    }
-    assert.deepEqual(calls[0], ["hearing", "press"]);
-    assert.deepEqual(calls.at(-1), ["send", "hello there"]);
-    await hosted.browser.close();
   } finally {
     await server.close();
   }
