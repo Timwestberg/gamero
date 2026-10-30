@@ -19,7 +19,7 @@ import kotlin.test.*
 /** [ClaudeChatRuntime] against [FakeClaude], which replays output recorded from the real Claude Code. */
 class ClaudeChatRuntimeTest {
     private val persona = Persona.companion("Ember")
-    private val profile = "local"
+    private val account = "50000000-0000-4000-8000-000000000005"
 
     private class Events : TurnEvents {
         val seen = CopyOnWriteArrayList<String>()
@@ -39,8 +39,8 @@ class ClaudeChatRuntimeTest {
     /** The runtime with a sign-in reader that checks every time, since tests change the fake's answers. */
     private fun claude(fake: FakeClaude) = fake.runtime().let { ClaudeChatRuntime(it, ClaudeConnection(it, ttl = kotlin.time.Duration.ZERO)) }
 
-    private fun request(conversation: NativeConversation? = null, model: String? = "haiku", context: String? = null) =
-        TurnRequest(profile, "20000000-0000-4000-8000-000000000002", persona, model, conversation, context, "Hello")
+    private fun request(conversation: NativeConversation? = null, model: String? = "haiku") =
+        TurnRequest(account, "20000000-0000-4000-8000-000000000002", persona, model, conversation, "Hello")
 
     /** Run one turn to its end against [turn]. */
     private fun turn(fake: FakeClaude, turn: String, exit: Int = 0, request: TurnRequest = request()): Events {
@@ -52,7 +52,7 @@ class ClaudeChatRuntimeTest {
 
     @Test fun aNewConversationStreamsItsReplyAndKeepsTheSession() {
         val fake = FakeClaude()
-        val events = turn(fake, "turn-success.ndjson", request = request(context = "Earlier:\n<<<\nuser: Hi\n>>>"))
+        val events = turn(fake, "turn-success.ndjson", request = request())
         val call = fake.turns().single()
         val argv = call.argv()
         val session = argv[argv.indexOf("--session-id") + 1]
@@ -67,9 +67,9 @@ class ClaudeChatRuntimeTest {
             "partial You asked me to say \"hello,\" and my name is Ember.",
             "completed You asked me to say \"hello,\" and my name is Ember. @ $session",
         ), events.seen)
-        // One user message, then end of input; the context block is data ahead of the person's text.
-        assertEquals(userMessage("Earlier:\n<<<\nuser: Hi\n>>>\n\nHello") + "\n", call.getValue("stdin").jsonPrimitive.content)
-        val workspace = fake.providers.resolve("local/claude-code/conversation-workspace")
+        // One user message, then end of input.
+        assertEquals(userMessage("Hello") + "\n", call.getValue("stdin").jsonPrimitive.content)
+        val workspace = fake.providers.resolve("$account/claude-code/conversation-workspace")
         assertEquals(workspace.toRealPath().toString(), call.getValue("cwd").jsonPrimitive.content)
         assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(workspace)))
         assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(workspace.parent)))
@@ -239,14 +239,14 @@ class ClaudeChatRuntimeTest {
     @Test fun readinessFollowsTheProviderStatus() {
         val fake = FakeClaude()
         claude(fake).use { claude ->
-            assertEquals(Readiness.Ready, claude.readiness(profile))
+            assertEquals(Readiness.Ready, claude.readiness(account))
             fake.scenario(auth = FakeClaude.fixture("auth-status-signed-out.json"), authExit = 1)
-            assertEquals(Readiness.SignedOut, claude.readiness(profile))
+            assertEquals(Readiness.SignedOut, claude.readiness(account))
             fake.scenario(version = "2.0.0 (Claude Code)")
-            assertEquals(Readiness.Unavailable("Update Claude Code to use it here. Hovel needs version 2.1.304 or later."), claude.readiness(profile))
+            assertEquals(Readiness.Unavailable("Update Claude Code to use it here. Hovel needs version 2.1.304 or later."), claude.readiness(account))
         }
         assertTrue(fake.calls().none { "login" in it.argv() || "logout" in it.argv() })
-        assertFails { claude(fake).use { it.startTurn(request().copy(profile = "../x"), Events()) } }
+        assertFails { claude(fake).use { it.startTurn(request().copy(accountId = "../x"), Events()) } }
         assertFalse(Files.exists(Path.of(fake.providers.toString(), "..", "x")))
     }
     @Test fun talkingEffortReachesTheCliAndAutoLeavesItUnset() {

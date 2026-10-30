@@ -11,15 +11,15 @@ import java.time.format.FormatStyle
 import kotlinx.serialization.Serializable
 import org.formulagen.wrapper.bridge.Activity
 import org.formulagen.wrapper.bridge.RuntimeId
+import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.bridge.TeamMember
 import org.formulagen.wrapper.providers.copy
 
 /**
- * A runtime's own conversation with one companion: Codex's thread id or Claude Code's session id.
- * [personaHash] is the [Persona.hash] the conversation was last used with, or empty when it was
- * migrated from a record that did not track it. [playerLogin] is set on every conversation opened
- * since every runtime runs on the player's own sign-in; only Codex reads it, because a Codex thread
- * from before then lives in Hovel's old per-profile Codex home and cannot be resumed.
+ * A runtime's own conversation with one role: Codex's thread id, Claude Code's session id or a Grok binding's handle.
+ * [personaHash] is the [Persona.hash] the conversation was last used with. [playerLogin] is set on every conversation
+ * opened since every runtime runs on the player's own sign-in; only Codex reads it, because a Codex thread from before
+ * then lives in Hovel's old Codex home and cannot be resumed.
  */
 @Serializable
 internal data class NativeConversation(val id: String, val personaHash: String, val playerLogin: Boolean = false)
@@ -32,8 +32,11 @@ internal data class NativeConversation(val id: String, val personaHash: String, 
 internal interface ChatRuntime : AutoCloseable {
     val id: RuntimeId
 
-    /** A short local check, for "Not connected" without starting a turn. It may block briefly, so callers run it off the bridge thread. */
-    fun readiness(profile: String): Readiness
+    /**
+     * A short local check of the runtime's own sign-in, for [accountId]'s turns, without starting one. It may block
+     * briefly, so callers run it off the bridge thread.
+     */
+    fun readiness(accountId: String): Readiness
 
     /**
      * One reply. [TurnRequest.conversation] is this runtime's own conversation for the companion, or
@@ -47,24 +50,22 @@ internal interface ChatRuntime : AutoCloseable {
 }
 
 /**
- * What one turn needs. [model] is a model id or `runtime-default` (null means the same).
- * [context] is handover text owed to this runtime, sent as data ahead of the person's [text].
- * [work] is set for a working turn, which only a working runtime takes; [persona] is then
- * [Persona.working] and [conversation] the runtime's working conversation.
+ * What one turn needs, for the signed-in account [accountId] (its local folders are keyed by it). [model] is a model
+ * id or `runtime-default` (null means the same). [text] is the turn's whole input. [work] is set for a working turn,
+ * which only a working runtime takes; [persona] is then [Persona.working] and [conversation] the runtime's working
+ * conversation.
  */
 internal data class TurnRequest(
-    val profile: String,
+    val accountId: String,
     val companionId: String,
     val persona: Persona,
     val model: String?,
     val conversation: NativeConversation?,
-    val context: String?,
     val text: String,
     val work: WorkScope? = null,
     val effort: ModelEffort? = null,
 ) {
-    /** The user turn as the runtime sends it: the delimited context block first, then the message. */
-    fun input(): String = context?.let { "$it\n\n$text" } ?: text
+    init { require(SharedRules.isRecordId(accountId)) { "Turns are keyed by an account id" } }
 }
 
 /**

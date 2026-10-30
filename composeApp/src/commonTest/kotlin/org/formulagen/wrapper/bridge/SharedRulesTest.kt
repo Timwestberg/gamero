@@ -8,11 +8,11 @@ import kotlin.test.assertTrue
 class SharedRulesTest {
     private val lower = "40000000-0000-4000-8000-00000000000a"
 
-    @Test fun profilesAreLocalOrLowerCaseUuids() {
-        assertTrue(SharedRules.isProfileId("local"))
-        assertTrue(SharedRules.isProfileId(lower))
-        assertFalse(SharedRules.isProfileId(lower.uppercase()))
-        assertFalse(SharedRules.isProfileId("../other"))
+    @Test fun recordIdsAreLowerCaseUuids() {
+        assertTrue(SharedRules.isRecordId(lower))
+        assertFalse(SharedRules.isRecordId(lower.uppercase()))
+        assertFalse(SharedRules.isRecordId("local"))
+        assertFalse(SharedRules.isRecordId("../other"))
     }
 
     @Test fun trimMatchesEcmaScript() {

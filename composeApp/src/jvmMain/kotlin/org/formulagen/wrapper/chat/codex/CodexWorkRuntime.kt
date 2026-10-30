@@ -68,7 +68,7 @@ internal class CodexWorkRuntime(
     private val epoch = java.util.concurrent.atomic.AtomicInteger()
     @Volatile private var closed = false
 
-    override fun readiness(profile: String): Readiness {
+    override fun readiness(accountId: String): Readiness {
         val rpc = createRpc(CodexRuntime(executable, providerRoot), { _, _ -> }, { _, _, respond -> respond(null) })
         return rpc.use {
             val status = runCatching { codexAccountStatus(it.call("account/read", buildJsonObject { put("refreshToken", false) })["account"]) }.getOrNull()
@@ -147,7 +147,7 @@ internal class CodexWorkRuntime(
             events.activity(turn.activity.activity())
             val started = rpc.call("turn/start", buildJsonObject {
                 put("threadId", threadId)
-                putJsonArray("input") { add(buildJsonObject { put("type", "text"); put("text", request.input()) }) }
+                putJsonArray("input") { add(buildJsonObject { put("type", "text"); put("text", request.text) }) }
                 model?.let { put("model", it) }
                 request.effort?.let { put("effort", it.value) }
             })

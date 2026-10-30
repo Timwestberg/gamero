@@ -49,7 +49,7 @@ internal class GrokWorkRuntime(
      * ([org.formulagen.wrapper.conversations.ConversationStore.bindingHandles]); null when they could not be read,
      * and then nothing is pruned.
      */
-    private val retained: (profile: String) -> Set<String>? = { emptySet() },
+    private val retained: (accountId: String) -> Set<String>? = { emptySet() },
 ) : WorkRuntime {
     override val id = RuntimeId.GROK_BUILD
     private val bindings = GrokSessions(root.resolve("grok-work-bindings"))
@@ -62,7 +62,7 @@ internal class GrokWorkRuntime(
     private val stopper = Executors.newSingleThreadScheduledExecutor(loggingDaemonThreads("hovel-grok-work-stop"))
 
     /** Account access is shared with chat; project-specific configuration is checked before every turn. */
-    override fun readiness(profile: String): Readiness {
+    override fun readiness(accountId: String): Readiness {
         if (cleanupFailed.get()) return Readiness.Unavailable("Grok work cleanup could not be confirmed. Restart Hovel before continuing.")
         val access = connection.check()
         if (access.auth == GrokAuthAvailability.SIGNED_OUT) return Readiness.SignedOut
@@ -82,7 +82,6 @@ internal class GrokWorkRuntime(
     /** Register before starting the worker so release cannot miss a racing startup. */
     override fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle {
         require(turn.work != null && turn.work.member.runtimeId == id && turn.work.folder.isAbsolute)
-        require(SharedRules.isProfileId(turn.profile))
         require(java.util.UUID.fromString(turn.companionId).toString() == turn.companionId)
         val started = synchronized(lifecycle) {
             check(!closed.get() && !cleanupFailed.get())
@@ -155,8 +154,8 @@ internal class GrokWorkRuntime(
             val saved = request.conversation
             // Retain the saved handle while pruning; it is looked up next.
             val start = when (val resolved = resolveGrokWorkTurn(request, connection, bindings, beforeLookup = {
-                runCatching { retained(request.profile) }.getOrNull()
-                    ?.let { bindings.prune(request.profile, it + listOfNotNull(saved?.id)) }
+                runCatching { retained(request.accountId) }.getOrNull()
+                    ?.let { bindings.prune(request.accountId, it + listOfNotNull(saved?.id)) }
             })) {
                 is GrokTurnStart.Failed -> { fail(resolved.failure); return }
                 is GrokTurnStart.Ready -> resolved
@@ -181,7 +180,7 @@ internal class GrokWorkRuntime(
             if (saved == null) deliver { events.opened(binding.handle) }
             if (!active()) return
             stage = "prompt"
-            val result = opened.prompt("The person's project request follows:\n<message>\n${request.input()}\n</message>")
+            val result = opened.prompt("The person's project request follows:\n<message>\n${request.text}\n</message>")
             approvals?.close()
             val (accepted, final) = synchronized(this) {
                 val current = checkNotNull(activity)

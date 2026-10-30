@@ -87,7 +87,7 @@ internal class ClaudeWorkRuntime(
     private val epoch = AtomicInteger()
     @Volatile private var closed = false
 
-    override fun readiness(profile: String): Readiness {
+    override fun readiness(accountId: String): Readiness {
         val status = connection.status()
         return when (status.state) {
             ProviderState.CONNECTED -> Readiness.Ready
@@ -122,7 +122,7 @@ internal class ClaudeWorkRuntime(
         }
         // A release or close while it started: it ends now, and the chat has ended the turn already.
         if (closed || epoch.get() != started) { processes.remove(work.lease, process); process.close(); events.failed(ChatFailure.Temporary); return TurnHandle {} }
-        return process.turn(turn.input(), events)
+        return process.turn(turn.text, events)
     }
 
     /** End [lease]'s working process: its pending approvals are denied and its tree ended. Other leases keep theirs. */

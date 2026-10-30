@@ -44,7 +44,7 @@ internal class ClaudeChatRuntime(
     private val stopper = Executors.newSingleThreadScheduledExecutor(loggingDaemonThreads("hovel-claude-stop"))
     @Volatile private var closed = false
 
-    override fun readiness(profile: String): Readiness {
+    override fun readiness(accountId: String): Readiness {
         val status = connection.status()
         return when (status.state) {
             ProviderState.CONNECTED -> Readiness.Ready
@@ -63,7 +63,7 @@ internal class ClaudeChatRuntime(
         sessions[session]?.settle()
         val conversation = if (saved == null) listOf("--session-id", session) else listOf("--resume", session)
         val started = Turn(events, session, opens = saved == null)
-        started.start(claudeTurnArguments(model, turn.persona) + claudeEffortArguments(turn.effort) + conversation, turn.profile, turn.input())
+        started.start(claudeTurnArguments(model, turn.persona) + claudeEffortArguments(turn.effort) + conversation, turn.accountId, turn.text)
         return TurnHandle { started.stop() }
     }
 
@@ -81,8 +81,8 @@ internal class ClaudeChatRuntime(
         /** Set once the turn is stopped, abandoned or has reported its end; nothing is reported after. */
         private val ended = AtomicBoolean()
 
-        fun start(args: List<String>, profile: String, input: String) {
-            process = claude.builder(args, claude.workspace(profile)).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        fun start(args: List<String>, accountId: String, input: String) {
+            process = claude.builder(args, claude.workspace(accountId)).redirectError(ProcessBuilder.Redirect.DISCARD).start()
             running += this
             sessions[session] = this
             if (closed) abandon()

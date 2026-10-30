@@ -15,16 +15,16 @@ import org.formulagen.wrapper.bridge.SharedRules
 class CodexRuntime(val executable: Path, val root: Path) {
     init { require(executable.isAbsolute) }
 
-    /** `<providers root>/codex`: where account and model checks run. They belong to no profile: every profile shares the one Codex login. */
+    /** `<providers root>/codex`: where account and model checks run. They belong to no account: every one shares the player's Codex login. */
     fun statusFolder(): Path = private(root.resolve("codex"))
 
     /**
-     * `<providers root>/<profile>/codex-chat`: empty and native-owned, so a companion's Codex
+     * `<providers root>/<accountId>/codex-chat`: empty and native-owned, so a companion's Codex
      * threads start apart from the player's projects.
      */
-    fun conversationFolder(profile: String): Path {
-        require(SharedRules.isProfileId(profile)) { "Invalid profile" }
-        return private(private(root.resolve(profile)).resolve("codex-chat"))
+    fun conversationFolder(accountId: String): Path {
+        require(SharedRules.isRecordId(accountId)) { "Invalid account" }
+        return private(private(root.resolve(accountId)).resolve("codex-chat"))
     }
 
     /** A Codex child by [codexProcess]'s rules, started in [cwd]. */
@@ -69,18 +69,6 @@ internal fun scrubCodexEnvironment(environment: MutableMap<String, String>) {
 
 /** The only `CODEX_*` variables a Codex child or login keeps: the player's Codex home and network setup. */
 internal val KEPT_CODEX_VARIABLES = setOf("CODEX_HOME", "CODEX_CA_CERTIFICATE")
-
-/**
- * Hovel's old per-profile Codex home, `<providers root>/<profile>/codex`, from when Hovel signed
- * Codex in itself (its login lived in the keyring under this folder). Nothing signs in there any
- * more and Hovel leaves it on disk untouched; it is read only to migrate a version 1 chat record
- * that still lives inside it. A Codex thread started there cannot be resumed on the player's own
- * login (see `NativeConversation.playerLogin`).
- */
-internal fun legacyCodexProfileHome(root: Path, profile: String): Path {
-    require(SharedRules.isProfileId(profile)) { "Invalid profile" }
-    return root.resolve(profile).resolve("codex")
-}
 
 /** Prefer explicit configuration, then an installed executable; never download a runtime. */
 internal fun findCodexExecutable(environment: Map<String, String>): Path? {

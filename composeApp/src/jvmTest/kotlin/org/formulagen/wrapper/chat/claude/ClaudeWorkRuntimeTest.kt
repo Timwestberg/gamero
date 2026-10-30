@@ -76,7 +76,7 @@ class ClaudeWorkRuntimeTest {
         lineLimit = lineLimit)
 
     private fun request(conversation: NativeConversation? = null, text: String = "Read notes.txt, then append a line.", model: String = "sonnet") =
-        TurnRequest("local", "20000000-0000-4000-8000-000000000002", persona, model, conversation, context = null, text = text,
+        TurnRequest("50000000-0000-4000-8000-000000000005", "20000000-0000-4000-8000-000000000002", persona, model, conversation, text = text,
             work = WorkScope(folder, "lease-1", "Ember", TeamMember(RuntimeId.CLAUDE_CODE, model)))
 
     /** The recorded turns of [name] as fake turns: each permission request is asked, everything else emitted, split at each result. */

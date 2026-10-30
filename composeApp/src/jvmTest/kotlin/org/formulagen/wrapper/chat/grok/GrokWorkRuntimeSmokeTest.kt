@@ -34,8 +34,8 @@ class GrokWorkRuntimeSmokeTest {
             val runtime = GrokWorkRuntime(root.resolve("providers"), env, GrokConnection(env), broker)
             try {
                 val events = WorkSmokeEvents()
-                val handle = runtime.startTurn(TurnRequest("local", "20000000-0000-4000-8000-000000000002", Persona.working("Ember"),
-                    null, null, null, "This is a disposable process-cleanup test. Use run_terminal_cmd exactly once to execute this exact foreground command. " +
+                val handle = runtime.startTurn(TurnRequest(ACCOUNT, "20000000-0000-4000-8000-000000000002", Persona.working("Ember"),
+                    null, null, "This is a disposable process-cleanup test. Use run_terminal_cmd exactly once to execute this exact foreground command. " +
                         "Do not set block_until_ms, is_background or timeout, and do not run other tools. Stop if denied.\n$command",
                     WorkScope(project, "cleanup-lease", "Ember", TeamMember(RuntimeId.GROK_BUILD, "runtime-default"))), events)
                 waitFor { Files.exists(marker) && Files.size(marker) > 0 || events.done.isDone }
@@ -85,13 +85,13 @@ class GrokWorkRuntimeSmokeTest {
         }
         val persona = Persona.working("Ember")
         val work = WorkScope(project, "test-lease", "Ember", TeamMember(RuntimeId.GROK_BUILD, "runtime-default"))
-        val request = TurnRequest("local", "20000000-0000-4000-8000-000000000002", persona, null, null, null,
+        val request = TurnRequest(ACCOUNT, "20000000-0000-4000-8000-000000000002", persona, null, null,
             "This is a disposable integration test. Use search_replace exactly once to replace BEFORE with AFTER in $marker. " +
                 "Do not use other tools or alter other files. If denied, stop without retrying. Remember ORCHID_WORK.", work)
         val first = WorkSmokeEvents()
         try {
             GrokWorkRuntime(root.resolve("providers"), env, GrokConnection(env), broker, GrokWorkTrust { _, trusted, cancel -> trusted == project && !cancel.isCancelled }).use { runtime ->
-                assertEquals(Readiness.Ready, runtime.readiness("local"))
+                assertEquals(Readiness.Ready, runtime.readiness(ACCOUNT))
                 runtime.startTurn(request, first); first.await()
                 assertNull(first.failure)
                 assertEquals("AFTER", Files.readString(marker))

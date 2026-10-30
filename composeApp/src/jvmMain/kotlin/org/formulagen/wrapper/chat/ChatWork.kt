@@ -10,7 +10,7 @@ internal interface WorkRuntime : AutoCloseable {
     val id: RuntimeId
 
     /** As [ChatRuntime.readiness]: the runtime's own sign-in. */
-    fun readiness(profile: String): Readiness
+    fun readiness(accountId: String): Readiness
 
     /** As [ChatRuntime.startTurn], for a working turn. */
     fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle

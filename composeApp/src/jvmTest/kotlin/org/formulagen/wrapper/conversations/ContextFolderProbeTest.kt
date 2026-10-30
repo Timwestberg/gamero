@@ -45,7 +45,7 @@ class ContextFolderProbeTest {
 
         fun turn(runtime: WorkRuntime, member: TeamMember): String {
             val done = CompletableFuture<String>()
-            runtime.startTurn(TurnRequest("local", UUID.randomUUID().toString(), Persona.working("Ember"), member.modelId, null, null, prompt,
+            runtime.startTurn(TurnRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(), Persona.working("Ember"), member.modelId, null, prompt,
                 WorkScope(ProjectFolders(working, listOf(context)), "probe", "Ember", member)), object : TurnEvents {
                 override fun opened(conversation: String) = Unit
                 override fun accepted() = Unit

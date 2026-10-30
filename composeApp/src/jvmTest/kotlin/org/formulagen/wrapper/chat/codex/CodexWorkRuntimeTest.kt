@@ -66,7 +66,7 @@ class CodexWorkRuntimeTest {
         }
     }
 
-    private fun request() = TurnRequest("local", "20000000-0000-4000-8000-000000000002", Persona.working("Ember"), null, null, null,
+    private fun request() = TurnRequest("50000000-0000-4000-8000-000000000005", "20000000-0000-4000-8000-000000000002", Persona.working("Ember"), null, null,
         "Add a leap-year test.", WorkScope(folder, "lease-1", "Ember", member))
 
     @AfterTest fun cleanUp() { root.toFile().deleteRecursively() }

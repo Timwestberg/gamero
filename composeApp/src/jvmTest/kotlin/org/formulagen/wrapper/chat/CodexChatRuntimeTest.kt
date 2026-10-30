@@ -55,7 +55,7 @@ class CodexChatRuntimeTest {
         CodexChatRuntime(root, Path.of("/usr/bin/true")) { _, receive -> Rpc(receive).also { setup(it); rpcs += it } }
 
     private fun request(model: String?, conversation: NativeConversation? = null) =
-        TurnRequest("local", "20000000-0000-4000-8000-000000000002", persona, model, conversation, context = null, text = "Hello")
+        TurnRequest(ACCOUNT, "20000000-0000-4000-8000-000000000002", persona, model, conversation, text = "Hello")
 
     private fun complete(rpc: Rpc, threadId: String, text: String) {
         rpc.notify("item/agentMessage/delta", buildJsonObject { put("threadId", threadId); put("turnId", "turn-1"); put("itemId", "m"); put("delta", text) })
@@ -66,7 +66,7 @@ class CodexChatRuntimeTest {
         val root = Files.createTempDirectory("codex-account-events")
         val rpcs = mutableListOf<Rpc>()
         runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.onTurn = { complete(rpc, thread, "Hi") } }.use { codex ->
-            assertEquals(Readiness.Ready, codex.readiness("local"))
+            assertEquals(Readiness.Ready, codex.readiness(ACCOUNT))
             rpcs.single().notify("account/updated", buildJsonObject { put("authMode", "chatgpt") })
             rpcs.single().notify("remoteControl/status/changed", buildJsonObject {})
             val events = Events(); codex.startTurn(request("gpt-6.1-sol"), events)
@@ -198,7 +198,7 @@ class CodexChatRuntimeTest {
             assertEquals(JsonPrimitive("read-only"), start["sandbox"]); assertEquals(JsonPrimitive("never"), start["approvalPolicy"])
             // The configuration is read as a thread in the profile's own empty folder sees it.
             assertEquals(start["cwd"], rpc.calls("config/read").single()["cwd"])
-            assertEquals(root.resolve("local").resolve("codex-chat").toString(), start["cwd"]?.jsonPrimitive?.content)
+            assertEquals(root.resolve(ACCOUNT).resolve("codex-chat").toString(), start["cwd"]?.jsonPrimitive?.content)
         }
         // A Codex that cannot say what the player's configuration turns on starts no thread.
         runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.config = null }.use { codex ->
@@ -237,7 +237,7 @@ class CodexChatRuntimeTest {
             CodexChatRuntime(root, Path.of("/usr/bin/true")) { _, receive -> object : org.formulagen.wrapper.providers.CodexAppServer {
                 override fun call(method: String, params: JsonObject) = buildJsonObject { put("account", account) }
                 override fun close() = Unit
-            } }.use { assertEquals(expected, it.readiness("local")) }
+            } }.use { assertEquals(expected, it.readiness(ACCOUNT)) }
         }
     }
 
@@ -267,8 +267,7 @@ class CodexChatRuntimeTest {
         assertEquals(ember.hash, Persona.companion("Ember").hash)
         assertNotEquals(ember.hash, Persona.companion("Pip").hash)
         assertFails { Persona.companion(" Ember") }
-        assertEquals("Hello", request(null).input())
-        assertEquals("Earlier:\n<<<\nx\n>>>\n\nHello", request(null).copy(context = "Earlier:\n<<<\nx\n>>>").input())
+        assertFails { request(null).copy(accountId = "local") }
     }
     @Test fun effortIsSentPerTurnIncludingTheResolvedAutoDefault() {
         val root = Files.createTempDirectory("codex-effort")
@@ -283,3 +282,5 @@ class CodexChatRuntimeTest {
     }
 
 }
+
+private const val ACCOUNT = "50000000-0000-4000-8000-000000000005"

@@ -11,15 +11,15 @@ import kotlin.test.*
 import org.junit.Assume.assumeTrue
 
 /** Explicit local checks, not evidence of authenticated inference or other hardware. */
-class DesktopChatSmokeTest {
+class TalkRuntimeSmokeTest {
     @Test fun installedCodexReadinessSurvivesAccountNotifications() {
         val executable = System.getenv("HOVEL_CHAT_CODEX_SMOKE")
         assumeTrue("Set HOVEL_CHAT_CODEX_SMOKE to a signed-in codex executable", executable != null)
         val root = Files.createTempDirectory("hovel-codex-readiness-")
         try {
             CodexChatRuntime(root, Path.of(requireNotNull(executable))).use { runtime ->
-                assertEquals(Readiness.Ready, runtime.readiness("local"))
-                assertEquals(Readiness.Ready, runtime.readiness("local"))
+                assertEquals(Readiness.Ready, runtime.readiness(ACCOUNT))
+                assertEquals(Readiness.Ready, runtime.readiness(ACCOUNT))
             }
         } finally { root.toFile().deleteRecursively() }
     }
@@ -35,7 +35,7 @@ class DesktopChatSmokeTest {
             val startups = java.util.concurrent.CopyOnWriteArrayList<String>()
             chatCodex(runtime) { method, params -> if (method == "mcpServer/startupStatus/updated") startups += params["name"].toString() }.use { rpc ->
                 assertTrue(rpc.call("account/read", buildJsonObject { put("refreshToken", false) }).containsKey("account"))
-                val folder = runtime.conversationFolder("local")
+                val folder = runtime.conversationFolder(ACCOUNT)
                 val config = rpc.call("config/read", buildJsonObject { put("cwd", folder.toString()) }).getValue("config").jsonObject
                 val result = rpc.call("thread/start", chatThreadParams(Persona.companion("Ember"), folder.toString(), null, ephemeral = true, talkOnlyOverrides(config)))
                 assertNotNull(result["thread"]?.jsonObject?.get("id"))
@@ -58,11 +58,11 @@ class DesktopChatSmokeTest {
         val runtime = ClaudeRuntime(Path.of(requireNotNull(executable)), root)
         val claude = ClaudeChatRuntime(runtime, org.formulagen.wrapper.providers.ClaudeConnection(runtime))
         claude.use {
-            assertEquals(Readiness.Ready, claude.readiness("local"))
+            assertEquals(Readiness.Ready, claude.readiness(ACCOUNT))
             val persona = Persona.companion("Ember")
             fun turn(conversation: NativeConversation?, text: String): Pair<String, String> {
                 val done = java.util.concurrent.CompletableFuture<Pair<String, String>>()
-                claude.startTurn(TurnRequest("local", java.util.UUID.randomUUID().toString(), persona, "haiku", conversation, null, text), object : TurnEvents {
+                claude.startTurn(TurnRequest(ACCOUNT, java.util.UUID.randomUUID().toString(), persona, "haiku", conversation, text), object : TurnEvents {
                     override fun opened(conversation: String) = Unit
                     override fun accepted() = Unit
                     override fun partial(text: String) = Unit
@@ -105,10 +105,10 @@ class DesktopChatSmokeTest {
         }
         val haiku = org.formulagen.wrapper.bridge.TeamMember(org.formulagen.wrapper.bridge.RuntimeId.CLAUDE_CODE, "haiku")
         org.formulagen.wrapper.chat.claude.ClaudeWorkRuntime(runtime, org.formulagen.wrapper.providers.ClaudeConnection(runtime), broker).use { claude ->
-            assertEquals(Readiness.Ready, claude.readiness("local"))
+            assertEquals(Readiness.Ready, claude.readiness(ACCOUNT))
             val done = java.util.concurrent.CompletableFuture<String>()
             val last = java.util.concurrent.atomic.AtomicReference<org.formulagen.wrapper.bridge.Activity?>()
-            claude.startTurn(TurnRequest("local", java.util.UUID.randomUUID().toString(), Persona.working("Ember"), "haiku", null, null,
+            claude.startTurn(TurnRequest(ACCOUNT, java.util.UUID.randomUUID().toString(), Persona.working("Ember"), "haiku", null,
                 "Read notes.txt, then append the line 'hello from Ember' to it with your edit tool. Do not run any commands.",
                 WorkScope(folder, "smoke", "Ember", haiku)), object : TurnEvents {
                 override fun opened(conversation: String) = Unit
@@ -142,3 +142,5 @@ class DesktopChatSmokeTest {
         }
     }
 }
+
+private const val ACCOUNT = "50000000-0000-4000-8000-000000000005"

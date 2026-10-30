@@ -163,17 +163,17 @@ class GrokWorkRuntimeTest {
             val config = fake.root.resolve(".grok/config.toml")
             val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
             GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker).use { runtime ->
-                assertEquals(Readiness.Ready, runtime.readiness("local"))
+                assertEquals(Readiness.Ready, runtime.readiness(ACCOUNT))
                 Files.writeString(config, "theme = 'dark'\n")
-                val unpinned = runtime.readiness("local") as Readiness.Unavailable
+                val unpinned = runtime.readiness(ACCOUNT) as Readiness.Unavailable
                 assertEquals(grokWorkAuthNotice(config), unpinned.reason)
                 assertTrue(unpinned.reason.length <= ChatLimits.NOTICE)
                 assertEquals("theme = 'dark'\n", Files.readString(config))
                 Files.delete(config)
-                assertEquals(unpinned, runtime.readiness("local"))
+                assertEquals(unpinned, runtime.readiness(ACCOUNT))
                 assertFalse(Files.exists(config))
                 Files.writeString(config, "[auth]\npreferred_method = 'oidc'\n[endpoints]\nproxy_url = 'https://example.test'\n")
-                assertEquals(Readiness.Unavailable(GROK_WORK_CONFIG_UNSUPPORTED), runtime.readiness("local"))
+                assertEquals(Readiness.Unavailable(GROK_WORK_CONFIG_UNSUPPORTED), runtime.readiness(ACCOUNT))
             }
         }
     }
@@ -239,7 +239,7 @@ class GrokWorkRuntimeTest {
                     assertEquals(ChatFailure.Temporary, lost.failure)
                     assertFalse(Files.exists(binding), "The lost session's binding survived its unconfirmed cleanup")
                     assertEquals(Readiness.Unavailable("Grok work cleanup could not be confirmed. Restart Hovel before continuing."),
-                        runtime.readiness("local"))
+                        runtime.readiness(ACCOUNT))
                     assertFailsWith<IllegalStateException> { runtime.startTurn(request, WorkFixtureEvents()) }
                 } finally { fake.workProfile().toFile().deleteRecursively() }
             }
@@ -247,8 +247,8 @@ class GrokWorkRuntimeTest {
     }
 }
 
-private fun workRequest(fake: FakeGrokRuntime, folder: java.nio.file.Path = fake.root) = TurnRequest("local", "20000000-0000-4000-8000-000000000002",
-    Persona.working("Ember"), null, null, null, "Hello",
+private fun workRequest(fake: FakeGrokRuntime, folder: java.nio.file.Path = fake.root) = TurnRequest(ACCOUNT, "20000000-0000-4000-8000-000000000002",
+    Persona.working("Ember"), null, null, "Hello",
     WorkScope(folder, "lease", "Ember", TeamMember(RuntimeId.GROK_BUILD, "runtime-default")))
 
 private fun awaitCondition(condition: () -> Boolean) {

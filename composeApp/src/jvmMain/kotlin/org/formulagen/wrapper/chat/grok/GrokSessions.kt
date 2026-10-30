@@ -16,7 +16,7 @@ internal enum class GrokMode { TALK, WORK }
 /** Exact ownership required to resume, including the verified account's fingerprint. */
 @Serializable
 internal data class GrokSessionScope(
-    val profile: String,
+    val accountId: String,
     val companionId: String,
     val mode: GrokMode,
     val resolvedModel: String,
@@ -25,7 +25,7 @@ internal data class GrokSessionScope(
 ) {
     /** Validate Hovel ownership before a provider identifier can be stored or looked up. */
     fun validate() {
-        require(SharedRules.isProfileId(profile) && canonicalUuid(companionId))
+        require(SharedRules.isRecordId(accountId) && canonicalUuid(companionId))
         require(SharedRules.isModelId(resolvedModel) && resolvedModel != SharedRules.RUNTIME_DEFAULT_MODEL)
         require(FINGERPRINT.matches(accountFingerprint))
         require(if (mode == GrokMode.WORK) workspaceFingerprint?.let(FINGERPRINT::matches) == true else workspaceFingerprint == null)
@@ -99,12 +99,12 @@ internal class GrokSessions(private val root: Path) {
     @Synchronized fun clearLocal() { local.clear() }
 
     /**
-     * Remove this profile's orphan bindings using all saved and active handles after a successful history load.
-     * A failed/partial history read must never call this method. Unknown or corrupt files are preserved.
+     * Remove [accountId]'s orphan bindings, keeping every handle in [retainedHandles]: the ones its conversations hold
+     * and the active ones. A failed or partial read of those must never call this method. Unknown or corrupt files are preserved.
      * More than [limit] entries deletes nothing; cleanup runs off the UI thread.
      */
-    @Synchronized fun prune(profile: String, retainedHandles: Set<String>, limit: Int = 256) {
-        require(SharedRules.isProfileId(profile) && retainedHandles.all(::canonicalUuid))
+    @Synchronized fun prune(accountId: String, retainedHandles: Set<String>, limit: Int = 256) {
+        require(SharedRules.isRecordId(accountId) && retainedHandles.all(::canonicalUuid))
         require(limit in 1..4_096)
         val files = ArrayList<Path>()
         if (Files.exists(root, NOFOLLOW_LINKS)) {
@@ -122,9 +122,9 @@ internal class GrokSessions(private val root: Path) {
             val handle = name.removeSuffix(".json")
             if (!canonicalUuid(handle) || handle in retainedHandles) continue
             val binding = readBinding(handle) ?: continue
-            if (binding.scope.profile == profile && Files.deleteIfExists(file)) local.remove(handle)
+            if (binding.scope.accountId == accountId && Files.deleteIfExists(file)) local.remove(handle)
         }
-        local.entries.removeIf { (handle, binding) -> binding.scope.profile == profile && handle !in retainedHandles }
+        local.entries.removeIf { (handle, binding) -> binding.scope.accountId == accountId && handle !in retainedHandles }
     }
 
     /** Read only a supported private sidecar; validation is shared by resume and orphan cleanup. */

@@ -26,9 +26,9 @@ import org.formulagen.wrapper.providers.codexModelList
  * player's configuration loads, so every thread turns off the MCP servers and features it enables
  * ([talkOnlyOverrides]) on top of the process lockdown ([chatProcessArguments]); an MCP server
  * that starts anyway ends the turn as [ChatFailure.Lockdown]. A thread opened on Hovel's old
- * per-profile login cannot be resumed and is a lost conversation.
+ * Codex login (before turns ran on the player's own) cannot be resumed and is a lost conversation.
  *
- * One app-server serves the active profile and is kept between turns;
+ * One app-server serves the active account and is kept between turns;
  * it is dropped on [release], on a closed transport, on a refused tool request and when the account
  * is not ChatGPT, and the next turn starts a new one and resumes the thread again. A thread Codex no
  * longer has is a lost conversation, which the next turn starts fresh. Stopping
@@ -49,14 +49,14 @@ internal class CodexChatRuntime(
     /** Closing an app-server can wait seconds for its process tree, so it never runs on a caller's thread. */
     private val releaser = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-chat-release"))
     private var connection: Connection? = null
-    /** Codex's default model by profile, from `model/list`: the last one known, and when it was last asked for (System.nanoTime). */
+    /** Codex's default model by account, from `model/list`: the last one known, and when it was last asked for (System.nanoTime). */
     private val defaults = ConcurrentHashMap<String, Pair<Long, String?>>()
     /** Changes on every connect and release; events from an older app-server are ignored. */
     private var epoch = 0
     private var closed = false
 
-    /** [folder] is the profile's empty conversation folder, where its threads start. */
-    private class Connection(val profile: String, val folder: Path, val rpc: CodexAppServer, val epoch: Int) {
+    /** [folder] is the account's empty conversation folder, where its threads start. */
+    private class Connection(val accountId: String, val folder: Path, val rpc: CodexAppServer, val epoch: Int) {
         /** The thread this app-server has resumed or started; any other thread is resumed first. */
         var thread: String? = null
         var turn: Turn? = null
@@ -69,14 +69,14 @@ internal class CodexChatRuntime(
         val early = mutableListOf<Pair<String, JsonObject>>()
     }
 
-    override fun readiness(profile: String): Readiness = account(connect(profile))
+    override fun readiness(accountId: String): Readiness = account(connect(accountId))
 
     /** Resume only the native-owned thread belonging to this companion, then start the turn. */
     override fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle {
         val model = explicitModel(turn.model) ?: run { events.failed(ChatFailure.ModelUnavailable); return TurnHandle {} }
-        // Opened on Hovel's old per-profile Codex login, which the player's own login does not have.
+        // Opened on Hovel's old Codex login, which the player's own login does not have.
         if (turn.conversation?.playerLogin == false) { events.failed(ChatFailure.ConversationLost); return TurnHandle {} }
-        val connection = connect(turn.profile)
+        val connection = connect(turn.accountId)
         if (account(connection) != Readiness.Ready) { events.failed(ChatFailure.SignedOut); return TurnHandle {} }
         val overrides = overrides(connection) ?: run { events.failed(ChatFailure.Lockdown); return TurnHandle {} }
         val thread = thread(connection, turn, events, overrides) ?: run { events.failed(ChatFailure.ConversationLost); return TurnHandle {} }
@@ -87,7 +87,7 @@ internal class CodexChatRuntime(
         synchronized(lock) { current(connection); connection.turn = active }
         val started = connection.rpc.call("turn/start", buildJsonObject {
             put("threadId", thread)
-            putJsonArray("input") { add(buildJsonObject { put("type", "text"); put("text", turn.input()) }) }
+            putJsonArray("input") { add(buildJsonObject { put("type", "text"); put("text", turn.text) }) }
             // Codex keeps a turn's model for later turns, so an explicit model is sent with every turn.
             sent.takeIf { it.isNotEmpty() }?.let { put("model", it) }
             turn.effort?.let { put("effort", it.value) }
@@ -114,18 +114,18 @@ internal class CodexChatRuntime(
         releaser.awaitTermination(5, TimeUnit.SECONDS)
     }
 
-    /** The profile's app-server, started when needed. A release while it starts closes it again. */
-    private fun connect(profile: String): Connection {
+    /** The account's app-server, started when needed. A release while it starts closes it again. */
+    private fun connect(accountId: String): Connection {
         synchronized(lock) {
             check(!closed) { "Chat closed" }
-            connection?.let { if (it.profile == profile) return it; detachLocked() }
+            connection?.let { if (it.accountId == accountId) return it; detachLocked() }
         }
         val runtime = CodexRuntime(executable, providerRoot)
-        val folder = runtime.conversationFolder(profile)
+        val folder = runtime.conversationFolder(accountId)
         val mine = synchronized(lock) { ++epoch }
         val rpc = createRpc(runtime) { method, params -> receive(mine, method, params) }
         val opened = synchronized(lock) {
-            if (closed || epoch != mine || connection != null) null else Connection(profile, folder, rpc, mine).also { connection = it }
+            if (closed || epoch != mine || connection != null) null else Connection(accountId, folder, rpc, mine).also { connection = it }
         }
         if (opened == null) { rpc.close(); error("Chat closed") }
         return opened
@@ -172,15 +172,15 @@ internal class CodexChatRuntime(
     }
 
     /**
-     * Codex's own default model for the profile, asked for at most once a minute. A failed or empty
+     * Codex's own default model for the account, asked for at most once a minute. A failed or empty
      * answer keeps the last one known; null only when none ever was.
      */
     private fun defaultModel(connection: Connection): String? {
-        val known = defaults[connection.profile]
+        val known = defaults[connection.accountId]
         if (known != null && System.nanoTime() - known.first < defaultModelRefresh.inWholeNanoseconds) return known.second
         val fresh = try { codexModelList(connection.rpc).firstOrNull { it.isDefault }?.modelId } catch (_: Exception) { null }
         current(connection)
-        return (fresh ?: known?.second).also { defaults[connection.profile] = System.nanoTime() to it }
+        return (fresh ?: known?.second).also { defaults[connection.accountId] = System.nanoTime() to it }
     }
 
     /** Consume only text and terminal state from the current app-server. Tool requests are refused by the transport. */

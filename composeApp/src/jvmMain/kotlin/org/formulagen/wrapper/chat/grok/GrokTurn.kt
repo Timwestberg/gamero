@@ -66,7 +66,7 @@ private inline fun <F> resolveGrokTurn(request: TurnRequest, connection: GrokCon
     val model = request.model?.takeUnless { it == SharedRules.RUNTIME_DEFAULT_MODEL } ?: account.defaultModel
     if (account.models.none { it.modelId == model }) return GrokTurnStart.Failed(ChatFailure.ModelUnavailable)
     val canonical = folder()
-    val scope = GrokSessionScope(request.profile, request.companionId, mode, model, account.fingerprint, workspace(canonical))
+    val scope = GrokSessionScope(request.accountId, request.companionId, mode, model, account.fingerprint, workspace(canonical))
     scope.validate()
     beforeLookup()
     val previous = saved?.let {

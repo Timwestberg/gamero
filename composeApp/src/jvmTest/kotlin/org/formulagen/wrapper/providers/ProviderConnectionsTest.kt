@@ -80,10 +80,7 @@ class ProviderConnectionsTest {
             assertEquals(listOf("/bin/echo", "app-server"), command.command())
             assertEquals(runtime.statusFolder().toFile(), command.directory())
             assertFalse(command.environment().keys.any { it.startsWith("OPENAI_") || it in setOf("CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "ACCESS_TOKEN") })
-            // The old per-profile home is only named, for migrating a chat record; nothing creates or signs in there.
-            assertEquals(root.resolve("local").resolve("codex"), legacyCodexProfileHome(root, "local"))
-            assertFalse(Files.exists(legacyCodexProfileHome(root, LOGIN_ID)))
-            assertFails { legacyCodexProfileHome(root, "../x") }
+            assertFails { runtime.conversationFolder("local") }
             assertNull(findCodexExecutable(mapOf("GAMERO_CODEX_PATH" to "/missing/codex")))
         } finally { root.toFile().deleteRecursively() }
     }
@@ -148,7 +145,7 @@ class ProviderConnectionsTest {
                 assertEquals(connected.copy(message = "Sign in and out in Claude Code."), registry.perform(action, scope(RuntimeId.CLAUDE_CODE)))
             }
             // Several views ask on focus; one check answers them for a few seconds, and chat readiness shares it.
-            assertEquals(org.formulagen.wrapper.chat.Readiness.Ready, org.formulagen.wrapper.chat.ClaudeChatRuntime(fake.runtime(), signIn).use { it.readiness("local") })
+            assertEquals(org.formulagen.wrapper.chat.Readiness.Ready, org.formulagen.wrapper.chat.ClaudeChatRuntime(fake.runtime(), signIn).use { it.readiness(LOGIN_ID) })
             assertEquals(2, fake.calls().size, "One --version and one auth status")
             clock.now = clock.now.plusMillis(CLAUDE_STATUS_TTL.inWholeMilliseconds)
             fake.scenario(auth = FakeClaude.fixture("auth-status-signed-out.json"), authExit = 1)

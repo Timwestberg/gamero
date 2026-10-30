@@ -8,7 +8,7 @@ import kotlin.test.*
 /** Private-storage integration checks, using disposable roots only. */
 class GrokSessionsTest {
     private val companion = "11111111-1111-4111-8111-111111111111"
-    private val scope = GrokSessionScope("local", companion, GrokMode.TALK, "grok-model", "a".repeat(64))
+    private val scope = GrokSessionScope(ACCOUNT, companion, GrokMode.TALK, "grok-model", "a".repeat(64))
 
     @Test fun opaqueProviderIdsRoundTripThroughPrivateUuidHandles() {
         val root = Files.createTempDirectory("grok-bindings")
@@ -30,7 +30,7 @@ class GrokSessionsTest {
             val binding = GrokSessions(root).create("provider/owned", scope)
             val store = GrokSessions(root)
             assertEquals(GrokSessionLookup.Mismatch, store.find(binding.handle, scope.copy(accountFingerprint = "b".repeat(64))))
-            assertEquals(GrokSessionLookup.Mismatch, store.find(binding.handle, scope.copy(profile = companion)))
+            assertEquals(GrokSessionLookup.Mismatch, store.find(binding.handle, scope.copy(accountId = companion)))
             assertEquals(GrokSessionLookup.Mismatch, store.find(binding.handle, scope.copy(companionId = "22222222-2222-4222-8222-222222222222")))
             assertEquals(GrokSessionLookup.ModelChanged, store.find(binding.handle, scope.copy(resolvedModel = "other-model")))
             assertFailsWith<IllegalArgumentException> { store.create("invalid-default", scope.copy(resolvedModel = "runtime-default")) }
@@ -107,16 +107,16 @@ class GrokSessionsTest {
             val store = GrokSessions(root)
             val kept = store.create("saved-or-active", scope)
             val orphan = store.create("orphan", scope)
-            val foreignScope = scope.copy(profile = companion)
+            val foreignScope = scope.copy(accountId = companion)
             val foreign = store.create("foreign", foreignScope)
 
-            store.prune("local", setOf(kept.handle))
+            store.prune(ACCOUNT, setOf(kept.handle))
 
             assertEquals(GrokSessionLookup.Missing, store.find(orphan.handle, scope))
             assertEquals(GrokSessionLookup.Missing, GrokSessions(root).find(orphan.handle, scope))
             assertEquals(GrokSessionLookup.Found(kept), store.find(kept.handle, scope))
             assertEquals(GrokSessionLookup.Found(foreign), store.find(foreign.handle, foreignScope))
-            store.prune("local", setOf(kept.handle))
+            store.prune(ACCOUNT, setOf(kept.handle))
             assertEquals(GrokSessionLookup.Found(kept), GrokSessions(root).find(kept.handle, scope))
         } finally { root.toFile().deleteRecursively() }
     }
@@ -133,7 +133,7 @@ class GrokSessionsTest {
             val store = GrokSessions(root)
             val orphan = store.create("known-orphan", scope)
 
-            store.prune("local", emptySet())
+            store.prune(ACCOUNT, emptySet())
 
             assertEquals(GrokSessionLookup.Missing, GrokSessions(root).find(orphan.handle, scope))
             assertEquals("""{"version":2,"scope":{"mode":"future"}}""", Files.readString(future))
@@ -149,11 +149,11 @@ class GrokSessionsTest {
             val one = store.create("one", scope)
             val two = store.create("two", scope)
 
-            store.prune("local", emptySet(), limit = 1)
+            store.prune(ACCOUNT, emptySet(), limit = 1)
 
             assertEquals(GrokSessionLookup.Found(one), GrokSessions(root).find(one.handle, scope))
             assertEquals(GrokSessionLookup.Found(two), GrokSessions(root).find(two.handle, scope))
-            assertFailsWith<IllegalArgumentException> { store.prune("local", setOf("../invalid")) }
+            assertFailsWith<IllegalArgumentException> { store.prune(ACCOUNT, setOf("../invalid")) }
         } finally { root.toFile().deleteRecursively() }
     }
 }

@@ -19,11 +19,11 @@ import org.formulagen.wrapper.chat.*
 internal class StoppedException : RuntimeException("Stopped")
 
 /**
- * Who one claimed message's provider turns run for: the account ([profile]), the companion, the project's
+ * Who one claimed message's provider turns run for: the account ([accountId]), the companion, the project's
  * [folders], and the message's [cancel], which ends any turn or wait.
  */
 internal class TurnCall(
-    val profile: String,
+    val accountId: String,
     val companionId: String,
     val companion: String,
     val folders: ProjectFolders,
@@ -62,7 +62,7 @@ internal class ProviderTurns(
     fun talk(call: TurnCall, role: BrainRoleSnapshot, persona: Persona, input: String, conversation: NativeConversation?, context: String,
         coordinator: Boolean, stream: ReplyStream, opened: (NativeConversation) -> Unit): Pair<String, Activity?> {
         val runtime = ready(call, talk[role.binding.runtimeId], role, context, coordinator)
-        val request = TurnRequest(call.profile, call.companionId, persona, role.binding.modelId, conversation, null, input, null,
+        val request = TurnRequest(call.accountId, call.companionId, persona, role.binding.modelId, conversation, input, null,
             role.binding.effort)
         return gated(call, runtime.id) { turn(call, request, role, coordinator, context, stream, runtime::startTurn, opened) }
     }
@@ -75,7 +75,7 @@ internal class ProviderTurns(
         scope: ApprovalScope, stream: ReplyStream, opened: (NativeConversation) -> Unit): Pair<String, Activity?> {
         val worker = ready(call, work[role.binding.runtimeId], role, threadId, coordinator = false)
         val folders = WorkScope(call.folders.forRuntime(worker.contextFolders), threadId, call.companion, role.binding.member())
-        val request = TurnRequest(call.profile, call.companionId, persona, role.binding.modelId, conversation, null, input, folders,
+        val request = TurnRequest(call.accountId, call.companionId, persona, role.binding.modelId, conversation, input, folders,
             role.binding.effort)
         val relay = approvals.register(threadId, scope)
         try {
@@ -123,8 +123,8 @@ internal class ProviderTurns(
     /** [runtime] when it can take [role]'s turn now; otherwise the failure its readiness names (signed out, or unavailable). */
     private fun <R : Any> ready(call: TurnCall, runtime: R?, role: BrainRoleSnapshot, context: String, coordinator: Boolean): R {
         val readiness = when (runtime) {
-            is ChatRuntime -> runtime.readiness(call.profile)
-            is WorkRuntime -> runtime.readiness(call.profile)
+            is ChatRuntime -> runtime.readiness(call.accountId)
+            is WorkRuntime -> runtime.readiness(call.accountId)
             else -> Readiness.Unavailable("Not offered on this Mac")
         }
         if (runtime == null || readiness != Readiness.Ready) {

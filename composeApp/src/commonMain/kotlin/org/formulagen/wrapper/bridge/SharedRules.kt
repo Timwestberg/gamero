@@ -34,10 +34,8 @@ enum class ModelEffort(val value: String) {
 
 /** Rules more than one capability uses. Mirrors event-contracts `host-bridge/shared.ts`. */
 object SharedRules {
-    /** The profile of a person who is not signed in. */
-    const val LOCAL_PROFILE = "local"
     const val COMPANION_NAME_LIMIT = 40
-    /** Hovel Brain's sentinel model: the runtime's own default, or for Claude Code the profile's default Claude model. */
+    /** Hovel Brain's sentinel model: the runtime's own default, or for Claude Code the default model of the person's Claude login. */
     const val RUNTIME_DEFAULT_MODEL = "runtime-default"
     /**
      * A model as its runtime names it, or [RUNTIME_DEFAULT_MODEL]: one lower-case token of at most
@@ -52,13 +50,9 @@ object SharedRules {
     fun isModelId(value: String): Boolean = MODEL_ID.matches(value)
 
     /**
-     * `local`, or a signed-in account's UUID in canonical lower case. Native code builds folder
-     * paths from it, so an upper-case profile is invalid rather than folded into the same folder.
+     * An account record's id, such as the account's own or a project's: a UUID in canonical lower case. Native code keys
+     * local stores and folder paths by it, so an upper-case id is invalid rather than folded into the same folder.
      */
-    fun isProfileId(value: String): Boolean =
-        value == LOCAL_PROFILE || (BridgeProtocol.UUID_PATTERN.matches(value) && value == value.lowercase())
-
-    /** An account record's id, such as a project's: a UUID in canonical lower case, since native code keys local stores by it. */
     fun isRecordId(value: String): Boolean = BridgeProtocol.UUID_PATTERN.matches(value) && value == value.lowercase()
 
     /**
