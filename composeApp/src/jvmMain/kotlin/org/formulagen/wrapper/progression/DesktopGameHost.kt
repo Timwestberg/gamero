@@ -18,24 +18,11 @@ import kotlinx.serialization.encodeToString
 import org.formulagen.wrapper.companion.terminateProcessTreeInBackground
 
 /**
- * A game a desktop host starts: the [engine] script that resolves the pinned Godot, the [project] it runs and the
- * [scene] it opens. Only a [presentation] game talks to the host over the companion presentation socket.
- */
-data class GodotGame(val engine: Path, val project: Path, val scene: String, val presentation: Boolean) {
-    companion object {
-        /** The companions game's scene in the Tower project. */
-        const val COMPANIONS_SCENE = "res://companions/main.tscn"
-
-        /** The companions game in [project], a Tower project, run by the project's own engine script. */
-        fun companions(project: Path) = GodotGame(project.resolve("scripts/godot.sh"), project, COMPANIONS_SCENE, presentation = true)
-    }
-}
-
-/**
  * Private desktop adapter: runs one [game] as a child process and, for a presentation game, its loopback
- * presentation session. The child game alone owns its progression save.
+ * presentation session. The child game alone owns its progression save. [environment] is the launch's own
+ * environment ([launchEnvironment] builds it); the host controls the variables in [HOST_CONTROLLED_VARIABLES].
  */
-class DesktopCompanionHost(
+class DesktopGameHost(
     private val game: GodotGame,
     private val scope: CoroutineScope,
     val controller: PresentationController,
@@ -73,23 +60,19 @@ class DesktopCompanionHost(
                 }
             }
             try {
-                val scenario = environment["HOVEL_PRESENTATION_SCENARIO"]
-                val command = buildList {
-                    add(game.engine.toString())
-                    addAll(gameArguments)
-                    if (environment["HOVEL_PRESENTATION_HEADLESS"] == "1") add("--headless")
-                    addAll(listOf("--path", game.project.toString()))
-                    if (scenario != null) addAll(listOf("-s", scenario)) else add(game.scene)
-                }
+                val command = gameCommand(game, gameArguments, environment)
+                val presentation = server?.let { server ->
+                    mapOf(PRESENTATION_PORT_VARIABLE to server.localPort.toString(), PRESENTATION_SESSION_VARIABLE to session)
+                }.orEmpty()
                 val started = withContext(Dispatchers.IO) {
                     synchronized(lifecycle) {
                         check(!closed) { "Host already closed" }
                         ProcessBuilder(command).directory(game.project.toFile()).inheritIO().apply {
-                            environment().putAll(this@DesktopCompanionHost.environment)
-                            server?.let { server ->
-                                environment()["HOVEL_PRESENTATION_PORT"] = server.localPort.toString()
-                                environment()["HOVEL_PRESENTATION_SESSION"] = session
-                            }
+                            // ProcessBuilder starts from this process's environment; replace it, so nothing the
+                            // launch removed comes back.
+                            val child = childEnvironment(environment(), this@DesktopGameHost.environment, presentation)
+                            environment().clear()
+                            environment().putAll(child)
                         }.start().also { process = it }
                     }
                 }
@@ -97,7 +80,7 @@ class DesktopCompanionHost(
                 mutableExit.value = code
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
-                System.err.println("Hovel companion host could not start: ${error.message}")
+                System.err.println("Hovel game host could not start: ${error.message}")
                 controller.disconnected()
                 mutableExit.value = 1
             }
@@ -170,5 +153,33 @@ class DesktopCompanionHost(
         socket?.close()
         server?.close()
         job?.cancel()
+    }
+
+    companion object {
+        /**
+         * The command that starts [game]: its engine, [arguments], then the project and scene. The presentation test
+         * hooks (`HOVEL_PRESENTATION_HEADLESS`, `HOVEL_PRESENTATION_SCENARIO`) apply to a presentation game only, so
+         * nothing in the environment can replace Tower's or Overclock's scene.
+         */
+        internal fun gameCommand(game: GodotGame, arguments: List<String>, environment: Map<String, String>): List<String> {
+            val scenario = environment["HOVEL_PRESENTATION_SCENARIO"]?.takeIf { game.presentation }
+            return buildList {
+                add(game.engine.toString())
+                addAll(arguments)
+                if (game.presentation && environment["HOVEL_PRESENTATION_HEADLESS"] == "1") add("--headless")
+                addAll(listOf("--path", game.project.toString()))
+                if (scenario != null) addAll(listOf("-s", scenario)) else add(game.scene)
+            }
+        }
+
+        /**
+         * The child's whole environment: what it would inherit, without the variables the host controls, then the
+         * launch's [supplied] environment, then this session's [presentation] variables (empty for any other game).
+         */
+        internal fun childEnvironment(
+            inherited: Map<String, String>,
+            supplied: Map<String, String>,
+            presentation: Map<String, String>,
+        ): Map<String, String> = inherited - HOST_CONTROLLED_VARIABLES + (supplied - PRESENTATION_VARIABLES) + presentation
     }
 }

@@ -1,8 +1,6 @@
 package org.formulagen.wrapper.progression.embedded
 
-import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -10,6 +8,7 @@ import kotlinx.serialization.json.JsonObject
 import org.formulagen.wrapper.bridge.PetAppearance
 import org.formulagen.wrapper.bridge.PetCompanion
 import org.formulagen.wrapper.bridge.PetMethods
+import org.formulagen.wrapper.storage.writeDurably
 
 /**
  * An `EmberProfile` v1 (game-platform `ember-rogue-addons/contracts/ember.profile.schema.json`): what every Ember
@@ -35,7 +34,8 @@ internal data class EmberProfile(
     companion object {
         /** [companion]'s profile, its colors by channel. */
         fun of(companion: PetCompanion) = with(companion.appearance) {
-            EmberProfile(companion.id, companion.name, mapOf("shell" to shellColor, "frame" to frameColor, "face" to faceColor, "eyes" to eyeColor))
+            val palettes = mapOf("shell" to shellColor, "frame" to frameColor, "face" to faceColor, "eyes" to eyeColor)
+            EmberProfile(companion.id, companion.name, palettes)
         }
     }
 }
@@ -49,8 +49,8 @@ internal class EmberProfileStore(val folder: Path) {
     private val json = Json { encodeDefaults = true; explicitNulls = true }
 
     /**
-     * Writes [companion]'s profile atomically, as `CompanionAppearanceStore` does, and answers its path. The id and
-     * colors are lower-cased first, as the account stores them, and then checked by the contract's rules.
+     * Writes [companion]'s profile durably (a private file, synced, then moved into place) and answers its path. The
+     * id and colors are lower-cased first, as the account stores them, and then checked by the contract's rules.
      */
     fun save(companion: PetCompanion): Path {
         val lowered = with(companion.appearance) {
@@ -60,12 +60,7 @@ internal class EmberProfileStore(val folder: Path) {
         require(PetMethods.isValid(lowered)) { "Invalid companion" }
         val profile = EmberProfile.of(lowered)
         val path = folder.resolve("${profile.emberId}.json")
-        Files.createDirectories(folder)
-        val temp = Files.createTempFile(folder, ".profile-", ".json")
-        try {
-            Files.writeString(temp, json.encodeToString(EmberProfile.serializer(), profile))
-            Files.move(temp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-        } finally { Files.deleteIfExists(temp) }
+        writeDurably(path, json.encodeToString(EmberProfile.serializer(), profile).toByteArray(Charsets.UTF_8))
         return path
     }
 }

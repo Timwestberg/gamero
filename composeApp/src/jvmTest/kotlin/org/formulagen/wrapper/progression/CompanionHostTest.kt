@@ -5,7 +5,6 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
 import kotlin.test.*
 import org.formulagen.wrapper.bridge.GameId
-import org.formulagen.wrapper.progression.embedded.desktopGame
 import org.junit.Assume.assumeTrue
 
 class CompanionHostTest {
@@ -19,7 +18,8 @@ class CompanionHostTest {
             setExecutable(true)
         }
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val host = DesktopCompanionHost(GodotGame.companions(project), scope, PresentationController { "stop" }, emptyMap())
+        val game = GodotGame(project.resolve("scripts/godot.sh"), project, "res://companions/main.tscn", presentation = true)
+        val host = DesktopGameHost(game, scope, PresentationController { "stop" }, emptyMap())
         try {
             host.start()
             val pid = withTimeout(5000) {
@@ -45,13 +45,22 @@ class CompanionHostTest {
         val engine = root.resolve("engine.sh")
         val record = root.resolve("record.txt")
         engine.toFile().apply {
-            writeText("#!/bin/sh\n{ echo \"args=\$*\"; echo \"port=\${HOVEL_PRESENTATION_PORT:-none}\"; echo \"session=\${HOVEL_PRESENTATION_SESSION:-none}\"; echo \"pwd=\$(pwd -P)\"; } > \"$record.tmp\"\nmv \"$record.tmp\" \"$record\"\n")
+            writeText("""
+                #!/bin/sh
+                {
+                  echo "args=$@"
+                  echo "port=${'$'}{HOVEL_PRESENTATION_PORT:-none}"
+                  echo "session=${'$'}{HOVEL_PRESENTATION_SESSION:-none}"
+                  echo "pwd=$(pwd -P)"
+                } > "$record.tmp"
+                mv "$record.tmp" "$record"
+            """.trimIndent() + "\n")
             setExecutable(true)
         }
         val project = Files.createDirectories(root.resolve("ember-overclock"))
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val host = DesktopCompanionHost(GodotGame(engine, project, "res://game/main.tscn", presentation = false), scope,
-            PresentationController { "plain" }, emptyMap(), listOf("--embedded"))
+        val game = GodotGame(engine, project, "res://game/main.tscn", presentation = false)
+        val host = DesktopGameHost(game, scope, PresentationController { "plain" }, emptyMap(), listOf("--embedded"))
         try {
             host.start()
             assertEquals(0, withTimeout(5000) { host.exitCode.first { it != null } })
@@ -73,12 +82,12 @@ class CompanionHostTest {
     /** Exercise the desktop adapter with real saved offers and receipts. */
     private fun roundTrip(recover: Boolean, reviewFirst: Boolean = false) = runBlocking {
         val game = desktopGame(System.getenv(), GameId.HOVEL_COMPANIONS)
-        assumeTrue("Set HOVEL_GAMES_ROOT to run the actual Godot integration", game != null)
+        assumeTrue("Set HOVEL_GAMES_ROOT (it replaced HOVEL_GAME_PROJECT) to run the actual Godot integration", game != null)
         val gameProject = requireNotNull(game)
         val save = Files.createTempDirectory("hovel-roundtrip-").resolve("save.json")
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
         val controller = PresentationController { "roundtrip-${System.nanoTime()}" }
-        val host = DesktopCompanionHost(gameProject, scope, controller, System.getenv() + mapOf(
+        val host = DesktopGameHost(gameProject, scope, controller, System.getenv() + mapOf(
             "HOVEL_PRESENTATION_RECOVERY" to if (recover) "1" else "0",
             "HOVEL_PRESENTATION_REVIEW_FIRST" to if (reviewFirst) "1" else "0",
             "HOVEL_COMPANION_SAVE" to save.toString(), "HOVEL_PRESENTATION_HEADLESS" to "1",

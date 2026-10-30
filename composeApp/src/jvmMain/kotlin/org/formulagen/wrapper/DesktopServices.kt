@@ -63,7 +63,9 @@ import org.formulagen.wrapper.hovel.appOrigin
 import org.formulagen.wrapper.hovel.hovelStateFolder
 import org.formulagen.wrapper.pet.DesktopPetLauncher
 import org.formulagen.wrapper.progression.embedded.DesktopGameLauncher
-import org.formulagen.wrapper.progression.embedded.GAMES_ROOT_VARIABLE
+import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.logger.log
+import org.formulagen.wrapper.progression.GAMES_ROOT_VARIABLE
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.providers.ClaudeConnection
 import org.formulagen.wrapper.providers.ClaudeProvider
@@ -208,6 +210,9 @@ internal class DesktopServices private constructor(
                 // Codex, when installed, runs this Mac's memory jobs; registration needs no provider.
                 val companion = conversations?.let { host ->
                     own(HovelCompanion(appUrl, hovelStateFolder(support, appUrl), codex, conversations = host::start))
+                }
+                if (environment["HOVEL_GAME_PROJECT"] != null && environment[GAMES_ROOT_VARIABLE] == null) {
+                    log(LogLevel.Warn, "games", "HOVEL_GAME_PROJECT is replaced by HOVEL_GAMES_ROOT; games stay off until it is set")
                 }
                 val games = if (window != null && environment[GAMES_ROOT_VARIABLE] != null) {
                     DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }

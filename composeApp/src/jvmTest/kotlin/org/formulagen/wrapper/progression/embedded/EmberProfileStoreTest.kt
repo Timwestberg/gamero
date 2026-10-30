@@ -7,7 +7,9 @@ import org.formulagen.wrapper.bridge.PetCompanion
 import kotlin.test.*
 
 class EmberProfileStoreTest {
-    private val wren = PetCompanion(PetAppearance("#53E7F3", "#ed8f40", "#856b4e", "#5C6B73"), "74A0000B-0000-4000-8000-000000000001", "Wren")
+    private val wren = PetCompanion(
+        PetAppearance("#53E7F3", "#ed8f40", "#856b4e", "#5C6B73"), "74A0000B-0000-4000-8000-000000000001", "Wren",
+    )
 
     /** The keys `ember.profile.schema.json` requires, every one of which a game may read. */
     private val required = setOf("schema", "schema_version", "revision", "ember_id", "owner_account_id", "name", "rig", "parts",

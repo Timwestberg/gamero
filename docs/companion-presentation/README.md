@@ -9,13 +9,14 @@ For the macOS prototype with the game and these screens in **one window**, use [
 HOVEL_GAMES_ROOT=/absolute/game-platform/games ./gradlew :composeApp:runCompanions
 ```
 
-Use `games/ember-tower/scripts/play-companions-glass.sh` in the game checkout to handle import and launch together. `HOVEL_REDUCED_EFFECTS=1` starts with motion/transparency reduced. The normal Gamero WebView entry point is unchanged.
+Use `games/ember-tower/scripts/play-companions-glass.sh` in the game checkout to handle import and launch together. It must set `HOVEL_GAMES_ROOT` (the checkout's `games` folder); game-platform's GP5 moves it from the old `HOVEL_GAME_PROJECT`, which this launcher no longer reads, so use both changes together. `HOVEL_REDUCED_EFFECTS=1` starts with motion/transparency reduced. The normal Gamero WebView entry point is unchanged.
 
 - `PresentationTypes.kt`: versioned wire types and validation.
 - `PresentationController.kt`: preview, confirm, retry and refresh state.
 - `CompanionGlass.kt`: shared palette and small companion portrait.
 - `CompanionPresentation.kt`: responsive screens and semantic controls.
-- `DesktopCompanionHost.kt`: the game process (`GodotGame`) and, for the companions game, its loopback session.
+- `DesktopGames.kt`: the games this Mac launches (`GodotGame`, `DESKTOP_GAMES` under `HOVEL_GAMES_ROOT`) and the one place a launch's environment is built.
+- `DesktopGameHost.kt`: the game process and, for the companions game, its loopback session.
 - `CompanionMain.kt`: native prototype window lifecycle.
 
 [Behavior, architecture, usage and test guide](../../../game-platform/docs/hovel-companions/companion-presentation.README.md) live beside the authoritative game feature. Android/iOS hosting needs an adapter; both targets compile the same shared screens.
@@ -87,7 +88,7 @@ Every environment variable the desktop companion path reads. The launchers take 
 | `JAVA_HOME` | `/usr/libexec/java_home -v 21` | `dev-env.sh`, Gradle, the packaging scripts | JDK for builds, jpackage and the embed library's JNI headers; the runtime of the standalone embedded app. |
 | `GAMERO_BROWSER_JAVA_HOME` | none; Play From Catalog requires it | `build.gradle.kts`, `package-catalog-macos.sh` | JetBrains Runtime with JCEF that the catalog app bundles and runs on. |
 | `GAME_PLATFORM_SIBLING_ROOT` | the folder above this checkout | `dev-env.sh`, game-platform's Vite config | Folder that holds the `game-platform` and `server-platform` checkouts; base of the next two defaults. |
-| `HOVEL_GAMES_ROOT` | `$GAME_PLATFORM_SIBLING_ROOT/game-platform/games` | `dev-env.sh`, `DesktopServices`, `DesktopGameLauncher` (`DesktopGames.kt`), `CompanionMain`, the standalone embedded app, tests | Folder of the game projects the app launches: Hovel Companions (`ember-tower`, `res://companions/main.tscn`), Ember Tower (`ember-tower`, `res://game/main.tscn`) and Ember: Overclock (`ember-overclock`, `res://game/main.tscn`). Every game runs through `ember-tower/scripts/godot.sh`, which must report Godot `4.8.beta1.official.4d10419ca`. Unset in the app, `games.launch` answers `unsupported`; unset in tests, real-Godot tests skip. It replaces `HOVEL_GAME_PROJECT`: `dev-env.sh` stops when only the old variable is set. |
+| `HOVEL_GAMES_ROOT` | `$GAME_PLATFORM_SIBLING_ROOT/game-platform/games` | `dev-env.sh`, `DesktopServices`, `DesktopGames.kt`, `DesktopGameLauncher`, `CompanionMain`, the standalone embedded app, tests | Absolute folder of the game projects the app launches: Hovel Companions (`ember-tower`, `res://companions/main.tscn`), Ember Tower (`ember-tower`, `res://game/main.tscn`) and Ember: Overclock (`ember-overclock`, `res://game/main.tscn`). Every game runs through `ember-tower/scripts/godot.sh`, which must report Godot `4.8.beta1.official.4d10419ca`. Unset in the app, `games.launch` answers `unsupported`; unset in tests, real-Godot tests skip. It replaces `HOVEL_GAME_PROJECT`: `dev-env.sh` stops when only the old variable is set, and the app logs a warning. |
 | `GAME_PLATFORM_CONTRACTS_ROOT` | `$GAME_PLATFORM_SIBLING_ROOT/server-platform/event-contracts` | `dev-env.sh`, the catalog's Vite server | Event-contracts checkout the web catalog builds against. Play From Catalog stops if it is missing. |
 | `GAMERO_CATALOG_PORT` | `8133` | Play From Catalog, game-platform `companionLauncher.ts` | Loopback port of the catalog server; Play From Catalog sets `GAMERO_WEB_URL` from it. |
 | `HOVEL_EMBED_LIBRARY` | `build/embedded-godot/libhovel_embed.dylib`, always | `DesktopGameLauncher`, `MacGameLayer` | JAWT layer bridge for the embedded game. A missing file fails the launch with a log line instead of a crash. |
@@ -108,10 +109,10 @@ Every environment variable the desktop companion path reads. The launchers take 
 | `HOVEL_CODEX_WORK` | unset | `codexWorkEnabled` | `1` lets Codex roles work in a project folder, in a development build only (`-Dgamero.dev=true`, never with `-Dgamero.release=true`), until Codex's approval protocol is verified live. The same answer is `providers.list.working`. |
 | `GAMERO_CLAUDE_PATH` | `claude` on `PATH`, then `~/.local/bin`, Homebrew, `/usr/local/bin` | `findClaudeExecutable` | The player's own Claude Code (2.1.304 or later), run with its own sign-in. Hovel never signs in or out. Without one, the Claude card says to install it. |
 | `HOVEL_REDUCED_EFFECTS` | unset | `CompanionMain` | `1` starts the two-window prototype with reduced motion and transparency. |
-| `HOVEL_PRESENTATION_SCENARIO` | unset (`res://companions/main.tscn`) | `DesktopCompanionHost` | Godot script to run instead of the game scene, for tests. |
-| `HOVEL_PRESENTATION_HEADLESS` | unset | `DesktopCompanionHost` | `1` runs Godot with `--headless`, for tests. |
+| `HOVEL_PRESENTATION_SCENARIO` | unset (`res://companions/main.tscn`) | `DesktopGameHost` | Godot script to run instead of the companions game's scene, for tests. Other games ignore it. |
+| `HOVEL_PRESENTATION_HEADLESS` | unset | `DesktopGameHost` | `1` runs the companions game with `--headless`, for tests. Other games ignore it. |
 | `HOVEL_PRESENTATION_DIAGNOSTICS` | unset | `CompanionMain` | `1` logs window focus. |
-| `HOVEL_TRACE_CONTROLLER` | unset | `DesktopCompanionHost` | `1` prints each forwarded controller input. |
+| `HOVEL_TRACE_CONTROLLER` | unset | `DesktopGameHost` | `1` prints each forwarded controller input. |
 | `HOVEL_ONE_FLOOR_RENDERED` | unset | `CompanionOneFloorTest` | `1` captures native Godot frames instead of running headless. |
 | `HOVEL_CHAT_CODEX_SMOKE` | unset | `TalkRuntimeSmokeTest` | Path to a `codex` executable; runs the real app-server configuration check. |
 | `HOVEL_CHAT_VOICE_SMOKE` | unset | `TalkRuntimeSmokeTest` | `1` runs the local voice playback check. |

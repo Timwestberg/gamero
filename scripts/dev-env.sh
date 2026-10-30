@@ -26,7 +26,9 @@ SIBLING_ROOT="${GAME_PLATFORM_SIBLING_ROOT:-$(cd "$GAMERO_ROOT/.." && pwd)}"
 # HOVEL_GAMES_ROOT replaced the one-game HOVEL_GAME_PROJECT. Stop rather than
 # quietly launch the sibling checkout's games instead of the one it named.
 if [[ -n "${HOVEL_GAME_PROJECT:-}" && -z "${HOVEL_GAMES_ROOT:-}" ]]; then
-  echo "HOVEL_GAME_PROJECT is replaced by HOVEL_GAMES_ROOT, the games folder that holds ember-tower and ember-overclock. Set HOVEL_GAMES_ROOT=$(dirname "$HOVEL_GAME_PROJECT")." >&2
+  echo "HOVEL_GAME_PROJECT is replaced by HOVEL_GAMES_ROOT, the games folder" \
+    "that holds ember-tower and ember-overclock." \
+    "Set HOVEL_GAMES_ROOT=$(dirname "$HOVEL_GAME_PROJECT")." >&2
   return 1
 fi
 # Every game the app launches (Hovel Companions, Ember Tower, Ember: Overclock)

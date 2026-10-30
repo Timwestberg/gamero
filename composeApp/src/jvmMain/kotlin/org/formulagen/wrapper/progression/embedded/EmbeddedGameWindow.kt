@@ -8,7 +8,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import java.awt.Dimension
 import java.awt.event.*
-import java.nio.file.Files
 import java.util.UUID
 import javax.swing.*
 import kotlinx.coroutines.*
@@ -18,23 +17,19 @@ import org.formulagen.wrapper.progression.*
 /**
  * One embedded game in a native window: the game's surface, and for a presentation game ([GodotGame.presentation])
  * the companion screens in Compose above it. Owns both surfaces, transport lifetimes, and input ownership for this
- * window. With [onReturn] it covers an existing window's content until Back; without it, it owns [frame].
+ * window. [environment] is the launch's, as `launchEnvironment` built it. With [onReturn] it covers an existing
+ * window's content until Back; without it, it owns [frame].
  */
 internal class EmbeddedGameWindow(
     private val godotGame: GodotGame,
-    private val frame: JFrame = JFrame("Hovel · Embedded game prototype"),
-    private val suppliedEnvironment: Map<String, String> = System.getenv(),
+    private val frame: JFrame,
+    private val environment: Map<String, String>,
     private val onReturn: (() -> Unit)? = null,
 ) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val game = MacEmbeddedGame(scope)
     private val controller = PresentationController { UUID.randomUUID().toString() }
-    /** Only a presentation game keeps a progression save; a standalone run gets a disposable one. */
-    private val environment = suppliedEnvironment + ("HOVEL_EMBEDDED" to "1") +
-        if (godotGame.presentation && DesktopGameLauncher.SAVE_VARIABLE !in suppliedEnvironment) {
-            mapOf(DesktopGameLauncher.SAVE_VARIABLE to Files.createTempDirectory("hovel-embedded-").resolve("save.json").toString())
-        } else emptyMap()
-    private val host = DesktopCompanionHost(godotGame, scope, controller, environment, game.launchArguments)
+    private val host = DesktopGameHost(godotGame, scope, controller, environment, game.launchArguments)
     private val originalContent = frame.contentPane
     private val back = ComposePanel().apply { background = java.awt.Color(12, 15, 19) }
     private val resizeListener = object : ComponentAdapter() {
@@ -139,7 +134,7 @@ internal class EmbeddedGameWindow(
         // In the catalog the window is the whole app, so point at Back, which stays above the status.
         val leave = if (onReturn == null) "Close this window to finish." else "Choose Back to games to return."
         scope.launch { host.exitCode.collect { if (it != null && !closed) fail("Adventure ended (exit $it). $leave") } }
-        environment[DesktopGameLauncher.SAVE_VARIABLE]?.let { println("HOVEL_EMBEDDED_SAVE $it") }
+        environment[SAVE_VARIABLE]?.let { println("HOVEL_EMBEDDED_SAVE $it") }
         Runtime.getRuntime().addShutdownHook(shutdownHook)
         host.start()
     }
