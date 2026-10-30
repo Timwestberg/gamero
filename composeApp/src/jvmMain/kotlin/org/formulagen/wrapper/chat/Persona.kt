@@ -5,7 +5,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import org.formulagen.wrapper.bridge.SharedRules
 
 /**
- * A companion persona. Talking ([companion]) it is the whole system prompt: Codex's
+ * A companion persona. Talking ([role] with `working` false) it is the whole system prompt: Codex's
  * `baseInstructions`, Claude Code's `--system-prompt`. Working ([working]) it is appended to the
  * provider's own agent prompt (Claude Code's `--append-system-prompt`, Codex's
  * `developerInstructions`), so the agent keeps its tools and the player's setup while staying the
@@ -28,22 +28,7 @@ internal class Persona private constructor(val instructions: String) {
                 "\nRole instructions:\n" + instructions)
 
         /**
-         * The persona for a companion named [name]. The name is untrusted page text, so it appears
-         * only as a JSON string literal; tool access stays controlled by each runtime's configuration.
-         */
-        fun companion(name: String): Persona {
-            require(SharedRules.isCompanionName(name)) { "Invalid companion name" }
-            val quoted = JsonPrimitive(name).toString()
-            return Persona("You are a friendly AI companion in Hovel. Your display name is $quoted. " +
-                "Chat warmly and clearly. Be honest that you are an AI. Keep most replies to a few sentences, suitable for spoken playback. " +
-                "This is conversation mode: answer using only this conversation. Do not use tools, read files, run commands, browse, or change anything. " +
-                "If asked to perform computer work, explain that workspace tasks need the separate approved task flow. " +
-                "Never claim to have performed actions or accessed information you have not. " +
-                "Never mention the person's email, account, computer or environment, and stay in character as $quoted.")
-        }
-
-        /**
-         * The persona for a member of [name]'s team working in its project folder, added to the
+         * The persona for a role of [name]'s brain working in its project folder, added to the
          * provider's own agent prompt with more weight than for talking: the name and voice are
          * stated as overriding the agent's own identity, and repeated at the end, because the
          * player's own instructions (`CLAUDE.md`, `AGENTS.md`) load too. The name is untrusted page

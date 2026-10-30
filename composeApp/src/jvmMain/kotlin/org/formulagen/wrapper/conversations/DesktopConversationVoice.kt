@@ -18,9 +18,8 @@ import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 
 /**
- * `conversationVoice.*` on the Mac, named like `DesktopProjects` and `DesktopChat`: the microphone and speaker serve
- * one conversation at a time, its [VoiceConversation], each with its own share of [microphone] and the [settings]
- * team chat shares too.
+ * `conversationVoice.*` on the Mac, named like `DesktopProjects`: the microphone and speaker serve one conversation at
+ * a time, its [VoiceConversation], each with its own share of [microphone] and the one set of [settings].
  *
  * - A page's action names the conversation and moves the voice to it, unless Talk or dictation is on in another,
  *   which keeps it (the answer then names that conversation).
@@ -34,7 +33,6 @@ internal class DesktopConversationVoice(
     private val microphone: SharedHearing?,
     private val settings: TalkSettings,
     private val picker: VoicePickerModel?,
-    private val product: String,
     /** How long a posted heard turn waits for its claim before Talk listens again. */
     private val claimWaitMs: Long = HEARD_CLAIM_WAIT_MS,
     private val now: () -> Long = System::nanoTime,
@@ -51,6 +49,8 @@ internal class DesktopConversationVoice(
     /** Heard turns given up on before their claim, by message id: the newest few; the journal holds every one. */
     private val abandoned = LinkedHashSet<String>()
     private val worker = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-conversation-voice"))
+    /** The voice row's clicks: arming can load the full-duplex graph, which never runs on the window's thread. */
+    private val row = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-conversation-voice-row"))
 
     init {
         speech.onVoice { current?.refresh() }
@@ -109,8 +109,14 @@ internal class DesktopConversationVoice(
         current?.refresh()
     }
 
-    /** The voice row's Talk icon, for the conversation the voice serves; it also ends a session the page started. */
-    internal fun converseClick() { current?.talk?.click() }
+    /**
+     * The voice row's Talk icon, for the conversation the voice serves; it also ends a session the page started. It runs
+     * on the row's own thread: the first full-duplex arm loads the voice-processing graph, never on the window's thread.
+     */
+    internal fun converseClick() {
+        val voice = current ?: return
+        runCatching { row.execute { voice.talk.click() } }
+    }
 
     internal fun toggleFillers() { current?.talk?.toggleFillers() }
 
@@ -171,7 +177,7 @@ internal class DesktopConversationVoice(
     private fun publish(voice: VoiceConversation) {
         val model = picker ?: return
         if (current !== voice) return
-        model.update(if (closed) VoicePickerState.Hidden else voice.pickerLocked(product))
+        model.update(if (closed) VoicePickerState.Hidden else voice.pickerLocked())
     }
 
     override fun close() {
@@ -184,6 +190,7 @@ internal class DesktopConversationVoice(
         }
         timer.shutdownNow()
         worker.shutdownNow()
+        row.shutdownNow()
         speech.close()
     }
 

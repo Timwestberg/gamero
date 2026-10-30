@@ -93,8 +93,6 @@ object VoiceConversation {
     const val ENGINE = VoiceConfig.KOKORO
     const val SENTENCE_GAP_MS = VoiceConfig.KOKORO_SENTENCE_GAP_MS
     const val FILLERS_DEFAULT = false
-    const val CATALOG_PRODUCT = "Gamero"
-    const val LAUNCHER_PRODUCT = "Hovel"
     /** Shown before the first capture. The recording itself is not saved. */
     const val PERMISSION_COPY = "Ember hears you on this Mac to turn what you say into a chat message. The recording is not saved."
     /** A browser with no host. The same sentence chat already shows. It does not ask for a microphone. */
@@ -122,9 +120,6 @@ object VoiceConversation {
         )
     }
 }
-
-/** The Gamero Adventures catalog owns the conversation controls. Ember Tower only launches the game. */
-fun catalogOwnsConversationControls(product: String): Boolean = product == VoiceConversation.CATALOG_PRODUCT
 
 fun duplexStatusLabel(mode: HearingDuplex, reason: String): String = when (mode) {
     HearingDuplex.FULL -> "Full duplex"

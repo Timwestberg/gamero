@@ -105,7 +105,7 @@ internal class VoiceConversation(
     private val sleep: (Long) -> Unit = Thread::sleep,
 ) : TalkHost {
     private val gate = Any()
-    internal val talk = TalkLoop(gate, this, speech, hearing, settings, timer, CompanionLimits.MESSAGE, rowEndsPageTalk = true, now = now)
+    internal val talk = TalkLoop(gate, this, speech, hearing, settings, timer, CompanionLimits.MESSAGE, now = now)
     /** The heard turn on its way: posted or posting, and not claimed yet. */
     private var pending: Pending? = null
     /**
@@ -249,8 +249,8 @@ internal class VoiceConversation(
             dictation?.let { ConversationDictation(it.state, partial = it.partial, notice = it.notice) })
     }
 
-    /** The native voice row for this conversation, shown in every product. */
-    fun pickerLocked(product: String): VoicePickerState = talk.pickerLocked(open = !closed, product = product, owned = true)
+    /** The native voice row for this conversation. */
+    fun pickerLocked(): VoicePickerState = talk.pickerLocked(open = !closed)
 
     /** Talk, dictation, a heard turn or a reply is in progress, or the speaker is still saying one. */
     val busy: Boolean get() = synchronized(gate) {

@@ -7,7 +7,6 @@ import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.chat.*
-import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.voice.DuplexChoice
 import org.formulagen.wrapper.voice.FillerSettings
 import org.formulagen.wrapper.voice.HearingDuplex
@@ -43,7 +42,7 @@ class ConversationVoiceLatencyTest {
         val ear = FakeEar()
         val speaker = FakeSpeaker()
         val settings = TalkSettings(FillerSettings(), duplex = DuplexChoice(HearingDuplex.HALF, "test"), guardMs = 0)
-        val voice = DesktopConversationVoice(speaker, SharedHearing(ear), settings, null, HOVEL_PRODUCT)
+        val voice = DesktopConversationVoice(speaker, SharedHearing(ear), settings, null)
         val beat = HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), listOf("memory-extraction"), "ready")
         val runner = ConversationRunner(server, store, engine, approvals, folders,
             ProjectFolderPublisher(folders, server, account, server.hostId) { emptyList() }, { beat }, replies = voice)

@@ -3,8 +3,8 @@ package org.formulagen.wrapper.chat
 import org.formulagen.wrapper.voice.HearingResult
 
 /**
- * The Mac's one microphone and recognizer ([ear]), shared by team chat and conversations: one user
- * at a time. A [user] starts a hold or a session only while no other user holds the microphone, and
+ * The Mac's one microphone and recognizer ([ear]), shared by the conversations the voice serves in turn: one user
+ * at a time, so a conversation the voice just left lets go before the next one captures. A [user] starts a hold or a session only while no other user holds the microphone, and
  * its controls act only on its own capture, so one user ending, pausing or closing never touches
  * another's. Closing this closes the recognizer.
  */

@@ -186,7 +186,7 @@ internal class DesktopServices private constructor(
                 val conversationsHere = product == HOVEL_PRODUCT && System.getProperty("os.name").contains("Mac")
                 val conversationPicker = VoicePickerModel()
                 val conversationVoice = if (conversationsHere) own(DesktopConversationVoice(
-                    DesktopSpeech(desktopVoiceConfig(environment), route::openLine), hearing, talkSettings, conversationPicker, product,
+                    DesktopSpeech(desktopVoiceConfig(environment), route::openLine), hearing, talkSettings, conversationPicker,
                 )) else null
                 val conversations = if (conversationsHere) own(ConversationHost(
                     providerRoot, ProjectFolderStore(providerRoot, NativeFolderPicker { window }), providers, nativeDialogs, offered, working,

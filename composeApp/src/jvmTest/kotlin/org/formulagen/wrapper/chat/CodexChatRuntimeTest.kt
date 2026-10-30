@@ -11,7 +11,7 @@ import kotlin.test.*
 
 class CodexChatRuntimeTest {
     private val thread = "10000000-0000-4000-8000-000000000001"
-    private val persona = Persona.companion("Ember")
+    private val persona = Persona.role("Ember", "Coordinator", "Help the user.", working = false)
 
     /** Records every call; [onTurn] plays the app-server's notifications for a started turn. */
     private class Rpc(val notify: (String, JsonObject) -> Unit) : CodexAppServer {
@@ -250,23 +250,23 @@ class CodexChatRuntimeTest {
         assertContains(working.instructions, "Follow the project's own instructions")
         // Working is not talking: it never forbids tools, and the two never share a conversation's persona hash.
         assertFalse(working.instructions.contains("Do not use tools"))
-        assertNotEquals(Persona.companion("Ember").hash, working.hash)
+        assertNotEquals(Persona.role("Ember", "Coordinator", "Help the user.", working = false).hash, working.hash)
         assertEquals(working.hash, Persona.working("Ember").hash)
         assertNotEquals(working.hash, Persona.working("Pip").hash)
         assertContains(Persona.working("Say \"hi\"").instructions, "\"Say \\\"hi\\\"\"")
         assertFails { Persona.working("Ember\n") }
     }
 
-    @Test fun thePersonaQuotesTheNameForbidsPersonalDetailsAndHashesStably() {
-        val ember = Persona.companion("Ember")
-        assertContains(ember.instructions, "Your display name is \"Ember\".")
-        assertContains(ember.instructions, "Do not use tools, read files, run commands")
-        assertTrue(ember.instructions.endsWith("Never mention the person's email, account, computer or environment, and stay in character as \"Ember\"."))
-        assertContains(Persona.companion("Say \"hi\"").instructions, "\"Say \\\"hi\\\"\"")
+    @Test fun aRolesPersonaQuotesTheNamesAndHashesStably() {
+        fun role(name: String, role: String = "Coordinator") = Persona.role(name, role, "Help the user.", working = false)
+        val ember = role("Ember")
+        assertTrue(ember.instructions.startsWith("You are the AI companion \"Ember\", acting as \"Coordinator\"."))
+        assertTrue(ember.instructions.endsWith("Role instructions:\nHelp the user."))
+        assertContains(role("Say \"hi\"").instructions, "\"Say \\\"hi\\\"\"")
         assertTrue(Regex("^[0-9a-f]{64}$").matches(ember.hash))
-        assertEquals(ember.hash, Persona.companion("Ember").hash)
-        assertNotEquals(ember.hash, Persona.companion("Pip").hash)
-        assertFails { Persona.companion(" Ember") }
+        assertEquals(ember.hash, role("Ember").hash)
+        assertNotEquals(ember.hash, role("Pip").hash)
+        assertNotEquals(ember.hash, role("Ember", "Reviewer").hash)
         assertFails { request(null).copy(accountId = "local") }
     }
     @Test fun effortIsSentPerTurnIncludingTheResolvedAutoDefault() {

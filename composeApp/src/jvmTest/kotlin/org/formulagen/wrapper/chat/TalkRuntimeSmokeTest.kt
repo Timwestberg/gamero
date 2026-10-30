@@ -37,7 +37,7 @@ class TalkRuntimeSmokeTest {
                 assertTrue(rpc.call("account/read", buildJsonObject { put("refreshToken", false) }).containsKey("account"))
                 val folder = runtime.conversationFolder(ACCOUNT)
                 val config = rpc.call("config/read", buildJsonObject { put("cwd", folder.toString()) }).getValue("config").jsonObject
-                val result = rpc.call("thread/start", chatThreadParams(Persona.companion("Ember"), folder.toString(), null, ephemeral = true, talkOnlyOverrides(config)))
+                val result = rpc.call("thread/start", chatThreadParams(Persona.role("Ember", "Coordinator", "Help the user.", working = false), folder.toString(), null, ephemeral = true, talkOnlyOverrides(config)))
                 assertNotNull(result["thread"]?.jsonObject?.get("id"))
                 Thread.sleep(3000)
                 assertTrue(startups.isEmpty(), "No MCP server starts for a talk-only thread: $startups")
@@ -59,7 +59,7 @@ class TalkRuntimeSmokeTest {
         val claude = ClaudeChatRuntime(runtime, org.formulagen.wrapper.providers.ClaudeConnection(runtime))
         claude.use {
             assertEquals(Readiness.Ready, claude.readiness(ACCOUNT))
-            val persona = Persona.companion("Ember")
+            val persona = Persona.role("Ember", "Coordinator", "Help the user.", working = false)
             fun turn(conversation: NativeConversation?, text: String): Pair<String, String> {
                 val done = java.util.concurrent.CompletableFuture<Pair<String, String>>()
                 claude.startTurn(TurnRequest(ACCOUNT, java.util.UUID.randomUUID().toString(), persona, "haiku", conversation, text), object : TurnEvents {

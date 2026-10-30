@@ -16,7 +16,6 @@ import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.chat.*
-import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.voice.DuplexChoice
 import org.formulagen.wrapper.voice.FillerSettings
 import org.formulagen.wrapper.voice.HearingDuplex
@@ -88,6 +87,8 @@ internal class FakeSpeaker : ChatSpeech {
     val ends = AtomicInteger()
     val warms = AtomicInteger()
     @Volatile var firstPieceAt = 0L
+    /** The thread the last session warmed the voice on: where a Talk arm ran. */
+    @Volatile var warmedOn: Thread? = null
     @Volatile private var voice = ChatVoice()
     @Volatile private var listener: (() -> Unit)? = null
 
@@ -103,7 +104,7 @@ internal class FakeSpeaker : ChatSpeech {
         return true
     }
     override fun endStream() { ends.incrementAndGet(); events += "end" }
-    override fun warm() { warms.incrementAndGet() }
+    override fun warm() { warms.incrementAndGet(); warmedOn = Thread.currentThread() }
     override fun kokoroActive() = true
     override fun voiceChoices() = listOf(VoiceChoice("adam70-michael30", "Sam"), VoiceChoice("heart60-adam40", "Harper"))
     override fun currentVoiceId() = "adam70-michael30"
@@ -132,7 +133,7 @@ class VoiceConversationTest {
     private var mac = Mac(root)
 
     /** This Mac's conversation voice; a restart makes a new one. */
-    private fun voice() = DesktopConversationVoice(speaker, microphone, settings, row, HOVEL_PRODUCT, claimWaitMs = CLAIM_WAIT_MS,
+    private fun voice() = DesktopConversationVoice(speaker, microphone, settings, row, claimWaitMs = CLAIM_WAIT_MS,
         sleep = {}, timer = timer)
 
     /** Wait until every timer due within [ms] has run: a task queued after them runs last. */
@@ -628,9 +629,9 @@ class VoiceConversationTest {
         assertEquals(DictationState.LISTENING, status().dictation?.state)
     }
 
-    @Test fun oneMicrophoneServesTeamChatOrAConversationAtATime() {
+    @Test fun oneMicrophoneServesOneCaptureAtATime() {
         val chat = microphone.user()
-        assertTrue(chat.startSession(1_000, {}, {}, {}))
+        assertTrue(chat.startSession(1_000, {}, {}, {}), "another capture, such as a conversation the voice just left")
         val refused = hearing(HearingAction.HANDS_FREE)
         assertEquals(MICROPHONE_IN_USE, refused.hearing.notice)
         assertEquals(HearingState.OFF, refused.hearing.state)
@@ -638,7 +639,7 @@ class VoiceConversationTest {
         assertEquals(ConversationDictation(DictationState.UNAVAILABLE, notice = MICROPHONE_IN_USE), status().dictation)
         chat.endSession()
         assertEquals(HearingState.LISTENING, hearing(HearingAction.HANDS_FREE).hearing.state)
-        assertFalse(chat.startSession(1_000, {}, {}, {}), "now team chat waits")
+        assertFalse(chat.startSession(1_000, {}, {}, {}), "now the other one waits")
     }
 
     @Test fun aCaptureThatCannotStartSaysBusyInsteadOfListening() {
@@ -668,10 +669,21 @@ class VoiceConversationTest {
         assertTrue(shown.showTalk, "its icon can end a session the page started")
         assertEquals(TalkPhase.LISTENING, shown.phase)
         voice.converseClick()
-        assertEquals(HearingState.OFF, status().hearing.state)
+        eventually { status().hearing.state == HearingState.OFF }
         assertFalse(row.state.value.showTalk, "with Talk off, the page owns starting it")
         voice.converseClick()
+        timersDue(100)
         assertEquals(HearingState.OFF, status().hearing.state, "the icon never starts a session the page owns")
+    }
+
+    @Test fun theRowIconArmsTalkOffTheWindowsThread() {
+        // Served by a spoken reply, so no page owns Talk and the row's icon may start it.
+        val claim = talk.claim(id(), talk.message("Hi"), document, speak = true)
+        checkNotNull(voice.forClaim(claim) {}).ended()
+        assertTrue(row.state.value.showTalk)
+        voice.converseClick()
+        eventually { checkNotNull(voice.served).talk.on && ear.listening }
+        assertNotEquals(Thread.currentThread(), speaker.warmedOn, "the arm, which can load the full-duplex graph, runs on the row's thread")
     }
 
     @Test fun theFillerChoiceHoldsAcrossConversationsAndThePageGoingAway() {

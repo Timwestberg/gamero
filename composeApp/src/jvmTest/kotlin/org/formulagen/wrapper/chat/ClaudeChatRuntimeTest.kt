@@ -18,7 +18,7 @@ import kotlin.test.*
 
 /** [ClaudeChatRuntime] against [FakeClaude], which replays output recorded from the real Claude Code. */
 class ClaudeChatRuntimeTest {
-    private val persona = Persona.companion("Ember")
+    private val persona = Persona.role("Ember", "Coordinator", "Help the user.", working = false)
     private val account = "50000000-0000-4000-8000-000000000005"
 
     private class Events : TurnEvents {
@@ -136,7 +136,7 @@ class ClaudeChatRuntimeTest {
         val fake = FakeClaude()
         claude(fake).use { claude ->
             val renamed = Events()
-            claude.startTurn(request(NativeConversation("9d6b5d91-5085-4e72-a576-7d379498daf0", Persona.companion("Pip").hash)), renamed)
+            claude.startTurn(request(NativeConversation("9d6b5d91-5085-4e72-a576-7d379498daf0", Persona.role("Pip", "Coordinator", "Help the user.", working = false).hash)), renamed)
             assertEquals(listOf("failed ConversationLost"), renamed.seen)
             val migrated = Events()
             claude.startTurn(request(NativeConversation("9d6b5d91-5085-4e72-a576-7d379498daf0", "")), migrated)

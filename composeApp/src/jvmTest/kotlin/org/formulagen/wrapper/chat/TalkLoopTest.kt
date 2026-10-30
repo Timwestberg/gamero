@@ -23,7 +23,7 @@ import org.formulagen.wrapper.voice.FillerSettings
 import org.formulagen.wrapper.voice.HearingDuplex
 import org.formulagen.wrapper.voice.HearingResult
 
-/** The talk loop on its own, with a conversation the test plays ([Host]): what team chat and project conversations share. */
+/** The talk loop on its own, with a conversation the test plays ([Host]). */
 class TalkLoopTest {
     private val lock = Any()
     private val ear = FakeEar()
@@ -68,8 +68,7 @@ class TalkLoopTest {
 
     private fun loop(
         settings: TalkSettings = TalkSettings(duplex = DuplexChoice(HearingDuplex.HALF, "test"), guardMs = 0),
-        rowEndsPageTalk: Boolean = false,
-    ) = TalkLoop(lock, host, speaker, SharedHearing(ear).user(), settings, timer, LIMIT, rowEndsPageTalk, clock::get)
+    ) = TalkLoop(lock, host, speaker, SharedHearing(ear).user(), settings, timer, LIMIT, clock::get)
         .also { host.loop = it }
 
     private fun TalkLoop.arm() {
@@ -181,7 +180,7 @@ class TalkLoopTest {
         timer.schedule({ due.countDown() }, 60, TimeUnit.MILLISECONDS)
         assertTrue(due.await(5, TimeUnit.SECONDS))
         assertEquals(listOf("Hmm,"), speaker.clips, "the choice made elsewhere is this turn's")
-        assertTrue(synchronized(lock) { talk.pickerLocked(open = true, product = "Gamero").fillersOn })
+        assertTrue(synchronized(lock) { talk.pickerLocked(open = true).fillersOn })
     }
 
     @Test fun dictationFillsTheDraftWithinTheLimitAndTalkWaitsForIt() {
@@ -209,22 +208,16 @@ class TalkLoopTest {
         assertEquals(HearingState.LISTENING, talk.hearing().state)
     }
 
-    @Test fun theRowIconEndsAPageSessionOnlyWhereItMay() {
-        val team = loop()
-        team.arm()
-        synchronized(lock) { team.pageOwnsLocked() }
-        team.click()
-        assertTrue(team.on, "team chat's icon steps aside for the page")
-        assertFalse(synchronized(lock) { team.pickerLocked(open = true, product = "Gamero") }.showTalk)
-        synchronized(lock) { team.endLocked() }
-        val conversation = loop(rowEndsPageTalk = true)
+    @Test fun theRowIconEndsAPageSessionButNeverStartsOne() {
+        val conversation = loop()
         conversation.arm()
         synchronized(lock) { conversation.pageOwnsLocked() }
-        assertTrue(synchronized(lock) { conversation.pickerLocked(open = true, product = "Gamero", owned = true) }.showTalk)
+        assertTrue(synchronized(lock) { conversation.pickerLocked(open = true) }.showTalk)
         conversation.click()
         assertFalse(conversation.on, "a conversation's icon ends the page's session")
         conversation.click()
         assertFalse(conversation.on, "and never starts one the page owns")
+        assertFalse(synchronized(lock) { conversation.pickerLocked(open = true) }.showTalk)
     }
 
     @Test fun aSessionWarmsTheVoiceHoweverItStartsAndAnInterruptNeverStartsOne() {
@@ -248,7 +241,7 @@ class TalkLoopTest {
     }
 
     @Test fun aCaptureThatStartsAfterTheRowEndedTalkLetsTheMicrophoneGo() {
-        val talk = loop(rowEndsPageTalk = true)
+        val talk = loop()
         assertTrue(synchronized(lock) { talk.pressLocked() })
         synchronized(lock) { talk.pageOwnsLocked() }
         // The row's icon ends Talk while the page's capture is still starting.

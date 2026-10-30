@@ -10,7 +10,7 @@ import org.formulagen.wrapper.chat.TurnEvents
 import org.formulagen.wrapper.chat.TurnRequest
 
 /** The companion persona of the talk runtime's fixture and live turns. */
-internal val talkPersona = Persona.companion("Ember")
+internal val talkPersona = Persona.role("Ember", "Coordinator", "Help the user.", working = false)
 
 /** One talk turn for the fixture companion, resuming [conversation] when given. */
 internal fun talkRequest(conversation: NativeConversation? = null) = TurnRequest(ACCOUNT, "20000000-0000-4000-8000-000000000002",

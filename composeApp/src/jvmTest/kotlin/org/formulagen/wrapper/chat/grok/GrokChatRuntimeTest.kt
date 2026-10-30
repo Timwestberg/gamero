@@ -50,7 +50,7 @@ class GrokChatRuntimeTest {
         FakeGrokRuntime().use { fake ->
             GrokChatRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), nothingRetained).use { runtime ->
                 for (saved in listOf(NativeConversation("11111111-1111-4111-8111-111111111111", talkPersona.hash),
-                    NativeConversation("11111111-1111-4111-8111-111111111111", Persona.companion("Other").hash))) {
+                    NativeConversation("11111111-1111-4111-8111-111111111111", Persona.role("Other", "Coordinator", "Help the user.", working = false).hash))) {
                     val events = TalkEvents()
                     runtime.startTurn(talkRequest(saved), events); events.await()
                     assertEquals(ChatFailure.ConversationLost, events.failure)

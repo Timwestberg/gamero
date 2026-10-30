@@ -74,7 +74,7 @@ class ClaudeStreamTest {
     }
 
     @Test fun theTurnCommandIsLockedDownAndAcceptsModelAliasesAndIds() {
-        val persona = Persona.companion("Ember")
+        val persona = Persona.role("Ember", "Coordinator", "Help the user.", working = false)
         assertEquals(listOf("-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
             "--safe-mode", "--disable-slash-commands", "--tools", "", "--disallowedTools", "mcp__*", "--strict-mcp-config",
             "--permission-mode", "dontAsk", "--permission-prompts", "none", "--max-turns", "1",

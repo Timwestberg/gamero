@@ -63,9 +63,7 @@ class VoiceConversationTest {
         assertEquals("Open Hovel on your Mac to connect…", VoiceConversation.NO_HOST_NOTICE)
     }
 
-    @Test fun theCatalogOwnsTheControlsAndTheLauncherDoesNot() {
-        assertTrue(catalogOwnsConversationControls(VoiceConversation.CATALOG_PRODUCT))
-        assertFalse(catalogOwnsConversationControls(VoiceConversation.LAUNCHER_PRODUCT))
+    @Test fun theDuplexLabelSaysTheModeAndWhyItIsHalf() {
         assertEquals("Half duplex · aec-unavailable", duplexStatusLabel(HearingDuplex.HALF, "aec-unavailable"))
         assertEquals("Full duplex", duplexStatusLabel(HearingDuplex.FULL, "self-check-passed"))
     }

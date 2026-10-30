@@ -26,18 +26,16 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.formulagen.wrapper.voice.HearingDuplex
-import org.formulagen.wrapper.voice.VoiceConversation
 import org.formulagen.wrapper.voice.duplexStatusLabel
-import org.formulagen.wrapper.voice.catalogOwnsConversationControls
 import org.jetbrains.compose.resources.painterResource
 import westbergwrapper.composeapp.generated.resources.Res
 import westbergwrapper.composeapp.generated.resources.ember_chat
 
-/** One Kokoro blend the chat can speak with. The name is what the row shows. */
+/** One Kokoro blend the voice can speak with. The name is what the row shows. */
 internal data class VoiceChoice(val id: String, val name: String)
 
 /**
- * Shown only while an Ember chat is open and the engine is Kokoro.
+ * Shown only while the voice serves a conversation and the engine is Kokoro.
  * The names come from the blend recipe, and [selectedId] is the one in use.
  */
 internal data class VoicePickerState(
@@ -48,7 +46,7 @@ internal data class VoicePickerState(
     val fillersOn: Boolean = false,
     val partial: String = "",
     val hearingNotice: String? = null,
-    /** False once the catalog page has sent press, so this row cannot arm a second capture. */
+    /** False once the page owns Talk and it is off, so this row cannot arm a second capture. */
     val showTalk: Boolean = false,
     val duplexLabel: String = "",
 ) {
@@ -66,17 +64,11 @@ internal fun voicePickerState(
     fillersOn: Boolean = false,
     partial: String = "",
     hearingNotice: String? = null,
-    product: String = VoiceConversation.CATALOG_PRODUCT,
     pageOwnsTalk: Boolean = false,
     duplexMode: HearingDuplex = HearingDuplex.HALF,
     duplexReason: String = "default",
-    /**
-     * Whether this row is the conversation's voice control. Team chat's is the Gamero catalog's only; a
-     * project conversation's shows in every product, since its page has no voice choice or filler toggle.
-     */
-    owned: Boolean = catalogOwnsConversationControls(product),
 ): VoicePickerState {
-    if (!owned || !chatOpen || !kokoro || voices.isEmpty()) return VoicePickerState.Hidden
+    if (!chatOpen || !kokoro || voices.isEmpty()) return VoicePickerState.Hidden
     val selected = if (voices.any { it.id == selectedId }) selectedId else voices.first().id
     return VoicePickerState(
         visible = true,
@@ -104,7 +96,8 @@ internal class VoicePickerModel {
 }
 
 /**
- * A short row across the top of the catalog window while Ember's chat is open.
+ * A short row across the top of the window while the voice serves a conversation; its page has no voice choice or
+ * filler toggle of its own.
  * The chat icon sits at the left. Click it to start a hands-free session, and click it again to stop.
  * The glyph is the Material Icons filled Chat bubble. The desktop pet's own PNG lives in
  * ember-desktop-pet, which is not part of this repository.

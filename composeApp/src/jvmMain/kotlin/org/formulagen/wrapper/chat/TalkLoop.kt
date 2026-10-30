@@ -27,16 +27,15 @@ import org.formulagen.wrapper.voice.HearingStates
 import org.formulagen.wrapper.voice.LatencyMetric
 import org.formulagen.wrapper.voice.VoiceConversation as VoiceCopy
 import org.formulagen.wrapper.voice.catalogHearingState
-import org.formulagen.wrapper.voice.catalogOwnsConversationControls
 
 /** Where the reply to a conversation's latest turn stands, as a [TalkLoop] reads it. */
 internal enum class TalkReply {
-    IDLE, RESPONDING, HANDING_OVER, AWAITING_YOU;
+    IDLE, RESPONDING;
 
-    /** A reply is being written, or waits on a dialog: a click or Escape interrupts it. */
-    val live: Boolean get() = this == RESPONDING || this == AWAITING_YOU
+    /** A reply is being written: a click or Escape interrupts it. */
+    val live: Boolean get() = this == RESPONDING
 
-    /** Anything in progress keeps the microphone closed in half duplex. */
+    /** A reply in progress keeps the microphone closed in half duplex. */
     val busy: Boolean get() = this != IDLE
 }
 
@@ -68,8 +67,8 @@ internal interface TalkHost {
 }
 
 /**
- * The Mac's voice settings every talk loop shares, so a choice made in one conversation holds in the next and in
- * team chat: the filler choice (remembered in [fillerFile]), the duplex mode (the [route]'s, which falls back to
+ * The Mac's voice settings every talk loop shares, so a choice made in one conversation holds in the next: the filler
+ * choice (remembered in [fillerFile]), the duplex mode (the [route]'s, which falls back to
  * half duplex when the voice-processing graph fails), and the turn-taking timings.
  */
 internal class TalkSettings(
@@ -111,7 +110,7 @@ internal sealed interface DictationStep {
 }
 
 /**
- * One voice conversation's loop on the Mac, shared by team chat and project conversations: hands-free Talk
+ * One project conversation's voice loop on the Mac: hands-free Talk
  * (listen, send a heard turn, think, speak, listen again), fillers, barge-in, the reply spoken sentence by sentence
  * through [SentenceCursor], dictation into the page's draft, the latency marks, and the native voice row's state.
  * [host] is the conversation: it sends heard turns and decides what a barge-in or an end stops.
@@ -130,8 +129,6 @@ internal class TalkLoop(
     private val timer: ScheduledExecutorService,
     /** The longest heard or dictated text the conversation takes. */
     private val limit: Int,
-    /** The voice row's icon ends a session the page started; team chat's steps aside instead. */
-    private val rowEndsPageTalk: Boolean = false,
     private val now: () -> Long = System::nanoTime,
 ) {
     private val duplexChoice: DuplexChoice get() = settings.duplexChoice
@@ -229,8 +226,8 @@ internal class TalkLoop(
         else -> null
     }
 
-    /** The native voice row for a conversation that is [open]; [owned] rows show in any product. */
-    fun pickerLocked(open: Boolean, product: String, owned: Boolean = catalogOwnsConversationControls(product)): VoicePickerState =
+    /** The native voice row for a conversation that is [open]. */
+    fun pickerLocked(open: Boolean): VoicePickerState =
         voicePickerState(
             chatOpen = open,
             kokoro = speech.kokoroActive(),
@@ -240,11 +237,9 @@ internal class TalkLoop(
             fillersOn = settings.fillers.enabled,
             partial = hearingPartial,
             hearingNotice = rowNoticeLocked(),
-            product = product,
-            pageOwnsTalk = pageOwnsCapture && !(rowEndsPageTalk && talkOn),
+            pageOwnsTalk = pageOwnsCapture && !talkOn,
             duplexMode = duplexChoice.mode,
             duplexReason = duplexChoice.reason,
-            owned = owned,
         )
 
     /** The permission sentence until the first arm. After that, only a real notice. */
@@ -254,12 +249,12 @@ internal class TalkLoop(
     /**
      * Click on the voice row's icon. The first click listens until a second of quiet, then keeps going. The next
      * click, Escape, or stop ends the session. The icon stays clickable while Ember speaks. Once the page owns Talk,
-     * the icon only ends (or interrupts) a session, and only where [rowEndsPageTalk].
+     * the icon only ends (or interrupts) a session.
      */
     fun click() {
         synchronized(lock) {
             if (!host.open) return
-            if (pageOwnsCapture && !(rowEndsPageTalk && talkOn)) return
+            if (pageOwnsCapture && !talkOn) return
             if (talkOn && replyLiveLocked()) {
                 bargeInLocked("press")
                 return
@@ -858,5 +853,5 @@ internal const val DICTATION_NEEDS_MODELS = "Dictation needs the hearing models.
 internal const val TALK_NEEDS_MODELS = "Talk needs the hearing models. Run scripts/fetch-voice.sh, then rebuild."
 /** How long a new capture waits for one that is stopping to let go of the microphone. */
 private const val MICROPHONE_HANDOFF_MS = 1_000L
-/** The microphone is held by another capture, such as the native chat row's or another conversation's. */
+/** The microphone is held by another capture, such as another conversation's. */
 internal const val MICROPHONE_IN_USE = "The microphone is in use. Try again in a moment."
