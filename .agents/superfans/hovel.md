@@ -318,15 +318,19 @@ and say so.
   load the web app without the legacy bridge.
 - **Watch:** `./gradlew -Pgamero.iosTargets=true
   :composeApp:compileKotlinIosSimulatorArm64 :composeApp:iosSimulatorArm64Test`
-  (Mac only), `tools/ios-smoke.sh`, `WebUrlPolicyTest`, `IosWebUrlTest`.
+  (Mac only), `tools/ios-smoke.sh`, `tools/android-smoke.sh`, `WebUrlPolicyTest`,
+  `IosWebUrlTest`, `SmokeMarkersTest`, `FirstAnswerTest`.
 - **Known quirks and gaps:** Hovel runs as remote UI only: no Connect computer,
   no companion. Android (`bridge/AndroidHostBridge.kt`) and iOS
   (`bridge/IosHostBridge.kt`, `WebKitHostTransport.kt`) carry the host-bridge.v2
   `gameroHost` transport (#28, plan FOR-120), with `companion` passed as
   `Unsupported`; there is no `gameroQuery` (`NativeBridge.ios.kt` only posts
   NSNotifications). No `iosX64` target. Sign-in needs HTTPS.
-  `SessionManager.kt:31` logout is `TODO()` and crashes. The iOS start screen
-  merged as #24; the smoke script does not exercise the Hovel path yet.
+  `SessionManager.kt:31` logout is `TODO()` and crashes. `tools/ios-smoke.sh`
+  and `tools/android-smoke.sh` step past the start screen with
+  `GAMERO_AUTO_ENTER=1` and wait for `GAMERO_BRIDGE_ANSWERED` (FOR-183).
+  Android debug builds open http on loopback (`network_security_debug.xml`);
+  release stays HTTPS-only.
 - **Cares most about:** parity with desktop where the platform allows it, and
   saying "unsupported" explicitly where it does not.
 

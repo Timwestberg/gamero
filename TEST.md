@@ -9,8 +9,9 @@ runtime. Unless a case says otherwise, Hovel is served at
 `http://127.0.0.1:8080/hovel` with `pnpm serve:edge`. Signed out, `/hovel`
 moves to the app's one sign-in at `/auth?next=%2Fhovel`, which keeps the title
 **Hovel** and returns to `/hovel` after the PIN.
-Debug builds open on the Hovel start screen: tap "Open the door" first, or
-launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
+Debug builds open on the Hovel start screen: tap "Open the door" first, launch
+with `SIMCTL_CHILD_GAMERO_AUTO_ENTER=1` to step inside on its own, or launch
+with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 
 ## Happy paths
 
@@ -19,10 +20,12 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 - **Preconditions:** Hovel is served. No simulator is required in advance.
 - **Steps:** Run `tools/ios-smoke.sh`.
 - **Expected:** The script prints
-  `PASS: GAMERO_PAGE_LOADED origin=http://127.0.0.1:8080 title=Hovel` and exits
-  0. `build/ios/smoke.png` shows the **Welcome** sign-in card at
+  `PASS: GAMERO_PAGE_LOADED origin=http://127.0.0.1:8080 title=Hovel; GAMERO_BRIDGE_ANSWERED platform=ios product=Hovel method=watchContext outcome=ok`
+  and exits 0. `build/ios/smoke.png` shows the **Welcome** sign-in card at
   `/auth?next=%2Fhovel`, because the throwaway simulator is signed out. No
   `gamero-smoke-*` simulator is left in `xcrun simctl list devices`.
+  `tools/ios-smoke.sh --product gamero` prints only the `GAMERO_PAGE_LOADED`
+  part.
 
 ### 1b. Smoke test over HTTPS
 
@@ -30,7 +33,7 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
   [docs/ios.md](docs/ios.md#sign-in-https).
 - **Steps:** Run
   `GAMERO_WEB_URL=https://localhost:8123/hovel GAMERO_SMOKE_ROOT_CERT=/tmp/vite-dev-cert.pem tools/ios-smoke.sh`.
-- **Expected:** `PASS: GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Hovel`,
+- **Expected:** `PASS: GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Hovel; GAMERO_BRIDGE_ANSWERED platform=ios …`,
   from `/hovel` or the sign-in page it moves to. Without
   `GAMERO_SMOKE_ROOT_CERT`, it fails at the reachability check.
 
