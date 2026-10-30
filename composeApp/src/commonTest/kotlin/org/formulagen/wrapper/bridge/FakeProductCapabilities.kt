@@ -24,7 +24,12 @@ class FakePetCapability : PetCapability {
 class FakeGameCapability : GameCapability {
     /** The listener the router subscribed, or null when none is; call it to simulate the player returning. */
     var closed: ((GameId) -> Unit)? = null
-    override suspend fun launch(gameId: GameId) = GameLaunchResult(gameId)
+    /** Each launch's game and companion, in order. */
+    val launches = mutableListOf<Pair<GameId, PetCompanion?>>()
+    override suspend fun launch(gameId: GameId, companion: PetCompanion?): GameLaunchResult {
+        launches += gameId to companion
+        return GameLaunchResult(gameId)
+    }
     override fun observe(onClosed: (GameId) -> Unit): AutoCloseable {
         closed = onClosed
         return AutoCloseable { closed = null }

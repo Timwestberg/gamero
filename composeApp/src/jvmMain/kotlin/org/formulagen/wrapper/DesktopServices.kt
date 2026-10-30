@@ -63,6 +63,9 @@ import org.formulagen.wrapper.hovel.appOrigin
 import org.formulagen.wrapper.hovel.hovelStateFolder
 import org.formulagen.wrapper.pet.DesktopPetLauncher
 import org.formulagen.wrapper.progression.embedded.DesktopGameLauncher
+import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.logger.log
+import org.formulagen.wrapper.progression.GAMES_ROOT_VARIABLE
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.providers.ClaudeConnection
 import org.formulagen.wrapper.providers.ClaudeProvider
@@ -95,7 +98,7 @@ internal class DesktopServices private constructor(
     val conversations: ConversationHost?,
     /** `host.contract`: the page's companion contract for its context. */
     val hostContract: DesktopHostContract,
-    /** The embedded game; null without `HOVEL_GAME_PROJECT` or a window to host it. */
+    /** The embedded games; null without `HOVEL_GAMES_ROOT` or a window to host them. */
     val games: DesktopGameLauncher?,
     /** `conversationVoice.*`: voice in project conversations; null without conversations on this Mac. */
     val conversationVoice: DesktopConversationVoice?,
@@ -208,7 +211,10 @@ internal class DesktopServices private constructor(
                 val companion = conversations?.let { host ->
                     own(HovelCompanion(appUrl, hovelStateFolder(support, appUrl), codex, conversations = host::start))
                 }
-                val games = if (window != null && environment["HOVEL_GAME_PROJECT"] != null) {
+                if (environment["HOVEL_GAME_PROJECT"] != null && environment[GAMES_ROOT_VARIABLE] == null) {
+                    log(LogLevel.Warn, "games", "HOVEL_GAME_PROJECT is replaced by HOVEL_GAMES_ROOT; games stay off until it is set")
+                }
+                val games = if (window != null && environment[GAMES_ROOT_VARIABLE] != null) {
                     DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }
                 } else null
                 return DesktopServices(providers, pet, dialogs, companion, conversations, hostContract, games, conversationVoice,

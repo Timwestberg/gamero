@@ -13,16 +13,20 @@ import java.awt.event.ComponentEvent
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import javax.swing.SwingUtilities
+import org.formulagen.wrapper.bridge.GameId
 
 /** Standalone desktop entry into the same commonMain screens used by future hosts. */
 fun main() {
     var processExit = 0
     application {
-        val project = System.getenv("HOVEL_GAME_PROJECT")?.let(Path::of)
-            ?: error("Set HOVEL_GAME_PROJECT to games/ember-tower in the companion checkout.")
+        val environment = System.getenv()
+        val game = desktopGame(environment, GameId.HOVEL_COMPANIONS)
+            ?: error("Set HOVEL_GAMES_ROOT to the absolute games folder of the game-platform checkout.")
+        // Two windows, not embedded; the game keeps its own save unless HOVEL_COMPANION_SAVE names one.
+        val launch = launchEnvironment(environment, game, environment[SAVE_VARIABLE]?.let(Path::of), profile = null, embedded = false)
         val scope = rememberCoroutineScope()
         val controller = remember { PresentationController { UUID.randomUUID().toString() } }
-        val host = remember { DesktopCompanionHost(project, scope, controller) }
+        val host = remember { DesktopGameHost(game, scope, controller, launch) }
         val state by controller.state.collectAsState()
         val exitCode by host.exitCode.collectAsState()
         val connected by host.connected.collectAsState()

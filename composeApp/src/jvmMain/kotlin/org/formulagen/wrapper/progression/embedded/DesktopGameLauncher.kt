@@ -8,36 +8,44 @@ import org.formulagen.wrapper.bridge.BridgeBusyException
 import org.formulagen.wrapper.bridge.GameCapability
 import org.formulagen.wrapper.bridge.GameId
 import org.formulagen.wrapper.bridge.GameLaunchResult
+import org.formulagen.wrapper.bridge.PetCompanion
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
+import org.formulagen.wrapper.progression.GAMES_ROOT_VARIABLE
+import org.formulagen.wrapper.progression.GodotGame
+import org.formulagen.wrapper.progression.SAVE_VARIABLE
+import org.formulagen.wrapper.progression.desktopGame
+import org.formulagen.wrapper.progression.launchEnvironment
 
 /**
- * The `games` capability. The page selects an installed game ID; native configuration owns all
- * paths. [support] is the app's support folder, which holds the default progression save. When the
- * player returns from a launch that opened, every [observe] listener hears which game closed, so the
- * router can send `games.closed`.
+ * The `games` capability. The page selects an installed game ID and, optionally, the companion to play as; native
+ * configuration owns all paths (`DESKTOP_GAMES` under `HOVEL_GAMES_ROOT`). [support] is the app's support folder,
+ * which holds the companions game's default progression save and the launched companions' profiles. When the
+ * player returns from a launch that opened, every [observe] listener hears which game closed, so the router can
+ * send `games.closed`.
  */
 internal class DesktopGameLauncher(
     private val frame: JFrame,
     private val environment: Map<String, String>,
     private val support: Path,
 ) : GameCapability, AutoCloseable {
-    private var active: EmbeddedCompanionWindow? = null
+    private var active: EmbeddedGameWindow? = null
     private val closedListeners = GameClosedListeners()
+    private val profiles = EmberProfileStore(support.resolve("companions").resolve("profiles"))
 
-    /** The router has accepted only a known game ID; one adventure is open at a time. */
-    override suspend fun launch(gameId: GameId): GameLaunchResult = withContext(Dispatchers.Main) {
+    /** The router has accepted only a known game ID and a valid companion; one game is open at a time. */
+    override suspend fun launch(gameId: GameId, companion: PetCompanion?): GameLaunchResult = withContext(Dispatchers.Main) {
         if (active != null) throw BridgeBusyException()
         check(System.getProperty("os.name").contains("Mac")) { "Native adventures require macOS" }
-        try { installedGame(environment) } catch (error: IllegalStateException) {
-            // The page sees only `failed`, so name the missing piece here.
-            log(LogLevel.Warn, "games", error.message ?: "Companion game is not installed")
-            throw error
-        }
-        val save = environment["HOVEL_COMPANION_SAVE"] ?: support.resolve("companions").resolve("save.json").toString()
-        Path.of(save).parent.toFile().mkdirs()
+        // The page sees only `failed`, so each refusal names the missing piece in the log.
+        val game = logged { installedGame(environment, gameId) }
+        val save = if (game.presentation) {
+            (environment[SAVE_VARIABLE]?.let(Path::of) ?: support.resolve("companions").resolve("save.json"))
+                .also { it.parent.toFile().mkdirs() }
+        } else null
+        val profile = companion?.let { logged { profiles.save(it) } }
         closedListeners.track(gameId) { returned ->
-            val launch = EmbeddedCompanionWindow(frame, environment + ("HOVEL_COMPANION_SAVE" to save)) {
+            val launch = EmbeddedGameWindow(game, frame, launchEnvironment(environment, game, save, profile)) {
                 active = null
                 returned()
             }
@@ -54,19 +62,27 @@ internal class DesktopGameLauncher(
     /** The caller closes the launch surface on the AWT event thread. */
     override fun close() { active?.close(); active = null }
 
+    /** Runs [step], logging a missing install or a failed profile write before the page gets its plain `failed`. */
+    private fun <T> logged(step: () -> T): T = try { step() } catch (error: Exception) {
+        log(LogLevel.Warn, "games", error.message ?: error.toString())
+        throw error
+    }
+
     companion object {
         /**
-         * The game project and the native layer bridge must both exist before any window changes:
-         * loading a missing bridge later fails on the UI thread, where it would end the app.
+         * [gameId]'s project, scene and engine, and the native layer bridge, must all exist before any window
+         * changes: loading a missing bridge later fails on the UI thread, where it would end the app.
          */
-        internal fun installedGame(environment: Map<String, String>): Path {
-            val project = environment["HOVEL_GAME_PROJECT"]?.let(Path::of)
-            check(project != null && project.resolve("companions/main.tscn").toFile().isFile) { "Companion game is not installed" }
+        internal fun installedGame(environment: Map<String, String>, gameId: GameId): GodotGame {
+            val game = desktopGame(environment, gameId)
+            check(game != null && game.sceneFile().toFile().isFile && game.engine.toFile().isFile) {
+                "Game ${gameId.name} is not installed: $GAMES_ROOT_VARIABLE must be an absolute folder with its scene and engine script"
+            }
             val library = environment["HOVEL_EMBED_LIBRARY"]?.let(Path::of)
             check(library != null && library.isAbsolute && library.toFile().isFile) {
                 "The embedded game bridge is not built. Run scripts/build-embedded-macos.sh and set HOVEL_EMBED_LIBRARY."
             }
-            return project
+            return game
         }
     }
 }

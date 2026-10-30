@@ -5,7 +5,7 @@ Tested locally on Apple M3 Max with Java 21 and Godot 4.8-beta1, Metal/Forward+.
 ## Automated checks
 
 ```sh
-HOVEL_GAME_PROJECT=/absolute/game-platform-companions/games/ember-tower \
+HOVEL_GAMES_ROOT=/absolute/game-platform-companions/games \
   ./gradlew :composeApp:jvmTest :composeApp:prepareEmbeddedCompanionApp
 ```
 

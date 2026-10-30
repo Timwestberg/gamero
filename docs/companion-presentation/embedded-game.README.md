@@ -20,7 +20,7 @@ Every launch defaults to a new temporary save and prints `HOVEL_EMBEDDED_SAVE <p
 HOVEL_COMPANION_SAVE=/absolute/playtest/save.json ./'Play Embedded Companions.command'
 ```
 
-Override `HOVEL_GAME_PROJECT` for another checkout of the same companion prototype. `JAVA_HOME` selects the JDK (default: `java_home -v 21`). Both come from `scripts/dev-env.sh`; see [every setting](README.md#desktop-companion-settings). Close this prototype before refreshing its bundle. The existing `:composeApp:runCompanions` launcher remains available.
+Override `HOVEL_GAMES_ROOT` (a checkout's `games` folder) for another checkout of the same companion prototype. `JAVA_HOME` selects the JDK (default: `java_home -v 21`). Both come from `scripts/dev-env.sh`; see [every setting](README.md#desktop-companion-settings). Close this prototype before refreshing its bundle. The existing `:composeApp:runCompanions` launcher remains available.
 
 ## Play and extend
 
@@ -28,6 +28,6 @@ Enter the Foundry. Move with A/D, jump with Space, aim and fire with the mouse, 
 
 On the Kotlin screens, use the D-pad or left stick to move focus. Cross/A previews the focused card; move to **Choose…** and press Cross/A again to confirm. Circle/B goes back. Release the stick between steps. The first action receives focus when the screen changes, including the final review.
 
-Shared presentation code and progression contracts remain unchanged. `EmbeddedCompanionWindow` composes the native surface and `CompanionPresentation`. `MacEmbeddedGame` owns rendering/input transport; `MacGameLayer` is the JNI surface boundary. A different platform should replace those desktop adapters while retaining the common UI and authoritative game commands.
+Shared presentation code and progression contracts remain unchanged. `EmbeddedGameWindow` composes the native surface and, for the companions game, `CompanionPresentation`. `MacEmbeddedGame` owns rendering/input transport; `MacGameLayer` is the JNI surface boundary. A different platform should replace those desktop adapters while retaining the common UI and authoritative game commands.
 
 This is a development proof using Godot's editor embedding infrastructure and a private macOS layer API. It is **not a production distribution build**. The card shader still samples its supplied artwork, not live game pixels. See [architecture and limits](embedded-game.ARCH.md), [validation](embedded-game.TEST.md), and [review](embedded-game.REVIEW.md).
