@@ -61,6 +61,26 @@ class ConversationStoreTest {
         } finally { reopened.close() }
     }
 
+    @Test fun stopMarksOlderThanAQueuedMessageLivesAreDroppedAtOpenUnlessTheirClaimIsJournaled() {
+        val stale = id()
+        val fresh = id()
+        val claimed = id()
+        listOf(stale, fresh, claimed).forEach { store.stopOnClaim(conversation, it) }
+        store.open()
+        store.journal(ClaimEntry(id(), conversation, ClaimPhase.CLAIMED, claimed, 1))
+        store.close()
+        val marks = root.resolve(account).resolve("conversations").resolve(conversation).resolve("stop-on-claim")
+        val old = java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - CompanionLimits.QUEUED_MESSAGE_MS - 60_000)
+        Files.setLastModifiedTime(marks.resolve("$stale.json"), old)
+        Files.setLastModifiedTime(marks.resolve("$claimed.json"), old)
+        val reopened = ConversationStore(root, account).open()
+        try {
+            assertFalse(reopened.stopsOnClaim(conversation, stale), "its message expired, so no claim comes")
+            assertTrue(reopened.stopsOnClaim(conversation, fresh))
+            assertTrue(reopened.stopsOnClaim(conversation, claimed), "a journaled claim still needs its mark")
+        } finally { reopened.close() }
+    }
+
     @Test fun onlyOneHovelRunsAnAccountsConversations() {
         store.open()
         try {

@@ -61,7 +61,8 @@ internal class DesktopConversationVoice(
 
     /**
      * The account's runner started ([turns]) or stopped (null, at sign-out or quit). Before the link goes, the served
-     * conversation's heard turns not claimed yet are given up through it, so their stop is journaled.
+     * conversation's heard turn not claimed yet is given up through it, so its stop is journaled. A turn Talk said is
+     * waiting runs.
      */
     override fun connected(turns: HeardTurns?) {
         if (turns == null) current?.releaseHeardTurns()

@@ -247,6 +247,20 @@ class TalkLoopTest {
         assertEquals("add a test", talk.awaitDictation(), "the hold was never ended")
     }
 
+    @Test fun aCaptureThatStartsAfterTheRowEndedTalkLetsTheMicrophoneGo() {
+        val talk = loop(rowEndsPageTalk = true)
+        assertTrue(synchronized(lock) { talk.pressLocked() })
+        synchronized(lock) { talk.pageOwnsLocked() }
+        // The row's icon ends Talk while the page's capture is still starting.
+        ear.beforeSession = { talk.click() }
+        talk.startCapture()
+        assertFalse(talk.on)
+        assertFalse(ear.listening, "the microphone was let go")
+        ear.beforeSession = null
+        talk.arm()
+        assertTrue(talk.on && ear.listening, "so the next session can have it")
+    }
+
     @Test fun aCaptureThatCannotStartSaysTheMicrophoneIsBusy() {
         val talk = loop()
         ear.refuseSessions = true
