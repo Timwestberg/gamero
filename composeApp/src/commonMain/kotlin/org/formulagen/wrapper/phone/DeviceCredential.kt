@@ -3,6 +3,7 @@ package org.formulagen.wrapper.phone
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.formulagen.wrapper.bridge.SharedRules
+import org.formulagen.wrapper.util.takeWhole
 
 /**
  * This phone's approval device: its id, the account it answers for, its name and platform, and its device token.
@@ -71,9 +72,7 @@ internal fun DeviceCrypto.newId(): String {
  * [fallback] when nothing is left.
  */
 internal fun deviceName(raw: String?, fallback: String): String {
-    val line = SharedRules.dialogName(raw.orEmpty(), fallback)
-    val cut = if (line.length > DEVICE_NAME_LIMIT && line[DEVICE_NAME_LIMIT - 1].isHighSurrogate()) DEVICE_NAME_LIMIT - 1 else DEVICE_NAME_LIMIT
-    return SharedRules.dialogName(line.take(cut), fallback)
+    return SharedRules.dialogName(SharedRules.dialogName(raw.orEmpty(), fallback).takeWhole(DEVICE_NAME_LIMIT), fallback)
 }
 
 private const val TOKEN_BYTES = 32

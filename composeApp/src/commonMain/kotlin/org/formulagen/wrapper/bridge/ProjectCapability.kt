@@ -2,6 +2,7 @@ package org.formulagen.wrapper.bridge
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.formulagen.wrapper.util.takeWhole
 import kotlin.time.Duration.Companion.minutes
 
 /**
@@ -82,8 +83,7 @@ object ProjectFolderNames {
     /** [text] in at most [limit] characters, never ending inside a surrogate pair or on whitespace. */
     private fun cut(text: String, limit: Int): String {
         if (text.length <= limit) return text
-        val head = text.take(limit)
-        return (if (head.last().isHighSurrogate()) head.dropLast(1) else head).trimEcma().ifEmpty { FALLBACK }
+        return text.takeWhole(limit).trimEcma().ifEmpty { FALLBACK }
     }
 
     private const val FALLBACK = "folder"

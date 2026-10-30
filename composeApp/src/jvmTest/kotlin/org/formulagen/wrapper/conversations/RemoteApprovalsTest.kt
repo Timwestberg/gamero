@@ -162,6 +162,18 @@ class RemoteApprovalsTest {
         assertTrue(MacApprovalLabels.of(ApprovalKind.PERMISSION, ApprovalOption.DENY) in permission, permission.toString())
         val start = org.formulagen.wrapper.approvals.startOfWorkDialog("Ember", working, member).buttons.map { it.first }
         assertEquals(listOf(ApprovalOption.CONTINUE, ApprovalOption.NOT_NOW).map { MacApprovalLabels.of(ApprovalKind.START_OF_WORK, it) }, start)
+        // a stage and the resume review, built as the engine builds them (CoordinatorEngine's option order)
+        val document = brain("Implementer" to org.formulagen.wrapper.conversation.MemberMode.WORK, workflow = true)
+        val specialist = document.configuration.specialists.single()
+        val role = BrainRoleSnapshot(specialist.id, specialist.name, checkNotNull(specialist.binding), specialist.instructions, specialist.mode)
+        val run = org.formulagen.wrapper.brain.RunRecord(BrainRun(id(), 1, 4, null, BrainRunState.RUNNING, null), document.configuration,
+            null, "request", emptyList(), attempts = emptyList(), task = "add sign-in")
+        val stage = org.formulagen.wrapper.brain.stageDialog(role, run, null, "").buttons.map { it.first }
+        val stageOptions = listOf(ApprovalOption.CONTINUE, ApprovalOption.REQUEST_CHANGES, ApprovalOption.NOT_NOW, ApprovalOption.STOP)
+        assertEquals(stageOptions.map { MacApprovalLabels.of(ApprovalKind.STAGE, it) }, stage)
+        val resume = org.formulagen.wrapper.brain.resumeDialog(run, rerun = false, uncertain = false, target = null, limit = false)
+            .buttons.map { it.first }
+        assertEquals(listOf(ApprovalOption.CONTINUE, ApprovalOption.NOT_NOW).map { MacApprovalLabels.of(ApprovalKind.RESUME_REVIEW, it) }, resume)
     }
 
     @Test fun aMacAnswerToAnApprovalTheServerLetExpireStillStands() {

@@ -8,6 +8,7 @@ import org.formulagen.wrapper.util.loggingDaemonThreads
 import org.formulagen.wrapper.hovel.HovelRejectedException
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
+import org.formulagen.wrapper.util.takeWhole
 
 /**
  * What one claimed message sends, every call naming its claim. A [checkpoint] is durable: it is
@@ -139,10 +140,9 @@ internal class ClaimOutput(
             val result = mutableListOf<String>()
             var start = 0
             while (start < text.length) {
-                var end = minOf(text.length, start + CompanionLimits.DELTA)
-                if (end < text.length && text[end - 1].isHighSurrogate()) end -= 1
-                result += text.substring(start, end)
-                start = end
+                val piece = text.substring(start).takeWhole(CompanionLimits.DELTA)
+                result += piece
+                start += piece.length
             }
             return result
         }
