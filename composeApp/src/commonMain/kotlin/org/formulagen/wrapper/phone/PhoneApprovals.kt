@@ -140,21 +140,20 @@ internal class PhoneApprovals(
      * Revokes this phone's device with its own token, then clears it from the Keychain or Keystore and closes any dialog
      * it shows. A device the server already refuses is cleared alike. When the revoke gets no answer, the phone is
      * cleared all the same, so a signed-out phone keeps no token; the account's device list still shows the device to
-     * revoke.
+     * revoke. It runs to the end even when the page that asked goes away, as it does on sign-out.
      */
-    override suspend fun forget(): ApprovalDeviceForgotten {
+    override suspend fun forget(): ApprovalDeviceForgotten = withContext(NonCancellable) {
+        // a sign-out navigates away at once: the page leaving never stops the wipe half done
         state.withLock { pending = null }
-        val device = active() ?: return ApprovalDeviceForgotten(false)
+        val device = active() ?: return@withContext ApprovalDeviceForgotten(false)
         try {
             api.revoke(device)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
         } catch (_: Exception) {
             // refused (already revoked or expired) or unanswered: clear it regardless
         }
         forgetHere(device)
         state.withLock { showing?.second?.cancel() }
-        return ApprovalDeviceForgotten(true)
+        ApprovalDeviceForgotten(true)
     }
 
     override suspend fun status(): ApprovalDeviceRef? = active()?.let { ApprovalDeviceRef(it.id, it.ownerId) }

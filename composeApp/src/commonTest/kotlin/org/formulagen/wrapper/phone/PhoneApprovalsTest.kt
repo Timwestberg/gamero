@@ -529,6 +529,28 @@ class PhoneApprovalsTest {
     }
 
     @Test
+    fun forgettingFinishesEvenWhenThePageThatAskedGoesAway() = runTest {
+        val phone = activePhone()
+        val gate = CompletableDeferred<Unit>()
+        val slow = object : DeviceHttp {
+            override suspend fun send(request: DeviceRequest): DeviceResponse {
+                if (request.url.endsWith("/revoke")) gate.await()
+                return phone.server.send(request)
+            }
+        }
+        val approvals = PhoneApprovals("ios", "iPhone", DeviceApprovalApi(slow, APP_URL), phone.vault, FakeCrypto(), phone.dialogs,
+            clock = { start + testScheduler.currentTime }, context = StandardTestDispatcher(testScheduler))
+        val asked = async { approvals.forget() }
+        runCurrent()
+        // the sign-out navigates away while the revoke is on its way
+        asked.cancel()
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(listOf(credential.id), phone.server.revoked)
+        assertNull(phone.vault.item)
+    }
+
+    @Test
     fun forgettingWithoutAnAnswerStillClearsThePhone() = runTest {
         val phone = activePhone()
         phone.server.offline = true
