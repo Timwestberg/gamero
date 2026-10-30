@@ -196,7 +196,7 @@ class ServerContractRunTest {
             val approvals = RemoteApprovals(dialogs, api, host)
             val turns = ProviderTurns(listOf(chat), emptyList(), ConnectedProviders(), approvals)
             val folders = ProjectFolderStore(root, FolderPicker { _, _ -> null })
-            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(dialogs), api)
+            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), api)
             val directory = HostDirectory(ConnectedProviders(), host, setOf(RuntimeId.CODEX), emptySet(), MemoryJobLane.FEATURES)
             runner = ConversationRunner(api, store, engine, approvals, folders, ProjectFolderPublisher(folders, api, account, host) { emptyList() },
                 directory::heartbeat, status = { statuses += it }, heartbeatEvery = heartbeatEvery, now = now)

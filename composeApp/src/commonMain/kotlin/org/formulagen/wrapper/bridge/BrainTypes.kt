@@ -31,11 +31,11 @@ import org.formulagen.wrapper.conversation.TeamMember
  * brain ([BrainDocument]); the types read and write the contract's JSON through [brainWire] and [BrainWireSerializer].
  */
 
-/** Mirrors BRAIN_LIMITS in event-contracts, checked against `fixtures/limits.json`. [INPUTS] bounds the inputs one message attaches. */
+/**
+ * The BRAIN_LIMITS of event-contracts this Mac applies, checked against `fixtures/limits.json`; the rest are the page's
+ * and the server's. [INPUTS] bounds the inputs one message attaches.
+ */
 object BrainLimits {
-    const val CONDITION = 240
-    const val CONFIGURATION = 48 * 1024
-    const val CURSOR = 80
     const val DESCRIPTION = 512
     const val DISPATCHES = 60
     const val HISTORY = 40
@@ -45,12 +45,8 @@ object BrainLimits {
     const val OUTPUT = 16000
     const val PREVIEW = 512
     const val RETURNS = 3
-    const val ROLE_INSTRUCTIONS = 4096
-    const val SPECIALISTS = 20
     const val STEP_INSTRUCTIONS = 2048
     const val STEPS = 30
-    /** `brainRevision`'s bound, `Number.MAX_SAFE_INTEGER`. */
-    const val REVISION = 9_007_199_254_740_991L
 }
 
 /** Records keep every null; [brainWire] decides which nulls the contract sends. */
@@ -330,56 +326,8 @@ internal class BrainWireSerializer<T>(private val inner: KSerializer<T>) : KSeri
     }
 }
 
-/** Strict structure checks of a brain configuration and its records. */
+/** Structure checks of the ids a coordinator's decision names. */
 object BrainRules {
     fun uuid(value: String) = BridgeProtocol.UUID_PATTERN.matches(value)
-    fun label(value: String, max: Int = BrainLimits.LABEL) = value.isNotEmpty() && value == value.trimEcma() && value.length <= max
-    fun binding(value: BrainBinding?) = value == null || SharedRules.isModelId(value.modelId)
-    /** A `brainRevision` of at least [min]. */
-    fun revision(value: Long, min: Long = 0) = value in min..BrainLimits.REVISION
     fun inputs(ids: List<String>) = ids.size <= BrainLimits.INPUTS && ids.all(::uuid)
-
-    fun configuration(value: BrainConfiguration): Boolean {
-        val coordinator = value.coordinator
-        if (value.version != 1 || !uuid(coordinator.id) || !binding(coordinator.binding)) return false
-        if (coordinator.instructions.length > BrainLimits.ROLE_INSTRUCTIONS) return false
-        if (value.specialists.size > BrainLimits.SPECIALISTS) return false
-        val roles = mutableSetOf(coordinator.id)
-        val slots = mutableSetOf<Int>()
-        val validRoles = value.specialists.all {
-            uuid(it.id) && roles.add(it.id) && slots.add(it.slot) && it.slot in 0 until BrainLimits.SPECIALISTS && label(it.name) &&
-                binding(it.binding) && it.instructions.length <= BrainLimits.ROLE_INSTRUCTIONS
-        }
-        if (!validRoles) return false
-        value.workflow?.let { workflow ->
-            if (!uuid(workflow.id) || !label(workflow.name)) return false
-            if (workflow.steps.size > BrainLimits.STEPS || workflow.sections.size > BrainLimits.STEPS) return false
-            val sections = mutableSetOf<String>()
-            // Every section is named, distinct and holds at least one step.
-            val validSections = workflow.sections.all {
-                uuid(it.id) && label(it.name) && sections.add(it.id) && workflow.steps.any { step -> step.sectionId == it.id }
-            }
-            if (!validSections) return false
-            val steps = mutableSetOf<String>()
-            val closed = mutableSetOf<String>()
-            var previous: String? = null
-            for (step in workflow.steps) {
-                if (!uuid(step.id) || step.id in steps || !label(step.name)) return false
-                if (step.instructions.length > BrainLimits.STEP_INSTRUCTIONS) return false
-                if (maxOf(step.inputDescription.length, step.outputDescription.length) > BrainLimits.DESCRIPTION) return false
-                if (step.specialistId != null && value.specialists.none { it.id == step.specialistId }) return false
-                // A return goes to an earlier step, under a short condition.
-                val back = step.returnTo
-                if (back != null && (back.stepId !in steps || !label(back.condition, BrainLimits.CONDITION))) return false
-                if (step.sectionId != null && step.sectionId !in sections) return false
-                if (step.sectionId != previous) {
-                    previous?.let(closed::add)
-                    if (step.sectionId in closed) return false
-                    previous = step.sectionId
-                }
-                steps.add(step.id)
-            }
-        }
-        return brainWire(value).toString().length <= BrainLimits.CONFIGURATION
-    }
 }

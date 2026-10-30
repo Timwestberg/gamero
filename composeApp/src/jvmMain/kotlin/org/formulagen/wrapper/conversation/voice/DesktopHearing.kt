@@ -11,7 +11,6 @@ import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.voice.DuplexChoice
 import org.formulagen.wrapper.voice.EmberAudio
 import org.formulagen.wrapper.voice.EndpointDecision
-import org.formulagen.wrapper.voice.HEARING_MIN_SPEECH_MS
 import org.formulagen.wrapper.voice.HEARING_SAMPLE_RATE
 import org.formulagen.wrapper.voice.TurnCommitter
 import org.formulagen.wrapper.voice.chunkRms

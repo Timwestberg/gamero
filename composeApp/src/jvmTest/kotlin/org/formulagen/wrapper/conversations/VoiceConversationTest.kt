@@ -158,7 +158,7 @@ class VoiceConversationTest {
         private val folders = ProjectFolderStore(root, FolderPicker { _, _ -> null })
         private val approvals = RemoteApprovals(NativeDialogs(Screen()), server, server.hostId)
         private val turns = ProviderTurns(listOf(coordinator), emptyList(), ConnectedProviders(), approvals)
-        private val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(NativeDialogs(Screen())), server)
+        private val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), server)
         private val beat = HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), listOf("memory-extraction"), "ready")
         val runner = ConversationRunner(server, store, engine, approvals, folders,
             ProjectFolderPublisher(folders, server, account, server.hostId) { emptyList() }, { beat },

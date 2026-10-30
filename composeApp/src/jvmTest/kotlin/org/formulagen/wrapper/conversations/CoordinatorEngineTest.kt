@@ -39,7 +39,7 @@ class CoordinatorEngineTest {
         val dialogs = NativeDialogs(screen)
         val approvals = RemoteApprovals(dialogs, server, server.hostId)
         val turns = ProviderTurns(listOf(chat), listOf(worker), ConnectedProviders(), approvals)
-        val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(dialogs), server)
+        val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), server)
 
         init {
             if (workingFolder) { picked = working; folders.choose(account, talk.projectId, FolderRole.WORKING) }

@@ -181,9 +181,6 @@ internal class TalkLoop(
         if (settings.fillers.enabled) speech.warmFillers(FILLER_LINES)
     }
 
-    /** A typed send or a stop: no filler plays for it. */
-    fun cancelFillerLocked() = fillerTurn.cancel()
-
     /** The reply finished: a filler that has not started never will. */
     fun replyArrivedLocked() = fillerTurn.replyArrived()
 
@@ -376,19 +373,6 @@ internal class TalkLoop(
     fun close() {
         hearing?.close()
     }
-
-    /** A test session with no microphone. Real clicks go through [click]. */
-    fun testingSession() = synchronized(lock) {
-        check(host.open)
-        talkOn = true
-        hearingPartial = ""
-        hearingNotice = null
-        setPhaseLocked(TalkPhase.LISTENING)
-        host.changedLocked()
-    }
-
-    /** A finished hands-free turn, as the microphone thread would deliver it. */
-    fun testingUtterance(result: HearingResult) = synchronized(lock) { onUtteranceLocked(result) }
 
     /** A test, or a finished hold, handing the recognizer result to the conversation. */
     fun commit(result: HearingResult) = synchronized(lock) {

@@ -14,7 +14,6 @@ import org.formulagen.wrapper.approvals.CancelSignal
 import org.formulagen.wrapper.approvals.displayPath
 import org.formulagen.wrapper.conversation.ChatLimits
 import org.formulagen.wrapper.bridge.RuntimeId
-import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.runtimes.ChatFailure
 import org.formulagen.wrapper.runtimes.Readiness
 import org.formulagen.wrapper.runtimes.TurnEvents

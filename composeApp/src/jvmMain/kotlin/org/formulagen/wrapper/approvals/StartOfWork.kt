@@ -10,17 +10,13 @@ import org.formulagen.wrapper.conversation.TeamMember
  * exactly what the dialog named, (conversation, project, folder, member), so a changed folder or
  * another member asks again. Not now, closing the dialog, a timeout or a cancel is never remembered.
  */
-internal class StartOfWork(private val dialogs: NativeDialogs) {
+internal class StartOfWork {
     private data class Confirmed(val lease: String, val companionId: String, val folder: Path, val member: TeamMember)
     private val confirmed = ConcurrentHashMap.newKeySet<Confirmed>()
 
     /** Whether this conversation already confirmed [member] working in [folder], without asking. */
     fun isConfirmed(lease: String, companionId: String, folder: Path, member: TeamMember): Boolean =
         Confirmed(lease, companionId, folder, member) in confirmed
-
-    /** Ask the player; true for Start working. Blocks while the dialog is up. Remembers nothing. */
-    fun ask(companionName: String, folder: Path, member: TeamMember, cancel: CancelSignal): Boolean =
-        dialogs.ask(startOfWorkDialog(companionName, folder, member), cancel) == true
 
     fun remember(lease: String, companionId: String, folder: Path, member: TeamMember) { confirmed += Confirmed(lease, companionId, folder, member) }
 }

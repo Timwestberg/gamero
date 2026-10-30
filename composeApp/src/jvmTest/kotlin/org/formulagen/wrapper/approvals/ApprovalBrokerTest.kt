@@ -175,29 +175,21 @@ class ApprovalBrokerTest {
         assertEquals(2, screen.shown.size)
     }
 
-    @Test fun startOfWorkIsAskedForExactlyWhatItNamesAndRememberedOnlyWhenTheConversationSaysSo() {
-        val screen = Screen()
-        val start = StartOfWork(NativeDialogs(screen, timeout = 30.seconds))
-        val companion = "20000000-0000-4000-8000-000000000002"
+    @Test fun startOfWorkNamesTheFolderAndMemberAndIsRememberedForExactlyThat() {
+        val dialog = startOfWorkDialog("Ember", folder, opus)
+        assertEquals("Ember wants to start working in game with Claude · Opus.", dialog.title)
+        assertEquals(listOf("Start working", "Not now"), dialog.buttons.map { it.first })
+        assertEquals(1, dialog.dismissIndex, "Not now is the default")
+        val start = StartOfWork()
+        val project = "20000000-0000-4000-8000-000000000002"
         val sonnet = TeamMember(RuntimeId.CLAUDE_CODE, "sonnet")
-        val notNow = async { start.ask("Ember", folder, opus, CancelSignal()) }
-        val dialog = screen.await(1)
-        assertEquals("Ember wants to start working in game with Claude · Opus.", dialog.dialog.title)
-        assertEquals(listOf("Start working", "Not now"), dialog.dialog.buttons.map { it.first })
-        assertEquals(1, dialog.dialog.dismissIndex, "Not now is the default")
-        dialog.answer(1)
-        assertFalse(notNow.get(5, TimeUnit.SECONDS))
-        val started = async { start.ask("Ember", folder, opus, CancelSignal()) }
-        screen.await(2).answer(0)
-        assertTrue(started.get(5, TimeUnit.SECONDS))
-        assertFalse(start.isConfirmed("lease-1", companion, folder, opus), "Asking remembers nothing")
-        start.remember("lease-1", companion, folder, opus)
-        assertTrue(start.isConfirmed("lease-1", companion, folder, opus))
+        assertFalse(start.isConfirmed("conversation-1", project, folder, opus))
+        start.remember("conversation-1", project, folder, opus)
+        assertTrue(start.isConfirmed("conversation-1", project, folder, opus))
         // Another member, folder or conversation was never confirmed.
-        assertFalse(start.isConfirmed("lease-1", companion, folder, sonnet))
-        assertFalse(start.isConfirmed("lease-1", companion, Path.of("/Users/player/Projects/other"), opus))
-        assertFalse(start.isConfirmed("lease-2", companion, folder, opus))
-        assertFalse(start.ask("Ember", folder, opus, CancelSignal().also { it.cancel() }))
+        assertFalse(start.isConfirmed("conversation-1", project, folder, sonnet))
+        assertFalse(start.isConfirmed("conversation-1", project, Path.of("/Users/player/Projects/other"), opus))
+        assertFalse(start.isConfirmed("conversation-2", project, folder, opus))
     }
 
     @Test fun aCancelSignalFiresOnceAndLateListenersRunAtOnce() {

@@ -78,7 +78,7 @@ internal class ConversationHost(
             val talkRuntimes = talk(retained).also { owned += it }
             val workRuntimes = work(approvals, retained).also { owned += it }
             val turns = ProviderTurns(talkRuntimes, workRuntimes, providers, approvals)
-            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(dialogs), api)
+            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), api)
             val publisher = ProjectFolderPublisher(folders, api, registration.ownerId, registration.id, engine::readableBy)
             val directory = HostDirectory(providers, registration.id, offered,
                 working.intersect(workRuntimes.map { it.id }.toSet()), connection.features)

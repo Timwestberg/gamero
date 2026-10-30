@@ -41,7 +41,7 @@ class ConversationVoiceLatencyTest {
         val coordinator = ScriptedRuntime(RuntimeId.CODEX, chunk = 12) { "It is late. Time for tea." }
         val approvals = RemoteApprovals(NativeDialogs(Screen()), server, server.hostId)
         val engine = CoordinatorEngine(store, folders, ProviderTurns(listOf(coordinator), emptyList(), ConnectedProviders(), approvals),
-            approvals, StartOfWork(NativeDialogs(Screen())), server)
+            approvals, StartOfWork(), server)
         val ear = FakeEar()
         val speaker = FakeSpeaker()
         val settings = TalkSettings(FillerSettings(), duplex = DuplexChoice(HearingDuplex.HALF, "test"), guardMs = 0)
