@@ -86,7 +86,7 @@ internal class ConversationHost(
                 connection.status, replies = voice ?: ReplyListeners.NONE)
             owned += runner
             val onThisMac = ProjectsOnThisMac(api, folders, registration.ownerId, registration.id, publishing)
-            running = Running(registration.ownerId, publisher, engine::readableBy, onThisMac::answer)
+            running = Running(registration.ownerId, publisher, engine::readableBy, onThisMac::isOnThisMac)
             runner.start()
             voice?.connected(heardTurns(api, runner))
             return AutoCloseable {
@@ -110,16 +110,17 @@ internal class ConversationHost(
          * (so its folders can be chosen again), or another computer's. Null when the account cannot be reached.
          */
         internal fun projectOnThisMac(api: ConversationApi, folders: ProjectFolderStore, accountId: String, hostId: String,
-            projectId: String): Boolean? = try {
-            val mark = folders.foreignMark(accountId, projectId)
-            val project = api.project(projectId)
-            // A foreign mark made while the account answered is the newer word, and this answer never clears it.
-            if (project.computerId == hostId) folders.claimedUnlessMarked(accountId, project, mark)
-            else { folders.foreign(accountId, projectId); false }
-        } catch (refusal: HovelStatusException) {
-            if (!refusal.final) null else { folders.foreign(accountId, projectId); false }
-        } catch (_: Exception) {
-            null
+            projectId: String): Boolean? {
+            // An answer to a newer request, recorded while this one was on its way, is the newer word either way.
+            val request = folders.requestSequence(accountId, projectId)
+            return try {
+                val project = api.project(projectId)
+                folders.answered(accountId, projectId, project.takeIf { it.computerId == hostId }, request)
+            } catch (refusal: HovelStatusException) {
+                if (!refusal.final) null else folders.answered(accountId, projectId, null, request)
+            } catch (_: Exception) {
+                null
+            }
         }
 
         /** Where the runner's Grok runtimes keep their bindings. */
@@ -128,7 +129,7 @@ internal class ConversationHost(
 }
 
 /**
- * Whether each project runs on this Mac ([answer]), as the account says. A project the account confirmed, and not marked
+ * Whether each project runs on this Mac ([isOnThisMac]), as the account says. A project the account confirmed, and not marked
  * foreign since, answers at once and is checked again in the background, one check per project at a time, so a slow
  * server never hides it. Anything else waits for the account.
  */
@@ -142,7 +143,7 @@ internal class ProjectsOnThisMac(
     private val confirmed = ConcurrentHashMap.newKeySet<String>()
     private val checking = ConcurrentHashMap.newKeySet<String>()
 
-    fun answer(projectId: String): Boolean? {
+    fun isOnThisMac(projectId: String): Boolean? {
         if (projectId !in confirmed || folders.isForeign(accountId, projectId)) return check(projectId)
         if (checking.add(projectId)) {
             runCatching { background.execute { try { check(projectId) } finally { checking -= projectId } } }

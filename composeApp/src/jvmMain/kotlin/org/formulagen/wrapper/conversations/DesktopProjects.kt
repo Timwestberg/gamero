@@ -123,12 +123,16 @@ internal class ProjectFolderPublisher(
         WireProjectFolder(folder.id, folder.name, if (folder.role == FolderRole.CONTEXT) readableBy() else emptyList(), folder.role)
     }
 
-    /** The project as the account has it, remembered; null when it runs on another computer. */
-    private fun read(projectId: String): CompanionProject? = try {
-        val project = api.project(projectId)
-        if (project.computerId != hostId) { store.foreign(accountId, projectId); null } else project.also { store.claimed(accountId, it) }
-    } catch (error: HovelStatusException) {
-        if (error.final) store.foreign(accountId, projectId)
-        null
+    /** The project as the account has it, remembered unless a newer answer was; null when it runs on another computer. */
+    private fun read(projectId: String): CompanionProject? {
+        val request = store.requestSequence(accountId, projectId)
+        return try {
+            val project = api.project(projectId).takeIf { it.computerId == hostId }
+            store.answered(accountId, projectId, project, request)
+            project
+        } catch (error: HovelStatusException) {
+            if (error.final) store.answered(accountId, projectId, null, request)
+            null
+        }
     }
 }

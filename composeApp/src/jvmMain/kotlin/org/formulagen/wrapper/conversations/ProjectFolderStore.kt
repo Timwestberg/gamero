@@ -24,12 +24,15 @@ internal data class LocalFolder(val id: String, val name: String, val path: Path
  * maps `(projectId, folderId)` to a path. Only the Mac's folder picker ([picker]) adds a folder: a page
  * can ask for the picker, never name a path.
  *
- * It also remembers what the account has of each project: the revision this Mac last saw, and
- * whether its folders still need publishing (`PUT /projects/:id/folders`).
+ * It also remembers what the account has of each project: the revision this Mac last saw, whether its folders still
+ * need publishing (`PUT /projects/:id/folders`), and whether it runs on this Mac. Answers about where a project runs
+ * are ordered by their requests ([requestSequence], [answered]): the answer to the newer request wins, whichever way
+ * it goes.
  */
 internal class ProjectFolderStore(private val root: Path, private val picker: FolderPicker) {
-    /** How many times each `accountId/projectId` was marked foreign since launch: see [claimedUnlessMarked]. */
-    private val foreignMarks = HashMap<String, Long>()
+    /** Per `accountId/projectId`, since launch: the last request sequence handed out, and the newest one answered. */
+    private val requested = HashMap<String, Long>()
+    private val answeredUpTo = HashMap<String, Long>()
 
     /** [projectId]'s folders, working first. */
     @Synchronized fun folders(accountId: String, projectId: String): List<LocalFolder> =
@@ -86,10 +89,15 @@ internal class ProjectFolderStore(private val root: Path, private val picker: Fo
     }
 
     /**
-     * The account's [project] as a claim or a read gave it: its revision, and whether its folders are this Mac's.
-     * When the account lists other folders than these (the project moved away and back), they are published again.
+     * The account's [project] as a claim or a read just gave it, newer than any answer still on its way: its revision,
+     * and that its folders are this Mac's. When the account lists other folders than these (the project moved away and
+     * back), they are published again.
      */
     @Synchronized fun claimed(accountId: String, project: CompanionProject) {
+        answered(accountId, project.id, project, requestSequence(accountId, project.id))
+    }
+
+    private fun recordClaimed(accountId: String, project: CompanionProject) {
         val id = key(project.id)
         val record = read(accountId)
         val stored = record.projects[id] ?: StoredProject()
@@ -107,25 +115,36 @@ internal class ProjectFolderStore(private val root: Path, private val picker: Fo
         write(accountId, record.with(id, project.copy(revision = revision, published = unchanged)))
     }
 
-    /** The account refused [projectId] to this Mac: its folders here answer `failed` until a claim says otherwise. */
+    /**
+     * The account refused [projectId] to this Mac just now, newer than any answer still on its way: its folders here
+     * answer `failed` until a newer answer says otherwise.
+     */
     @Synchronized fun foreign(accountId: String, projectId: String) {
+        answered(accountId, projectId, null, requestSequence(accountId, projectId))
+    }
+
+    private fun recordForeign(accountId: String, projectId: String) {
         val id = key(projectId)
-        foreignMarks.merge("$accountId/$id", 1L, Long::plus)
         val record = read(accountId)
         write(accountId, record.with(id, (record.projects[id] ?: StoredProject()).copy(foreign = true)))
     }
 
-    /** The count [claimedUnlessMarked] compares: read it before asking the account. */
-    @Synchronized fun foreignMark(accountId: String, projectId: String): Long = foreignMarks["$accountId/${key(projectId)}"] ?: 0L
+    /** The sequence of a new request to the account about where [projectId] runs: take it before asking. */
+    @Synchronized fun requestSequence(accountId: String, projectId: String): Long =
+        requested.merge("$accountId/${key(projectId)}", 1L, Long::plus)!!
 
     /**
-     * [claimed], from an answer asked for when [foreignMark] was [mark]. A foreign mark made since is the newer word, so
-     * the answer changes nothing then. True when [project] is recorded as this Mac's.
+     * The account's answer to request [sequence] about [projectId]: [project] when it runs on this Mac, null when it runs
+     * on another computer. It is recorded only when no answer to a newer request was, so the newer answer wins either
+     * way. True when the project is recorded as this Mac's afterwards.
      */
-    @Synchronized fun claimedUnlessMarked(accountId: String, project: CompanionProject, mark: Long): Boolean {
-        if (foreignMark(accountId, project.id) != mark) return !isForeign(accountId, project.id)
-        claimed(accountId, project)
-        return true
+    @Synchronized fun answered(accountId: String, projectId: String, project: CompanionProject?, sequence: Long): Boolean {
+        val key = "$accountId/${key(projectId)}"
+        if (sequence > (answeredUpTo[key] ?: 0L)) {
+            answeredUpTo[key] = sequence
+            if (project != null) recordClaimed(accountId, project) else recordForeign(accountId, projectId)
+        }
+        return !isForeign(accountId, projectId)
     }
 
     /** Whether [projectId] runs on another computer, as far as this Mac knows. */
