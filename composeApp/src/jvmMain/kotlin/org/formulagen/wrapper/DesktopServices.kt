@@ -13,6 +13,7 @@ import org.formulagen.wrapper.bridge.PetCapability
 import org.formulagen.wrapper.bridge.PetMethods
 import org.formulagen.wrapper.bridge.ProviderCapability
 import org.formulagen.wrapper.bridge.ProviderMethods
+import org.formulagen.wrapper.bridge.guardedBy
 import org.formulagen.wrapper.bridge.ApprovalDeviceMethods
 import org.formulagen.wrapper.bridge.ApprovalMethods
 import org.formulagen.wrapper.bridge.ConversationVoiceMethods
@@ -105,7 +106,7 @@ internal class DesktopServices private constructor(
     /** The product capability packs [product] registers with the bridge. */
     fun packs(product: String): List<CapabilityPack> =
         desktopProductPacks(product, companion?.let(::HovelCompanionCapability), providers, pet, games, conversations?.projects,
-            hostContract, conversationVoice)
+            hostContract, conversationVoice, pageCheck = hostContract::requireCurrentPage)
 
     /**
      * The page's document context ended: forget its contract, close its game, void a pending approval and let go of
@@ -225,7 +226,8 @@ internal class DesktopServices private constructor(
  * companion and the companion projects capabilities: `project` (a project's folders on this Mac), the `host.contract`
  * handshake, `conversationVoice` (voice in conversations, on a Mac with them) and phone `approvals`, which desktop never
  * supports. A missing implementation registers as `Unsupported`, so its methods answer `unsupported` instead of
- * `unknown-method`.
+ * `unknown-method`. [pageCheck] runs before every `companion.*`, `project.*` and `providers.*` call, the methods whose
+ * answers changed in contract 3 ([DesktopHostContract.requireCurrentPage]).
  */
 internal fun desktopProductPacks(
     product: String,
@@ -236,16 +238,17 @@ internal fun desktopProductPacks(
     projects: ProjectCapability? = null,
     hostContract: HostContractCapability? = null,
     conversationVoice: ConversationVoiceCapability? = null,
+    pageCheck: () -> Unit = {},
 ): List<CapabilityPack> = buildList {
     if (product == HOVEL_PRODUCT) {
-        add(CompanionMethods.pack(supportedIfPresent(companion)))
-        add(ProjectMethods.pack(supportedIfPresent(projects)))
+        add(CompanionMethods.pack(supportedIfPresent(companion)).guardedBy(pageCheck))
+        add(ProjectMethods.pack(supportedIfPresent(projects)).guardedBy(pageCheck))
         add(ConversationVoiceMethods.pack(supportedIfPresent(conversationVoice)))
         add(ApprovalMethods.pack(Capability.Unsupported))
         add(ApprovalDeviceMethods.pack(Capability.Unsupported))
         add(HostContractMethods.pack(supportedIfPresent(hostContract)))
     }
-    add(ProviderMethods.pack(supportedIfPresent(providers)))
+    add(ProviderMethods.pack(supportedIfPresent(providers)).guardedBy(pageCheck))
     add(PetMethods.pack(supportedIfPresent(pet)))
     add(GameMethods.pack(supportedIfPresent(games)))
 }

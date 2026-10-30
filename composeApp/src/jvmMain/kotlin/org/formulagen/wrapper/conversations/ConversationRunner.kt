@@ -41,7 +41,9 @@ internal fun interface MessageEngine {
  *
  * - **Connection:** it holds the host event stream, reconnecting with backoff, and after [idle] with no line
  *   (the server's own heartbeats included); and sends a heartbeat every [heartbeatEvery] (readiness, the
- *   provider directory and usage), whose answer goes to [onHeartbeat] (memory jobs ride it).
+ *   provider directory and usage), whose answer goes to [onHeartbeat] (memory jobs ride it). A heartbeat the server
+ *   answers 409 `update-required` was still stored, so this Mac reads as online and the page asks the person to
+ *   update; [status] says so, no memory job arrives, and the schedule and the conversation routes go on.
  * - **Claiming:** `work.available` wakes that conversation's [Session], which claims its next message with a
  *   claim id journaled first ([ConversationStore.journal]), runs it through the [engine], and settles it. One
  *   message runs at a time per conversation; at most [maxRunning] conversations run at once, and the others
@@ -135,7 +137,7 @@ internal class ConversationRunner(
                 status(when { older.failing -> SERVICE_OLDER; connected -> CONNECTED; else -> CONNECTING })
                 runCatching { onHeartbeat(response) }
                     .onFailure { log(LogLevel.Warn, "conversations", "A heartbeat's memory jobs could not run", it) }
-            }.onFailure { status(OFFLINE) }
+            }.onFailure { status(if (it is HovelRejectedException && it.code == UPDATE_REQUIRED_CODE) MAC_TOO_OLD else OFFLINE) }
             // A service older than this Mac answers none of it: everything waits, journaled, until the wait ends.
             if (!older.blocked) {
                 pendingInOrder().forEach { session(it.conversationId).retry(it) }
@@ -576,6 +578,8 @@ internal class ConversationRunner(
         const val OFFLINE = "Server unavailable; messages wait on the server"
         const val UPDATE_REQUIRED = "Update Hovel on this Mac to run every message in its conversations"
         const val SERVICE_OLDER = "Hovel's service is older than this Mac; messages wait until it updates"
+        /** The heartbeat answered `update-required`: the server needs a newer contract than this Mac's. */
+        const val MAC_TOO_OLD = "Update Hovel on this Mac: the server needs a newer version"
         /** The longest wait before asking again: after claim answers this build cannot read, or a service older than it. */
         val MAX_RETRY_WAIT = 10.minutes
         /** The contract's refusal code for a client too old for what it asked for. */

@@ -497,7 +497,13 @@ token. The log lines are `latency endpoint_to_posted_ms` and
 ### `host.contract`
 
 `DesktopHostContract` answers the page's contract with `HovelContract.CURRENT`
-and keeps the page's for its context. `providers.list` leaves out any runtime
+(3) and keeps the page's for its context. A page below contract 3
+(`HovelContract.COMPANIONS_ONLY`, the contract's
+`HOVEL_CONTRACT_FEATURES.companionsOnly`) is from before step E: the handshake
+answers it `failed` with the update message (`BridgeUpdateRequiredException`),
+and so does every `companion.*`, `project.*` and `providers.*` call in that
+context (`requireCurrentPage`, through `desktopProductPacks`' `pageCheck`). A
+context that never traded contracts is not refused. `providers.list` leaves out any runtime
 newer than the page's contract (`HovelContract.runtimesFor`, from
 `HovelContract.RUNTIMES`, which mirrors the server's `HOVEL_CONTRACT_RUNTIMES`).
 Every runtime arrived in the first contract, so nothing is left out yet.
@@ -569,6 +575,7 @@ person can retry it.
 | Status line "Connection failed. Check the native configuration, Keychain approval and server." | A `prepareConnection` or `activateConnection` failure, or an unknown method name, other than a cancellation. Failures before that point (a closed companion, another call pending) leave the status line unchanged and reach the page only as an envelope. This status replaces the specific error, so the causes below never reach the window. |
 | (not shown) "This native profile belongs to another account" | Thrown when `registration.json` has a different `ownerId`. Users see only the two generic messages above; check `registration.json` in the data directory. |
 | Status line "Server unavailable; messages wait on the server" | A heartbeat failed. The runner keeps trying every 10 seconds; queued messages wait on the server. |
+| Status line "Update Hovel on this Mac: the server needs a newer version" | The heartbeat answered 409 `update-required`: the server stored the beat, so this Mac reads as online and the page asks the person to update, but sends no memory jobs. The runner keeps beating, and conversation routes keep working while the server serves them. |
 | Status line "Update Hovel on this Mac to run every message in its conversations" | A claim answered `mac-update-required`: a message needs a newer contract. It stays queued until this Mac updates or it expires. |
 | A message settled `reconciliation-required` | Its turn may have started before a crash or an error the runner could not classify. It never runs again unless the person retries it. |
 

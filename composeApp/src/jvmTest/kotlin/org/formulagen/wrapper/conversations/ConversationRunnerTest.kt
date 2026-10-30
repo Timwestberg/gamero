@@ -251,6 +251,20 @@ class ConversationRunnerTest {
         eventually { statuses.lastOrNull() == ConversationRunner.OFFLINE }
     }
 
+    @Test fun aHeartbeatTheServerSaysIsTooOldAsksForAnUpdateAndConversationsGoOn() {
+        server.heartbeatUpdateRequired = true
+        runner.start(); waitConnected()
+        eventually { server.heartbeats.size >= 2 }
+        eventually { statuses.lastOrNull() == ConversationRunner.MAC_TOO_OLD }
+        assertTrue(ConversationRunner.OFFLINE !in statuses, "the server answered; it is not unavailable")
+        assertEquals(emptyList(), heartbeats, "a refused heartbeat brings no memory jobs")
+        // Its companion routes still serve this Mac.
+        val talk = TestConversation()
+        val message = queue(talk)
+        server.emit(HostStreamEvent.WorkAvailable(talk.id))
+        eventually { server.settled(message) == MessageState.ANSWERED }
+    }
+
     @Test fun theStreamReconnectsAfterAFailure() {
         server.streamFailures = 2
         runner.start()

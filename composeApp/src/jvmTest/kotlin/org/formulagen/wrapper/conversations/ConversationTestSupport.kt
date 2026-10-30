@@ -166,9 +166,13 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
 
     fun threads(): List<ConversationThread> = checkpoints.filterIsInstance<MessageCheckpoint.ThreadUpserted>().map { it.thread }
 
+    /** As hovel-service answers a Mac below the heartbeat's contract: the beat is stored, then refused. */
+    @Volatile var heartbeatUpdateRequired = false
+
     override fun heartbeat(beat: HostHeartbeat): JsonObject {
         if (offline) throw java.io.IOException("offline")
         heartbeats += beat
+        if (heartbeatUpdateRequired) throw HovelRejectedException(ConversationRunner.UPDATE_REQUIRED_CODE)
         return buildJsonObject { put("ok", true) }
     }
 

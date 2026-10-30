@@ -223,11 +223,27 @@ class ConversationWireTest {
         val contract = DesktopHostContract()
         assertEquals(HovelContract.CURRENT, contract.contract(7))
         assertEquals(7, contract.pageContract)
+        contract.requireCurrentPage()
         contract.invalidate()
         assertNull(contract.pageContract)
         val limits = Json.parseToJsonElement(HostBridgeFixtures.LIMITS).jsonObject
         assertEquals(limits.getValue("HOVEL_CONTRACT").jsonPrimitive.int, HovelContract.CURRENT)
         assertEquals(limits.getValue("HOVEL_CONTRACT_HEADER").jsonPrimitive.content, HovelContract.HEADER)
+        val features = limits.getValue("HOVEL_CONTRACT_FEATURES").jsonObject.mapValues { it.value.jsonPrimitive.int }
+        assertEquals(features, HovelContract.FEATURES)
+        assertEquals(features.getValue("companionsOnly"), HovelContract.COMPANIONS_ONLY)
+    }
+
+    @Test fun aPageFromBeforeContractThreeIsAskedToUpdate() = kotlinx.coroutines.runBlocking<Unit> {
+        val contract = DesktopHostContract()
+        for (page in 1 until HovelContract.COMPANIONS_ONLY) {
+            val refusal = assertFailsWith<BridgeUpdateRequiredException> { contract.contract(page) }
+            assertEquals(BridgeUpdateRequiredException.MESSAGE, refusal.message)
+            assertEquals(page, contract.pageContract, "kept, so the context's other calls are refused too")
+            assertFailsWith<BridgeUpdateRequiredException> { contract.requireCurrentPage() }
+        }
+        assertEquals(HovelContract.CURRENT, contract.contract(HovelContract.COMPANIONS_ONLY))
+        contract.requireCurrentPage()
     }
 
     @Test fun companionLimitsMirrorTheContract() {
