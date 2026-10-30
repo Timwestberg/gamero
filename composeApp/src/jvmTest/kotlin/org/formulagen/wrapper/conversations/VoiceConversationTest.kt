@@ -236,6 +236,7 @@ class VoiceConversationTest {
         assertEquals(HearingState.LISTENING, started.hearing.state)
         assertTrue(ear.listening)
         ear.hear("  what   time is it ")
+        eventually("posted") { server.sent.isNotEmpty() }
         val (conversationId, sent) = server.sent.single()
         assertEquals(talk.id, conversationId)
         assertEquals(MessageSend(sent.id, emptyList(), "what time is it", null), sent, "the owner's message, in the main conversation")
