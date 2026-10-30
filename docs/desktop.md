@@ -16,7 +16,9 @@ From the repository root:
 ./gradlew :composeApp:jvmTest :composeApp:jvmJar --console=plain
 ```
 
-To run Hovel, set `GAMERO_PRODUCT=hovel`. Without it the app runs as the games
+### Run Hovel
+
+Set `GAMERO_PRODUCT=hovel`. Without it the app runs as the games
 product: the companion pack and the conversation runner are off, and Connect
 computer stays disabled. The full Hovel launch:
 
