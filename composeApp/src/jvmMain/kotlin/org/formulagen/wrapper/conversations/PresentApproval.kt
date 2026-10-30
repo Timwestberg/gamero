@@ -14,24 +14,6 @@ import org.formulagen.wrapper.chat.wholePath
 import org.formulagen.wrapper.util.shortened
 
 /**
- * Text that may leave the Mac, as event-contracts `shareableText` checks it: no C0, C1 or
- * bidirectional controls, and no absolute path (`/` or `~` at the start or after whitespace, a quote
- * or `=`, `$HOME`, or a `file://` URL). Whitespace here is JavaScript's `\s` and more, so the Mac is
- * never laxer than the server.
- */
-internal object ShareableText {
-    private val CONTROL_OR_BIDI = Regex("[\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069]")
-    private val ABSOLUTE_PATH = Regex(
-        "(?:^|[\\t\\n\\u000b\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff\"'`=])[/~]|\\$\\{?HOME\\b|file://",
-        RegexOption.IGNORE_CASE,
-    )
-
-    /** Whether [text] may leave the Mac within [max] characters (and at least [min]). */
-    fun isShareable(text: String, max: Int, min: Int = 1): Boolean =
-        text.length in min..max && !CONTROL_OR_BIDI.containsMatchIn(text) && !ABSOLUTE_PATH.containsMatchIn(text)
-}
-
-/**
  * A project's folders as the phone names them: a path inside the working folder becomes `./…` (the
  * folder itself `.`), one inside a context folder `[name]/…`, and anything else stays unnamed.
  * Each folder is matched as given and as the file system resolves it (`/tmp` is `/private/tmp`), and
@@ -76,13 +58,13 @@ internal fun presentApproval(request: ApprovalRequest, folders: List<LocalFolder
     val lines = when (val subject = request.subject) {
         is ApprovalSubject.Edit -> listOf("${subject.verb} " + subject.files.map { inside(it) ?: return macOnly }.joinToString(", "))
         is ApprovalSubject.Command -> buildList {
-            addAll(labels.scrub(subject.command).lines())
+            addAll(labels.scrub(subject.command).splitLines())
             subject.cwd?.let { add("In ${inside(it) ?: return macOnly}") }
             subject.needs?.let { add("Needs access to ${inside(it) ?: return macOnly}") }
-            subject.reason?.let { addAll(labels.scrub(it).lines()) }
+            subject.reason?.let { addAll(labels.scrub(it).splitLines()) }
         }
-        is ApprovalSubject.Connector -> listOf("${subject.server} · ${subject.tool}") + labels.scrub(subject.input).lines()
-        is ApprovalSubject.Other -> listOf(subject.name) + labels.scrub(subject.description).lines()
+        is ApprovalSubject.Connector -> listOf("${subject.server} · ${subject.tool}") + labels.scrub(subject.input).splitLines()
+        is ApprovalSubject.Other -> listOf(subject.name) + labels.scrub(subject.description).splitLines()
     }
     return anywhere(lines) ?: macOnly
 }
@@ -90,7 +72,7 @@ internal fun presentApproval(request: ApprovalRequest, folders: List<LocalFolder
 /** A native dialog of the engine's own (start of work, a stage, the resume review) as the phone shows it. */
 internal fun presentDialog(dialog: NativeDialog<*>, folders: List<LocalFolder>, companionName: String): ApprovalPresentation {
     val labels = FolderLabels(folders)
-    return anywhere((listOf(dialog.title) + dialog.lines).flatMap { labels.scrub(it).lines() })
+    return anywhere((listOf(dialog.title) + dialog.lines).flatMap { labels.scrub(it).splitLines() })
         ?: macOnly(companionName, "continue its work")
 }
 
