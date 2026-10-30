@@ -551,7 +551,8 @@ internal class TalkLoop(
 
     /**
      * Start the armed session's capture. A page's arm first waits briefly for a capture that is still letting go. A
-     * capture that cannot start (the microphone is someone else's, or still letting go) ends the session as busy.
+     * capture that cannot start (the microphone is someone else's, or still letting go) ends the session as busy. One
+     * that starts after the session ended (the row's icon, while a page's capture was starting) lets the microphone go.
      */
     private fun launchCapture(wait: Boolean) {
         val ear = hearing
@@ -586,7 +587,11 @@ internal class TalkLoop(
             },
             onFrame = { voicedMs, chunkMs, prob -> synchronized(lock) { onHearingFrameLocked(voicedMs, chunkMs, prob) } },
         )
-        if (!started) synchronized(lock) {
+        if (started) {
+            synchronized(lock) { if (!talkOn) ear.endSession() }
+            return
+        }
+        synchronized(lock) {
             if (!talkOn) return@synchronized
             talkOn = false
             hearingNotice = MICROPHONE_IN_USE

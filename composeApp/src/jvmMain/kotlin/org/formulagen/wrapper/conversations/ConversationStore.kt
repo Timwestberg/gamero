@@ -20,6 +20,7 @@ import org.formulagen.wrapper.bridge.BrainAttemptState
 import org.formulagen.wrapper.bridge.BrainLimits
 import org.formulagen.wrapper.bridge.BrainRoleSnapshot
 import org.formulagen.wrapper.bridge.BrainSource
+import org.formulagen.wrapper.bridge.CompanionLimits
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.bridge.brainJson
 import org.formulagen.wrapper.bridge.trimEcma
@@ -130,6 +131,7 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
         if (held == null) { channel.close(); error("Another Hovel runs this account's conversations") }
         lock = channel to held
         loadJournal()
+        pruneStopMarks()
     }
 
     @Synchronized override fun close() {
@@ -240,6 +242,30 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
                     }
                 }.onFailure { log(LogLevel.Warn, "conversations", "Skipped an unreadable claim journal entry: $file", it) }.getOrNull()
                 if (entry != null) pending[entry.claimId] = entry
+            }
+        }
+    }
+
+    /**
+     * Drop stop marks older than a queued message lives ([CompanionLimits.QUEUED_MESSAGE_MS]): the account has expired
+     * those messages, so no claim comes. A mark whose message has a claim journaled stays until that claim settles. One
+     * that cannot be read or removed waits for the next launch.
+     */
+    private fun pruneStopMarks(now: Long = System.currentTimeMillis()) {
+        if (!Files.isDirectory(base, NOFOLLOW_LINKS)) return
+        val claimed = pending.values.mapNotNullTo(HashSet()) { it.messageId }
+        val folders = Files.list(base).use { it.toList() }
+            .filter { Files.isDirectory(it, NOFOLLOW_LINKS) && SharedRules.isRecordId(it.fileName.toString()) }
+        for (folder in folders) {
+            val marks = folder.resolve(STOPS)
+            if (!Files.isDirectory(marks, NOFOLLOW_LINKS)) continue
+            for (mark in Files.list(marks).use { it.toList() }) {
+                if (mark.fileName.toString().removeSuffix(".json") in claimed) continue
+                runCatching {
+                    if (now - Files.getLastModifiedTime(mark, NOFOLLOW_LINKS).toMillis() > CompanionLimits.QUEUED_MESSAGE_MS) {
+                        Files.deleteIfExists(mark)
+                    }
+                }.onFailure { log(LogLevel.Warn, "conversations", "A stale stop mark was kept: $mark", it) }
             }
         }
     }

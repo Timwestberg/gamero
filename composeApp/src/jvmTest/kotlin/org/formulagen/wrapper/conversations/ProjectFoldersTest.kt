@@ -245,5 +245,37 @@ class ProjectFoldersTest {
         server.projects[other] = CompanionProject(false, id(), id(), emptyList(), other, "Project", 2)
         assertEquals(false, ConversationHost.projectOnThisMac(server, store, account, server.hostId, other), "it moved to another Mac")
         assertTrue(store.isForeign(account, other))
+
+        // A newer read marks it foreign while the account's older answer is on its way: the mark stands.
+        server.projects[other] = CompanionProject(false, id(), server.hostId, emptyList(), other, "Project", 3)
+        val racing = object : ConversationApi by server {
+            override fun project(projectId: String) = server.project(projectId).also { store.foreign(account, projectId) }
+        }
+        assertEquals(false, ConversationHost.projectOnThisMac(racing, store, account, server.hostId, other))
+        assertTrue(store.isForeign(account, other), "an answer asked for before the mark never clears it")
+    }
+
+    @Test fun aConfirmedProjectAnswersAtOnceUntilMarkedForeignAndIsCheckedOnceAtATime() {
+        val server = FakeServer()
+        val other = id()
+        server.projects[other] = CompanionProject(false, id(), server.hostId, emptyList(), other, "Project", 1)
+        val checks = mutableListOf<Runnable>()
+        val onThisMac = ProjectsOnThisMac(server, store, account, server.hostId) { checks += it }
+        assertEquals(true, onThisMac.answer(other), "the account confirms it")
+        assertTrue(checks.isEmpty())
+        assertEquals(true, onThisMac.answer(other))
+        assertEquals(true, onThisMac.answer(other))
+        assertEquals(1, checks.size, "one background check per project at a time")
+        checks.removeFirst().run()
+        assertEquals(true, onThisMac.answer(other))
+        assertEquals(1, checks.size, "the next check waits for the last one to finish")
+
+        // A read elsewhere finds it moved: the mark sends the answer back to the account.
+        server.projects[other] = CompanionProject(false, id(), id(), emptyList(), other, "Project", 2)
+        store.foreign(account, other)
+        assertEquals(false, onThisMac.answer(other))
+        assertEquals(1, checks.size, "no answer from memory, so no new background check")
+        checks.removeFirst().run()
+        assertTrue(store.isForeign(account, other))
     }
 }

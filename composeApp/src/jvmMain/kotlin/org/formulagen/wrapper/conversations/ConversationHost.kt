@@ -2,6 +2,7 @@ package org.formulagen.wrapper.conversations
 
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import org.formulagen.wrapper.approvals.ApprovalBroker
 import org.formulagen.wrapper.approvals.NativeDialogs
@@ -81,16 +82,8 @@ internal class ConversationHost(
             val runner = ConversationRunner(api, store, engine, approvals, folders, publisher, directory::heartbeat, connection.heartbeat,
                 connection.status, replies = voice ?: ReplyListeners.NONE)
             owned += runner
-            // A project the account confirmed answers at once and is checked again in the background, so a slow
-            // server never hides it.
-            val confirmed = ConcurrentHashMap.newKeySet<String>()
-            val verify = { projectId: String ->
-                projectOnThisMac(api, folders, registration.ownerId, registration.id, projectId)
-                    .also { if (it == true) confirmed += projectId else if (it == false) confirmed -= projectId }
-            }
-            running = Running(registration.ownerId, publisher, engine::readableBy) { projectId ->
-                if (projectId in confirmed) true.also { runCatching { publishing.execute { verify(projectId) } } } else verify(projectId)
-            }
+            val onThisMac = ProjectsOnThisMac(api, folders, registration.ownerId, registration.id, publishing)
+            running = Running(registration.ownerId, publisher, engine::readableBy, onThisMac::answer)
             runner.start()
             voice?.connected(heardTurns(api, runner))
             return AutoCloseable {
@@ -115,8 +108,10 @@ internal class ConversationHost(
          */
         internal fun projectOnThisMac(api: ConversationApi, folders: ProjectFolderStore, accountId: String, hostId: String,
             projectId: String): Boolean? = try {
+            val mark = folders.foreignMark(accountId, projectId)
             val project = api.project(projectId)
-            if (project.computerId == hostId) { folders.claimed(accountId, project); true }
+            // A foreign mark made while the account answered is the newer word, and this answer never clears it.
+            if (project.computerId == hostId) folders.claimedUnlessMarked(accountId, project, mark)
             else { folders.foreign(accountId, projectId); false }
         } catch (refusal: HovelStatusException) {
             if (!refusal.final) null else { folders.foreign(accountId, projectId); false }
@@ -127,4 +122,33 @@ internal class ConversationHost(
         /** Where the runner's Grok runtimes keep their bindings: apart from team chat's, so neither prunes the other's. */
         fun grokRoot(providerRoot: Path): Path = providerRoot.resolve("conversation-runtimes")
     }
+}
+
+/**
+ * Whether each project runs on this Mac ([answer]), as the account says. A project the account confirmed, and not marked
+ * foreign since, answers at once and is checked again in the background, one check per project at a time, so a slow
+ * server never hides it. Anything else waits for the account.
+ */
+internal class ProjectsOnThisMac(
+    private val api: ConversationApi,
+    private val folders: ProjectFolderStore,
+    private val accountId: String,
+    private val hostId: String,
+    private val background: Executor,
+) {
+    private val confirmed = ConcurrentHashMap.newKeySet<String>()
+    private val checking = ConcurrentHashMap.newKeySet<String>()
+
+    fun answer(projectId: String): Boolean? {
+        if (projectId !in confirmed || folders.isForeign(accountId, projectId)) return check(projectId)
+        if (checking.add(projectId)) {
+            runCatching { background.execute { try { check(projectId) } finally { checking -= projectId } } }
+                .onFailure { checking -= projectId }
+        }
+        return true
+    }
+
+    private fun check(projectId: String): Boolean? =
+        ConversationHost.projectOnThisMac(api, folders, accountId, hostId, projectId)
+            .also { if (it == true) confirmed += projectId else if (it == false) confirmed -= projectId }
 }

@@ -33,6 +33,8 @@ internal class FakeEar : Hearing {
     @Volatile var muted = false
     /** Captures that will not start, as a microphone still letting go. */
     @Volatile var refuseSessions = false
+    /** Runs as a page's capture is about to start, while the last one lets go. */
+    @Volatile var beforeSession: (() -> Unit)? = null
     val sessions = AtomicInteger()
 
     override fun down(onPartial: (String) -> Unit, onFailed: (String) -> Unit): Boolean {
@@ -63,7 +65,7 @@ internal class FakeEar : Hearing {
     override fun noteEmberSpeaking(text: String) {}
     override fun noteEmberSilent(text: String) {}
     override fun endSession() { utterance = null }
-    override fun awaitStopped(timeoutMs: Long) {}
+    override fun awaitStopped(timeoutMs: Long) { beforeSession?.invoke() }
     override fun close() { utterance = null; holding = null }
 
     val listening: Boolean get() = utterance != null && !muted
@@ -486,6 +488,39 @@ class VoiceConversationTest {
         server.queue(talk.id, Queued(talk.message("and run the tests", messageId = second)) { claimId, claimed -> talk.claim(claimId, claimed, document) })
         mac.runner.wake(talk.id)
         eventually("the newer turn was not given up") { server.settled(second) == MessageState.ANSWERED }
+    }
+
+    @Test fun aTurnTalkSaidIsWaitingStillRunsWhenTalkEndsAndIsNotReadAloud() {
+        server.onSend = { _, _ -> null }
+        hearing(HearingAction.HANDS_FREE)
+        ear.hear("start the build")
+        eventually("the page is told it waits") { status().hearing.notice == TALK_QUEUED }
+        val waiting = heardId()
+        hearing(HearingAction.OFF)
+        server.queue(talk.id, Queued(talk.message("start the build", messageId = waiting)) { claimId, claimed -> talk.claim(claimId, claimed, document) })
+        mac.runner.wake(talk.id)
+        eventually("it runs as the person's message") { server.settled(waiting) == MessageState.ANSWERED }
+        assertFalse(mac.store.stopsOnClaim(talk.id, waiting))
+        assertTrue(speaker.pieces.isEmpty(), "Talk ended, so its reply is not said: ${speaker.pieces}")
+    }
+
+    @Test fun aTurnTalkSaidIsWaitingStillRunsAfterTheVoiceMovesAndHovelQuits() {
+        server.onSend = { _, _ -> null }
+        hearing(HearingAction.HANDS_FREE)
+        ear.hear("start the build")
+        eventually("the page is told it waits") { status().hearing.notice == TALK_QUEUED }
+        val waiting = heardId()
+        hearing(HearingAction.OFF)
+        val other = TestConversation().id
+        assertEquals(other, hearing(HearingAction.HANDS_FREE, other).conversationId, "the voice moved to another conversation")
+        voice.pageEnded()
+        mac.close()
+        voice.close()
+        voice = voice()
+        server.queue(talk.id, Queued(talk.message("start the build", messageId = waiting)) { claimId, claimed -> talk.claim(claimId, claimed, document) })
+        mac = Mac(root)
+        mac.runner.wake(talk.id)
+        eventually("it runs after the relaunch") { server.settled(waiting) == MessageState.ANSWERED }
     }
 
     @Test fun aThreadReplyNeverMovesTheVoice() {
