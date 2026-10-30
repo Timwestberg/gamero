@@ -10,6 +10,7 @@ import org.formulagen.wrapper.bridge.WorkflowStep
 import org.formulagen.wrapper.bridge.trimEcma
 import org.formulagen.wrapper.brain.RunRecord
 import org.formulagen.wrapper.brain.withEntry
+import org.formulagen.wrapper.util.shortened
 
 /*
  * Threads as pure functions of a conversation's record. An attempt is a thread: a task's first attempt
@@ -24,10 +25,7 @@ import org.formulagen.wrapper.brain.withEntry
  */
 internal fun threadTitle(role: String, task: String): String {
     val oneLine = task.map { if (it.code < 0x20 || it.code == 0x7F) ' ' else it }.joinToString("").replace(Regex(" {2,}"), " ").trimEcma()
-    val title = "$role · ${oneLine.ifEmpty { "task" }}"
-    if (title.length <= CompanionLimits.THREAD_TITLE) return title.trimEcma()
-    val cut = (CompanionLimits.THREAD_TITLE - 1).let { if (title[it - 1].isHighSurrogate()) it - 1 else it }
-    return (title.take(cut).trimEnd() + "…").trimEcma()
+    return "$role · ${oneLine.ifEmpty { "task" }}".shortened(CompanionLimits.THREAD_TITLE).trimEcma()
 }
 
 /**

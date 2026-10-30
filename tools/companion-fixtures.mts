@@ -264,6 +264,8 @@ if (c.deviceApproval) {
   add('device.devices', 'approvalDeviceList', c.approvalDeviceList, { devices: [s.pairedPhone] });
   add('device.pairingCode', 'devicePairingCode', c.devicePairingCode, { code: '042917', expiresAt: pending.pendingUntil });
   add('device.pairRequest', 'devicePairRequest', c.devicePairRequest, { code: '042917' });
+  add('device.pairLookup', 'devicePairLookup', c.devicePairLookup, { codeExpiresAt: pending.pendingUntil, device: pending });
+  add('device.pairConfirm', 'devicePairConfirm', c.devicePairConfirm, { code: '042917', deviceId: ids.device });
   fixtures['routes.device'] = { schema: 'routeTable', value: JSON.parse(canonical(c.HOVEL_COMPANION_ROUTES.device)) };
   fixtures['routes.deviceBase'] = { schema: 'routeBase', value: { base: c.HOVEL_DEVICE_BASE, tokenHeader: c.HOVEL_DEVICE_TOKEN_HEADER } };
 } else {

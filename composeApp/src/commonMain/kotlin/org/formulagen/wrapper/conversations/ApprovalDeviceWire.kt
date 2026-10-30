@@ -37,7 +37,26 @@ internal data class ApprovalDevice(
 @Serializable
 internal data class ApprovalDeviceList(val devices: List<ApprovalDevice>)
 
-/** `devicePairRequest`: what the person typed into a Mac's "Pair a phone…" dialog. */
+/** `PAIRING_REFUSAL_CODES`: why a Mac's lookup or pairing was refused, as the refusal body's `code` says. */
+internal object PairingRefusalCodes {
+    /** A confirmation whose code matched the named phone but ran out meanwhile (409). Not a wrong code. */
+    const val EXPIRED = "pairing-code-expired"
+
+    /** The account's Macs used up their wrong codes for the window (429). */
+    const val TOO_MANY_ATTEMPTS = "too-many-attempts"
+}
+
+/** `devicePairLookup`: the phone a typed code names, and when that code runs out. */
+@Serializable
+internal data class DevicePairLookup(val codeExpiresAt: String, val device: ApprovalDevice)
+
+/** `devicePairConfirm`: the person's confirmation, naming the phone the lookup found, so only that phone pairs. */
+@Serializable
+internal data class DevicePairConfirm(val code: String, val deviceId: String) {
+    init { require(DevicePairRequest.PAIRING_CODE.matches(code)) { "A pairing code is ${DevicePairRequest.PAIRING_CODE_DIGITS} digits" } }
+}
+
+/** `devicePairRequest`: what the person typed into a Mac's "Pair a phone…" dialog, to look the phone up. */
 @Serializable
 internal data class DevicePairRequest(val code: String) {
     init { require(PAIRING_CODE.matches(code)) { "A pairing code is $PAIRING_CODE_DIGITS digits" } }
