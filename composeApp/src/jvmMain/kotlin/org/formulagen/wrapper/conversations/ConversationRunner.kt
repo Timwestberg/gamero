@@ -166,11 +166,12 @@ internal class ConversationRunner(
                 val lines = api.openStream()
                 stream = lines
                 if (closed.get()) { lines.close(); return }
+                // The watchdog's clock starts before the stream reads as connected, so it never measures from an older line.
+                lastLine.set(now())
                 connected = true
                 // answers given while the stream was down close their dialogs now
                 later { approvals.catchUp() }
                 older.passed()
-                lastLine.set(now())
                 wait = firstBackoff.inWholeMilliseconds
                 status(CONNECTED)
                 lines.use { open -> HostEvents.read(open.lines().onEach { lastLine.set(now()) }, ::dispatch) }
