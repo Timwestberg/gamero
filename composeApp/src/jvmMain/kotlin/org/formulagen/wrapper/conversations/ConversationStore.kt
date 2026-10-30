@@ -266,14 +266,17 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
 
     /**
      * Drop stop marks older than a queued message lives ([CompanionLimits.QUEUED_MESSAGE_MS]): the account has expired
-     * those messages, so no claim comes. A mark whose message has a claim journaled stays until that claim settles. One
-     * that cannot be read or removed waits for the next launch.
+     * those messages, so no claim comes. A mark whose message has a claim journaled stays until that claim settles, and
+     * so does every mark of a conversation with a claim still being made, whose message is not known yet: the claim may
+     * land on any of them, however long this Mac was away. One that cannot be read or removed waits for the next launch.
      */
     private fun pruneStopMarks(now: Long = System.currentTimeMillis()) {
         if (!Files.isDirectory(base, NOFOLLOW_LINKS)) return
         val claimed = pending.values.mapNotNullTo(HashSet()) { it.messageId }
+        val claiming = pending.values.filter { it.messageId == null }.mapTo(HashSet()) { it.conversationId }
         val folders = Files.list(base).use { it.toList() }
             .filter { Files.isDirectory(it, NOFOLLOW_LINKS) && SharedRules.isRecordId(it.fileName.toString()) }
+            .filter { it.fileName.toString() !in claiming }
         for (folder in folders) {
             val marks = folder.resolve(STOPS)
             if (!Files.isDirectory(marks, NOFOLLOW_LINKS)) continue
