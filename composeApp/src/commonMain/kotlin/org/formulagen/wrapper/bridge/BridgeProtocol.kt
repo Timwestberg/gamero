@@ -56,7 +56,7 @@ class BridgeBusyException : IllegalStateException("Another call to this capabili
  */
 class BridgeUpdateRequiredException : IllegalStateException(MESSAGE) {
     companion object {
-        const val MESSAGE = "Update Hovel and reload this page to open this conversation. Your saved conversation has been kept."
+        const val MESSAGE = "Update Hovel and reload this page."
     }
 }
 
