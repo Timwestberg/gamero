@@ -55,8 +55,9 @@ internal data class VoicePickerState(
     }
 }
 
+/** The voice row: hidden unless the voice [serving] a conversation, Kokoro is the engine and it has voices. */
 internal fun voicePickerState(
-    chatOpen: Boolean,
+    serving: Boolean,
     kokoro: Boolean,
     voices: List<VoiceChoice>,
     selectedId: String,
@@ -68,7 +69,7 @@ internal fun voicePickerState(
     duplexMode: HearingDuplex = HearingDuplex.HALF,
     duplexReason: String = "default",
 ): VoicePickerState {
-    if (!chatOpen || !kokoro || voices.isEmpty()) return VoicePickerState.Hidden
+    if (!serving || !kokoro || voices.isEmpty()) return VoicePickerState.Hidden
     val selected = if (voices.any { it.id == selectedId }) selectedId else voices.first().id
     return VoicePickerState(
         visible = true,

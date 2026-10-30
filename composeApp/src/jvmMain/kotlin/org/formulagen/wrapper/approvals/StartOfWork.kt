@@ -11,14 +11,17 @@ import org.formulagen.wrapper.conversation.TeamMember
  * another member asks again. Not now, closing the dialog, a timeout or a cancel is never remembered.
  */
 internal class StartOfWork {
-    private data class Confirmed(val lease: String, val companionId: String, val folder: Path, val member: TeamMember)
+    private data class Confirmed(val conversationId: String, val projectId: String, val folder: Path, val member: TeamMember)
     private val confirmed = ConcurrentHashMap.newKeySet<Confirmed>()
 
     /** Whether this conversation already confirmed [member] working in [folder], without asking. */
-    fun isConfirmed(lease: String, companionId: String, folder: Path, member: TeamMember): Boolean =
-        Confirmed(lease, companionId, folder, member) in confirmed
+    fun isConfirmed(conversationId: String, projectId: String, folder: Path, member: TeamMember): Boolean =
+        Confirmed(conversationId, projectId, folder, member) in confirmed
 
-    fun remember(lease: String, companionId: String, folder: Path, member: TeamMember) { confirmed += Confirmed(lease, companionId, folder, member) }
+    /** The person chose Start working: this conversation does not ask again for exactly this. */
+    fun remember(conversationId: String, projectId: String, folder: Path, member: TeamMember) {
+        confirmed += Confirmed(conversationId, projectId, folder, member)
+    }
 }
 
 /** Not now is the default: Escape, Enter and closing the dialog choose it. */

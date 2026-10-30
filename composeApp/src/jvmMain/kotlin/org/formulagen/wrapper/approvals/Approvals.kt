@@ -80,16 +80,16 @@ internal data class ApprovalRequest(
 internal enum class ApprovalDecision { ALLOW_ONCE, ALLOW_FOR_CONVERSATION, DENY }
 
 /**
- * The seam between a working member's runtime and the native dialog. Blocks until the person
- * answers, [cancel] fires (the reply was stopped or the chat closed), or the dialog times out; the
- * last two are [ApprovalDecision.DENY]. [shown] runs when the dialog is on screen (a request may wait
+ * The seam between a working role's runtime and the native dialog. Blocks until the person
+ * answers, [cancel] fires (the run was stopped, or the phone answered first), or the dialog times
+ * out; the last two are [ApprovalDecision.DENY]. [shown] runs when the dialog is on screen (a request may wait
  * behind another dialog first). Only native code can answer: the page never sees the dialog.
  */
 internal fun interface ApprovalBroker {
     fun ask(request: ApprovalRequest, cancel: CancelSignal, shown: () -> Unit): ApprovalDecision
 }
 
-/** Fires once, from any thread: a stopped reply, a closed chat or a provider withdrawing its request. */
+/** Fires once, from any thread: a stopped run, an answer from elsewhere or a provider withdrawing its request. */
 internal class CancelSignal {
     private val fired = AtomicBoolean()
     private val listeners = CopyOnWriteArrayList<() -> Unit>()

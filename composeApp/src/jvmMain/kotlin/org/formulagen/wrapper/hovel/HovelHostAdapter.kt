@@ -176,8 +176,8 @@ private val EXTRACT_KIND = JsonPrimitive("extract")
 private val CODEX_RUNTIME = JsonPrimitive("codex")
 
 /**
- * Whether a memory job is this companion's to run. A job naming another `kind` or host-bridge
- * `runtimeId` is left for a companion that runs it. A job missing either field is not someone else's:
+ * Whether a memory job is this Mac's to run. A job naming another `kind` or host-bridge
+ * `runtimeId` is left for a computer that runs it. A job missing either field is not someone else's:
  * it is offered, refused by [hovelMemoryJobRequest] and shown as unreadable, so a renamed field
  * asks for an update instead of being skipped in silence.
  */

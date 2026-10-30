@@ -15,7 +15,7 @@ interface ProviderCapability {
      */
     suspend fun list(): ProviderList
 
-    /** The models a team member on [ProviderScope.runtimeId] may use. */
+    /** The models a role bound to [ProviderScope.runtimeId] may use. */
     suspend fun models(scope: ProviderScope): ProviderModels
 
     /** Shared subscription limits, without starting a model turn. Missing windows mean unknown. */

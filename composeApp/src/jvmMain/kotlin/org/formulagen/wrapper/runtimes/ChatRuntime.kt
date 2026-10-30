@@ -45,7 +45,7 @@ internal interface ChatRuntime : AutoCloseable {
      */
     fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle
 
-    /** End everything this runtime is running for chat now (teardown, watchdog, a closed view). Never blocks; safe to call repeatedly. */
+    /** End everything this runtime is running now (teardown, or a Stop of every turn). Never blocks; safe to call repeatedly. */
     fun release()
 }
 
@@ -69,9 +69,9 @@ internal data class TurnRequest(
 }
 
 /**
- * Where and for whom a member works: the project's [folders] (a working folder, and read-only context
- * folders the runtime was cleared to read), the [lease] a working process lives for (a chat view's
- * session id, or a conversation thread's id), the [companion]'s name and the [member].
+ * Where and for whom a role works: the project's [folders] (a working folder, and read-only context
+ * folders the runtime was cleared to read), the [lease] a working process lives for (a conversation
+ * thread's id), the [companion]'s name and the [member] the role is bound to.
  */
 internal data class WorkScope(val folders: ProjectFolders, val lease: String, val companion: String, val member: TeamMember) {
     /** A scope for one working folder and no context folders. */

@@ -52,9 +52,9 @@ import org.formulagen.wrapper.providers.claudeWorkEnvironment
 import org.formulagen.wrapper.util.text
 
 /**
- * Claude Code working in a companion's project folder, with exactly the player's own setup: one
+ * Claude Code working in a project's working folder, with exactly the player's own setup: one
  * long-lived `claude -p … --permission-prompt-tool stdio --append-system-prompt <working persona>`
- * per chat lease (a lease's working conversation is the runtime's, whichever Claude member sends),
+ * per lease (a conversation thread; its working conversation is the runtime's, whichever Claude role sends),
  * in the folder, with no `--safe-mode`, `--tools`, `--strict-mcp-config` or `--permission-mode`, so
  * the player's settings, `CLAUDE.md`, skills, plugins and MCP servers apply as in their terminal.
  * Everything Claude Code would ask the player goes through one [ApprovalRelay] per process to

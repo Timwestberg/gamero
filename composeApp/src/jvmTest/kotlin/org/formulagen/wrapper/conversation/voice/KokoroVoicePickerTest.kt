@@ -10,8 +10,8 @@ class VoicePickerStateTest {
     private val voices = listOf(VoiceChoice("adam70-michael30", "Sam"))
 
     @Test fun theRowHidesWithoutAConversationOrKokoro() {
-        assertFalse(voicePickerState(chatOpen = false, kokoro = true, voices = voices, selectedId = "adam70-michael30").visible)
-        assertFalse(voicePickerState(chatOpen = true, kokoro = false, voices = emptyList(), selectedId = "adam70-michael30").visible)
+        assertFalse(voicePickerState(serving = false, kokoro = true, voices = voices, selectedId = "adam70-michael30").visible)
+        assertFalse(voicePickerState(serving = true, kokoro = false, voices = emptyList(), selectedId = "adam70-michael30").visible)
     }
 
     @Test fun theRowShowsTalkUntilThePageOwnsItAndSaysTheDuplexMode() {

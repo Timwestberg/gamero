@@ -531,7 +531,7 @@ Fixes to how a coordinator runs go in `CoordinatorEngine`. Its rules live in
 oldest first. If no memory job is running, it
 picks the first one in `queued`, `claimed` or `running` (`queued` only when
 Codex is ready) whose `kind` is `extract` and host-bridge `runtimeId` is
-`codex`. A job naming another kind or runtime is left for a companion that runs
+`codex`. A job naming another kind or runtime is left for a computer that runs
 it. A job missing either field is treated as unreadable (below), so a renamed
 field asks for an update instead of being skipped in silence.
 

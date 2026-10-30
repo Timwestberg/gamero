@@ -29,7 +29,7 @@ import org.formulagen.wrapper.voice.pocketEngineLinked
 import org.formulagen.wrapper.voice.readFillerSettings
 import org.formulagen.wrapper.util.loggingDaemonThreads
 
-/** Chat owns when to speak; an audio failure must not discard its text. */
+/** The conversation's voice owns when to speak; an audio failure must not discard its text. */
 internal interface ChatSpeech : AutoCloseable {
     fun status(): ChatVoice
     fun speak(text: String)
@@ -140,7 +140,7 @@ internal class DesktopSpeech(
         if (enabled) warmFillers(FILLER_LINES)
     }
 
-    /** Caller holds [gate]. The listener runs later, so it can take the chat lock safely. */
+    /** Caller holds [gate]. The listener runs later, so it can take the conversation voice's lock safely. */
     private fun touchState(next: ChatVoice) {
         if (state == next) return
         state = next

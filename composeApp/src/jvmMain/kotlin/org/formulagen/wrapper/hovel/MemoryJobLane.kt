@@ -26,13 +26,13 @@ class MemoryJobLane(
     private val closed = AtomicBoolean(false)
 
     fun start() {
-        // The first heartbeat declares this companion's features before the server is asked to plan memory jobs.
+        // The first heartbeat declares this Mac's features before the server is asked to plan memory jobs.
         consolidation.scheduleWithFixedDelay({ if (!closed.get()) consolidate() }, 1, CONSOLIDATE_MINUTES, TimeUnit.MINUTES)
     }
 
     /**
-     * A heartbeat's answer: offer its first memory job this companion can run, when the lane is free. Memory jobs arrive
-     * only when this companion declares `memory-extraction`. A failed or uncertain job needs nothing here: the server
+     * A heartbeat's answer: offer its first memory job this Mac can run, when the lane is free. Memory jobs arrive
+     * only when this Mac declares `memory-extraction`. A failed or uncertain job needs nothing here: the server
      * closes it and plans the day again, up to its attempt limit.
      */
     fun heartbeat(response: JsonObject) {
@@ -80,7 +80,7 @@ class MemoryJobLane(
         const val CONSOLIDATE_MINUTES = 5L
         const val MEMORY_JOB_UNREADABLE = "Connected · Update Hovel on this computer to run its memory jobs"
 
-        /** What a heartbeat declares for a companion that runs memory jobs: the server sends them only to it. */
+        /** What a heartbeat declares for a Mac that runs memory jobs: the server sends them only to it. */
         val FEATURES = listOf("memory-extraction")
 
         /** Unfinished on the server; a queued job only once Codex is ready to launch it. */

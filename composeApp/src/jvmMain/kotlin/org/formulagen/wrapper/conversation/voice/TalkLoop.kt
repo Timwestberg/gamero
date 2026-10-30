@@ -230,7 +230,7 @@ internal class TalkLoop(
     /** The native voice row for a conversation that is [open]. */
     fun pickerLocked(open: Boolean): VoicePickerState =
         voicePickerState(
-            chatOpen = open,
+            serving = open,
             kokoro = speech.kokoroActive(),
             voices = speech.voiceChoices(),
             selectedId = speech.currentVoiceId(),
