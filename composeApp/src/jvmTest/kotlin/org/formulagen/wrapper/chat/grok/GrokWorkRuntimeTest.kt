@@ -310,7 +310,7 @@ class GrokWorkRuntimeTest {
                 val saved = NativeConversation(checkNotNull(first.handle), request.persona.hash)
                 val different = Files.createDirectory(fake.root.resolve("another-project"))
                 val mismatch = WorkFixtureEvents()
-                runtime.startTurn(request.copy(conversation = saved, work = request.work!!.copy(folder = different)), mismatch)
+                runtime.startTurn(request.copy(conversation = saved, work = request.work!!.copy(folders = ProjectFolders(different))), mismatch)
                 mismatch.done.get(10, TimeUnit.SECONDS)
                 assertEquals(ChatFailure.Unexpected, mismatch.failure)
                 assertEquals(1, fake.requests().count { it == "session/prompt" })

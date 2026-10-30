@@ -122,7 +122,7 @@ internal object ClaudeControl {
      * [folder]: exactly what Claude Code asks, the command verbatim and every path in full (relative
      * paths resolved against the folder). The page's summary is worked out from it separately.
      */
-    fun approvalRequest(permission: ToolPermission, companionName: String, member: TeamMember, folder: Path): ApprovalRequest {
+    fun approvalRequest(permission: ToolPermission, companionName: String, member: TeamMember, folder: Path, lease: String? = null): ApprovalRequest {
         val input = permission.input
         fun path(raw: String) = runCatching { Path.of(raw) }.getOrNull()?.let { if (it.isAbsolute) it else folder.resolve(it) }?.normalize()
         val subject = when (kindOf(permission.toolName, permission.mcpServer)) {
@@ -135,7 +135,7 @@ internal object ClaudeControl {
             }
             ApprovalKind.OTHER -> ApprovalSubject.Other(permission.displayName ?: permission.toolName, permission.description ?: input.toString())
         }
-        return ApprovalRequest(companionName, member, folder, subject, sessionLabel(permission.suggestions, folder))
+        return ApprovalRequest(companionName, member, folder, subject, sessionLabel(permission.suggestions, folder), lease)
     }
 
     /** Edits, commands and connectors as the dialog groups them; a tool of an MCP server is a connector. */

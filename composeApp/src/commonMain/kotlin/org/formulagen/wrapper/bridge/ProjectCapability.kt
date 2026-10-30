@@ -19,9 +19,17 @@ interface ProjectCapability {
 
 /** The companion contract's bounds that native code mirrors so far. */
 object CompanionLimits { // mirrors COMPANION_LIMITS (limits.json)
+    const val ACTIVITY_SUMMARY = 40
+    const val APPROVAL_LINE = 4096
+    const val APPROVAL_LINES = 64
+    const val APPROVAL_SUMMARY = 512
     const val CONTEXT_FOLDERS = 4
+    const val DELTA = 2048
     const val FOLDER_NAME = 80
     const val MESSAGE = 16_000
+    const val QUEUED_MESSAGE_MS = 86_400_000L
+    const val THREAD_OUTPUTS = 30
+    const val THREAD_TITLE = 120
 }
 
 /** The one folder agents edit in, or a folder they may only read. */

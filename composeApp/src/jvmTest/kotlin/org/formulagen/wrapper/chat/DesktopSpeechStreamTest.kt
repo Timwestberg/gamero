@@ -198,6 +198,65 @@ class DesktopSpeechStreamTest {
     }
 
     @Test
+    fun aLoadingEngineNeverHoldsUpTheSpeakerAndAVoiceChosenMeanwhileWins() {
+        val root = Files.createTempDirectory("kokoro-load")
+        val model = root.resolve("model")
+        Files.createDirectories(model)
+        for (name in listOf("model.onnx", "voices-blends.bin", "tokens.txt", "lexicon-us-en.txt")) {
+            Files.writeString(model.resolve(name), "x")
+        }
+        val env = mapOf(
+            "HOVEL_KOKORO_MODEL" to model.toString(),
+            "HOVEL_KOKORO_VOICE_FILE" to root.resolve("choice.txt").toString(),
+        )
+        val config = checkNotNull(desktopVoiceConfig(env, engineLinked = true)).copy(fillersEnabled = false)
+        val loading = CountDownLatch(1)
+        val loaded = CountDownLatch(1)
+        val opened = CopyOnWriteArrayList<String>()
+        val released = CopyOnWriteArrayList<String>()
+        val seen = CopyOnWriteArrayList<String>()
+        fun engine(active: VoiceConfig) = object : PieceEngine {
+            override val sampleRate: Int = 24000
+            override fun usesFrameCeiling(): Boolean = false
+            override fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio {
+                seen.add(active.kokoroVoiceId)
+                return PieceAudio(FloatArray(4800), 24000, 1.0, 1.0)
+            }
+            override fun release() { released.add(active.kokoroVoiceId) }
+        }
+        try {
+            DesktopSpeech(config, { SilentLine() }, { active ->
+                opened.add(active.kokoroVoiceId)
+                if (opened.size == 1) {
+                    loading.countDown()
+                    assertTrue(loaded.await(5, TimeUnit.SECONDS))
+                }
+                engine(active)
+            }).use { speech ->
+                speech.warm()
+                assertTrue(loading.await(2, TimeUnit.SECONDS), "the first load started")
+                // What the window's thread asks of the speaker answers while the model loads.
+                val answered = CountDownLatch(1)
+                Thread {
+                    speech.status()
+                    speech.stop()
+                    speech.chooseVoice("heart60-adam40")
+                    answered.countDown()
+                }.start()
+                assertTrue(answered.await(1, TimeUnit.SECONDS), "nothing waited on the load")
+                loaded.countDown()
+                speech.speak("Hello there.")
+                assertTrue(waitFor { seen.isNotEmpty() })
+                assertEquals(listOf("heart60-adam40"), seen, "the voice chosen during the load speaks")
+                assertEquals(listOf("adam70-michael30", "heart60-adam40"), opened)
+                assertEquals(listOf("adam70-michael30"), released, "the load for the old voice was let go")
+            }
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun kokoroChoicePersistsAcrossSpeaksAndTheNextLaunch() {
         val root = Files.createTempDirectory("kokoro-choice")
         val model = root.resolve("model")

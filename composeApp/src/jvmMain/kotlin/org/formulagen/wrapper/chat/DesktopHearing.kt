@@ -25,13 +25,52 @@ internal interface MicCapture : AutoCloseable {
 }
 
 /**
+ * What a talk loop asks of the microphone: a dictation hold ([down], [up]) or a hands-free session
+ * ([startSession] to [endSession]), and the session's controls. [DesktopHearing] is the Mac's; a
+ * [SharedHearing] user is one caller's share of it.
+ */
+internal interface Hearing : AutoCloseable {
+    /** Start a dictation hold. False when a capture is already running. */
+    fun down(onPartial: (String) -> Unit, onFailed: (String) -> Unit): Boolean
+
+    /** End the hold and deliver its last decode. False when it had already been delivered. May block. */
+    fun up(onResult: (HearingResult) -> Unit): Boolean
+
+    /** Start a hands-free session. False when a capture is already running. */
+    fun startSession(
+        silenceMs: Int,
+        onPartial: (String) -> Unit,
+        onUtterance: (HearingResult) -> Unit,
+        onFailed: (String) -> Unit,
+        onFrame: (voicedMs: Int, chunkMs: Int, vadProb: Float) -> Unit = { _, _, _ -> },
+    ): Boolean
+
+    fun setPaused(value: Boolean)
+
+    /** Drop the in-progress transcript and start again from the last 300 ms. */
+    fun restartUtterance()
+
+    fun noteEmberSpeaking(text: String)
+
+    fun noteEmberSilent(text: String)
+
+    fun endSession()
+
+    /** Wait up to [timeoutMs] for a capture told to stop to let go of the microphone. Call outside any lock. */
+    fun awaitStopped(timeoutMs: Long)
+
+    /** Whether another user of a shared microphone holds it now. */
+    val busyElsewhere: Boolean get() = false
+}
+
+/**
  * One hold: open the microphone, feed [engine], and finish on release.
  * The microphone thread never takes the chat lock. [up] may block for the last decode.
  */
 internal class DesktopHearing(
     private val engine: HearingEngine,
     private val openMic: () -> MicCapture,
-) : AutoCloseable {
+) : Hearing {
     private val gate = Any()
     private val stop = AtomicBoolean(false)
     private val delivered = AtomicBoolean(true)
@@ -39,7 +78,7 @@ internal class DesktopHearing(
     private var mic: MicCapture? = null
     private var failed: String? = null
 
-    fun down(onPartial: (String) -> Unit, onFailed: (String) -> Unit): Boolean {
+    override fun down(onPartial: (String) -> Unit, onFailed: (String) -> Unit): Boolean {
         synchronized(gate) {
             if (thread != null) return false
             stop.set(false)
@@ -80,7 +119,7 @@ internal class DesktopHearing(
     }
 
     /** @return false when this release had already been delivered, so the caller must still clear its hold. */
-    fun up(onResult: (HearingResult) -> Unit): Boolean {
+    override fun up(onResult: (HearingResult) -> Unit): Boolean {
         if (!delivered.compareAndSet(false, true)) return false
         val running = synchronized(gate) {
             stop.set(true)
@@ -107,12 +146,12 @@ internal class DesktopHearing(
      * Hands-free session. The microphone stays open until [endSession].
      * While paused, captured audio is discarded so Ember is not transcribed.
      */
-    fun startSession(
+    override fun startSession(
         silenceMs: Int,
         onPartial: (String) -> Unit,
         onUtterance: (HearingResult) -> Unit,
         onFailed: (String) -> Unit,
-        onFrame: (voicedMs: Int, chunkMs: Int, vadProb: Float) -> Unit = { _, _, _ -> },
+        onFrame: (voicedMs: Int, chunkMs: Int, vadProb: Float) -> Unit,
     ): Boolean {
         synchronized(gate) {
             if (thread != null) return false
@@ -221,13 +260,13 @@ internal class DesktopHearing(
         }
     }
 
-    fun setPaused(value: Boolean) {
+    override fun setPaused(value: Boolean) {
         paused.set(value)
         if (!value) restart.set(true)
     }
 
     /** Drop the in-progress transcript and start again from the last 300 ms. */
-    fun restartUtterance() {
+    override fun restartUtterance() {
         feedPreRoll.set(true)
         restart.set(true)
     }
@@ -238,13 +277,13 @@ internal class DesktopHearing(
         restart.set(true)
     }
 
-    fun noteEmberSpeaking(text: String) {
+    override fun noteEmberSpeaking(text: String) {
         emberSpeaking.set(true)
         if (text.isNotBlank()) emberWords.set(text)
         dropUtterance()
     }
 
-    fun noteEmberSilent(text: String) {
+    override fun noteEmberSilent(text: String) {
         emberSpeaking.set(false)
         if (text.isNotBlank()) emberWords.set(text)
         emberHotUntilNs.set(System.nanoTime() + 500_000_000L)
@@ -253,7 +292,7 @@ internal class DesktopHearing(
 
     fun isPaused(): Boolean = paused.get()
 
-    fun endSession() {
+    override fun endSession() {
         stop.set(true)
         delivered.set(true)
         paused.set(true)
@@ -264,7 +303,7 @@ internal class DesktopHearing(
      * Wait up to [timeoutMs] for a capture that was told to stop to let go of the microphone, so the next one can open
      * it. A capture still running is left alone. Call outside any lock: it joins.
      */
-    fun awaitStopped(timeoutMs: Long) {
+    override fun awaitStopped(timeoutMs: Long) {
         val running = synchronized(gate) { thread }
         if (stop.get()) running?.join(timeoutMs)
     }
@@ -311,7 +350,7 @@ private class PreRoll(private val capacity: Int) {
  * A failure rewrites [choice] to half duplex before the microphone opens.
  */
 internal class HearingRoute(
-    var choice: DuplexChoice,
+    @Volatile var choice: DuplexChoice,
     private val environment: Map<String, String>,
 ) {
     @Volatile private var graphUp = false

@@ -1,6 +1,7 @@
 package org.formulagen.wrapper.hovel
 
 import kotlinx.serialization.json.*
+import org.formulagen.wrapper.bridge.HovelContract
 import org.formulagen.wrapper.companion.*
 import java.net.URI
 import java.net.http.HttpClient
@@ -11,11 +12,39 @@ import java.util.UUID
 
 fun interface HovelTransport { fun post(route: String, body: JsonObject): JsonObject }
 
-/** The server answered and refused the request (HTTP 409), so it committed nothing. Lost or failed delivery is not this. */
-class HovelRejectedException : IllegalStateException("Host server returned HTTP 409")
+/**
+ * A native call by method: what the conversation routes need beside [HovelTransport.post]. Answers
+ * the response's `data` object; [body] null sends none (`GET`).
+ */
+fun interface NativeExchange { fun exchange(method: String, route: String, body: JsonObject?): JsonObject }
 
-/** Host bearer stays in native memory and is sent only to the configured server. */
-class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val token: String, private val timeoutMillis: Long = 15_000, private val brainEnabled: Boolean = false) : HovelTransport {
+/**
+ * The server answered and refused the request (HTTP 409), so it committed nothing. Lost or failed delivery is not
+ * this. [code] is the refusal's code when its body names one, such as the contract's `update-required`.
+ */
+class HovelRejectedException(val code: String? = null) : IllegalStateException("Host server returned HTTP 409")
+
+/**
+ * The server answered with [status], neither success nor a 409 refusal; [code] is the body's code when it names one,
+ * such as a `hovelContractError`'s. A 400, 403 or 404 is [final]: the request names something the server does not
+ * have, or this computer may not use, and sending it again cannot help. A [serverOlder] refusal never is.
+ */
+class HovelStatusException(val status: Int, val code: String? = null) : IllegalStateException("Host server returned HTTP $status") {
+    /** A 400 `unsupported-contract`: the service is older than this build's contract, so the work waits for it. */
+    val serverOlder: Boolean get() = status == 400 && code == UNSUPPORTED_CONTRACT
+    val final: Boolean get() = (status == 400 || status == 403 || status == 404) && !serverOlder
+
+    companion object {
+        /** The contract's refusal of a client newer than the server. */
+        const val UNSUPPORTED_CONTRACT = "unsupported-contract"
+    }
+}
+
+/**
+ * Host bearer stays in native memory and is sent only to the configured server. Every request names
+ * this build's companion contract ([HovelContract.HEADER]).
+ */
+class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val token: String, private val timeoutMillis: Long = 15_000, private val brainEnabled: Boolean = false) : HovelTransport, NativeExchange {
     private val endpoint: String
     private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
         .followRedirects(HttpClient.Redirect.NEVER).build()
@@ -26,21 +55,58 @@ class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val
         require(base.scheme == "https" || (base.scheme == "http" && base.host in setOf("localhost", "127.0.0.1", "[::1]")))
         endpoint = base.toASCIIString().trimEnd('/') + "/native/$ownerId/$hostId/"
     }
-    override fun post(route: String, body: JsonObject): JsonObject {
-        require(route in setOf("heartbeat", "claim", "progress", "memory/claim", "memory/progress", "memory/consolidate") ||
-            (brainEnabled && route in setOf(
-                "brain/admit", "brain/authorize", "brain/outcome", "brain/presentation-claim", "brain/presentation")))
-        val request = HttpRequest.newBuilder(URI(endpoint + route)).timeout(Duration.ofSeconds(15))
-            .header("Content-Type", "application/json").header("X-Hovel-Host-Token", token)
-            .POST(HttpRequest.BodyPublishers.ofString(body.toString())).build()
+    override fun post(route: String, body: JsonObject): JsonObject = exchange("POST", route, body)
+
+    override fun exchange(method: String, route: String, body: JsonObject?): JsonObject {
+        require(allowed(method, route)) { "Route not allowed: $method $route" }
+        require((method == "GET") == (body == null))
+        val publisher = body?.let { HttpRequest.BodyPublishers.ofString(it.toString()) } ?: HttpRequest.BodyPublishers.noBody()
+        val request = builder(route).timeout(Duration.ofSeconds(15)).header("Content-Type", "application/json")
+            .method(method, publisher).build()
         val future = client.sendAsync(request, HttpResponse.BodyHandler { BoundedBodySubscriber(16 * 1024 * 1024) })
         try {
             val response = future.get(timeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
-            if (response.statusCode() == 409) throw HovelRejectedException()
-            check(response.statusCode() in 200..299) { "Host server returned HTTP ${response.statusCode()}" }
+            if (response.statusCode() == 409) throw HovelRejectedException(refusalCode(response.body()))
+            if (response.statusCode() !in 200..299) throw HovelStatusException(response.statusCode(), refusalCode(response.body()))
             return Json.parseToJsonElement(response.body().toString(Charsets.UTF_8)).jsonObject.getValue("data").jsonObject
         } finally { if (!future.isDone) future.cancel(true) }
     }
+
+    /**
+     * Opens the host's server-sent events ([NativeRoute.STREAM]): connected within the connect
+     * timeout, then read line by line for as long as the server keeps it open. Closing the answer
+     * ends the connection.
+     */
+    fun openStream(): HovelEventLines {
+        val request = builder(NativeRoute.STREAM.path()).header("Accept", "text/event-stream").GET().build()
+        val response = client.send(request, HttpResponse.BodyHandlers.ofLines())
+        if (response.statusCode() !in 200..299) {
+            // A refusal body is a small JSON object, such as a `hovelContractError`.
+            val body = response.body().use { it.limit(64).toList().joinToString("\n").take(16 * 1024) }.toByteArray()
+            if (response.statusCode() == 409) throw HovelRejectedException(refusalCode(body))
+            throw HovelStatusException(response.statusCode(), refusalCode(body))
+        }
+        val lines = response.body()
+        return object : HovelEventLines {
+            override fun lines(): Sequence<String> = lines.iterator().asSequence()
+            override fun close() = lines.close()
+        }
+    }
+
+    private fun builder(route: String): HttpRequest.Builder = HttpRequest.newBuilder(URI(endpoint + route))
+        .header("X-Hovel-Host-Token", token).header(HovelContract.HEADER, HovelContract.CURRENT.toString())
+
+    private fun allowed(method: String, route: String) = NativeRoute.allows(method, route) ||
+        (brainEnabled && method == "POST" && route in setOf("brain/admit", "brain/authorize", "brain/outcome", "brain/presentation-claim", "brain/presentation"))
+
+    /** A refusal body's `code`, when it names one. */
+    private fun refusalCode(body: ByteArray): String? =
+        runCatching { (Json.parseToJsonElement(body.toString(Charsets.UTF_8)).jsonObject["code"] as? JsonPrimitive)?.contentOrNull }.getOrNull()
+}
+
+/** An open event stream: its raw lines, read until the server ends it or [close] does. */
+interface HovelEventLines : AutoCloseable {
+    fun lines(): Sequence<String>
 }
 
 /**
@@ -87,7 +153,7 @@ abstract class HovelRevisionRemote(private val transport: HovelTransport, initia
     }
 }
 
-/** A user task on the task routes. */
+/** A user task on the task routes, until step E removes Hovel tasks with the web task UI. */
 class HovelTaskRemote(transport: HovelTransport, initial: JsonObject) : HovelRevisionRemote(transport, initial) {
     override val claimRoute = "claim"
     override val progressRoute = "progress"
@@ -118,16 +184,12 @@ class HovelMemoryJobRemote(transport: HovelTransport, initial: JsonObject) : Hov
 const val HOVEL_MEMORY_JOB_OUTPUT_CHARS = 65_536
 
 /**
- * What this companion can run, declared on every heartbeat. The server sends follow-ups only to a computer
- * that lists `provider-input`, recalled memory only with `memory-context`, and memory jobs only with
- * `memory-extraction`.
+ * What this companion can run, declared on every heartbeat: `provider-input` with the task lane, `memory-context`
+ * (recalled memory as its own section) whenever it runs tasks or conversations, and `memory-extraction` with the
+ * memory lane. The server sends follow-ups, recalled memory and memory jobs only to a computer that lists them.
  */
-val HOVEL_HOST_FEATURES = listOf("provider-input", "memory-context", "memory-extraction")
-
-fun hovelHeartbeat(providerState: String) = buildJsonObject {
-    put("providerState", providerState)
-    putJsonArray("features") { HOVEL_HOST_FEATURES.forEach(::add) }
-}
+fun hovelHostFeatures(tasks: Boolean, memory: Boolean): List<String> =
+    listOfNotNull("provider-input".takeIf { tasks }, "memory-context", "memory-extraction".takeIf { memory })
 
 /** A follow-up runs the server-built `providerInput` (earlier exchanges, then the new prompt) in place of its bare prompt. */
 fun hovelExecutionRequest(task: JsonObject, hostId: String): ExecutionRequest {

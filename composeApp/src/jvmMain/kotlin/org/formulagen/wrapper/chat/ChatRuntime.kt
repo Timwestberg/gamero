@@ -74,10 +74,48 @@ internal data class TurnRequest(
 }
 
 /**
- * Where and for whom a member works: the companion's project [folder], the chat [lease] (the view's
- * session id, which a working process lives for), the [companion]'s name and the [member].
+ * Where and for whom a member works: the project's [folders] (a working folder, and read-only context
+ * folders the runtime was cleared to read), the [lease] a working process lives for (a chat view's
+ * session id, or a conversation thread's id), the [companion]'s name and the [member].
  */
-internal data class WorkScope(val folder: Path, val lease: String, val companion: String, val member: TeamMember)
+internal data class WorkScope(val folders: ProjectFolders, val lease: String, val companion: String, val member: TeamMember) {
+    /** A scope for one working folder and no context folders, as team chat and the brain use it. */
+    constructor(folder: Path, lease: String, companion: String, member: TeamMember) : this(ProjectFolders(folder), lease, companion, member)
+
+    init { require(folders.working != null) { "A working turn needs a working folder" } }
+
+    /** The working folder: where the member works and the only folder it may change. */
+    val folder: Path get() = checkNotNull(folders.working)
+}
+
+/**
+ * A project's folders on this Mac: the one [working] folder agents may edit (none for a talk-only
+ * project), and [context] folders they may only read. A runtime that cannot keep a context folder
+ * read-only ([ContextFolderSupport]) is never given it.
+ */
+internal data class ProjectFolders(val working: Path?, val context: List<Path> = emptyList()) {
+    init { require(working != null || context.isEmpty()) { "Context folders take effect only beside a working folder" } }
+
+    /** These folders as [runtime] may be given them: its context folders only when it keeps them read-only. */
+    fun forRuntime(support: ContextFolderSupport): ProjectFolders = if (support.readable) this else copy(context = emptyList())
+}
+
+/**
+ * Whether a work runtime keeps a project's context folders read-only. Hovel overrides the player's
+ * provider settings for those paths only; a runtime that cannot is not given them, and the project
+ * lists it as unable to read them (`readableBy`).
+ */
+internal enum class ContextFolderSupport {
+    /** The mechanism is in place and a live probe confirmed it: the runtime is given context folders. */
+    VERIFIED,
+    /** The mechanism is in place, but no live probe has confirmed it yet, so it counts as [NONE]. */
+    UNVERIFIED,
+    /** No mechanism: the runtime is never given context folders. */
+    NONE;
+
+    /** Whether the runtime may be given context folders now. */
+    val readable: Boolean get() = this == VERIFIED
+}
 
 /**
  * What a turn reports. Nothing is reported after [completed] or [failed]. After the caller's

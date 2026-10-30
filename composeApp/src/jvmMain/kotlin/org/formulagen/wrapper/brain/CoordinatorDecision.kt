@@ -16,6 +16,8 @@ internal enum class DecisionKind {
     @SerialName("start-step") START_STEP,
     @SerialName("skip-step") SKIP_STEP,
     @SerialName("step-result") STEP_RESULT,
+    /** A conversation's thread reply only ([THREAD_REPLY_DECISIONS]). */
+    @SerialName("forward") FORWARD,
 }
 
 /** How the coordinator grades an attempt: `blocked` will not go on as it is, so the coordinator re-plans. */
@@ -59,6 +61,10 @@ internal sealed interface CoordinatorDecision {
     /** Grade the last attempt, which must be [attemptId]. */
     @Serializable @SerialName("step-result")
     data class StepResult(val attemptId: String, val outcome: StepOutcome, val explanation: String) : CoordinatorDecision
+
+    /** Hand a thread reply to [threadId]'s specialist, with the coordinator's [note] as context when it adds one. */
+    @Serializable @SerialName("forward")
+    data class Forward(val threadId: String, val note: String? = null) : CoordinatorDecision
 }
 
 internal val CoordinatorDecision.kind: DecisionKind
@@ -70,6 +76,7 @@ internal val CoordinatorDecision.kind: DecisionKind
         is CoordinatorDecision.StartStep -> DecisionKind.START_STEP
         is CoordinatorDecision.SkipStep -> DecisionKind.SKIP_STEP
         is CoordinatorDecision.StepResult -> DecisionKind.STEP_RESULT
+        is CoordinatorDecision.Forward -> DecisionKind.FORWARD
     }
 
 /**
@@ -98,6 +105,7 @@ internal fun parseDecision(text: String, allowed: Set<DecisionKind>): Coordinato
         is CoordinatorDecision.StartStep -> { id(decision.stepId); ids(decision.inputIds) }
         is CoordinatorDecision.SkipStep -> { id(decision.stepId); text(decision.reason, BrainLimits.DESCRIPTION) }
         is CoordinatorDecision.StepResult -> { id(decision.attemptId); text(decision.explanation, BrainLimits.DESCRIPTION) }
+        is CoordinatorDecision.Forward -> { id(decision.threadId); decision.note?.let { text(it, BrainLimits.STEP_INSTRUCTIONS) } }
     }
     return decision
 }
@@ -113,4 +121,11 @@ internal fun allowedDecisions(run: RunRecord): Set<DecisionKind> = when (run.pha
         val always = setOf(DecisionKind.ANSWER, DecisionKind.ASK, DecisionKind.DELEGATE)
         if (canEnter) always + DecisionKind.ENTER_WORKFLOW else always
     }
+    BrainPhase.THREAD_REPLY -> THREAD_REPLY_DECISIONS
 }
+
+/**
+ * A conversation's thread reply: forward it to that thread's specialist, answer it in the thread, or
+ * delegate a new task, which opens a new thread. Nothing else, so a reply never steers a workflow.
+ */
+internal val THREAD_REPLY_DECISIONS = setOf(DecisionKind.FORWARD, DecisionKind.ANSWER, DecisionKind.DELEGATE)

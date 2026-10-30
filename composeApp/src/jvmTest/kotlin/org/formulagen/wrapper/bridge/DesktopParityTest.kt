@@ -14,15 +14,16 @@ import kotlin.test.Test
 
 class DesktopParityTest {
     /**
-     * Phase C of the host bridge plan ships the platform methods on desktop, and the conversation runner ships project
-     * folders, conversation voice and the contract handshake.
+     * Phase C of the host bridge plan ships the platform methods on desktop. Project folders, the contract
+     * handshake and conversation voice are the conversation runner's.
      */
-    private val pending = setOf(
-        "link.open", "lifecycle.pause", "lifecycle.resume",
-        "project.chooseFolder", "project.folderStatus", "project.forgetFolder",
-        "conversationVoice.dictation", "conversationVoice.hearing", "conversationVoice.voiceStatus",
-        "host.contract",
-    )
+    private val pending = setOf("link.open", "lifecycle.pause", "lifecycle.resume")
+
+    private class FakeProjects : ProjectCapability {
+        override suspend fun chooseFolder(args: ProjectChooseFolderArgs) = ProjectFoldersStatus(emptyList())
+        override suspend fun forgetFolder(args: ProjectForgetFolderArgs) = ProjectFoldersStatus(emptyList())
+        override suspend fun folderStatus(scope: ProjectScope) = ProjectFoldersStatus(emptyList())
+    }
 
     @Test
     fun hovelOnDesktopMatchesTheParityTable() {
@@ -31,13 +32,14 @@ class DesktopParityTest {
             override fun save(hostId: String, token: String) = Unit
             override fun read(hostId: String) = ""
         }
-        val companion = HovelCompanion("https://example.test/hovel.html", directory, directory.resolve("codex"), directory, credentials)
+        val companion = HovelCompanion("https://example.test/hovel.html", directory, directory.resolve("codex"), credentials = credentials)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val router = BridgeRouter(
             product = HOVEL_PRODUCT,
             capabilities = desktopHostCapabilities(),
             products = desktopProductPacks(HOVEL_PRODUCT, HovelCompanionCapability(companion), FakeChatCapability(),
-                FakeProviderCapability(), FakePetCapability(), FakeGameCapability(), FakeWorkspaceCapability(), FakeBrainCapability()),
+                FakeProviderCapability(), FakePetCapability(), FakeGameCapability(), FakeWorkspaceCapability(), FakeBrainCapability(),
+                FakeProjects(), DesktopHostContract(), FakeConversationVoiceCapability()),
             scope = scope,
             transport = {},
         )

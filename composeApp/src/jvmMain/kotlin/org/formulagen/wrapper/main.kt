@@ -51,6 +51,9 @@ private class DesktopResources : AutoCloseable {
     val windowActive = AtomicBoolean(false)
     var services: DesktopServices? = null
     private var keyboardClient: CefClient? = null
+    // Escape the page receives is the page's: team chat keeps its catalog barge-in here, and a project conversation's
+    // page sends its own interrupt only when it has no other use for the key. No page Escape reaches conversation voice
+    // natively: the window's handler is team chat's, and the conversation row's own handler needs the row focused.
     private val keyboard = BrowserEditKeyboard(browser::get, windowActive::get, onEscape = {
         services?.chat?.endConversation() == true
     })
@@ -125,11 +128,10 @@ fun main(args: Array<String>) {
                 Window(
                     onCloseRequest = { resources.services?.closeGame(); exitApplication() },
                     title = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME,
+                    // Team chat's Escape. A project conversation's voice hears Escape only from its own row, below.
                     onPreviewKeyEvent = { event ->
-                        if (event.key == Key.Escape && event.type == KeyEventType.KeyDown) {
-                            resources.services?.chat?.endConversation()
-                            true
-                        } else false
+                        event.key == Key.Escape && event.type == KeyEventType.KeyDown &&
+                            resources.services?.chat?.endConversation() == true
                     },
                 ) {
                     DisposableEffect(window) {
@@ -209,6 +211,8 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
         DesktopServices.create(url, support.toPath(), System.getenv(), product, window).also { resources.services = it }
     }
     val companion = services.companion
+    // A Mac registered before runs its conversations from launch, with no page involved. Keychain may block, so off the UI thread.
+    LaunchedEffect(companion) { companion?.let { withContext(Dispatchers.IO) { it.resume() } } }
     // Approvals and the start-of-work confirmation: windows of Hovel's own that the page cannot reach.
     NativeDialogHost(services.dialogs)
     LaunchedEffect(start) {
@@ -253,20 +257,34 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
             if (companion != null) {
                 Text(companion.status, Modifier.padding(8.dp))
                 companion.approval?.let { approval ->
-                    Text("Connect account ${approval.ownerId} at $url to this Mac? This stores a host credential in Keychain and allows read-only Codex tasks in ${System.getenv("GAMERO_WORKSPACE")} while Gamero is open. Codex uses your own ChatGPT subscription.", Modifier.padding(8.dp))
+                    val tasks = companion.taskWorkspace?.let { " It also runs read-only Codex tasks in $it." }.orEmpty()
+                    Text("Connect account ${approval.ownerId} at $url to this Mac? This stores a host credential in Keychain, and this Mac then runs the account's companion conversations whenever Hovel is open, with your own provider sign-ins. Agents work only in folders you choose here, and ask here before anything your settings do not allow.$tasks", Modifier.padding(8.dp))
                     Button(onClick = { approval.answer.complete(true) }) { Text("Approve computer connection") }
                     Button(onClick = { approval.answer.complete(false) }) { Text("Cancel") }
                 }
             } else if (isHovelProduct()) {
-                Text("Set GAMERO_CODEX_PATH and GAMERO_WORKSPACE to enable this Mac's optional Codex connection.", Modifier.padding(8.dp))
+                Text("Companion conversations run on a Mac.", Modifier.padding(8.dp))
             }
             val picker by services.voicePicker.state
-            KokoroVoicePicker(
-                picker,
-                services.chat::chooseSpokenVoice,
-                services.chat::converseClick,
-                services.chat::toggleFillers,
-            )
+            val conversationPicker by services.conversationPicker.state
+            val conversationVoice = services.conversationVoice
+            // The served conversation's row first; team chat's shows only in the Gamero catalog.
+            if (conversationVoice != null && conversationPicker.visible) {
+                KokoroVoicePicker(
+                    conversationPicker,
+                    conversationVoice::chooseSpokenVoice,
+                    conversationVoice::converseClick,
+                    conversationVoice::toggleFillers,
+                    onEscape = conversationVoice::escape,
+                )
+            } else {
+                KokoroVoicePicker(
+                    picker,
+                    services.chat::chooseSpokenVoice,
+                    services.chat::converseClick,
+                    services.chat::toggleFillers,
+                )
+            }
             App(url, enableLegacyBridge = false, webViewFactory = ::persistentDesktopBrowser, onPageLoaded = { loaded, title ->
                 log(LogLevel.Info, "Desktop", SmokeMarkers.pageLoaded(loaded, title))
             }, onWebViewCreated = { browser ->
