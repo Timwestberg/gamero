@@ -5,6 +5,12 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import org.formulagen.wrapper.conversation.ChatVoice
+import org.formulagen.wrapper.conversation.DictationAction
+import org.formulagen.wrapper.conversation.DictationState
+import org.formulagen.wrapper.conversation.HearingAction
+import org.formulagen.wrapper.conversation.HearingState
+import org.formulagen.wrapper.conversation.ChatLimits
 
 /**
  * Voice in a conversation on the Mac: dictation fills the page's draft, and Talk is a voice

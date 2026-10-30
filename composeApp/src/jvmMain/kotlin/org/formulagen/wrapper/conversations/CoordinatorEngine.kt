@@ -6,12 +6,16 @@ import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.approvals.startOfWorkDialog
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.brain.*
-import org.formulagen.wrapper.chat.*
+import org.formulagen.wrapper.runtimes.*
+import org.formulagen.wrapper.conversation.voice.*
+import org.formulagen.wrapper.util.*
 import org.formulagen.wrapper.hovel.HovelRejectedException
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.storage.Artifacts
 import org.formulagen.wrapper.storage.sha256
+import org.formulagen.wrapper.conversation.Activity
+import org.formulagen.wrapper.conversation.MemberMode
 
 /**
  * Runs one claimed message of a conversation through the companion's brain: the coordinator, its specialists

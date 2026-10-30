@@ -145,7 +145,7 @@ class ProviderConnectionsTest {
                 assertEquals(connected.copy(message = "Sign in and out in Claude Code."), registry.perform(action, scope(RuntimeId.CLAUDE_CODE)))
             }
             // Several views ask on focus; one check answers them for a few seconds, and chat readiness shares it.
-            assertEquals(org.formulagen.wrapper.chat.Readiness.Ready, org.formulagen.wrapper.chat.ClaudeChatRuntime(fake.runtime(), signIn).use { it.readiness(LOGIN_ID) })
+            assertEquals(org.formulagen.wrapper.runtimes.Readiness.Ready, org.formulagen.wrapper.runtimes.ClaudeChatRuntime(fake.runtime(), signIn).use { it.readiness(LOGIN_ID) })
             assertEquals(2, fake.calls().size, "One --version and one auth status")
             clock.now = clock.now.plusMillis(CLAUDE_STATUS_TTL.inWholeMilliseconds)
             fake.scenario(auth = FakeClaude.fixture("auth-status-signed-out.json"), authExit = 1)

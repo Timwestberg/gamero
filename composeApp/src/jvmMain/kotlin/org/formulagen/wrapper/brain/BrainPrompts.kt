@@ -10,8 +10,8 @@ import kotlinx.serialization.json.put
 import org.formulagen.wrapper.approvals.NativeDialog
 import org.formulagen.wrapper.approvals.memberLabel
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.ChatFailure
-import org.formulagen.wrapper.chat.failureNotice
+import org.formulagen.wrapper.runtimes.ChatFailure
+import org.formulagen.wrapper.runtimes.failureNotice
 import org.formulagen.wrapper.providers.copy
 import org.formulagen.wrapper.storage.Artifacts
 

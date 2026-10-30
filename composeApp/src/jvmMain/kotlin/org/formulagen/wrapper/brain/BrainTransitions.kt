@@ -1,7 +1,10 @@
 package org.formulagen.wrapper.brain
 
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.ChatFailure
+import org.formulagen.wrapper.runtimes.ChatFailure
+import org.formulagen.wrapper.conversation.Activity
+import org.formulagen.wrapper.conversation.ActivityStatus
+import org.formulagen.wrapper.conversation.MemberMode
 
 /*
  * The run state machine as pure functions of a record, which a conversation's coordinator (`CoordinatorEngine`)

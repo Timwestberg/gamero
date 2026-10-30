@@ -11,6 +11,7 @@ import org.formulagen.wrapper.hovel.HovelHttpTransport
 import org.formulagen.wrapper.hovel.HovelRejectedException
 import org.formulagen.wrapper.hovel.HovelStatusException
 import org.formulagen.wrapper.hovel.NativeRoute
+import org.formulagen.wrapper.conversation.MemberMode
 
 /** The Mac's companion payloads in the contract's exact form, and the routes they travel on. */
 class ConversationWireTest {

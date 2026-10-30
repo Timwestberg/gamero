@@ -23,7 +23,7 @@ import java.io.File
 import java.net.URI
 import kotlin.system.exitProcess
 import org.formulagen.wrapper.approvals.NativeDialogHost
-import org.formulagen.wrapper.chat.KokoroVoicePicker
+import org.formulagen.wrapper.conversation.voice.KokoroVoicePicker
 import org.formulagen.wrapper.bridge.desktopHostCapabilities
 import org.formulagen.wrapper.companion.NativeBridge
 import org.formulagen.wrapper.hovel.PhonePairing

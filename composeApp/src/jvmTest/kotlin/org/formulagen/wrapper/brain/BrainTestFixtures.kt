@@ -2,6 +2,7 @@ package org.formulagen.wrapper.brain
 
 import java.util.UUID
 import org.formulagen.wrapper.bridge.*
+import org.formulagen.wrapper.conversation.MemberMode
 
 internal fun brainId() = UUID.randomUUID().toString()
 

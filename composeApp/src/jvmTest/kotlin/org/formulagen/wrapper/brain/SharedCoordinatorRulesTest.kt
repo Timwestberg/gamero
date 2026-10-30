@@ -4,6 +4,7 @@ import kotlin.test.*
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.conversations.CONVERSATION_PROTOCOL
 import org.formulagen.wrapper.conversations.brain
+import org.formulagen.wrapper.conversation.MemberMode
 
 /** The role and protocol rules a conversation's coordinator (CoordinatorEngine) applies. */
 class SharedCoordinatorRulesTest {

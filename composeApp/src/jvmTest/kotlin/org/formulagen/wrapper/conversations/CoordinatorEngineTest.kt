@@ -10,7 +10,14 @@ import org.formulagen.wrapper.approvals.CancelSignal
 import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.*
+import org.formulagen.wrapper.runtimes.*
+import org.formulagen.wrapper.conversation.voice.*
+import org.formulagen.wrapper.util.*
+import org.formulagen.wrapper.conversation.Activity
+import org.formulagen.wrapper.conversation.ActivityKind
+import org.formulagen.wrapper.conversation.ActivityStatus
+import org.formulagen.wrapper.conversation.ActivityStep
+import org.formulagen.wrapper.conversation.MemberMode
 
 class CoordinatorEngineTest {
     /** One engine on a fake server, with a coordinator and specialists the test scripts. */

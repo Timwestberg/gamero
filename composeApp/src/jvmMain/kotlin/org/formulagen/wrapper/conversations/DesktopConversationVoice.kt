@@ -6,14 +6,14 @@ import org.formulagen.wrapper.bridge.ConversationDictationArgs
 import org.formulagen.wrapper.bridge.ConversationHearingArgs
 import org.formulagen.wrapper.bridge.ConversationVoiceCapability
 import org.formulagen.wrapper.bridge.ConversationVoiceStatus
-import org.formulagen.wrapper.bridge.DictationAction
-import org.formulagen.wrapper.bridge.HearingAction
-import org.formulagen.wrapper.chat.ChatSpeech
-import org.formulagen.wrapper.chat.SharedHearing
-import org.formulagen.wrapper.chat.TalkSettings
-import org.formulagen.wrapper.chat.VoicePickerModel
-import org.formulagen.wrapper.chat.VoicePickerState
-import org.formulagen.wrapper.chat.loggingDaemonThreads
+import org.formulagen.wrapper.conversation.DictationAction
+import org.formulagen.wrapper.conversation.HearingAction
+import org.formulagen.wrapper.conversation.voice.ChatSpeech
+import org.formulagen.wrapper.conversation.voice.SharedHearing
+import org.formulagen.wrapper.conversation.voice.TalkSettings
+import org.formulagen.wrapper.conversation.voice.VoicePickerModel
+import org.formulagen.wrapper.conversation.voice.VoicePickerState
+import org.formulagen.wrapper.util.loggingDaemonThreads
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 

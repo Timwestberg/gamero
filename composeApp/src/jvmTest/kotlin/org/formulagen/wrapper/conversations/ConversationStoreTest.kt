@@ -6,7 +6,7 @@ import kotlin.test.*
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.brain.BrainRecord
 import org.formulagen.wrapper.brain.RunRecord
-import org.formulagen.wrapper.chat.NativeConversation
+import org.formulagen.wrapper.runtimes.NativeConversation
 
 class ConversationStoreTest {
     private val root = folder("conversation-store")

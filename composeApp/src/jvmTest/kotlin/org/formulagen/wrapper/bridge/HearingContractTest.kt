@@ -10,6 +10,8 @@ import org.formulagen.wrapper.voice.HearingStates
 import org.formulagen.wrapper.voice.VoiceConversation
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import org.formulagen.wrapper.conversation.HearingAction
+import org.formulagen.wrapper.conversation.HearingState
 
 /** The host's mirror of ember-hearing.v1, checked against the generated contract fixture. */
 class HearingContractTest {

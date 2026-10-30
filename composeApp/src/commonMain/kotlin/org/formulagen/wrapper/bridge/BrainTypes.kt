@@ -22,6 +22,9 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.serializer
+import org.formulagen.wrapper.conversation.Activity
+import org.formulagen.wrapper.conversation.MemberMode
+import org.formulagen.wrapper.conversation.TeamMember
 
 /*
  * A companion's brain as the account holds it, and the run state a conversation keeps on this Mac. The claim carries the

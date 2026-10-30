@@ -1,6 +1,6 @@
 package org.formulagen.wrapper.approvals
 
-import org.formulagen.wrapper.chat.TurnEvents
+import org.formulagen.wrapper.runtimes.TurnEvents
 
 /**
  * The one way a working runtime asks the player, shared by Claude, Codex and Grok. A request is

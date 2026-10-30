@@ -9,7 +9,7 @@ import org.formulagen.wrapper.bridge.CompanionLimits
 import org.formulagen.wrapper.bridge.FolderRole
 import org.formulagen.wrapper.bridge.ProjectFolderNames
 import org.formulagen.wrapper.bridge.SharedRules
-import org.formulagen.wrapper.chat.ProjectFolders
+import org.formulagen.wrapper.runtimes.ProjectFolders
 import org.formulagen.wrapper.storage.readBounded
 import org.formulagen.wrapper.storage.writeDurably
 

@@ -2,7 +2,7 @@ package org.formulagen.wrapper.approvals
 
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
-import org.formulagen.wrapper.bridge.TeamMember
+import org.formulagen.wrapper.conversation.TeamMember
 
 /**
  * The native confirmation before a role's first working message in a conversation:

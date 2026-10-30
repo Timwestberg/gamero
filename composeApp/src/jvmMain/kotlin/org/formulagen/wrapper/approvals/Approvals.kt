@@ -3,10 +3,10 @@ package org.formulagen.wrapper.approvals
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
-import org.formulagen.wrapper.bridge.ActivityLimits
-import org.formulagen.wrapper.bridge.ChatLimits
-import org.formulagen.wrapper.bridge.TeamMember
-import org.formulagen.wrapper.chat.WorkPaths
+import org.formulagen.wrapper.conversation.ActivityLimits
+import org.formulagen.wrapper.conversation.ChatLimits
+import org.formulagen.wrapper.conversation.TeamMember
+import org.formulagen.wrapper.runtimes.WorkPaths
 import org.formulagen.wrapper.providers.copy
 import org.formulagen.wrapper.util.shortened
 

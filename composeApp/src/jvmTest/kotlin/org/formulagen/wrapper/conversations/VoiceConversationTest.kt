@@ -15,11 +15,20 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.*
+import org.formulagen.wrapper.runtimes.*
+import org.formulagen.wrapper.conversation.voice.*
+import org.formulagen.wrapper.util.*
 import org.formulagen.wrapper.voice.DuplexChoice
 import org.formulagen.wrapper.voice.FillerSettings
 import org.formulagen.wrapper.voice.HearingDuplex
 import org.formulagen.wrapper.voice.HearingResult
+import org.formulagen.wrapper.conversation.ChatVoice
+import org.formulagen.wrapper.conversation.DictationAction
+import org.formulagen.wrapper.conversation.DictationState
+import org.formulagen.wrapper.conversation.HearingAction
+import org.formulagen.wrapper.conversation.HearingState
+import org.formulagen.wrapper.conversation.MemberMode
+import org.formulagen.wrapper.conversation.VoiceState
 
 /** The Mac's microphone as the tests drive it: a session hears what [hear] says, and a hold answers [held] on release. */
 internal class FakeEar : Hearing {

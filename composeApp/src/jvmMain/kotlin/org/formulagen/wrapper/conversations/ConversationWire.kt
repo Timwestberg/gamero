@@ -8,7 +8,7 @@ import kotlinx.serialization.json.JsonClassDiscriminator
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
-import org.formulagen.wrapper.bridge.ActivityStep
+import org.formulagen.wrapper.conversation.ActivityStep
 import org.formulagen.wrapper.bridge.BrainAttemptOutcome
 import org.formulagen.wrapper.bridge.BrainAttemptState
 import org.formulagen.wrapper.bridge.BrainDocument

@@ -5,6 +5,11 @@ import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import org.formulagen.wrapper.conversation.ActivityKind
+import org.formulagen.wrapper.conversation.ActivityStatus
+import org.formulagen.wrapper.conversation.ActivityStep
+import org.formulagen.wrapper.conversation.ChatVoice
+import org.formulagen.wrapper.conversation.MemberMode
 
 /** Brain types encode exactly the nulls event-contracts requires, and omit the optional ones ([brainWire]). */
 class BrainWireTest {

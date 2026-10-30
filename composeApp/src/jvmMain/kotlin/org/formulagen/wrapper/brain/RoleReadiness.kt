@@ -1,6 +1,7 @@
 package org.formulagen.wrapper.brain
 
 import org.formulagen.wrapper.bridge.*
+import org.formulagen.wrapper.conversation.MemberMode
 
 /*
  * Rules a conversation's coordinator (CoordinatorEngine) applies to its roles, as pure functions.

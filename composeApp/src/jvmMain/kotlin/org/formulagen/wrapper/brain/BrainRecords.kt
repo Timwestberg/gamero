@@ -3,7 +3,7 @@ package org.formulagen.wrapper.brain
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.NativeConversation
+import org.formulagen.wrapper.runtimes.NativeConversation
 
 /**
  * What the controller does next with a run: [PLAN] asks the coordinator what to do with the request, [EXECUTE] runs the

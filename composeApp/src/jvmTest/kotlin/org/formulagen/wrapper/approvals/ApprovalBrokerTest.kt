@@ -8,9 +8,9 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
-import org.formulagen.wrapper.bridge.TeamMember
-import org.formulagen.wrapper.chat.ChatFailure
-import org.formulagen.wrapper.chat.TurnEvents
+import org.formulagen.wrapper.conversation.TeamMember
+import org.formulagen.wrapper.runtimes.ChatFailure
+import org.formulagen.wrapper.runtimes.TurnEvents
 import kotlin.test.*
 
 class ApprovalBrokerTest {

@@ -1,9 +1,14 @@
 package org.formulagen.wrapper.brain
 
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.ChatFailure
-import org.formulagen.wrapper.chat.NativeConversation
+import org.formulagen.wrapper.runtimes.ChatFailure
+import org.formulagen.wrapper.runtimes.NativeConversation
 import kotlin.test.*
+import org.formulagen.wrapper.conversation.Activity
+import org.formulagen.wrapper.conversation.ActivityKind
+import org.formulagen.wrapper.conversation.ActivityStatus
+import org.formulagen.wrapper.conversation.ActivityStep
+import org.formulagen.wrapper.conversation.MemberMode
 
 /** The pure run transitions, one table row per case: a record and an input in, the next record (or a refusal) out. */
 class BrainTransitionsTest {

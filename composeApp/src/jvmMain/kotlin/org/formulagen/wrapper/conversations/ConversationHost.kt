@@ -9,9 +9,9 @@ import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.bridge.ProviderCapability
 import org.formulagen.wrapper.bridge.RuntimeId
-import org.formulagen.wrapper.chat.ChatRuntime
-import org.formulagen.wrapper.chat.WorkRuntime
-import org.formulagen.wrapper.chat.loggingDaemonThreads
+import org.formulagen.wrapper.runtimes.ChatRuntime
+import org.formulagen.wrapper.runtimes.WorkRuntime
+import org.formulagen.wrapper.util.loggingDaemonThreads
 import org.formulagen.wrapper.closeInReverse
 import org.formulagen.wrapper.hovel.HostConnection
 import org.formulagen.wrapper.hovel.HovelStatusException

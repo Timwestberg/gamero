@@ -18,7 +18,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonObject
 import org.formulagen.wrapper.approvals.CancelSignal
-import org.formulagen.wrapper.chat.loggingDaemonThreads
+import org.formulagen.wrapper.util.loggingDaemonThreads
 import org.formulagen.wrapper.hovel.HovelEventLines
 import org.formulagen.wrapper.hovel.HovelRejectedException
 import org.formulagen.wrapper.hovel.HovelStatusException

@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.*
 import org.formulagen.wrapper.approvals.*
 import org.formulagen.wrapper.bridge.*
+import org.formulagen.wrapper.conversation.TeamMember
 
 class RemoteApprovalsTest {
     private val server = FakeServer()

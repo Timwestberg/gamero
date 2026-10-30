@@ -13,7 +13,7 @@ import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import org.formulagen.wrapper.bridge.ActivityStep
+import org.formulagen.wrapper.conversation.ActivityStep
 import org.formulagen.wrapper.bridge.BrainArtifact
 import org.formulagen.wrapper.bridge.BrainAttemptOutcome
 import org.formulagen.wrapper.bridge.BrainAttemptState
@@ -30,7 +30,7 @@ import org.formulagen.wrapper.storage.privateFolder
 import org.formulagen.wrapper.storage.readBounded
 import org.formulagen.wrapper.storage.sha256
 import org.formulagen.wrapper.storage.writeDurably
-import org.formulagen.wrapper.chat.NativeConversation
+import org.formulagen.wrapper.runtimes.NativeConversation
 
 /**
  * What one conversation keeps on this Mac. The server holds everything the person sees; this holds

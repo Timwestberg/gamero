@@ -6,11 +6,14 @@ import kotlinx.coroutines.runBlocking
 import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.*
+import org.formulagen.wrapper.runtimes.*
+import org.formulagen.wrapper.conversation.voice.*
+import org.formulagen.wrapper.util.*
 import org.formulagen.wrapper.voice.DuplexChoice
 import org.formulagen.wrapper.voice.FillerSettings
 import org.formulagen.wrapper.voice.HearingDuplex
 import org.junit.Assume.assumeTrue
+import org.formulagen.wrapper.conversation.HearingAction
 
 /**
  * Hermetic, and measured only with `HOVEL_VOICE_LATENCY=1`, since it asserts wall-clock time: endpoint to the first

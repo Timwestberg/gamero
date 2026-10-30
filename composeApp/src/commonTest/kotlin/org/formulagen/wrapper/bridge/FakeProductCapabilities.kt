@@ -1,4 +1,6 @@
 package org.formulagen.wrapper.bridge
+import org.formulagen.wrapper.conversation.DictationState
+import org.formulagen.wrapper.conversation.HearingState
 
 /** Protocol fixtures exercise dispatch without starting a provider, pet or game process. */
 class FakeProviderCapability : ProviderCapability {

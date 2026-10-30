@@ -4,12 +4,12 @@ import java.nio.file.Path
 import kotlin.test.*
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.RuntimeId
-import org.formulagen.wrapper.bridge.TeamMember
-import org.formulagen.wrapper.chat.ContextFolderSupport
-import org.formulagen.wrapper.chat.ProjectFolders
-import org.formulagen.wrapper.chat.WorkScope
-import org.formulagen.wrapper.chat.claude.claudeContextArguments
-import org.formulagen.wrapper.chat.codex.codexContextSandbox
+import org.formulagen.wrapper.conversation.TeamMember
+import org.formulagen.wrapper.runtimes.ContextFolderSupport
+import org.formulagen.wrapper.runtimes.ProjectFolders
+import org.formulagen.wrapper.runtimes.WorkScope
+import org.formulagen.wrapper.runtimes.claude.claudeContextArguments
+import org.formulagen.wrapper.runtimes.codex.codexContextSandbox
 import org.junit.Test
 
 /**
@@ -65,9 +65,9 @@ class ContextFoldersTest {
         val broker = org.formulagen.wrapper.approvals.ApprovalBroker { _, _, _ -> org.formulagen.wrapper.approvals.ApprovalDecision.DENY }
         val claude = org.formulagen.wrapper.providers.ClaudeRuntime(root.resolve("claude"), root.resolve("providers"), emptyMap())
         val runtimes = listOf(
-            org.formulagen.wrapper.chat.claude.ClaudeWorkRuntime(claude, org.formulagen.wrapper.providers.ClaudeConnection(claude), broker),
-            org.formulagen.wrapper.chat.codex.CodexWorkRuntime(root, root.resolve("codex"), broker),
-            org.formulagen.wrapper.chat.grok.GrokWorkRuntime(root, emptyMap(), org.formulagen.wrapper.providers.GrokConnection(emptyMap()), broker, { emptySet() }),
+            org.formulagen.wrapper.runtimes.claude.ClaudeWorkRuntime(claude, org.formulagen.wrapper.providers.ClaudeConnection(claude), broker),
+            org.formulagen.wrapper.runtimes.codex.CodexWorkRuntime(root, root.resolve("codex"), broker),
+            org.formulagen.wrapper.runtimes.grok.GrokWorkRuntime(root, emptyMap(), org.formulagen.wrapper.providers.GrokConnection(emptyMap()), broker, { emptySet() }),
         )
         try {
             assertEquals(mapOf(RuntimeId.CLAUDE_CODE to ContextFolderSupport.UNVERIFIED, RuntimeId.CODEX to ContextFolderSupport.UNVERIFIED,

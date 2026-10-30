@@ -13,7 +13,11 @@ import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.brain.ProviderFailure
 import org.formulagen.wrapper.brain.model
 import org.formulagen.wrapper.brain.roleIssues
-import org.formulagen.wrapper.chat.*
+import org.formulagen.wrapper.runtimes.*
+import org.formulagen.wrapper.conversation.voice.*
+import org.formulagen.wrapper.util.*
+import org.formulagen.wrapper.conversation.Activity
+import org.formulagen.wrapper.conversation.MemberMode
 
 /** The person stopped the message (or Hovel is quitting), or a stage dialog's Stop ended the run. */
 internal class StoppedException : RuntimeException("Stopped")

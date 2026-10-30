@@ -14,10 +14,14 @@ import kotlinx.serialization.json.put
 import org.formulagen.wrapper.approvals.DialogPresenter
 import org.formulagen.wrapper.approvals.NativeDialog
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.*
+import org.formulagen.wrapper.runtimes.*
+import org.formulagen.wrapper.conversation.voice.*
+import org.formulagen.wrapper.util.*
 import org.formulagen.wrapper.hovel.HovelEventLines
 import org.formulagen.wrapper.hovel.HovelRejectedException
 import org.formulagen.wrapper.hovel.HovelStatusException
+import org.formulagen.wrapper.conversation.Activity
+import org.formulagen.wrapper.conversation.MemberMode
 
 /** Shared fixtures for the conversation tests: ids, brains, claims, a fake server and fake runtimes. */
 

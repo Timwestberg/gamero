@@ -8,6 +8,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.formulagen.wrapper.conversation.ActivityLimits
+import org.formulagen.wrapper.conversation.ChatLimits
 
 /**
  * The limits, the model name rule and each runtime's provider, as native code mirrors them, equal event-contracts
