@@ -102,7 +102,7 @@ internal class CoordinatorEngine(
 
         /** A brain with no specialists: the coordinator answers as a plain, streaming talk turn. */
         fun direct(): MessageState {
-            val role = turns.resolved(call, coordinatorRole())
+            val role = turns.resolved(call, coordinatorRole(), coordinator = true)
             val persona = Persona.role(companion, role.name, roleInstructions(role), false)
             val key = contextKey(role)
             val conversation = record.brain.coordinatorContexts[key]?.takeIf { it.personaHash == persona.hash }
@@ -153,7 +153,7 @@ internal class CoordinatorEngine(
             // The newer of this Mac's thread and the server's: another Mac may have moved it on.
             val thread = listOfNotNull(record.threads[threadId], claim.thread?.takeIf { it.id == threadId }?.let(::localThread))
                 .maxByOrNull { it.revision } ?: error("Unknown thread")
-            val coordinator = turns.resolved(call, coordinatorRole())
+            val coordinator = turns.resolved(call, coordinatorRole(), coordinator = true)
             val (decision, replyId) = decide(coordinator, THREAD_REPLY_DECISIONS, threadId) { allowed ->
                 threadReplyRequest(uuid(), allowed, threadId, thread, message.text, claim.brain.configuration.specialists,
                     record.brain.messages.takeLast(10), claim.recalledMemory)
@@ -211,7 +211,7 @@ internal class CoordinatorEngine(
         /** Ask the coordinator what the run does next, and apply its validated decision. */
         fun decideRun() {
             val current = currentRun()
-            val coordinator = turns.resolved(call, coordinatorRole())
+            val coordinator = turns.resolved(call, coordinatorRole(), coordinator = true)
             val allowed = allowedDecisions(current)
             val (decision, replyId) = decide(coordinator, allowed, null) { kinds ->
                 val input = handoff(current.artifacts.filter { it.id in current.inputs }.map { it.id }, files = false)
@@ -409,11 +409,14 @@ internal class CoordinatorEngine(
             return null
         }
 
-        /** Whether [decision] names what exists: this thread for a forward, a bound specialist for a delegation. */
+        /**
+         * Whether [decision] names what exists: this thread for a forward, a specialist of this brain for a delegation.
+         * One with no provider fits; delegating to it then says to assign one ([specialistSnapshot]), as a run does.
+         */
         fun fits(decision: CoordinatorDecision, threadId: String?): Boolean = when (decision) {
             is CoordinatorDecision.Forward -> decision.threadId == threadId
             is CoordinatorDecision.Delegate -> threadId == null ||
-                claim.brain.configuration.specialists.any { it.id == decision.specialistId && it.binding != null }
+                claim.brain.configuration.specialists.any { it.id == decision.specialistId }
             else -> true
         }
 

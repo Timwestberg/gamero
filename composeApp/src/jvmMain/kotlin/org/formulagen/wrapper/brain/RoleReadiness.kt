@@ -59,6 +59,14 @@ internal class BrainConfigurationException(message: String) : IllegalStateExcept
         /** A role, the coordinator included, with no provider assigned. */
         fun unassigned(roleName: String) = BrainConfigurationException("Assign a provider to $roleName in Configure brain.")
 
+        /**
+         * A role bound to a runtime ([product]) this Mac does not run for it: not offered here at all, or, for a
+         * working role ([working]), not one that may work in projects here.
+         */
+        fun notOnThisMac(roleName: String, product: String, working: Boolean) = BrainConfigurationException(
+            (if (working) "$product can't work in projects on this Mac." else "$product doesn't run on this Mac.") +
+                " Choose another provider for $roleName in Configure brain.")
+
         /** The coordinator's name in that line. */
         const val COORDINATOR = "the coordinator"
     }

@@ -189,6 +189,13 @@ class BrainTransitionsTest {
         assertEquals("the coordinator", record().failingRole)
     }
 
+    @Test fun aResumeToASpecialistThatLostItsProviderSaysToAssignOne() {
+        val unbound = configuration.copy(specialists = configuration.specialists.map { if (it.id == writer.id) it.copy(binding = null) else it })
+        val before = record(BrainPhase.EXECUTE, attempts = listOf(attempt(writer, steps[0], BrainAttemptState.QUEUED)), inWorkflow = true).r
+        val refusal = assertFailsWith<BrainConfigurationException> { before.resumed(true, BrainDocument(2, unbound), 9, ::newId) }
+        assertEquals("Assign a provider to ${writer.name} in Configure brain.", refusal.message)
+    }
+
     @Test fun anApprovedResumeReplacesWorkThatNeverStartedAndAppendsWorkThatDid() {
         // (last attempt's state, retry) to (attempt count after, whether the queued attempt kept its ID).
         val rows = listOf(

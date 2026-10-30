@@ -10,9 +10,11 @@ import kotlin.time.Duration.Companion.hours
 import kotlinx.coroutines.runBlocking
 import org.formulagen.wrapper.approvals.CancelSignal
 import org.formulagen.wrapper.bridge.*
+import org.formulagen.wrapper.brain.BrainConfigurationException
 import org.formulagen.wrapper.brain.ProviderFailure
 import org.formulagen.wrapper.brain.model
 import org.formulagen.wrapper.brain.roleIssues
+import org.formulagen.wrapper.providers.copy
 import org.formulagen.wrapper.runtimes.*
 import org.formulagen.wrapper.conversation.voice.*
 import org.formulagen.wrapper.util.*
@@ -93,9 +95,11 @@ internal class ProviderTurns(
 
     /**
      * [role] with the model its runtime actually runs for its binding; an unavailable model or effort fails as the
-     * provider's refusal.
+     * provider's refusal. A runtime this Mac does not run for the role is the brain's configuration to change
+     * ([offered]), never a refusal to retry. [coordinator] names the role in that line.
      */
-    fun resolved(call: TurnCall, role: BrainRoleSnapshot): BrainRoleSnapshot {
+    fun resolved(call: TurnCall, role: BrainRoleSnapshot, coordinator: Boolean = false): BrainRoleSnapshot {
+        offered(role, coordinator)
         val unavailable = ProviderFailure(ChatFailure.ModelUnavailable, role.binding.runtimeId, role.roleId, false)
         val scope = ProviderScope(role.binding.runtimeId)
         val models = runCatching { runBlocking { providers.models(scope).models } }.getOrNull()
@@ -124,8 +128,18 @@ internal class ProviderTurns(
         try { return action() } finally { gate.release() }
     }
 
+    /** Throws [BrainConfigurationException] when [role]'s runtime is not one this Mac runs for its mode. */
+    private fun offered(role: BrainRoleSnapshot, coordinator: Boolean) {
+        val working = role.mode == MemberMode.WORK
+        val runtime = role.binding.runtimeId
+        if (runtime in (if (working) work else talk)) return
+        throw BrainConfigurationException.notOnThisMac(if (coordinator) BrainConfigurationException.COORDINATOR else role.name,
+            runtime.copy.product, working)
+    }
+
     /** [runtime] when it can take [role]'s turn now; otherwise the failure its readiness names (signed out, or unavailable). */
     private fun <R : Any> ready(call: TurnCall, runtime: R?, role: BrainRoleSnapshot, context: String, coordinator: Boolean): R {
+        if (runtime == null) offered(role, coordinator)
         val readiness = when (runtime) {
             is ChatRuntime -> runtime.readiness(call.accountId)
             is WorkRuntime -> runtime.readiness(call.accountId)

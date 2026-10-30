@@ -593,6 +593,7 @@ person can retry it.
 | Status line "Update Hovel on this Mac: the server needs a newer version" | The heartbeat answered 409 `update-required`: the server stored the beat, so this Mac reads as online and the page asks the person to update, but sends no memory jobs. The runner keeps beating, and conversation routes keep working while the server serves them. |
 | Status line "Update Hovel on this Mac to run every message in its conversations" | A claim answered `mac-update-required`: a message needs a newer contract. It stays queued until this Mac updates or it expires. |
 | System note "Assign a provider to the coordinator in Configure brain." (or to a named role) | The companion's brain has a role with no provider (`BrainConfigurationException`); the message settles `failed`. Assign one in Configure brain, then send the message again. |
+| System note "Claude doesn't run on this Mac. Choose another provider for the coordinator in Configure brain." (or "can't work in projects on this Mac" for a working role) | The role is bound to a runtime this Mac does not offer for it, so retrying cannot help. Choose another provider in Configure brain. |
 | System note "Hovel could not finish this message on this Mac. Try sending it again." | An unexpected error on this Mac; the log has it as "A message could not run". |
 | A message settled `reconciliation-required` | Its turn may have started before a crash or an error the runner could not classify. It never runs again unless the person retries it. |
 

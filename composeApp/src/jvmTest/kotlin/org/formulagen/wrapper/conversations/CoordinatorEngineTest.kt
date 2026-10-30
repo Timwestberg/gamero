@@ -518,6 +518,34 @@ class CoordinatorEngineTest {
         }
     }
 
+    @Test fun aCoordinatorOnARuntimeThisMacDoesNotRunSaysToChooseAnother() {
+        // This Mac runs Codex only; the coordinator is bound to Claude Code.
+        for (document in listOf(brain(), brain("Implementer" to MemberMode.WORK))) {
+            val configuration = document.configuration
+            val claude = configuration.coordinator.copy(binding = BrainBinding(RuntimeId.CLAUDE_CODE, SharedRules.RUNTIME_DEFAULT_MODEL))
+            val fixture = Fixture(document.copy(configuration = configuration.copy(coordinator = claude)))
+            assertEquals(MessageState.FAILED, fixture.send("Hi"))
+            assertEquals("Claude doesn't run on this Mac. Choose another provider for the coordinator in Configure brain.",
+                fixture.server.appended().last { it.author == MessageAuthor.SYSTEM }.text)
+            assertEquals(emptyList(), fixture.chat.requests, "no provider turn starts")
+        }
+    }
+
+    @Test fun aThreadReplyDelegatedToASpecialistWithNoProviderSaysToAssignOne() {
+        val document = brain("Implementer" to MemberMode.WORK, "Reviewer" to MemberMode.TALK)
+        val configuration = document.configuration
+        val fixture = Fixture(document.copy(configuration = configuration.copy(
+            specialists = configuration.specialists.map { if (it.name == "Reviewer") it.copy(binding = null) else it })))
+        fixture.delegateThenAnswer()
+        fixture.send("Add sign-in")
+        val threadId = fixture.server.threads().last().id
+        val reviewer = fixture.document.configuration.specialists[1]
+        fixture.decide = { delegate(reviewer, "review the sign-in page") }
+        assertEquals(MessageState.FAILED, fixture.send("Can someone review it?", threadId))
+        assertEquals("Assign a provider to Reviewer in Configure brain.", fixture.server.appended().last { it.author == MessageAuthor.SYSTEM }.text)
+        assertEquals(listOf(threadId), fixture.server.threads().map { it.id }.distinct(), "no thread opens for it")
+    }
+
     @Test fun anUnexpectedErrorStillSaysToTryAgain() {
         val fixture = Fixture(brain())
         fixture.chat.reply = { error("a bug in this build") }
