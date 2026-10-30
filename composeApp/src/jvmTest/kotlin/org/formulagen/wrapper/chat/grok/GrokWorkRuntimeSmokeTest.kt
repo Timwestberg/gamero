@@ -31,7 +31,7 @@ class GrokWorkRuntimeSmokeTest {
                 if ((request.subject as? ApprovalSubject.Command)?.command == command && permissions.incrementAndGet() == 1)
                     ApprovalDecision.ALLOW_ONCE else ApprovalDecision.DENY
             }
-            val runtime = GrokWorkRuntime(root.resolve("providers"), env, GrokConnection(env), broker)
+            val runtime = GrokWorkRuntime(root.resolve("providers"), env, GrokConnection(env), broker, nothingRetained)
             try {
                 val events = WorkSmokeEvents()
                 val handle = runtime.startTurn(TurnRequest(ACCOUNT, "20000000-0000-4000-8000-000000000002", Persona.working("Ember"),
@@ -90,7 +90,7 @@ class GrokWorkRuntimeSmokeTest {
                 "Do not use other tools or alter other files. If denied, stop without retrying. Remember ORCHID_WORK.", work)
         val first = WorkSmokeEvents()
         try {
-            GrokWorkRuntime(root.resolve("providers"), env, GrokConnection(env), broker, GrokWorkTrust { _, trusted, cancel -> trusted == project && !cancel.isCancelled }).use { runtime ->
+            GrokWorkRuntime(root.resolve("providers"), env, GrokConnection(env), broker, nothingRetained, GrokWorkTrust { _, trusted, cancel -> trusted == project && !cancel.isCancelled }).use { runtime ->
                 assertEquals(Readiness.Ready, runtime.readiness(ACCOUNT))
                 runtime.startTurn(request, first); first.await()
                 assertNull(first.failure)
@@ -100,7 +100,7 @@ class GrokWorkRuntimeSmokeTest {
                 assertTrue(first.activities.any { it.steps.any { step -> step.kind == ActivityKind.EDIT && step.status == ActivityStatus.DONE } })
             }
             Files.writeString(marker, "BEFORE")
-            GrokWorkRuntime(root.resolve("providers"), env, GrokConnection(env), broker).use { runtime ->
+            GrokWorkRuntime(root.resolve("providers"), env, GrokConnection(env), broker, nothingRetained).use { runtime ->
                 val second = WorkSmokeEvents()
                 runtime.startTurn(request.copy(conversation = NativeConversation(checkNotNull(first.handle), persona.hash),
                     text = "The test harness reset the file. Repeat the same edit once. If denied, stop. Include the word I asked you to remember."), second)

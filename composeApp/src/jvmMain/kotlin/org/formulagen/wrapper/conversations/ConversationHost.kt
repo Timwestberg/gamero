@@ -27,8 +27,9 @@ internal interface ConversationVoiceLink : ReplyListeners {
 /**
  * Builds this Mac's conversation side for a registered account ([start]) and owns what outlives it:
  * the project folders and the `project.*` capability ([projects]), which needs the account the runner
- * serves. The runner gets runtime instances of its own ([talk], [work]), which end with it, and every work
- * approval goes through [RemoteApprovals]. [voice], when
+ * serves. The runner gets runtime instances of its own ([talk], [work]), which end with it; they keep the provider
+ * sessions its conversations can resume ([ConversationStore.bindingHandles]), and every work approval goes through
+ * [RemoteApprovals]. [voice], when
  * this Mac has conversation voice, is linked to each runner it starts.
  */
 internal class ConversationHost(
@@ -39,8 +40,8 @@ internal class ConversationHost(
     /** The runtimes this build offers, and those of them that may work here. */
     private val offered: Set<RuntimeId>,
     private val working: Set<RuntimeId>,
-    private val talk: () -> List<ChatRuntime>,
-    private val work: (ApprovalBroker) -> List<WorkRuntime>,
+    private val talk: (retained: () -> Set<String>?) -> List<ChatRuntime>,
+    private val work: (approvals: ApprovalBroker, retained: () -> Set<String>?) -> List<WorkRuntime>,
     private val voice: ConversationVoiceLink? = null,
 ) : AutoCloseable {
     @Volatile private var running: Running? = null
@@ -72,8 +73,10 @@ internal class ConversationHost(
         val owned = mutableListOf<AutoCloseable>(store)
         try {
             val approvals = RemoteApprovals(dialogs, api, registration.id)
-            val talkRuntimes = talk().also { owned += it }
-            val workRuntimes = work(approvals).also { owned += it }
+            // The account's live bindings: the runtimes prune only what no conversation can resume.
+            val retained = { store.bindingHandles() }
+            val talkRuntimes = talk(retained).also { owned += it }
+            val workRuntimes = work(approvals, retained).also { owned += it }
             val turns = ProviderTurns(talkRuntimes, workRuntimes, providers, approvals)
             val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(dialogs), api)
             val publisher = ProjectFolderPublisher(folders, api, registration.ownerId, registration.id, engine::readableBy)

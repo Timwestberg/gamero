@@ -41,15 +41,15 @@ internal class GrokWorkRuntime(
     private val environment: Map<String, String>,
     private val connection: GrokConnection,
     private val broker: ApprovalBroker,
+    /**
+     * Every binding handle the account's conversations can still resume, such as a thread's
+     * ([org.formulagen.wrapper.conversations.ConversationStore.bindingHandles]): pruning keeps them, so a specialist's
+     * session lives as long as its thread can resume. Null when they could not be read, and then nothing is pruned.
+     */
+    private val retained: () -> Set<String>?,
     private val trust: GrokWorkTrust = GrokWorkTrust { _, _, _ -> false },
     /** The player's login-shell `PATH` for the working child ([grokWorkEnvironment]); null keeps [environment]'s. */
     private val loginPath: () -> String? = { loginShellPath.value },
-    /**
-     * Handles of the account's work bindings its conversations still hold, such as a thread's
-     * ([org.formulagen.wrapper.conversations.ConversationStore.bindingHandles]); null when they could not be read,
-     * and then nothing is pruned.
-     */
-    private val retained: (accountId: String) -> Set<String>? = { emptySet() },
 ) : WorkRuntime {
     override val id = RuntimeId.GROK_BUILD
     private val bindings = GrokSessions(root.resolve("grok-work-bindings"))
@@ -154,7 +154,7 @@ internal class GrokWorkRuntime(
             val saved = request.conversation
             // Retain the saved handle while pruning; it is looked up next.
             val start = when (val resolved = resolveGrokWorkTurn(request, connection, bindings, beforeLookup = {
-                runCatching { retained(request.accountId) }.getOrNull()
+                runCatching { retained() }.getOrNull()
                     ?.let { bindings.prune(request.accountId, it + listOfNotNull(saved?.id)) }
             })) {
                 is GrokTurnStart.Failed -> { fail(resolved.failure); return }

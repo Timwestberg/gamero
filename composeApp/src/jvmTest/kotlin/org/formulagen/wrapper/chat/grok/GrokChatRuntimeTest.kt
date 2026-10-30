@@ -7,6 +7,10 @@ import org.formulagen.wrapper.bridge.ProviderAction
 import org.formulagen.wrapper.bridge.ProviderState
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.chat.*
+import org.formulagen.wrapper.brain.BrainRecord
+import org.formulagen.wrapper.conversations.ConversationRecord
+import org.formulagen.wrapper.conversations.ConversationStore
+import java.util.UUID
 import org.formulagen.wrapper.providers.GrokConnection
 import org.formulagen.wrapper.providers.GrokProvider
 
@@ -18,7 +22,7 @@ class GrokChatRuntimeTest {
             assertEquals(ProviderState.CONNECTED, provider.status(ProviderAction.STATUS).state)
             assertEquals("grok-test", provider.models().single().modelId)
             val first = TalkEvents()
-            GrokChatRuntime(fake.root.resolve("providers"), fake.env, connection).use { runtime ->
+            GrokChatRuntime(fake.root.resolve("providers"), fake.env, connection, nothingRetained).use { runtime ->
                 runtime.startTurn(talkRequest(), first)
                 first.await()
                 assertEquals(listOf("opened", "accepted", "partial", "completed"), first.seen)
@@ -33,7 +37,7 @@ class GrokChatRuntimeTest {
                 assertEquals(1, fake.requests().count { it == "session/load" })
             }
             val restarted = TalkEvents()
-            GrokChatRuntime(fake.root.resolve("providers"), fake.env, connection).use { runtime ->
+            GrokChatRuntime(fake.root.resolve("providers"), fake.env, connection, nothingRetained).use { runtime ->
                 runtime.startTurn(talkRequest(NativeConversation(checkNotNull(first.handle), talkPersona.hash)), restarted)
                 restarted.await()
                 assertEquals("completed", restarted.seen.last())
@@ -44,7 +48,7 @@ class GrokChatRuntimeTest {
 
     @Test fun missingBindingAndPersonaChangeFailBeforeSubmissionWhileModelAndTransportErrorsNeverReplay() {
         FakeGrokRuntime().use { fake ->
-            GrokChatRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env)).use { runtime ->
+            GrokChatRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), nothingRetained).use { runtime ->
                 for (saved in listOf(NativeConversation("11111111-1111-4111-8111-111111111111", talkPersona.hash),
                     NativeConversation("11111111-1111-4111-8111-111111111111", Persona.companion("Other").hash))) {
                     val events = TalkEvents()
@@ -68,7 +72,7 @@ class GrokChatRuntimeTest {
     @Test fun aRejectedSessionLoadLosesOnlyThatConversationAndDropsItsBinding() {
         FakeGrokRuntime().use { fake ->
             val providers = fake.root.resolve("providers")
-            GrokChatRuntime(providers, fake.env, GrokConnection(fake.env)).use { runtime ->
+            GrokChatRuntime(providers, fake.env, GrokConnection(fake.env), nothingRetained).use { runtime ->
                 val first = TalkEvents()
                 runtime.startTurn(talkRequest(), first); first.await()
                 val saved = NativeConversation(checkNotNull(first.handle), talkPersona.hash)
@@ -90,7 +94,7 @@ class GrokChatRuntimeTest {
 
     @Test fun toolsFailBeforePrompt() {
         FakeGrokRuntime().use { fake ->
-            GrokChatRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env)).use { runtime ->
+            GrokChatRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), nothingRetained).use { runtime ->
                 fake.mode("tools")
                 val unsafe = TalkEvents()
                 runtime.startTurn(talkRequest(), unsafe); unsafe.await()
@@ -100,18 +104,35 @@ class GrokChatRuntimeTest {
         }
     }
 
-    @Test fun cleanupKeepsEveryBindingTheConversationsHoldAndDropsOrphans() {
+    @Test fun aCoordinatorsSessionIsKeptWhileItsConversationCanResumeIt() {
         FakeGrokRuntime().use { fake ->
             val providers = fake.root.resolve("providers")
-            val held = java.util.concurrent.CopyOnWriteArraySet<String>()
-            GrokChatRuntime(providers, fake.env, GrokConnection(fake.env), retained = { held.toSet() }).use { runtime ->
-                val kept = TalkEvents(); runtime.startTurn(talkRequest(), kept); kept.await()
-                held += checkNotNull(kept.handle)
-                val orphan = TalkEvents(); runtime.startTurn(talkRequest(), orphan); orphan.await()
+            ConversationStore(fake.root.resolve("conversations"), ACCOUNT).open().use { store ->
+                GrokChatRuntime(providers, fake.env, GrokConnection(fake.env), retained = { store.bindingHandles() }).use { runtime ->
+                    val kept = TalkEvents(); runtime.startTurn(talkRequest(), kept); kept.await()
+                    // The coordinator's conversation, as the engine records it once the turn opens it.
+                    store.write(UUID.randomUUID().toString(), ConversationRecord(brain = BrainRecord(coordinatorContexts = mapOf(
+                        "coordinator:grok-build" to NativeConversation(checkNotNull(kept.handle), talkPersona.hash)))))
+                    val orphan = TalkEvents(); runtime.startTurn(talkRequest(), orphan); orphan.await()
+                    val next = TalkEvents(); runtime.startTurn(talkRequest(), next); next.await()
+                    assertTrue(Files.exists(providers.resolve("grok-bindings/${kept.handle}.json")))
+                    assertFalse(Files.exists(providers.resolve("grok-bindings/${orphan.handle}.json")))
+                    assertTrue(Files.exists(providers.resolve("grok-bindings/${next.handle}.json")))
+                    val resumed = TalkEvents()
+                    runtime.startTurn(talkRequest(NativeConversation(checkNotNull(kept.handle), talkPersona.hash)), resumed); resumed.await()
+                    assertEquals(kept.handle, resumed.handle)
+                }
+            }
+        }
+    }
+
+    @Test fun anUnreadableConversationPrunesNothing() {
+        FakeGrokRuntime().use { fake ->
+            val providers = fake.root.resolve("providers")
+            GrokChatRuntime(providers, fake.env, GrokConnection(fake.env), retained = { null }).use { runtime ->
+                val first = TalkEvents(); runtime.startTurn(talkRequest(), first); first.await()
                 val next = TalkEvents(); runtime.startTurn(talkRequest(), next); next.await()
-                assertTrue(Files.exists(providers.resolve("grok-bindings/${kept.handle}.json")))
-                assertFalse(Files.exists(providers.resolve("grok-bindings/${orphan.handle}.json")))
-                assertTrue(Files.exists(providers.resolve("grok-bindings/${next.handle}.json")))
+                assertTrue(Files.exists(providers.resolve("grok-bindings/${first.handle}.json")))
             }
         }
     }
@@ -119,7 +140,7 @@ class GrokChatRuntimeTest {
     @Test fun aMessageSentRightAfterStoppingAnUnresponsiveTurnWaitsForItsTeardown() {
         FakeGrokRuntime().use { fake ->
             fake.mode("stuck")
-            GrokChatRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env)).use { runtime ->
+            GrokChatRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), nothingRetained).use { runtime ->
                 val stuck = TalkEvents()
                 val handle = runtime.startTurn(talkRequest(), stuck)
                 val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
@@ -139,7 +160,7 @@ class GrokChatRuntimeTest {
     @Test fun stopWaitsForCancellationAndDoesNotDeliverLateEvents() {
         FakeGrokRuntime().use { fake ->
             fake.mode("wait")
-            GrokChatRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env)).use { runtime ->
+            GrokChatRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), nothingRetained).use { runtime ->
                 val events = TalkEvents()
                 val handle = runtime.startTurn(talkRequest(), events)
                 val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)

@@ -67,7 +67,7 @@ class ContextFoldersTest {
         val runtimes = listOf(
             org.formulagen.wrapper.chat.claude.ClaudeWorkRuntime(claude, org.formulagen.wrapper.providers.ClaudeConnection(claude), broker),
             org.formulagen.wrapper.chat.codex.CodexWorkRuntime(root, root.resolve("codex"), broker),
-            org.formulagen.wrapper.chat.grok.GrokWorkRuntime(root, emptyMap(), org.formulagen.wrapper.providers.GrokConnection(emptyMap()), broker),
+            org.formulagen.wrapper.chat.grok.GrokWorkRuntime(root, emptyMap(), org.formulagen.wrapper.providers.GrokConnection(emptyMap()), broker, { emptySet() }),
         )
         try {
             assertEquals(mapOf(RuntimeId.CLAUDE_CODE to ContextFolderSupport.UNVERIFIED, RuntimeId.CODEX to ContextFolderSupport.UNVERIFIED,

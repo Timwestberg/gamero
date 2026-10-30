@@ -18,13 +18,13 @@ class GrokChatRuntimeSmokeTest {
             val connection = GrokConnection(env)
             assertEquals(ProviderState.CONNECTED, GrokProvider(connection).status(ProviderAction.STATUS).state)
             val first = TalkEvents()
-            GrokChatRuntime(root, env, connection).use { runtime ->
+            GrokChatRuntime(root, env, connection, nothingRetained).use { runtime ->
                 runtime.startTurn(talkRequest().copy(text = "Remember HOVEL_ORCHID for this conversation. Reply briefly."), first)
                 first.await(60)
                 assertNull(first.failure)
                 assertTrue("accepted" in first.seen)
             }
-            GrokChatRuntime(root, env, connection).use { runtime ->
+            GrokChatRuntime(root, env, connection, nothingRetained).use { runtime ->
                 val next = TalkEvents()
                 runtime.startTurn(talkRequest(NativeConversation(checkNotNull(first.handle), talkPersona.hash)).copy(
                     text = "What word did I ask you to remember? Reply with the word only."), next)

@@ -224,6 +224,24 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
         return folder(conversationId).resolve(ARTIFACTS).resolve(artifact.id)
     }
 
+    /**
+     * Every provider conversation this account's conversations can resume: each coordinator's, each thread's specialist,
+     * and any a run names, read from the records under their locks. Grok's pruning keeps these bindings, so a
+     * specialist's session lives as long as its thread can resume. Ids of other runtimes are harmless there. Null when
+     * any record cannot be read, or there are more than [limit] conversations: then nothing may be pruned.
+     */
+    fun bindingHandles(limit: Int = 4_096): Set<String>? = runCatching {
+        if (!Files.isDirectory(base, NOFOLLOW_LINKS)) return@runCatching emptySet()
+        val conversations = Files.list(base).use { it.toList() }
+            .filter { Files.isDirectory(it, NOFOLLOW_LINKS) && SharedRules.isRecordId(it.fileName.toString()) }
+        check(conversations.size <= limit)
+        conversations.flatMapTo(HashSet()) { folder ->
+            val record = read(folder.fileName.toString())
+            (record.brain.coordinatorContexts.values + record.threadContexts.values + record.brain.run?.contexts?.values.orEmpty())
+                .map { it.id }
+        }
+    }.getOrNull()
+
     /** The journal as it is on disk. An entry that cannot be read is skipped, and logged once; it stays on disk for a person to inspect. */
     private fun loadJournal() {
         pending.clear()
@@ -286,27 +304,5 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
         private val STOP_MARK = "{}".toByteArray()
         private const val RECORD_BYTES = 16_000_000L
         private const val ENTRY_BYTES = 16_384L
-
-        /**
-         * Every provider conversation id [profile]'s conversations hold, coordinators and threads alike,
-         * read from disk, so Grok's pruning keeps them. Ids of other runtimes are harmless there. Null
-         * when any record cannot be read, and then nothing may be pruned.
-         */
-        fun bindingHandles(root: Path, profile: String, limit: Int = 4_096): Set<String>? {
-            if (!SharedRules.isRecordId(profile)) return emptySet()
-            val base = root.resolve(profile).resolve("conversations")
-            if (Files.notExists(base, NOFOLLOW_LINKS)) return emptySet()
-            return runCatching {
-                val folders = Files.list(base).use { it.toList() }.filter { Files.isDirectory(it, NOFOLLOW_LINKS) }
-                check(folders.size <= limit)
-                folders.flatMapTo(HashSet()) { folder ->
-                    val file = folder.resolve(RECORD)
-                    if (!Files.exists(file)) return@flatMapTo emptyList()
-                    val text = readBounded(file, RECORD_BYTES).decodeToString()
-                    val record = brainJson.decodeFromString(ConversationRecord.serializer(), text)
-                    (record.brain.coordinatorContexts.values + record.threadContexts.values).map { it.id }
-                }
-            }.getOrNull()
-        }
     }
 }

@@ -5,6 +5,7 @@ import java.nio.file.attribute.PosixFilePermissions
 import kotlin.test.*
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.brain.BrainRecord
+import org.formulagen.wrapper.brain.RunRecord
 import org.formulagen.wrapper.chat.NativeConversation
 
 class ConversationStoreTest {
@@ -102,15 +103,19 @@ class ConversationStoreTest {
         assertFails { store.bytes(conversation, artifact) }
     }
 
-    @Test fun grokPruningKeepsEveryConversationsBindings() {
-        val coordinator = id(); val thread = id()
-        store.write(conversation, ConversationRecord(brain = BrainRecord(coordinatorContexts = mapOf("c:grok-build" to NativeConversation(coordinator, "h"))),
+    @Test fun grokPruningKeepsEveryBindingAConversationCanResume() {
+        val coordinator = id(); val thread = id(); val run = id()
+        val document = brain()
+        val running = RunRecord(BrainRun(id(), 1, document.revision, null, BrainRunState.RUNNING, null), document.configuration, null, "Ship it",
+            emptyList(), contexts = mapOf("writer:grok-build" to NativeConversation(run, "h")))
+        store.write(conversation, ConversationRecord(brain = BrainRecord(run = running,
+            coordinatorContexts = mapOf("c:grok-build" to NativeConversation(coordinator, "h"))),
             threadContexts = mapOf(id() to NativeConversation(thread, "h"))))
         store.write(id(), ConversationRecord())
-        assertEquals(setOf(coordinator, thread), ConversationStore.bindingHandles(root, account))
-        assertEquals(emptySet(), ConversationStore.bindingHandles(root, id()))
-        assertEquals(emptySet(), ConversationStore.bindingHandles(root, "local"))
+        assertEquals(setOf(coordinator, thread, run), store.bindingHandles(), "a coordinator's, a thread's and a run's")
+        assertEquals(emptySet(), ConversationStore(root, id()).bindingHandles(), "another account holds none of them")
+        assertNull(store.bindingHandles(limit = 1), "more conversations than the limit prune nothing")
         Files.writeString(root.resolve(account).resolve("conversations").resolve(conversation).resolve("conversation.json"), "{broken")
-        assertNull(ConversationStore.bindingHandles(root, account), "an unreadable record prunes nothing")
+        assertNull(store.bindingHandles(), "an unreadable record prunes nothing")
     }
 }

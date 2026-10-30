@@ -29,8 +29,12 @@ internal class GrokChatRuntime(
     private val root: Path,
     private val environment: Map<String, String>,
     private val connection: GrokConnection,
-    /** Handles of the account's talk bindings its conversations still hold, such as a coordinator's; see [GrokWorkRuntime]. */
-    private val retained: (accountId: String) -> Set<String>? = { emptySet() },
+    /**
+     * Every binding handle the account's conversations can still resume
+     * ([org.formulagen.wrapper.conversations.ConversationStore.bindingHandles]): pruning keeps
+     * them. Null when they could not be read, and then nothing is pruned.
+     */
+    private val retained: () -> Set<String>?,
 ) : ChatRuntime {
     override val id = RuntimeId.GROK_BUILD
     private val bindings = GrokSessions(root.resolve("grok-bindings"))
@@ -116,7 +120,7 @@ internal class GrokChatRuntime(
                 // during the read is kept, since its history may have been written after the read passed it.
                 synchronized(bindingLock) { saved?.id?.let { activate(it); activeHandle = it }; scans++; touched += activeHandles }
                 try {
-                    val kept = runCatching { retained(request.accountId) }.getOrNull()
+                    val kept = runCatching { retained() }.getOrNull()
                     synchronized(bindingLock) { kept?.let { bindings.prune(request.accountId, it + activeHandles + touched) } }
                 } finally { synchronized(bindingLock) { if (--scans == 0) touched.clear() } }
             })) {

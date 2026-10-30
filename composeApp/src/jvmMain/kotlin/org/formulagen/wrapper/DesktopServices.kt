@@ -23,7 +23,6 @@ import org.formulagen.wrapper.bridge.ProjectCapability
 import org.formulagen.wrapper.bridge.ConversationVoiceCapability
 import org.formulagen.wrapper.conversations.ConversationHost
 import org.formulagen.wrapper.conversations.DesktopConversationVoice
-import org.formulagen.wrapper.conversations.ConversationStore
 import org.formulagen.wrapper.conversations.ProjectFolderStore
 import org.formulagen.wrapper.conversations.NativeFolderPicker
 import org.formulagen.wrapper.approvals.ComposeDialogPresenter
@@ -183,7 +182,6 @@ internal class DesktopServices private constructor(
                 // Conversations get their runtime instances from the runner, and every work approval races the phone
                 // through the runner's broker.
                 val grokRoot = ConversationHost.grokRoot(providerRoot)
-                val retained = { profile: String -> ConversationStore.bindingHandles(providerRoot, profile) }
                 val conversationsHere = product == HOVEL_PRODUCT && System.getProperty("os.name").contains("Mac")
                 val conversationPicker = VoicePickerModel()
                 val conversationVoice = if (conversationsHere) own(DesktopConversationVoice(
@@ -191,15 +189,15 @@ internal class DesktopServices private constructor(
                 )) else null
                 val conversations = if (conversationsHere) own(ConversationHost(
                     providerRoot, ProjectFolderStore(providerRoot, NativeFolderPicker { window }), providers, nativeDialogs, offered, working,
-                    talk = {
+                    talk = { retained ->
                         listOfNotNull(codex?.let { CodexChatRuntime(providerRoot, it) }, claude?.let { ClaudeChatRuntime(it, checkNotNull(claudeSignIn)) },
                             grokConnection?.let { GrokChatRuntime(grokRoot, environment, it, retained) })
                     },
-                    work = { approvals ->
+                    work = { approvals, retained ->
                         listOfNotNull(claude?.takeIf { RuntimeId.CLAUDE_CODE in working }?.let { ClaudeWorkRuntime(it, checkNotNull(claudeSignIn), approvals) },
                             codex?.takeIf { RuntimeId.CODEX in working }?.let { CodexWorkRuntime(providerRoot, it, approvals) },
                             grokConnection?.takeIf { RuntimeId.GROK_BUILD in working }?.let {
-                                GrokWorkRuntime(grokRoot, environment, it, approvals, NativeGrokWorkTrust(nativeDialogs), retained = retained)
+                                GrokWorkRuntime(grokRoot, environment, it, approvals, retained, NativeGrokWorkTrust(nativeDialogs))
                             })
                     },
                     voice = conversationVoice,

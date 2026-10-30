@@ -33,3 +33,6 @@ internal class TalkEvents : TurnEvents {
 
 /** The signed-in account the Grok tests run turns for. */
 internal const val ACCOUNT = "50000000-0000-4000-8000-000000000005"
+
+/** A runtime's retention when no conversation holds a binding: pruning keeps only what is active. */
+internal val nothingRetained: () -> Set<String>? = { emptySet() }

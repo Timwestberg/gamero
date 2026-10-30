@@ -10,6 +10,8 @@ import kotlin.test.*
 import org.formulagen.wrapper.approvals.*
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.chat.*
+import org.formulagen.wrapper.conversations.ConversationRecord
+import org.formulagen.wrapper.conversations.ConversationStore
 import org.formulagen.wrapper.providers.GrokConnection
 
 /** Process fixtures exercise cancellation/resume ownership without a model or real provider configuration. */
@@ -24,7 +26,7 @@ class GrokWorkRuntimeTest {
                 cancel.onCancel { cancelled.complete(Unit) }.use { cancelled.get(10, TimeUnit.SECONDS) }
                 ApprovalDecision.ALLOW_ONCE // A late native click must not resurrect an ended turn.
             }
-            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker).use { runtime ->
+            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker, nothingRetained).use { runtime ->
                 val events = WorkFixtureEvents()
                 val handle = runtime.startTurn(workRequest(fake), events)
                 shown.get(10, TimeUnit.SECONDS)
@@ -52,7 +54,7 @@ class GrokWorkRuntimeTest {
             val asked = CopyOnWriteArrayList<Pair<java.nio.file.Path, java.nio.file.Path>>()
             val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
             val trust = GrokWorkTrust { selected, root, _ -> asked += selected to root; true }
-            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker, trust).use { runtime ->
+            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker, nothingRetained, trust).use { runtime ->
                 fake.untrusted(repository, rootAfterTrust = project)
                 val moved = WorkFixtureEvents()
                 runtime.startTurn(workRequest(fake, project), moved); moved.done.get(10, TimeUnit.SECONDS)
@@ -74,7 +76,7 @@ class GrokWorkRuntimeTest {
             val project = Files.createDirectories(fake.root.resolve("notes")).toRealPath()
             val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
             val trust = GrokWorkTrust { _, _, _ -> error("A trust root above the home folder must not be offered") }
-            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker, trust).use { runtime ->
+            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker, nothingRetained, trust).use { runtime ->
                 for (root in listOf(fake.root, fake.root.parent, java.nio.file.Path.of("/"))) {
                     fake.untrusted(root)
                     val events = WorkFixtureEvents()
@@ -100,11 +102,43 @@ class GrokWorkRuntimeTest {
         assertEquals("Folder Grok will trust: /work/\\u202Erepo", grokWorkTrustDialog(project, java.nio.file.Path.of("/work/\u202Erepo")).lines[1])
     }
 
+    /**
+     * A specialist's Grok session lives as long as its thread can resume: pruning reads the live bindings of the account's
+     * conversations. Before, the runtimes pruned against team chat's histories, and anything else they were not told to
+     * keep, such as a brain specialist's session, went with the next Grok turn.
+     */
+    @Test fun aSpecialistsSessionIsKeptWhileItsThreadCanResume() {
+        FakeGrokRuntime().use { fake ->
+            val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
+            val root = fake.root.resolve("providers")
+            ConversationStore(fake.root.resolve("conversations"), ACCOUNT).open().use { store ->
+                GrokWorkRuntime(root, fake.env, GrokConnection(fake.env), broker, { store.bindingHandles() }).use { runtime ->
+                    fun turn(conversation: NativeConversation? = null) = WorkFixtureEvents().also {
+                        runtime.startTurn(workRequest(fake).copy(conversation = conversation), it)
+                        it.done.get(10, TimeUnit.SECONDS)
+                    }
+                    val specialist = turn()
+                    val saved = NativeConversation(checkNotNull(specialist.handle), Persona.working("Ember").hash)
+                    // The thread's specialist conversation, as the engine records it once the turn opens it.
+                    store.write(UUID.randomUUID().toString(), ConversationRecord(threadContexts = mapOf(UUID.randomUUID().toString() to saved)))
+                    val orphan = turn()
+                    turn()
+                    val bindings = root.resolve("grok-work-bindings")
+                    assertTrue(Files.exists(bindings.resolve("${saved.id}.json")), "the thread can still resume it")
+                    assertFalse(Files.exists(bindings.resolve("${orphan.handle}.json")), "no conversation holds it")
+                    val resumed = turn(saved)
+                    assertEquals(listOf("accepted", "partial", "completed"), resumed.seen.toList())
+                    assertEquals(saved.id, resumed.handle)
+                }
+            }
+        }
+    }
+
     @Test fun aRejectedWorkSessionLoadLosesOnlyThatConversationAndDropsItsBinding() {
         FakeGrokRuntime().use { fake ->
             val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
             val root = fake.root.resolve("providers")
-            GrokWorkRuntime(root, fake.env, GrokConnection(fake.env), broker).use { runtime ->
+            GrokWorkRuntime(root, fake.env, GrokConnection(fake.env), broker, nothingRetained).use { runtime ->
                 val first = WorkFixtureEvents()
                 runtime.startTurn(workRequest(fake), first)
                 first.done.get(10, TimeUnit.SECONDS)
@@ -130,7 +164,7 @@ class GrokWorkRuntimeTest {
                 "TMPDIR" to fake.root.toString(), "XAI_API_KEY" to "fixture-secret", "GROK_API_KEY" to "fixture-secret",
                 "GROK_ENDPOINT" to "https://example.invalid")
             val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
-            GrokWorkRuntime(fake.root.resolve("providers"), parent, GrokConnection(parent), broker,
+            GrokWorkRuntime(fake.root.resolve("providers"), parent, GrokConnection(parent), broker, nothingRetained,
                 loginPath = { "/opt/homebrew/bin:/usr/bin:/bin" }).use { runtime ->
                 val events = WorkFixtureEvents()
                 runtime.startTurn(workRequest(fake), events); events.done.get(10, TimeUnit.SECONDS)
@@ -162,7 +196,7 @@ class GrokWorkRuntimeTest {
         FakeGrokRuntime().use { fake ->
             val config = fake.root.resolve(".grok/config.toml")
             val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
-            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker).use { runtime ->
+            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker, nothingRetained).use { runtime ->
                 assertEquals(Readiness.Ready, runtime.readiness(ACCOUNT))
                 Files.writeString(config, "theme = 'dark'\n")
                 val unpinned = runtime.readiness(ACCOUNT) as Readiness.Unavailable
@@ -181,7 +215,7 @@ class GrokWorkRuntimeTest {
     @Test fun workBindingsCannotResumeInAnotherWorkspaceOrReplayAnAmbiguousPrompt() {
         FakeGrokRuntime().use { fake ->
             val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
-            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker).use { runtime ->
+            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker, nothingRetained).use { runtime ->
                 val first = WorkFixtureEvents()
                 val request = workRequest(fake)
                 runtime.startTurn(request, first); first.done.get(10, TimeUnit.SECONDS)
@@ -207,7 +241,7 @@ class GrokWorkRuntimeTest {
             // The work agent's initialize rewrites the player's config away from the OIDC pin.
             fake.mode("repin")
             val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
-            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker).use { runtime ->
+            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker, nothingRetained).use { runtime ->
                 val events = WorkFixtureEvents()
                 runtime.startTurn(workRequest(fake), events); events.done.get(10, TimeUnit.SECONDS)
                 assertEquals(ChatFailure.Temporary, events.failure)
@@ -223,7 +257,7 @@ class GrokWorkRuntimeTest {
     @Test fun anUnconfirmedCleanupAfterALostSessionForgetsTheBindingAndStopsFurtherWork() {
         FakeGrokRuntime().use { fake ->
             val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
-            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker).use { runtime ->
+            GrokWorkRuntime(fake.root.resolve("providers"), fake.env, GrokConnection(fake.env), broker, nothingRetained).use { runtime ->
                 val request = workRequest(fake)
                 val first = WorkFixtureEvents()
                 runtime.startTurn(request, first); first.done.get(10, TimeUnit.SECONDS)
