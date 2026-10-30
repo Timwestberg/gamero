@@ -67,7 +67,11 @@ internal class DesktopSpeech(
     private val openEngine: (VoiceConfig) -> PieceEngine = ::openPieceEngine,
 ) : ChatSpeech {
     private val gate = Any()
-    private val worker = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-voice"))
+    /** The voice worker's thread, the only one that loads an engine ([loadedEngine]). A worker that died is replaced. */
+    @Volatile private var workerThread: Thread? = null
+    private val worker = Executors.newSingleThreadExecutor { task ->
+        loggingDaemonThreads(VOICE_WORKER).newThread(task).also { workerThread = it }
+    }
     private var voiceConfig: VoiceConfig? = config
     private var engine: EmberVoice? = null
     /** Bumped whenever [engine] is dropped for another voice, so a load that started before keeps nothing. */
@@ -108,11 +112,13 @@ internal class DesktopSpeech(
     }
 
     /**
-     * The engine, loaded on the voice worker if there is none. The load runs outside [gate], so a caller on the UI thread
-     * ([status], [stop], [enqueue]) never waits on a model load. A load the voice changed under, or that finished after
-     * [close], is released; the next voice is loaded instead. Null once closed or with no voice installed.
+     * The engine, loaded if there is none. It runs only on the voice worker (checked), so a model load never blocks a
+     * caller; and the load runs outside [gate], so a caller on the UI thread ([status], [stop], [enqueue]) never waits on
+     * one either. A load the voice changed under, or that finished after [close], is released; the next voice is loaded
+     * instead. Null once closed or with no voice installed.
      */
     private fun loadedEngine(): EmberVoice? {
+        check(Thread.currentThread() === workerThread) { "The voice engine loads only on the voice worker" }
         while (true) {
             val (active, epoch) = synchronized(gate) {
                 if (closed) return null
@@ -517,6 +523,9 @@ internal class DesktopSpeech(
 }
 
 private const val MAX_SPOKEN_CHARS = 1200
+
+/** The voice worker's thread name. */
+internal const val VOICE_WORKER = "hovel-voice"
 
 /** Keep code blocks, list markers, and long machine output out of spoken replies. */
 internal fun speechText(text: String): String = textBeforeUnclosedFence(text)

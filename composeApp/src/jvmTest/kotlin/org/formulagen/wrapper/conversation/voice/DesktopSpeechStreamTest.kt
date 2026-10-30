@@ -15,6 +15,35 @@ import kotlin.test.assertTrue
 
 class DesktopSpeechStreamTest {
     @Test
+    fun theEngineLoadsOnlyOnTheVoiceWorker() {
+        val loadedOn = CopyOnWriteArrayList<String>()
+        val spoken = CountDownLatch(1)
+        val engine = object : PieceEngine {
+            override val sampleRate: Int = 24000
+            override fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio {
+                spoken.countDown()
+                return PieceAudio(FloatArray(480), 24000, 1.0, 1.0)
+            }
+            override fun release() {}
+        }
+        val line = object : PcmLine {
+            override fun start() {}
+            override fun write(pcm: ByteArray) {}
+            override fun drain() {}
+            override fun flush() {}
+            override fun stop() {}
+            override fun close() {}
+        }
+        DesktopSpeech(VoiceConfig(), { line }, { loadedOn += Thread.currentThread().name; engine }).use { speech ->
+            // Warm and speak from the caller's thread, as Talk's arm and a reply do: the load happens on the worker.
+            speech.warm()
+            speech.speak("Hello there.")
+            assertTrue(spoken.await(2, TimeUnit.SECONDS))
+        }
+        assertEquals(listOf(VOICE_WORKER), loadedOn, "loaded once, on the voice worker")
+    }
+
+    @Test
     fun firstSentenceStartsBeforeTheNextOneIsSynthesized() {
         val calls = AtomicInteger()
         val secondEntered = CountDownLatch(1)
