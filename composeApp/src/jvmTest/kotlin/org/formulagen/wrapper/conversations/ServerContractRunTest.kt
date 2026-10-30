@@ -297,8 +297,8 @@ class ServerContractRunTest {
         }
     }
 
-    @Test fun aServiceOlderThanThisMacLosesNoJournaledWorkAndRecoversOnceItAnswersContract2() {
-        val serving = AtomicInteger(1)
+    @Test fun aServiceOlderThanThisMacLosesNoJournaledWorkAndRecoversOnceItAnswersThisMacsContract() {
+        val serving = AtomicInteger(HovelContract.CURRENT - 1)
         Served("hostEvent.work.available", serving::get) { body, n ->
             if (n > 0) Answer.Data(value("claim.empty"))
             else Answer.Data(buildJsonObject { put("status", "claimed"); put("claim", JsonObject(claimed + ("claimId" to body.getValue("claimId")))) })
@@ -314,7 +314,7 @@ class ServerContractRunTest {
                 assertEquals(setOf("heartbeat"), served.called, "an older service answers only its own heartbeat")
                 assertFalse(ConversationRunner.UPDATE_REQUIRED in mac.statuses)
                 // The service updates: the journaled claim is asked again with its id and runs, and the stream connects.
-                serving.set(2)
+                serving.set(HovelContract.CURRENT)
                 eventually("it recovered") { served.bodies("messageProgress").any { it["state"]?.jsonPrimitive?.content == "answered" } }
                 eventually { mac.runner.connected && mac.statuses.last() == ConversationRunner.CONNECTED }
                 mac.runner.close()
