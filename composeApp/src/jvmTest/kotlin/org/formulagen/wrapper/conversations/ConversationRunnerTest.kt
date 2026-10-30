@@ -20,7 +20,7 @@ class ConversationRunnerTest {
     private val folders = ProjectFolderStore(root, FolderPicker { _, _ -> picked })
     private val statuses = CopyOnWriteArrayList<String>()
     private val heartbeats = CopyOnWriteArrayList<kotlinx.serialization.json.JsonObject>()
-    private val beat = HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), listOf("memory-context"), "ready")
+    private val beat = HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), listOf("memory-extraction"), "ready")
 
     /** An engine the test drives: [behave] runs each claimed message; every run is recorded with its Stop. */
     private inner class Engine : MessageEngine {

@@ -9,7 +9,7 @@ import org.formulagen.wrapper.providers.codexProcess
 import org.formulagen.wrapper.providers.scrubCodexEnvironment
 
 class CodexCliProviderTest {
-    @Test fun tasksRunOnThePlayersOwnCodexLoginWithNoSettingsOfHovels() {
+    @Test fun memoryJobsRunOnThePlayersOwnCodexLoginWithNoSettingsOfHovels() {
         val directory = Files.createTempDirectory("hovel-codex-profile")
         try {
             val provider = CodexCliProvider(java.nio.file.Path.of("/bin/echo"), directory, directory.resolve("output"))
@@ -64,12 +64,12 @@ class CodexCliProviderTest {
     @Test fun supportedCliUsesStdinAndRetainsOutputWithoutShellInterpolation() {
         val (provider, directory) = fixture()
         val id = UUID.randomUUID().toString()
-        val request = ExecutionRequest(id, UUID.randomUUID().toString(), "literal ${'$'}(touch unwanted)", "Ada")
+        val request = ExecutionRequest(id, UUID.randomUUID().toString(), "literal ${'$'}(touch unwanted)")
         assertEquals(CodexCliProvider.Readiness.READY, provider.readiness())
         assertEquals(ProviderResult(true, "fixture result"), provider.execute(request))
         val args = Files.readAllLines(directory.resolve("arguments.txt"))
         assertTrue(args.containsAll(listOf("never", "--ignore-user-config", "--ephemeral", "read-only")))
-        // The task reads the login where readiness found it; no forced login method, which would log an API key out.
+        // The job reads the login where readiness found it; no forced login method, which would log an API key out.
         assertEquals(listOf("-c", "cli_auth_credentials_store=\"file\""), args.take(2))
         assertFalse(args.any { it.startsWith("forced_login_method") })
         assertFalse(args.contains(request.prompt))
@@ -79,23 +79,11 @@ class CodexCliProviderTest {
         assertFails { provider.execute(request) }
     }
 
-    @Test fun aTaskGetsRecalledMemoryInItsOwnSectionBetweenContextAndTask() {
-        val (provider, directory) = fixture()
-        val request = ExecutionRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(), "Open the release PR.", "Be brief.",
-            recalledMemory = "Recalled memory notes, generated from earlier tasks.\n- Uses pnpm ✅")
-        assertTrue(provider.execute(request).succeeded)
-        assertEquals("Platform-owned character context (user-authored):\nBe brief.\n\n" +
-            "Recalled memory notes, generated from earlier tasks.\n- Uses pnpm ✅\n\nUser task:\nOpen the release PR.",
-            String(Files.readAllBytes(directory.resolve("input.txt")), Charsets.UTF_8))
-        val args = Files.readAllLines(directory.resolve("arguments.txt"))
-        assertFalse(args.contains("-m") || args.any { it.startsWith("model_reasoning_effort") })
-    }
-
-    @Test fun aMemoryJobRunsItsInputAloneOnItsModelAndEffort() {
+    @Test fun aMemoryJobRunsItsInputAsItIsOnItsModelAndEffort() {
         val (provider, directory) = fixture()
         val input = "Extract memory notes from these exchanges.\n[t1] Request:\nFix the build."
         val request = ExecutionRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(), input,
-            rawPrompt = true, choice = ProviderChoice("gpt-5.1-codex-mini", "low"))
+            choice = ProviderChoice("gpt-5.1-codex-mini", "low"))
         assertEquals(ProviderResult(true, "fixture result"), provider.execute(request))
         assertEquals(input, Files.readString(directory.resolve("input.txt")))
         val args = Files.readAllLines(directory.resolve("arguments.txt"))
@@ -109,7 +97,7 @@ class CodexCliProviderTest {
         val tail = listOf("--ignore-user-config", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check",
             "--color", "never", "--output-last-message", "/tmp/out.txt", "-")
         fun request(choice: ProviderChoice?) = ExecutionRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(), "x", choice = choice)
-        // A task's command is unchanged by memory.
+        // Without a choice, Codex runs its own model and effort.
         val head = listOf("-c", "cli_auth_credentials_store=\"keyring\"", "-a", "never")
         assertEquals(head + "exec" + tail, codexExecArguments(request(null), output, "keyring"))
         assertEquals(head + "exec" + tail,
@@ -145,7 +133,7 @@ class CodexCliProviderTest {
         assertFalse(provider.execute(ExecutionRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(), "hello")).succeeded)
     }
 
-    @Test fun aKeyringOnlyLoginIsFoundAndTheTaskReadsItFromTheKeyring() {
+    @Test fun aKeyringOnlyLoginIsFoundAndTheJobReadsItFromTheKeyring() {
         // `--ignore-user-config` would otherwise read the default file store, where this player has no login.
         val (provider, directory) = fixture(store = "keyring")
         assertEquals(CodexCliProvider.Readiness.READY, provider.readiness())

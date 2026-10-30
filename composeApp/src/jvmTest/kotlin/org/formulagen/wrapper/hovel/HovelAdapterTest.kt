@@ -11,110 +11,16 @@ import kotlin.test.*
 class HovelAdapterTest {
     private val host = UUID.randomUUID().toString()
     private val owner = UUID.randomUUID().toString()
-    private val taskId = UUID.randomUUID().toString()
-    private fun task(progress: JsonObject, revision: Int) = HovelTestFixtures.task(host, owner, taskId, progress, revision)
-    @Test fun taskPublicationRetriesWithoutLaunchingAgain() {
-        var current = task(buildJsonObject { put("state", "queued") }, 0)
-        var deliveries = 0
-        var launches = 0
-        val transport = HovelTransport { route, body ->
-            when (route) {
-                "claim" -> current = task(buildJsonObject { put("state", "claimed"); put("claimId", body.getValue("claimId")) }, 1)
-                "progress" -> {
-                    assertEquals(current.getValue("revision"), body.getValue("expectedRevision"))
-                    current = task(body.getValue("progress").jsonObject, current.getValue("revision").jsonPrimitive.int + 1)
-                    if (body.getValue("progress").jsonObject.getValue("state").jsonPrimitive.content == "succeeded" && deliveries++ == 0) error("lost acknowledgement")
-                }
-            }
-            current
-        }
-        ExecutionJournal(Files.createTempDirectory("adapter-journal"), host).use { journal ->
-            val request = hovelExecutionRequest(current, host)
-            val provider = TaskProvider { launches++; ProviderResult(true, "Done") }
-            assertFails { ExecutionCoordinator(journal, provider, HovelTaskRemote(transport, current)).accept(request) }
-            ExecutionCoordinator(journal, provider, HovelTaskRemote(transport, current)).accept(request)
-            assertEquals(1, launches)
-            assertEquals(2, deliveries)
-            assertEquals("Done", current.getValue("progress").jsonObject.getValue("result").jsonPrimitive.content)
-        }
-    }
-
-    @Test fun rejectsTasksForAnotherHost() {
-        assertFails { hovelExecutionRequest(task(buildJsonObject { put("state", "queued") }, 0), UUID.randomUUID().toString()) }
-    }
-
-    private fun followUp(providerInput: String?, withFollowUp: Boolean) =
-        followUp(providerInput?.let(::JsonPrimitive), if (withFollowUp) buildJsonObject {
-            put("conversationId", UUID.randomUUID().toString()); put("previousTaskId", UUID.randomUUID().toString())
-        } else null)
-
-    private fun followUp(providerInput: JsonElement?, followUp: JsonElement?) = buildJsonObject {
-        val base = task(buildJsonObject { put("state", "queued") }, 0)
-        base.forEach { (key, value) -> if (key != "request") put(key, value) }
-        put("request", buildJsonObject {
-            base.getValue("request").jsonObject.forEach { (key, value) -> put(key, value) }
-            put("prompt", "And the tests?")
-            if (followUp != null) put("followUp", followUp)
-        })
-        if (providerInput != null) put("providerInput", providerInput)
-    }
-
-    @Test fun aFollowUpRunsItsWholeConversationNotItsBarePrompt() {
-        val conversation = "Earlier request and its result, then: And the tests?"
-        val request = hovelExecutionRequest(followUp(conversation, withFollowUp = true), host)
-        assertEquals(conversation, request.prompt)
-        assertEquals("Ada remembers", request.context)
-        assertEquals("Inspect", hovelExecutionRequest(task(buildJsonObject { put("state", "queued") }, 0), host).prompt)
-    }
-
-    @Test fun aFollowUpWithoutItsConversationIsRefused() {
-        assertFails { hovelExecutionRequest(followUp(null, withFollowUp = true), host) }
-        assertFails { hovelExecutionRequest(followUp("Earlier exchanges", withFollowUp = false), host) }
-        val link = buildJsonObject { put("conversationId", UUID.randomUUID().toString()) }
-        // Malformed is refused, never run as the text "null" or "42".
-        assertFails { hovelExecutionRequest(followUp(JsonNull, link), host) }
-        assertFails { hovelExecutionRequest(followUp(JsonPrimitive(42), link), host) }
-        assertFails { hovelExecutionRequest(followUp(JsonNull, JsonNull), host) }
-        assertFails { hovelExecutionRequest(followUp(JsonPrimitive("Earlier exchanges"), JsonPrimitive("c-1")), host) }
-    }
-
-    @Test fun aHeartbeatDeclaresOnlyTheLanesThisComputerRuns() {
-        assertEquals(listOf("provider-input", "memory-context", "memory-extraction"), hovelHostFeatures(tasks = true, memory = true))
-        assertEquals(listOf("memory-context", "memory-extraction"), hovelHostFeatures(tasks = false, memory = true))
-        assertEquals(listOf("memory-context"), hovelHostFeatures(tasks = false, memory = false))
-    }
-
-    private fun withRecalled(value: JsonElement) = buildJsonObject {
-        task(buildJsonObject { put("state", "queued") }, 0).forEach { (key, item) -> put(key, item) }
-        put("recalledMemory", value)
-    }
-
-    @Test fun recalledMemoryTravelsInItsOwnField() {
-        val notes = "Recalled memory notes, generated from earlier tasks.\n- Uses pnpm"
-        val request = hovelExecutionRequest(withRecalled(JsonPrimitive(notes)), host)
-        assertEquals(notes, request.recalledMemory)
-        assertEquals("Inspect", request.prompt)
-        assertEquals("Ada remembers", request.context)
-        assertNull(hovelExecutionRequest(task(buildJsonObject { put("state", "queued") }, 0), host).recalledMemory)
-        // Malformed is refused, never run as the text "null" or "7".
-        assertFails { hovelExecutionRequest(withRecalled(JsonNull), host) }
-        assertFails { hovelExecutionRequest(withRecalled(JsonPrimitive(7)), host) }
-    }
-
     private val jobId = UUID.randomUUID().toString()
     private fun job(progress: JsonObject, revision: Int, model: String = "runtime-default", effort: String = "low", runtimeId: String = "codex") =
         HovelTestFixtures.memoryJob(host, owner, jobId, progress, revision, model, effort, runtimeId)
     private val queued = HovelTestFixtures.QUEUED
 
-    @Test fun aMemoryJobRunsItsInputAloneOnItsModelAndEffort() {
+    @Test fun aMemoryJobRunsItsInputOnItsModelAndEffort() {
         val request = hovelMemoryJobRequest(job(queued, 0, model = "gpt-5.1-codex-mini", effort = "high"), host)
         assertEquals(jobId, request.id)
         assertEquals(HovelTestFixtures.MEMORY_JOB_INPUT, request.prompt)
-        assertEquals("", request.context)
-        assertNull(request.recalledMemory)
-        assertTrue(request.rawPrompt)
         assertEquals(ProviderChoice("gpt-5.1-codex-mini", "high"), request.choice)
-        assertEquals(HovelTestFixtures.MEMORY_JOB_INPUT, providerPrompt(request))
     }
 
     @Test fun aMemoryJobThisCompanionCannotRunIsRefused() {
@@ -166,6 +72,29 @@ class HovelAdapterTest {
             ExecutionCoordinator(journal, { ProviderResult(true, output) }, HovelMemoryJobRemote(server, server.current)).accept(request)
         }
 
+    @Test fun aLostAcknowledgementIsPublishedAgainWithoutLaunchingAgain() {
+        val server = JobServer()
+        var deliveries = 0
+        val flaky = HovelTransport { route, body ->
+            if (route == "memory/progress" && body.getValue("progress").jsonObject.getValue("state").jsonPrimitive.content == "succeeded" &&
+                deliveries++ == 0) {
+                server.post(route, body)
+                error("lost acknowledgement")
+            }
+            server.post(route, body)
+        }
+        ExecutionJournal(Files.createTempDirectory("memory-journal"), host).use { journal ->
+            val request = hovelMemoryJobRequest(server.current, host)
+            var launches = 0
+            val provider = TaskProvider { launches++; ProviderResult(true, "{}") }
+            assertFails { ExecutionCoordinator(journal, provider, HovelMemoryJobRemote(flaky, server.current)).accept(request) }
+            ExecutionCoordinator(journal, provider, HovelMemoryJobRemote(flaky, server.current)).accept(request)
+            assertEquals(1, launches)
+            assertEquals(2, deliveries)
+            assertEquals("{}", server.progress.getValue("result").jsonPrimitive.content)
+        }
+    }
+
     @Test fun aMemoryJobReportsOnTheMemoryRoutes() {
         val server = JobServer()
         runJob(server, "{\"notes\":[]}")
@@ -205,7 +134,7 @@ class HovelAdapterTest {
             override fun save(hostId: String, token: String) { check(!secrets.containsKey(hostId)); secrets[hostId] = token }
             override fun read(hostId: String) = secrets.getValue(hostId)
         }
-        val companion = HovelCompanion("https://example.test/hovel.html", directory, directory.resolve("fixture"), directory, credentials)
+        val companion = HovelCompanion("https://example.test/hovel.html", directory, directory.resolve("fixture"), credentials)
         val first = companion.prepareRegistration(owner)
         assertEquals(first, companion.prepareRegistration(owner))
         assertEquals(1, secrets.size)
@@ -228,7 +157,7 @@ class HovelAdapterTest {
                     return secret
                 }
             }
-            val companion = HovelCompanion("https://example.test/hovel.html", directory, directory.resolve("fixture"), directory, credentials)
+            val companion = HovelCompanion("https://example.test/hovel.html", directory, directory.resolve("fixture"), credentials)
             val prepared = async(Dispatchers.IO) { companion.dispatch("prepareConnection", buildJsonObject { put("ownerId", owner) }) }
             withTimeout(5000) { while (companion.approval == null) delay(5) }
             companion.approval!!.answer.complete(true)
@@ -253,7 +182,7 @@ class HovelAdapterTest {
             override fun save(hostId: String, token: String) = Unit
             override fun read(hostId: String) = ""
         }
-        val companion = HovelCompanion("https://example.test/hovel.html", directory, directory.resolve("fixture"), directory, credentials)
+        val companion = HovelCompanion("https://example.test/hovel.html", directory, directory.resolve("fixture"), credentials)
         val prepare = buildJsonObject { put("ownerId", owner) }
         val timedOut = runCatching { withTimeout(500) { companion.dispatch("prepareConnection", prepare) } }
         assertIs<TimeoutCancellationException>(timedOut.exceptionOrNull())

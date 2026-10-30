@@ -44,7 +44,7 @@ class ConversationVoiceLatencyTest {
         val speaker = FakeSpeaker()
         val settings = TalkSettings(FillerSettings(), duplex = DuplexChoice(HearingDuplex.HALF, "test"), guardMs = 0)
         val voice = DesktopConversationVoice(speaker, SharedHearing(ear), settings, null, HOVEL_PRODUCT)
-        val beat = HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), listOf("memory-context"), "ready")
+        val beat = HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), listOf("memory-extraction"), "ready")
         val runner = ConversationRunner(server, store, engine, approvals, folders,
             ProjectFolderPublisher(folders, server, account, server.hostId) { emptyList() }, { beat }, replies = voice)
         // One brain for the conversation, so its coordinator continues one provider conversation as it does for a person.

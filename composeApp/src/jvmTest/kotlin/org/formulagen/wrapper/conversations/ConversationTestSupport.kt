@@ -353,7 +353,7 @@ internal open class ScriptedRuntime(override val id: RuntimeId, val chunk: Int =
     override val contextFolders: ContextFolderSupport get() = support
     val started = CountDownLatch(1)
 
-    override fun readiness(profile: String) = Readiness.Ready
+    override fun readiness(accountId: String) = Readiness.Ready
 
     override fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle {
         requests += turn

@@ -162,7 +162,7 @@ class CodexChatRuntimeTest {
         val root = Files.createTempDirectory("codex-old-login")
         val rpcs = mutableListOf<Rpc>()
         runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.onTurn = { complete(rpc, thread, "Hi") } }.use { codex ->
-            // Opened before Codex moved to the player's own login: that thread lives in the old per-profile home.
+            // Opened before Codex moved to the player's own login: that thread lives in Hovel's old Codex home.
             val lost = Events()
             codex.startTurn(request(null, NativeConversation(thread, persona.hash)), lost)
             assertEquals(listOf("failed ConversationLost"), lost.seen)
@@ -196,7 +196,7 @@ class CodexChatRuntimeTest {
             val start = rpc.calls("thread/start").single()
             assertEquals(off, start["config"])
             assertEquals(JsonPrimitive("read-only"), start["sandbox"]); assertEquals(JsonPrimitive("never"), start["approvalPolicy"])
-            // The configuration is read as a thread in the profile's own empty folder sees it.
+            // The configuration is read as a thread in the account's own empty folder sees it.
             assertEquals(start["cwd"], rpc.calls("config/read").single()["cwd"])
             assertEquals(root.resolve(ACCOUNT).resolve("codex-chat").toString(), start["cwd"]?.jsonPrimitive?.content)
         }

@@ -7,7 +7,7 @@ import org.formulagen.wrapper.bridge.SharedRules
 
 /**
  * The player's installed Codex on the player's own sign-in, as every Codex child runs it: the
- * Providers card, companion chat and Hovel tasks. Codex keeps its login, configuration and history
+ * Providers card, conversation turns and memory jobs. Codex keeps its login, configuration and history
  * in its default home (`$CODEX_HOME` when the player set it, else `~/.codex`); Hovel never writes
  * there and never signs in or out. [root] is the providers root, where Hovel keeps the empty
  * folders its own Codex children start in.
@@ -47,7 +47,7 @@ class CodexRuntime(val executable: Path, val root: Path) {
  *   the player out of their own Codex. Hovel checks the account type instead (`account/read`,
  *   `codex login status`) and refuses anything but a ChatGPT login.
  *
- * Talk-only chat and Hovel tasks add their own lockdown arguments on top (see `chatCodex` and
+ * Talk-only turns and memory jobs add their own lockdown arguments on top (see `chatCodex` and
  * `CodexCliProvider`).
  */
 internal fun codexProcess(executable: Path, arguments: List<String>, workspace: Path): ProcessBuilder =

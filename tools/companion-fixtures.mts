@@ -212,7 +212,8 @@ const heartbeat = {
   }
 };
 c.computerHeartbeat.parse(heartbeat);
-const features = ['provider-input', 'memory-context', 'memory-extraction'];
+// A Mac that runs memory jobs declares only that; conversations need no feature.
+const features = ['memory-extraction'];
 for (const feature of features) hovelHostFeature.parse(feature);
 const beat = { ...heartbeat, features, providerState: hovelProviderState.parse('ready') };
 if ('directory' in service.heartbeatInput.shape) {
@@ -227,6 +228,9 @@ fixtures.usage = {
   schema: 'allowanceSnapshot',
   value: JSON.parse(canonical({ computerId: ids.computer, snapshot: usage }))
 };
+
+// The contract each runtime arrived in, so the Mac leaves out the same runtimes for an older page.
+fixtures.contractRuntimes = { schema: 'HOVEL_CONTRACT_RUNTIMES', value: JSON.parse(canonical(c.HOVEL_CONTRACT_RUNTIMES)) };
 
 // The native route table, so the Mac's own table is checked against the routes the server serves.
 if (!c.HOVEL_COMPANION_ROUTES) throw new Error('This server-platform predates HOVEL_COMPANION_ROUTES; update it first');

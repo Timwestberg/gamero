@@ -41,7 +41,7 @@ internal fun interface MessageEngine {
  *
  * - **Connection:** it holds the host event stream, reconnecting with backoff, and after [idle] with no line
  *   (the server's own heartbeats included); and sends a heartbeat every [heartbeatEvery] (readiness, the
- *   provider directory and usage), whose answer goes to [onHeartbeat] (tasks and memory jobs ride it).
+ *   provider directory and usage), whose answer goes to [onHeartbeat] (memory jobs ride it).
  * - **Claiming:** `work.available` wakes that conversation's [Session], which claims its next message with a
  *   claim id journaled first ([ConversationStore.journal]), runs it through the [engine], and settles it. One
  *   message runs at a time per conversation; at most [maxRunning] conversations run at once, and the others
@@ -134,7 +134,7 @@ internal class ConversationRunner(
                 // hovel-service's own heartbeat answers a newer Mac; its companion routes do not.
                 status(when { older.failing -> SERVICE_OLDER; connected -> CONNECTED; else -> CONNECTING })
                 runCatching { onHeartbeat(response) }
-                    .onFailure { log(LogLevel.Warn, "conversations", "A heartbeat's tasks could not run", it) }
+                    .onFailure { log(LogLevel.Warn, "conversations", "A heartbeat's memory jobs could not run", it) }
             }.onFailure { status(OFFLINE) }
             // A service older than this Mac answers none of it: everything waits, journaled, until the wait ends.
             if (!older.blocked) {
