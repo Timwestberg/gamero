@@ -7,10 +7,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.MenuBar
@@ -47,12 +43,9 @@ private class DesktopResources : AutoCloseable {
     val windowActive = AtomicBoolean(false)
     var services: DesktopServices? = null
     private var keyboardClient: CefClient? = null
-    // Escape the page receives is the page's: team chat keeps its catalog barge-in here, and a project conversation's
-    // page sends its own interrupt only when it has no other use for the key. No page Escape reaches conversation voice
-    // natively: the window's handler is team chat's, and the conversation row's own handler needs the row focused.
-    private val keyboard = BrowserEditKeyboard(browser::get, windowActive::get, onEscape = {
-        services?.chat?.endConversation() == true
-    })
+    // Escape the page receives is the page's: a project conversation's page sends its own interrupt only when it has no
+    // other use for the key, and the conversation's voice row hears Escape natively only while the row is focused.
+    private val keyboard = BrowserEditKeyboard(browser::get, windowActive::get)
 
     fun attachBrowser(target: org.cef.browser.CefBrowser) {
         browser.set(null)
@@ -118,11 +111,6 @@ fun main(args: Array<String>) {
                 Window(
                     onCloseRequest = { resources.services?.closeGame(); exitApplication() },
                     title = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME,
-                    // Team chat's Escape. A project conversation's voice hears Escape only from its own row, below.
-                    onPreviewKeyEvent = { event ->
-                        event.key == Key.Escape && event.type == KeyEventType.KeyDown &&
-                            resources.services?.chat?.endConversation() == true
-                    },
                 ) {
                     DisposableEffect(window) {
                         // Read AWT state on its event thread, never from the CEF callback thread.
@@ -254,24 +242,16 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
             } else if (isHovelProduct()) {
                 Text("Companion conversations run on a Mac.", Modifier.padding(8.dp))
             }
-            val picker by services.voicePicker.state
             val conversationPicker by services.conversationPicker.state
             val conversationVoice = services.conversationVoice
-            // The served conversation's row first; team chat's shows only in the Gamero catalog.
-            if (conversationVoice != null && conversationPicker.visible) {
+            // The voice row of the conversation the voice serves; hidden while it serves none.
+            if (conversationVoice != null) {
                 KokoroVoicePicker(
                     conversationPicker,
                     conversationVoice::chooseSpokenVoice,
                     conversationVoice::converseClick,
                     conversationVoice::toggleFillers,
                     onEscape = conversationVoice::escape,
-                )
-            } else {
-                KokoroVoicePicker(
-                    picker,
-                    services.chat::chooseSpokenVoice,
-                    services.chat::converseClick,
-                    services.chat::toggleFillers,
                 )
             }
             App(url, enableLegacyBridge = false, webViewFactory = ::persistentDesktopBrowser, onWebViewCreated = { browser ->

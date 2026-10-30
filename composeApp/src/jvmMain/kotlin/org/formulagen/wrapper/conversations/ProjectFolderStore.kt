@@ -12,7 +12,6 @@ import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.chat.ProjectFolders
 import org.formulagen.wrapper.storage.readBounded
 import org.formulagen.wrapper.storage.writeDurably
-import org.formulagen.wrapper.workspace.FolderPicker
 
 /** One project folder on this Mac: its account [id], display [name], [role], and the [path] that never leaves the Mac. */
 internal data class LocalFolder(val id: String, val name: String, val path: Path, val role: FolderRole) {
@@ -22,8 +21,8 @@ internal data class LocalFolder(val id: String, val name: String, val path: Path
 /**
  * Each project's folders on this Mac, per account, at `<root>/<accountId>/project-folders.json`
  * (private, replaced atomically, validated on every read; a corrupt file is never overwritten). It
- * maps `(projectId, folderId)` to a path, and replaces `WorkspaceStore` once team chat goes. Only
- * the Mac's folder picker ([picker]) adds a folder: a page can ask for the picker, never name a path.
+ * maps `(projectId, folderId)` to a path. Only the Mac's folder picker ([picker]) adds a folder: a page
+ * can ask for the picker, never name a path.
  *
  * It also remembers what the account has of each project: the revision this Mac last saw, and
  * whether its folders still need publishing (`PUT /projects/:id/folders`).

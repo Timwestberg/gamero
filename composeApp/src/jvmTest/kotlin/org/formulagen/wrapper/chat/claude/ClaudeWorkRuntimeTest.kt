@@ -15,10 +15,8 @@ import org.formulagen.wrapper.approvals.CancelSignal
 import org.formulagen.wrapper.bridge.Activity
 import org.formulagen.wrapper.bridge.ActivityKind
 import org.formulagen.wrapper.bridge.ActivityStatus
-import org.formulagen.wrapper.bridge.ChatWaiting
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.TeamMember
-import org.formulagen.wrapper.bridge.WaitingKind
 import org.formulagen.wrapper.chat.*
 import org.formulagen.wrapper.providers.ClaudeConnection
 import org.formulagen.wrapper.providers.ClaudeRuntime
@@ -63,7 +61,6 @@ class ClaudeWorkRuntimeTest {
     private class Events : TurnEvents {
         val seen = CopyOnWriteArrayList<String>()
         val activities = CopyOnWriteArrayList<Activity>()
-        val waitings = CopyOnWriteArrayList<ChatWaiting?>()
         val end = CompletableFuture<String>()
         override fun opened(conversation: String) { seen += "opened $conversation" }
         override fun accepted() { seen += "accepted" }
@@ -71,7 +68,6 @@ class ClaudeWorkRuntimeTest {
         override fun completed(text: String, conversation: String) { seen += "completed $text"; end.complete("completed") }
         override fun failed(failure: ChatFailure) { seen += "failed $failure"; end.complete("failed $failure") }
         override fun activity(activity: Activity) { activities += activity }
-        override fun waiting(waiting: ChatWaiting?) { waitings += waiting }
         fun outcome() = end.get(20, TimeUnit.SECONDS)
     }
 
@@ -122,10 +118,6 @@ class ClaudeWorkRuntimeTest {
             assertEquals(listOf(ApprovalKind.EDIT, ApprovalKind.COMMAND, ApprovalKind.EDIT, ApprovalKind.EDIT), broker.asked.map { it.kind })
             assertEquals("Allow all edits in project for this conversation", broker.asked[0].sessionLabel)
             assertEquals(listOf("Ember", sonnet), listOf(broker.asked[0].companionName, broker.asked[0].member))
-            // The page saw "awaiting you" for each, and then not.
-            assertEquals(WaitingKind.APPROVAL, first.waitings.first()?.kind)
-            assertEquals("Ember wants to edit files: Edit notes.txt", first.waitings.first()?.summary)
-            assertNull(first.waitings.last())
             // Each step as it finished.
             assertEquals(listOf(ActivityKind.READ to ActivityStatus.DONE, ActivityKind.EDIT to ActivityStatus.DONE, ActivityKind.COMMAND to ActivityStatus.DENIED),
                 first.activities.last().steps.map { it.kind to it.status })

@@ -10,7 +10,6 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.serialization.json.put
 import org.formulagen.wrapper.approvals.CancelSignal
 import org.formulagen.wrapper.approvals.NativeDialogs
-import org.formulagen.wrapper.workspace.FolderPicker
 
 class ConversationRunnerTest {
     private val server = FakeServer()

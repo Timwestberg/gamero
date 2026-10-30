@@ -34,25 +34,6 @@ enum class ModelEffort(val value: String) {
 
 /** Rules more than one capability uses. Mirrors event-contracts `host-bridge/shared.ts`. */
 object SharedRules {
-    /** The runtime vocabulary understood by legacy bridge calls. */
-    val LEGACY_RUNTIMES = setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE)
-    /** Most runtime names a page declares it can decode. Mirrors `CLIENT_RUNTIME_LIMIT`. */
-    const val CLIENT_RUNTIME_LIMIT = 8
-    /** One declared runtime name, known or a future one. Mirrors `CLIENT_RUNTIME_PATTERN`. */
-    const val CLIENT_RUNTIME_PATTERN = "^[a-z][a-z0-9-]{0,63}$"
-    private val CLIENT_RUNTIME = Regex(CLIENT_RUNTIME_PATTERN)
-    /** Client declarations allow bounded future names, never duplicate names. */
-    fun validClientRuntimes(names: List<String>): Boolean =
-        names.size <= CLIENT_RUNTIME_LIMIT && names.distinct().size == names.size && names.all(CLIENT_RUNTIME::matches)
-    /** Recognized names only; advertising a name does not offer its runtime. */
-    fun clientRuntimes(names: List<String>): Set<RuntimeId> = RuntimeId.entries.filter { it.wireName in names }.toSet()
-    /** The runtimes a page decodes: those it declared, or [LEGACY_RUNTIMES] for a page that predates declaring them. */
-    fun understood(names: List<String>?): Set<RuntimeId> {
-        if (names == null) return LEGACY_RUNTIMES
-        require(validClientRuntimes(names))
-        return clientRuntimes(names)
-    }
-
     /** The profile of a person who is not signed in. */
     const val LOCAL_PROFILE = "local"
     const val COMPANION_NAME_LIMIT = 40

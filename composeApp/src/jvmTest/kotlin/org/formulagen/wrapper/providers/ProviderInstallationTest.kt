@@ -107,13 +107,11 @@ printf '%s\n' "${'$'}HOME" "${'$'}CODEX_HOME" "${'$'}GROK_HOME" "${'$'}OPENAI_AP
         assertEquals(ProviderSetupState.UNAVAILABLE, ProviderInstallation(root, emptyMap(), discover = { error("private failure") }, mac = true).setup(RuntimeId.CODEX).state)
     }
 
-    @Test fun gatedRuntimeAndInvalidProfileNeverDiscoverOrLaunch() = fixture { root -> runBlocking {
+    @Test fun aGatedRuntimeIsNeverDiscoveredOrLaunched() = fixture { root -> runBlocking {
         val service = ProviderInstallation(root, emptyMap(), discover = { fail("Gated runtime must not be discovered") }, mac = true)
         DesktopProviders(emptyList(), installation = service).use { providers ->
-            assertEquals(ProviderSetupState.UNAVAILABLE, providers.setup(ProviderScope("local", RuntimeId.GROK_BUILD)).state)
-            assertFalse(providers.startLogin(ProviderScope("local", RuntimeId.GROK_BUILD)).launched)
-            assertFailsWith<IllegalArgumentException> { providers.setup(ProviderScope("../profile", RuntimeId.CODEX)) }
-            assertFailsWith<IllegalArgumentException> { providers.startLogin(ProviderScope("../profile", RuntimeId.CODEX)) }
+            assertEquals(ProviderSetupState.UNAVAILABLE, providers.setup(ProviderScope(RuntimeId.GROK_BUILD)).state)
+            assertFalse(providers.startLogin(ProviderScope(RuntimeId.GROK_BUILD)).launched)
             Unit
         }
     } }

@@ -60,16 +60,6 @@ internal fun browserEditShortcut(event: CefKeyEvent): BrowserEditAction? {
 }
 
 /** The callback browser proves the key's origin; AWT focus does not describe native JCEF focus. */
-/** Bare Escape, the key the catalog page receives while the voice row is not focused. */
-internal fun isConversationEscape(event: CefKeyEvent): Boolean {
-    if (event.type != CefKeyEvent.EventType.KEYEVENT_RAWKEYDOWN) return false
-    if (event.windows_key_code != 27) return false
-    return event.modifiers and (
-        EventFlags.EVENTFLAG_COMMAND_DOWN or EventFlags.EVENTFLAG_CONTROL_DOWN or
-            EventFlags.EVENTFLAG_ALT_DOWN or EventFlags.EVENTFLAG_SHIFT_DOWN
-        ) == 0
-}
-
 internal class BrowserEditKeyboard(
     private val browser: () -> CefBrowser?,
     private val windowActive: () -> Boolean,
@@ -77,8 +67,6 @@ internal class BrowserEditKeyboard(
         println("GAMERO_EDIT_KEY: action=$action outcome=$outcome")
     },
     private val diagnostics: BrowserKeyDiagnostics = BrowserKeyDiagnostics(),
-    /** Returns true when a voice session handled Escape. The page keeps the key otherwise. */
-    private val onEscape: () -> Boolean = { false },
 ) : CefKeyboardHandlerAdapter() {
     override fun onPreKeyEvent(source: CefBrowser?, event: CefKeyEvent?, isKeyboardShortcut: BoolRef?): Boolean {
         event?.let { diagnostics.observe(BrowserKeyPhase.PRE, it) }
@@ -93,7 +81,6 @@ internal class BrowserEditKeyboard(
 
     override fun onKeyEvent(source: CefBrowser?, event: CefKeyEvent?): Boolean {
         event?.let { diagnostics.observe(BrowserKeyPhase.POST, it) }
-        if (event != null && isConversationEscape(event) && windowActive() && onEscape()) return true
         val action = event?.let(::browserEditShortcut) ?: return false
         fun finish(outcome: BrowserEditOutcome): Boolean {
             report(action, outcome)

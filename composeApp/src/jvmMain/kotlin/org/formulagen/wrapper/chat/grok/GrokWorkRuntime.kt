@@ -21,7 +21,6 @@ import org.formulagen.wrapper.chat.TurnEvents
 import org.formulagen.wrapper.chat.TurnHandle
 import org.formulagen.wrapper.chat.TurnRequest
 import org.formulagen.wrapper.chat.WorkRuntime
-import org.formulagen.wrapper.chat.companionConversationIds
 import org.formulagen.wrapper.chat.loggingDaemonThreads
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
@@ -46,9 +45,9 @@ internal class GrokWorkRuntime(
     /** The player's login-shell `PATH` for the working child ([grokWorkEnvironment]); null keeps [environment]'s. */
     private val loginPath: () -> String? = { loginShellPath.value },
     /**
-     * Handles of a profile's work bindings that live outside team chat's history, such as a conversation
-     * thread's ([org.formulagen.wrapper.conversations.ConversationStore.bindingHandles]); null when they
-     * could not be read, and then nothing is pruned.
+     * Handles of the account's work bindings its conversations still hold, such as a thread's
+     * ([org.formulagen.wrapper.conversations.ConversationStore.bindingHandles]); null when they could not be read,
+     * and then nothing is pruned.
      */
     private val retained: (profile: String) -> Set<String>? = { emptySet() },
 ) : WorkRuntime {
@@ -156,7 +155,7 @@ internal class GrokWorkRuntime(
             val saved = request.conversation
             // Retain the saved handle while pruning; it is looked up next.
             val start = when (val resolved = resolveGrokWorkTurn(request, connection, bindings, beforeLookup = {
-                retainedGrokHandles(root, request.profile, retained)
+                runCatching { retained(request.profile) }.getOrNull()
                     ?.let { bindings.prune(request.profile, it + listOfNotNull(saved?.id)) }
             })) {
                 is GrokTurnStart.Failed -> { fail(resolved.failure); return }
@@ -238,7 +237,7 @@ internal class GrokWorkRuntime(
             if (active() && ended.compareAndSet(false, true)) { approvals?.close(); events.failed(failure) }
         }
 
-        /** DesktopChat independently rejects callbacks that were already in flight when Stop was pressed. */
+        /** The caller independently ignores callbacks that were already in flight when Stop was pressed. */
         private inline fun deliver(event: () -> Unit) { if (active()) event() }
     }
 
@@ -260,14 +259,3 @@ internal fun grokWorkAuthNotice(config: Path): String = ("Grok work needs Grok B
 
 internal const val GROK_WORK_CONFIG_UNSUPPORTED = "Grok work can't use your Grok config: it has settings Hovel has not " +
     "accepted for project work, such as custom models, endpoints, relays or command prefixes."
-
-/**
- * Every Grok handle [profile] still uses: team chat's saved conversations and the [retained] ones kept
- * elsewhere, such as conversation threads. Null when either could not be read, so nothing is pruned
- * on a partial view.
- */
-internal fun retainedGrokHandles(root: Path, profile: String, retained: (String) -> Set<String>?): Set<String>? {
-    val chat = companionConversationIds(root, profile, RuntimeId.GROK_BUILD) ?: return null
-    val elsewhere = runCatching { retained(profile) }.getOrNull() ?: return null
-    return chat + elsewhere
-}

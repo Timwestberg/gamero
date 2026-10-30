@@ -9,39 +9,33 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.RuntimeId
-import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
 import org.formulagen.wrapper.chat.ChatFailure
 import org.formulagen.wrapper.chat.ChatRuntime
 import org.formulagen.wrapper.chat.Readiness
-import org.formulagen.wrapper.chat.SummaryRequest
 import org.formulagen.wrapper.chat.TurnEvents
 import org.formulagen.wrapper.chat.TurnHandle
 import org.formulagen.wrapper.chat.TurnRequest
-import org.formulagen.wrapper.chat.boundSummary
 import org.formulagen.wrapper.chat.loggingDaemonThreads
-import org.formulagen.wrapper.chat.summaryInstruction
 import org.formulagen.wrapper.hovel.HovelCompanion
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.providers.GrokConnection
 import org.formulagen.wrapper.providers.grok.GrokAuthAvailability
-import org.formulagen.wrapper.providers.grok.GrokBudget
 import org.formulagen.wrapper.providers.grok.GrokTransportFailure
 import org.formulagen.wrapper.providers.grok.GrokTransportIssue
 
-/** Grok subscription chat using the same conversation, handover and event seam as Codex and Claude. */
+/** Grok subscription talk turns, on the same conversation and event seam as Codex and Claude. */
 internal class GrokChatRuntime(
     private val root: Path,
     private val environment: Map<String, String>,
     private val connection: GrokConnection,
-    /** Handles of a profile's talk bindings kept outside team chat, such as a conversation's coordinator; see [GrokWorkRuntime]. */
+    /** Handles of the account's talk bindings its conversations still hold, such as a coordinator's; see [GrokWorkRuntime]. */
     private val retained: (profile: String) -> Set<String>? = { emptySet() },
 ) : ChatRuntime {
     override val id = RuntimeId.GROK_BUILD
     private val bindings = GrokSessions(root.resolve("grok-bindings"))
     private val running = ConcurrentHashMap.newKeySet<Turn>()
     private val owners = ConcurrentHashMap<String, Semaphore>()
-    private val summaries = ConcurrentHashMap.newKeySet<Thread>()
     private val bindingLock = Any()
     private val activeHandles = HashSet<String>()
     /** History scans in progress outside [bindingLock], and every handle active at any time during them. */
@@ -70,33 +64,7 @@ internal class GrokChatRuntime(
         return TurnHandle(started::stop)
     }
 
-    /** Summaries use a disposable provider session, without changing a companion's saved binding. */
-    override fun summarize(request: SummaryRequest): String {
-        check(!closed.get())
-        val thread = Thread.currentThread()
-        summaries += thread
-        try { return summary(request) } finally { summaries -= thread }
-    }
-
-    private fun summary(request: SummaryRequest): String {
-        val budget = GrokBudget(request.timeout)
-        val access = connection.check(fresh = true)
-        val account = access.account ?: error("Grok subscription unavailable")
-        val executable = access.executable ?: error("Grok unavailable")
-        val selected = request.model?.takeUnless { it == RUNTIME_DEFAULT_MODEL } ?: account.defaultModel
-        val state = java.util.concurrent.atomic.AtomicReference<GrokTurnState?>()
-        GrokTalkSession.open(executable, environment, request.persona.instructions, selected, budget.remaining(),
-            expectedAccount = account.fingerprint, onUpdate = { update -> state.updateAndGet { it?.update(update) } }).use { session ->
-            check(!closed.get())
-            state.set(GrokTurnState(session.sessionId))
-            val outcome = session.prompt(summaryInstruction(request.transcript), budget.remaining())
-            val result = checkNotNull(state.get()).finish(outcome)
-            check(result.end == GrokTurnEnd.COMPLETE)
-            return boundSummary(result.text)
-        }
-    }
-
-    override fun release() { running.forEach(Turn::stop); summaries.forEach(Thread::interrupt) }
+    override fun release() { running.forEach(Turn::stop) }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
@@ -141,7 +109,7 @@ internal class GrokChatRuntime(
             }
         }
 
-        /** Only missing pre-submission mappings can request DesktopChat's one context-restoration retry. */
+        /** Only a missing pre-submission mapping loses the conversation, so the next turn starts it fresh. */
         private fun run() {
             val saved = request.conversation
             val start = when (val resolved = resolveGrokTalkTurn(request, connection, bindings, beforeLookup = {
@@ -149,7 +117,7 @@ internal class GrokChatRuntime(
                 // during the read is kept, since its history may have been written after the read passed it.
                 synchronized(bindingLock) { saved?.id?.let { activate(it); activeHandle = it }; scans++; touched += activeHandles }
                 try {
-                    val kept = retainedGrokHandles(root, request.profile, retained)
+                    val kept = runCatching { retained(request.profile) }.getOrNull()
                     synchronized(bindingLock) { kept?.let { bindings.prune(request.profile, it + activeHandles + touched) } }
                 } finally { synchronized(bindingLock) { if (--scans == 0) touched.clear() } }
             })) {

@@ -9,8 +9,7 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * Voice in a conversation on the Mac: dictation fills the page's draft, and Talk is a voice
  * conversation with the coordinator. The microphone serves one conversation and one use at a time.
- * Desktop only; the conversation runner brings the implementation, replacing `chat.dictation` and
- * `chat.hearing`.
+ * Desktop only; the conversation runner brings the implementation.
  */
 interface ConversationVoiceCapability {
     suspend fun dictation(args: ConversationDictationArgs): ConversationVoiceStatus

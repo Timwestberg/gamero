@@ -14,4 +14,14 @@ object HovelContract {
 
     /** `HOVEL_CONTRACT_HEADER`. */
     const val HEADER = "X-Hovel-Contract"
+
+    /**
+     * `HOVEL_CONTRACT_RUNTIMES`: the contract each runtime arrived in. A page whose contract is older than a runtime's
+     * is never shown it ([runtimesFor]).
+     */
+    val RUNTIMES: Map<RuntimeId, Int> = RuntimeId.entries.associateWith { FIRST }
+
+    /** The runtimes a page on [contract] can render, in the contract's order, by [table] ([RUNTIMES]). */
+    fun runtimesFor(contract: Int, table: Map<RuntimeId, Int> = RUNTIMES): List<RuntimeId> =
+        RuntimeId.entries.filter { table.getValue(it) <= contract }
 }

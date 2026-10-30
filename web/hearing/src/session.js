@@ -1,6 +1,6 @@
 /**
- * Click-to-converse for the browser. The catalog supplies the sink (host send, or a local Kokoro line).
- * This file does not name Ember and does not call chat.send.
+ * Click-to-converse for the browser. The page supplies the sink (the catalog's is a local Kokoro line).
+ * This file does not name Ember and sends nothing anywhere.
  *
  * Optional speech slot (speaker.js, or tool-webkit's SpeechOutput):
  *   speak(text, { onStart }) -> Promise<"ended" | "cancelled">, stop()
@@ -10,7 +10,7 @@
  *
  * Microphone frames (listener.js) may carry desktop's own fields:
  *   voicedMs     milliseconds of VAD windows at or above the hearing threshold in this chunk;
- *                the committer's "voiced" and the barge-in span then follow DesktopHearing/DesktopChat
+ *                the committer's "voiced" and the barge-in span then follow DesktopHearing/TalkLoop
  *   deferCommit  on an endpoint, leave the send to commitTurn(text), which takes the recognizer's
  *                finished text the way desktop's engine.finish() does
  * Hooks: onBargeIn(kind) and onEnd(), so the listener can restart or stop the microphone.
@@ -118,10 +118,6 @@ export function createSession(options) {
   }
 
   function arm() {
-    if (options.chatState === "awaiting-you") {
-      session.notice = options.answerFirst || "Answer the approval first.";
-      return false;
-    }
     session.talkOn = true;
     session.explained = true;
     session.notice = null;
@@ -131,7 +127,6 @@ export function createSession(options) {
     barge.reset();
     committer.resetUtterance();
     sink.arm();
-    return true;
   }
 
   session.click = () => {
@@ -143,7 +138,8 @@ export function createSession(options) {
       end();
       return "end";
     }
-    return arm() ? "start" : "refused";
+    arm();
+    return "start";
   };
 
   session.escape = () => {

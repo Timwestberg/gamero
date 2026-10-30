@@ -22,7 +22,6 @@ import org.formulagen.wrapper.bridge.HovelContract
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.hovel.HovelHttpTransport
 import org.formulagen.wrapper.hovel.hovelHostFeatures
-import org.formulagen.wrapper.workspace.FolderPicker
 
 /**
  * The whole Mac stack (runner, engine, transport) against hovel-service's own native route table and payloads, as
@@ -198,7 +197,7 @@ class ServerContractRunTest {
             val turns = ProviderTurns(listOf(chat), emptyList(), ConnectedProviders(), approvals)
             val folders = ProjectFolderStore(root, FolderPicker { _, _ -> null })
             val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(dialogs), api)
-            val directory = HostDirectory(ConnectedProviders(), account, host, setOf(RuntimeId.CODEX), emptySet(),
+            val directory = HostDirectory(ConnectedProviders(), host, setOf(RuntimeId.CODEX), emptySet(),
                 hovelHostFeatures(tasks = true, memory = true), taskProviderState = { "ready" })
             runner = ConversationRunner(api, store, engine, approvals, folders, ProjectFolderPublisher(folders, api, account, host) { emptyList() },
                 directory::heartbeat, status = { statuses += it }, heartbeatEvery = heartbeatEvery, now = now)

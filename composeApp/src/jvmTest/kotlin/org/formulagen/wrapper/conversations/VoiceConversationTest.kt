@@ -21,7 +21,6 @@ import org.formulagen.wrapper.voice.DuplexChoice
 import org.formulagen.wrapper.voice.FillerSettings
 import org.formulagen.wrapper.voice.HearingDuplex
 import org.formulagen.wrapper.voice.HearingResult
-import org.formulagen.wrapper.workspace.FolderPicker
 
 /** The Mac's microphone as the tests drive it: a session hears what [hear] says, and a hold answers [held] on release. */
 internal class FakeEar : Hearing {

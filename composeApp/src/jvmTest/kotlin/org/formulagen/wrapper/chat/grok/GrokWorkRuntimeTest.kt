@@ -11,118 +11,9 @@ import org.formulagen.wrapper.approvals.*
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.chat.*
 import org.formulagen.wrapper.providers.GrokConnection
-import org.formulagen.wrapper.workspace.FolderPicker
-import org.formulagen.wrapper.workspace.WorkspaceStore
 
 /** Process fixtures exercise cancellation/resume ownership without a model or real provider configuration. */
 class GrokWorkRuntimeTest {
-    @Test fun switchingProfilesCancelsGrokApprovalAndKeepsHistoriesAndWorkspaceSeparate() = runBlocking {
-        FakeGrokRuntime().use { fake ->
-            fake.mode("approval")
-            val shown = CompletableFuture<Unit>()
-            val cancelled = CompletableFuture<Unit>()
-            val broker = ApprovalBroker { _, cancel, visible ->
-                visible(); shown.complete(Unit)
-                cancel.onCancel { cancelled.complete(Unit) }.use { cancelled.get(10, TimeUnit.SECONDS) }
-                ApprovalDecision.ALLOW_ONCE // Deliberately late; must never grant the old operation.
-            }
-            val root = fake.root.resolve("providers")
-            val workspaces = WorkspaceStore(root, FolderPicker { _, _ -> fake.root })
-            val dialogs = NativeDialogs(DialogPresenter { _, answer -> answer(0); {} })
-            val old = ChatScope("local", UUID.randomUUID().toString(), "Ember", UUID.randomUUID().toString())
-            val next = old.copy(profile = UUID.randomUUID().toString(), sessionId = UUID.randomUUID().toString())
-            val connection = GrokConnection(fake.env)
-            val speech = object : ChatSpeech {
-                override fun status() = ChatVoice()
-                override fun speak(text: String) = Unit
-                override fun stop() = Unit
-                override fun close() = Unit
-            }
-            val member = TeamMember(RuntimeId.GROK_BUILD, "runtime-default")
-            DesktopChat(root, listOf(GrokChatRuntime(root, fake.env, connection)), speech,
-                work = ChatWork(workspaces, StartOfWork(dialogs), listOf(GrokWorkRuntime(root, fake.env, connection, broker)))).use { chat ->
-                fun args(scope: ChatScope) = ChatOpenForClient(scope.profile, scope.companionId, scope.name, scope.sessionId, listOf("grok-build"))
-                workspaces.choose(old.profile, old.companionId)
-                chat.openForClient(args(old))
-                chat.send(ChatSend(old.profile, old.companionId, old.name, old.sessionId, member,
-                    UUID.randomUUID().toString(), "Old profile message", false, MemberMode.WORK))
-                shown.get(10, TimeUnit.SECONDS)
-                assertEquals(ChatState.AWAITING_YOU, chat.snapshot(old).state)
-                assertTrue(chat.openForClient(args(next)).messages.isEmpty())
-                cancelled.get(2, TimeUnit.SECONDS)
-                awaitCondition { Files.readAllLines(fake.root.resolve("pids")).none { ProcessHandle.of(it.toLong()).map(ProcessHandle::isAlive).orElse(false) } }
-                assertNull(workspaces.folder(next.profile, next.companionId))
-                // Cleanup from the old web view must not close the replacement profile's chat.
-                chat.closeSession(old)
-                fake.mode("normal")
-                chat.send(ChatSend(next.profile, next.companionId, next.name, next.sessionId, member,
-                    UUID.randomUUID().toString(), "New profile message", false))
-                awaitCondition { runBlocking { chat.snapshot(next).state == ChatState.READY } }
-                val entries = chat.snapshot(next).messages
-                assertEquals(listOf("New profile message"), entries.filterIsInstance<ChatEntry.User>().map { it.text })
-                assertEquals("Hello", entries.filterIsInstance<ChatEntry.Assistant>().single().text)
-                val restored = chat.openForClient(args(old.copy(sessionId = UUID.randomUUID().toString())))
-                assertEquals(listOf("Old profile message"), restored.messages.filterIsInstance<ChatEntry.User>().map { it.text })
-                assertTrue(restored.messages.filterIsInstance<ChatEntry.Assistant>().none { it.text == "Hello" })
-            }
-        }
-    }
-
-    @Test fun ambiguousFailureWaitsForExplicitRetryAndDuplicateRetriesDoNotReplay() = runBlocking {
-        FakeGrokRuntime().use { fake ->
-            fake.mode("drop")
-            val shown = CompletableFuture<Unit>()
-            val cancelled = CompletableFuture<Unit>()
-            val broker = ApprovalBroker { _, cancel, visible ->
-                visible(); shown.complete(Unit)
-                cancel.onCancel { cancelled.complete(Unit) }.use { cancelled.get(10, TimeUnit.SECONDS) }
-                ApprovalDecision.ALLOW_ONCE
-            }
-            val root = fake.root.resolve("providers")
-            val workspace = WorkspaceStore(root, FolderPicker { _, _ -> fake.root })
-            val dialogs = NativeDialogs(DialogPresenter { _, answer -> answer(0); {} })
-            val scope = ChatScope("local", UUID.randomUUID().toString(), "Ember", UUID.randomUUID().toString())
-            val connection = GrokConnection(fake.env)
-            val speech = object : ChatSpeech {
-                override fun status() = ChatVoice()
-                override fun speak(text: String) = Unit
-                override fun stop() = Unit
-                override fun close() = Unit
-            }
-            val member = TeamMember(RuntimeId.GROK_BUILD, "runtime-default")
-            DesktopChat(root, listOf(GrokChatRuntime(root, fake.env, connection)), speech,
-                work = ChatWork(workspace, StartOfWork(dialogs), listOf(GrokWorkRuntime(root, fake.env, connection, broker)))).use { chat ->
-                workspace.choose(scope.profile, scope.companionId)
-                chat.openForClient(ChatOpenForClient(scope.profile, scope.companionId, scope.name, scope.sessionId, listOf("grok-build")))
-                val message = UUID.randomUUID().toString()
-                chat.send(ChatSend(scope.profile, scope.companionId, scope.name, scope.sessionId, member, message, "Do this once", false, MemberMode.WORK))
-                awaitCondition { runBlocking { chat.snapshot(scope).state == ChatState.ERROR } }
-                assertEquals(UserStatus.UNANSWERED, chat.snapshot(scope).messages.filterIsInstance<ChatEntry.User>().single().status)
-                assertEquals(1, fake.requests().count { it == "session/prompt" })
-                fake.mode("approval")
-                val retry = ChatRetry(scope.profile, scope.companionId, scope.name, scope.sessionId, message, member,
-                    UUID.randomUUID().toString(), false, MemberMode.WORK)
-                chat.retry(retry)
-                shown.get(10, TimeUnit.SECONDS)
-                chat.retry(retry)
-                val busy = chat.retry(retry.copy(requestId = UUID.randomUUID().toString()))
-                assertEquals(ChatState.AWAITING_YOU, busy.state)
-                assertEquals(2, fake.requests().count { it == "session/prompt" })
-                chat.stop(scope)
-                cancelled.get(2, TimeUnit.SECONDS)
-                fake.mode("normal")
-                val finalRetry = retry.copy(requestId = UUID.randomUUID().toString())
-                chat.retry(finalRetry)
-                awaitCondition { runBlocking { chat.snapshot(scope).state == ChatState.READY } }
-                val entries = chat.snapshot(scope).messages
-                assertEquals(listOf(message), entries.filterIsInstance<ChatEntry.User>().map { it.id })
-                assertEquals("Hello", entries.filterIsInstance<ChatEntry.Assistant>().single().text)
-                chat.retry(finalRetry)
-                assertEquals(3, fake.requests().count { it == "session/prompt" })
-            }
-        }
-    }
-
     @Test fun stopReleaseAndCloseCancelPendingApprovalsAndReapBeforeReplacement() {
         for (action in listOf("stop", "release", "close")) FakeGrokRuntime().use { fake ->
             fake.mode("approval")
@@ -209,37 +100,25 @@ class GrokWorkRuntimeTest {
         assertEquals("Folder Grok will trust: /work/\\u202Erepo", grokWorkTrustDialog(project, java.nio.file.Path.of("/work/\u202Erepo")).lines[1])
     }
 
-    @Test fun aRejectedWorkSessionLoadStartsFreshOnceAndDropsTheBinding() = runBlocking {
+    @Test fun aRejectedWorkSessionLoadLosesOnlyThatConversationAndDropsItsBinding() {
         FakeGrokRuntime().use { fake ->
             val broker = ApprovalBroker { _, _, _ -> error("No permission expected") }
             val root = fake.root.resolve("providers")
-            val workspace = WorkspaceStore(root, FolderPicker { _, _ -> fake.root })
-            val dialogs = NativeDialogs(DialogPresenter { _, answer -> answer(0); {} })
-            val scope = ChatScope("local", UUID.randomUUID().toString(), "Ember", UUID.randomUUID().toString())
-            val connection = GrokConnection(fake.env)
-            val speech = object : ChatSpeech {
-                override fun status() = ChatVoice()
-                override fun speak(text: String) = Unit
-                override fun stop() = Unit
-                override fun close() = Unit
-            }
-            val member = TeamMember(RuntimeId.GROK_BUILD, "runtime-default")
-            DesktopChat(root, listOf(GrokChatRuntime(root, fake.env, connection)), speech,
-                work = ChatWork(workspace, StartOfWork(dialogs), listOf(GrokWorkRuntime(root, fake.env, connection, broker)))).use { chat ->
-                workspace.choose(scope.profile, scope.companionId)
-                chat.openForClient(ChatOpenForClient(scope.profile, scope.companionId, scope.name, scope.sessionId, listOf("grok-build")))
-                suspend fun send(text: String) = chat.send(ChatSend(scope.profile, scope.companionId, scope.name, scope.sessionId, member,
-                    UUID.randomUUID().toString(), text, false, MemberMode.WORK))
-                send("First"); awaitCondition { runBlocking { chat.snapshot(scope).state == ChatState.READY } }
-                val bindings = root.resolve("grok-work-bindings")
-                val first = Files.list(bindings).use { it.toList() }.single()
+            GrokWorkRuntime(root, fake.env, GrokConnection(fake.env), broker).use { runtime ->
+                val first = WorkFixtureEvents()
+                runtime.startTurn(workRequest(fake), first)
+                first.done.get(10, TimeUnit.SECONDS)
+                val saved = NativeConversation(checkNotNull(first.handle), Persona.working("Ember").hash)
+                val binding = root.resolve("grok-work-bindings/${saved.id}.json")
+                assertTrue(Files.exists(binding))
                 fake.mode("reject-load")
-                send("Second"); awaitCondition { runBlocking { chat.snapshot(scope).state == ChatState.READY } }
-                assertEquals(listOf("Hello", "Hello"), chat.snapshot(scope).messages.filterIsInstance<ChatEntry.Assistant>().map { it.text })
-                assertFalse(Files.exists(first))
+                val rejected = WorkFixtureEvents()
+                runtime.startTurn(workRequest(fake).copy(conversation = saved), rejected)
+                rejected.done.get(10, TimeUnit.SECONDS)
+                assertEquals(ChatFailure.ConversationLost, rejected.failure)
+                assertFalse(Files.exists(binding))
                 assertEquals(1, fake.requests().count { it == "session/load" })
-                assertEquals(2, fake.requests().count { it == "session/new" })
-                assertEquals(2, fake.requests().count { it == "session/prompt" })
+                assertEquals(1, fake.requests().count { it == "session/prompt" })
             }
         }
     }

@@ -60,11 +60,6 @@ class BridgeUpdateRequiredException : IllegalStateException(MESSAGE) {
     }
 }
 
-/** A page reads only [runtimes] it decodes ([understood]); for any other it is told to update, never sent what it cannot parse. */
-fun requireDecodable(understood: Set<RuntimeId>, runtimes: Collection<RuntimeId>) {
-    if (!understood.containsAll(runtimes)) throw BridgeUpdateRequiredException()
-}
-
 /** Thrown by a capability when the person said no. The router answers `declined`. */
 class BridgeDeclinedException(message: String) : IllegalStateException(message)
 

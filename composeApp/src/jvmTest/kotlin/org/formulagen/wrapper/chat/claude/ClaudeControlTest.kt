@@ -69,9 +69,6 @@ class ClaudeControlTest {
         assertEquals("Append 'from echo' to notes.txt\nNeeds access to /private/tmp/hovel-fixture/project/notes.txt", command.detail)
         // The project folder Claude would add is already the working folder, so only the command is named.
         assertEquals("Allow `echo 'from echo' >> notes.txt` for this conversation", command.sessionLabel)
-        // The page's summary is relative to the project folder.
-        assertEquals("Ember wants to edit files: Edit notes.txt", edit.summary())
-        assertFalse((edit.summary() + command.summary()).contains("/private/tmp"))
         // A command that reaches outside the project appears verbatim in the dialog, its grant too.
         val outside = permission(json("""{"type":"control_request","request_id":"r","request":{"subtype":"can_use_tool","tool_name":"Bash",
             "input":{"command":"cp notes.txt /Users/player/Desktop/notes.txt"},"blocked_path":"/Users/player/Desktop/notes.txt","tool_use_id":"t",

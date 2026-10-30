@@ -2,7 +2,6 @@ package org.formulagen.wrapper.chat
 
 import java.io.IOException
 import java.util.UUID
-import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -68,22 +67,6 @@ internal class ClaudeChatRuntime(
         return TurnHandle { started.stop() }
     }
 
-    /** A turn that Claude Code never saves, so the companion's session is untouched. Abandoning it (a cancelled handover) ends the wait at once. */
-    override fun summarize(request: SummaryRequest): String {
-        val model = claudeModel(request.model) ?: error("Unknown model")
-        val summary = CompletableFuture<String>()
-        val turn = Turn(object : TurnEvents {
-            override fun opened(conversation: String) = Unit
-            override fun accepted() = Unit
-            override fun partial(text: String) = Unit
-            override fun completed(text: String, conversation: String) { summary.complete(text) }
-            override fun failed(failure: ChatFailure) { summary.completeExceptionally(IllegalStateException("No summary: $failure")) }
-        }, session = null, opens = false, onEnd = { summary.completeExceptionally(IllegalStateException("Summary ended")) })
-        turn.start(claudeTurnArguments(model, request.persona) + "--no-session-persistence", request.profile, summaryInstruction(request.transcript))
-        return try { boundSummary(summary.get(request.timeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)) }
-        catch (error: Exception) { turn.abandon(); throw error }
-    }
-
     override fun release() = running.forEach { it.abandon() }
 
     override fun close() {
@@ -92,20 +75,16 @@ internal class ClaudeChatRuntime(
         stopper.shutdown()
     }
 
-    /**
-     * One `claude -p` process. [session] is the session it must report, or null for a summary.
-     * [onEnd] runs once the process has ended, however it ended.
-     */
-    private inner class Turn(private val events: TurnEvents, private val session: String?, private val opens: Boolean, private val onEnd: () -> Unit = {}) {
+    /** One `claude -p` process, which must report [session]. */
+    private inner class Turn(private val events: TurnEvents, private val session: String, private val opens: Boolean) {
         private lateinit var process: Process
         /** Set once the turn is stopped, abandoned or has reported its end; nothing is reported after. */
         private val ended = AtomicBoolean()
-        private val finished = AtomicBoolean()
 
         fun start(args: List<String>, profile: String, input: String) {
             process = claude.builder(args, claude.workspace(profile)).redirectError(ProcessBuilder.Redirect.DISCARD).start()
             running += this
-            session?.let { sessions[it] = this }
+            sessions[session] = this
             if (closed) abandon()
             Thread.ofPlatform().daemon().name("hovel-claude-turn").start {
                 try { read() }
@@ -115,8 +94,7 @@ internal class ClaudeChatRuntime(
                     if (error is VirtualMachineError) throw error
                 } finally {
                     running -= this
-                    session?.let { sessions.remove(it, this) }
-                    finish()
+                    sessions.remove(session, this)
                 }
             }
             // One user message, then end of input: the process answers it and exits.
@@ -132,10 +110,7 @@ internal class ClaudeChatRuntime(
         fun abandon() {
             ended.set(true)
             if (process.isAlive) terminateProcessTreeInBackground(process, "hovel-claude-end")
-            finish()
         }
-
-        private fun finish() { if (finished.compareAndSet(false, true)) onEnd() }
 
         /** Wait briefly for this process to exit after a stop, then end it. */
         fun settle() {
@@ -155,10 +130,10 @@ internal class ClaudeChatRuntime(
                         if (ended.get()) continue
                         when (val event = ClaudeStream.parse(line)) {
                             is ClaudeEvent.Init -> {
-                                val broken = ClaudeLockdown.verify(event) + (if (session != null && event.sessionId != session) setOf("session_id") else emptySet())
+                                val broken = ClaudeLockdown.verify(event) + (if (event.sessionId != session) setOf("session_id") else emptySet())
                                 if (broken.isNotEmpty()) return refuse(broken)
                                 if (!verified) {
-                                    if (opens) deliver { events.opened(session!!) }
+                                    if (opens) deliver { events.opened(session) }
                                     // The message was written before the start was verified, so the turn and its context reached Claude Code.
                                     deliver { events.accepted() }
                                 }
@@ -181,12 +156,12 @@ internal class ClaudeChatRuntime(
             // A result line can be dropped (longer than a protocol line); a clean exit after a verified start keeps the streamed text.
             val streamed = exit == 0 && verified && outcome == null && assistantError == null && text.isNotBlank()
             when {
-                streamed -> if (ended.compareAndSet(false, true)) events.completed(text.take(ChatLimits.REPLY).toString(), session.orEmpty())
+                streamed -> if (ended.compareAndSet(false, true)) events.completed(text.take(ChatLimits.REPLY).toString(), session)
                 !ClaudeFailures.succeeded(exit, outcome) -> report(ClaudeFailures.classify(outcome, assistantError, rateLimit))
                 // A reply without a verified init is never used.
                 !verified -> report(ChatFailure.Lockdown)
                 else -> if (ended.compareAndSet(false, true)) {
-                    events.completed((outcome?.result ?: text.toString()).take(ChatLimits.REPLY), session.orEmpty())
+                    events.completed((outcome?.result ?: text.toString()).take(ChatLimits.REPLY), session)
                 }
             }
         }

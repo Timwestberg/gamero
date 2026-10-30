@@ -26,7 +26,7 @@ class HostDirectoryTest {
         val providers = Counting(ConnectedProviders(setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE)))
         val clock = MutableClock(Instant.parse("2026-10-29T12:00:00Z"))
         val features = listOf("provider-input", "memory-context", "memory-extraction")
-        val directory = HostDirectory(providers, id(), id(), offered = setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE),
+        val directory = HostDirectory(providers, id(), offered = setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE),
             working = setOf(RuntimeId.CLAUDE_CODE), features = features, clock = clock, directoryEvery = 60.seconds, usageEvery = 300.seconds)
         val beat = directory.heartbeat()
         assertEquals(features, beat.features)
@@ -49,7 +49,7 @@ class HostDirectoryTest {
 
     @Test fun aSignedOutRuntimeHasNoModelsAndNoUsage() {
         val providers = ConnectedProviders().apply { connected = false }
-        val beat = HostDirectory(providers, id(), id(), setOf(RuntimeId.CODEX), setOf(RuntimeId.CODEX), listOf("memory-context")).heartbeat()
+        val beat = HostDirectory(providers, id(), setOf(RuntimeId.CODEX), setOf(RuntimeId.CODEX), listOf("memory-context")).heartbeat()
         val codex = beat.directory.runtimes.first()
         assertEquals(ProviderRuntime(false, emptyList(), ProviderReadiness.SIGNED_OUT, RuntimeId.CODEX), codex)
         assertEquals(emptyList(), beat.allowances)
@@ -59,7 +59,7 @@ class HostDirectoryTest {
     @Test fun providerStateIsTheTaskLanesCodexAndUnavailableWithoutOne() {
         val ready = ConnectedProviders()
         var codex: String? = "auth-required"
-        val directory = HostDirectory(ready, id(), id(), setOf(RuntimeId.CODEX), emptySet(), listOf("provider-input"),
+        val directory = HostDirectory(ready, id(), setOf(RuntimeId.CODEX), emptySet(), listOf("provider-input"),
             taskProviderState = { codex })
         val beat = directory.heartbeat()
         assertEquals("auth-required", beat.providerState, "the task lane's own Codex, though the directory's Codex is ready")
@@ -67,7 +67,7 @@ class HostDirectoryTest {
             "conversation readiness stays in the directory")
         codex = "ready"
         assertEquals("ready", directory.heartbeat().providerState)
-        val noTasks = HostDirectory(ready, id(), id(), RuntimeId.entries.toSet(), RuntimeId.entries.toSet(), listOf("memory-context"))
+        val noTasks = HostDirectory(ready, id(), RuntimeId.entries.toSet(), RuntimeId.entries.toSet(), listOf("memory-context"))
         assertEquals("unavailable", noTasks.heartbeat().providerState, "a Mac without a task lane is never offered a task")
     }
 

@@ -51,8 +51,7 @@ internal fun resolveGrokWorkTurn(request: TurnRequest, connection: GrokConnectio
 /**
  * The start shared by talk and work turns, whose mode follows [TurnRequest.work]: the saved conversation's persona,
  * a fresh account check, an available model, the turn's ownership scope and the saved binding it resumes. Only a
- * missing or model-changed binding loses the conversation, which allows DesktopChat's one context-restoration
- * retry; a binding of another scope is never resumed, and is logged. [beforeLookup] runs once the scope is valid:
+ * missing or model-changed binding loses the conversation, and the role's next turn starts fresh; a binding of another scope is never resumed, and is logged. [beforeLookup] runs once the scope is valid:
  * it retains the bindings in use, then prunes orphans.
  */
 private inline fun <F> resolveGrokTurn(request: TurnRequest, connection: GrokConnection, bindings: GrokSessions,

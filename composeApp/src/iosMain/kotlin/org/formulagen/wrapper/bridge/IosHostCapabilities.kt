@@ -19,12 +19,9 @@ internal fun iosHostCapabilities(appVersion: String): HostCapabilities = HostCap
  */
 internal fun iosHovelBridgePacks(): List<CapabilityPack> = listOf(
     CompanionMethods.pack(Capability.Unsupported),
-    org.formulagen.wrapper.bridge.BrainMethods.pack(Capability.Unsupported),
-    ChatMethods.pack(Capability.Unsupported),
     ProviderMethods.pack(Capability.Unsupported),
     PetMethods.pack(Capability.Unsupported),
     GameMethods.pack(Capability.Unsupported),
-    WorkspaceMethods.pack(Capability.Unsupported),
     ProjectMethods.pack(Capability.Unsupported),
     ConversationVoiceMethods.pack(Capability.Unsupported),
     ApprovalMethods.pack(Capability.Unsupported),

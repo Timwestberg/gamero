@@ -27,8 +27,8 @@ internal interface ConversationVoiceLink : ReplyListeners {
 /**
  * Builds this Mac's conversation side for a registered account ([start]) and owns what outlives it:
  * the project folders and the `project.*` capability ([projects]), which needs the account the runner
- * serves. The runner gets runtime instances of its own ([talk], [work]), so team chat ending a page's
- * work never ends a conversation's, and every work approval goes through [RemoteApprovals]. [voice], when
+ * serves. The runner gets runtime instances of its own ([talk], [work]), which end with it, and every work
+ * approval goes through [RemoteApprovals]. [voice], when
  * this Mac has conversation voice, is linked to each runner it starts.
  */
 internal class ConversationHost(
@@ -77,7 +77,7 @@ internal class ConversationHost(
             val turns = ProviderTurns(talkRuntimes, workRuntimes, providers, approvals)
             val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(dialogs), api)
             val publisher = ProjectFolderPublisher(folders, api, registration.ownerId, registration.id, engine::readableBy)
-            val directory = HostDirectory(providers, registration.ownerId, registration.id, offered,
+            val directory = HostDirectory(providers, registration.id, offered,
                 working.intersect(workRuntimes.map { it.id }.toSet()), connection.features, connection.providerState)
             val runner = ConversationRunner(api, store, engine, approvals, folders, publisher, directory::heartbeat, connection.heartbeat,
                 connection.status, replies = voice ?: ReplyListeners.NONE)
@@ -119,7 +119,7 @@ internal class ConversationHost(
             null
         }
 
-        /** Where the runner's Grok runtimes keep their bindings: apart from team chat's, so neither prunes the other's. */
+        /** Where the runner's Grok runtimes keep their bindings. */
         fun grokRoot(providerRoot: Path): Path = providerRoot.resolve("conversation-runtimes")
     }
 }

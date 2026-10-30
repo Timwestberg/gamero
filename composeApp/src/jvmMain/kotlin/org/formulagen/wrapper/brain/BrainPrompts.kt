@@ -47,22 +47,6 @@ internal val COORDINATOR_DECISION_SHAPES = listOf(
     """{"kind":"step-result","attemptId":"UUID","outcome":"ready|changes-needed|blocked","explanation":"evidence"}""",
 )
 
-/** The brain's coordinator protocol: every decision, the answer included, is one JSON object. */
-internal val COORDINATOR_PROTOCOL = (listOf(
-    "You are the user's companion coordinator. Respond with exactly one JSON object, no markdown.",
-    "The entire JSON response must be at most ${BrainLimits.OUTPUT} characters.",
-    "Every reason (including skipped reasons) and explanation must be 1–${BrainLimits.DESCRIPTION} characters.",
-    "Tasks must be 1–${BrainLimits.STEP_INSTRUCTIONS} characters; text and question must be nonempty and fit the total response limit.",
-) + COORDINATOR_EVIDENCE_RULES + "Only delegate tasks the user requested. Ordinary conversation uses answer. Never invent role or artifact IDs." +
-    COORDINATOR_WORKFLOW_RULES + "Do not claim work has run merely because it was configured. Never print your private JSON to the user." +
-    "Decision shapes:" + """{"kind":"answer","text":"user-facing response"}""" + COORDINATOR_DECISION_SHAPES).joinToString("\n")
-
-/** The coordinator's persona: the fixed protocol, then the person's own instructions. */
-internal fun coordinatorInstructions(instructions: String) = COORDINATOR_PROTOCOL + "\nUser's coordinator instructions:\n" + instructions
-
-/** Appended to the request for the one repair attempt after an invalid decision. */
-internal const val DECISION_REPAIR = "\nYour last response was invalid. Return exactly one allowed JSON decision."
-
 /**
  * The coordinator's turn input: the decision's identity and [allowed] kinds, the pinned run as data, the handoff text
  * of the request's [input] and the [latestOutput], and the recent [conversation].

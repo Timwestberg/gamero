@@ -6,7 +6,6 @@ import kotlin.test.*
 import kotlinx.coroutines.runBlocking
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.chat.ProjectFolders
-import org.formulagen.wrapper.workspace.FolderPicker
 
 class ProjectFoldersTest {
     private val root = folder("project-folders")

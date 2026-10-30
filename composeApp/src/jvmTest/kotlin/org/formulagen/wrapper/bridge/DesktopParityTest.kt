@@ -37,9 +37,8 @@ class DesktopParityTest {
         val router = BridgeRouter(
             product = HOVEL_PRODUCT,
             capabilities = desktopHostCapabilities(),
-            products = desktopProductPacks(HOVEL_PRODUCT, HovelCompanionCapability(companion), FakeChatCapability(),
-                FakeProviderCapability(), FakePetCapability(), FakeGameCapability(), FakeWorkspaceCapability(), FakeBrainCapability(),
-                FakeProjects(), DesktopHostContract(), FakeConversationVoiceCapability()),
+            products = desktopProductPacks(HOVEL_PRODUCT, HovelCompanionCapability(companion), FakeProviderCapability(),
+                FakePetCapability(), FakeGameCapability(), FakeProjects(), DesktopHostContract(), FakeConversationVoiceCapability()),
             scope = scope,
             transport = {},
         )

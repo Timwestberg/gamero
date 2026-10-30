@@ -5,7 +5,6 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationStrategy
-import kotlinx.serialization.builtins.nullable
 import kotlinx.serialization.descriptors.PolymorphicKind
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.descriptors.StructureKind
@@ -23,36 +22,11 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.serializer
-import kotlin.time.Duration.Companion.minutes
 
-/**
- * Native companion coordination, one method per `brain.*` call of event-contracts `brain.ts`. No method answers a
- * native approval. Results name only runtimes the page declared on [read] or [open]; a result that would name another
- * throws [BridgeUpdateRequiredException] instead.
+/*
+ * A companion's brain as the account holds it, and the run state a conversation keeps on this Mac. The claim carries the
+ * brain ([BrainDocument]); the types read and write the contract's JSON through [brainWire] and [BrainWireSerializer].
  */
-interface BrainCapability {
-    /** The saved brain and its current readiness, or absent. */
-    suspend fun read(args: BrainRead): BrainReadResult
-    /** Compare and set the configuration at [BrainSave.expectedRevision]. It never starts work. */
-    suspend fun save(args: BrainSave): BrainSaveResult
-    /** Acquire the coordinator conversation's lease, ending any other lease on it. */
-    suspend fun open(args: BrainOpen): BrainSnapshot
-    suspend fun close(lease: BrainLease)
-    suspend fun send(args: BrainSend): BrainSnapshot
-    suspend fun snapshot(args: BrainSnapshotRequest): BrainSnapshot
-    suspend fun stop(lease: BrainLease): BrainSnapshot
-    suspend fun stopSpeaking(lease: BrainLease): BrainSnapshot
-    /** Run the run's last attempt again after a native review. */
-    suspend fun retry(args: BrainRetry): BrainSnapshot
-    /** Continue a paused run after a native review, optionally adopting [BrainResume.targetRevision]. */
-    suspend fun resume(args: BrainResume): BrainSnapshot
-    /** Reveal the host's pending dialog. The page cannot answer it. */
-    suspend fun showApproval(args: BrainShowApproval)
-    suspend fun addInput(args: BrainAddInput): BrainArtifact
-    /** The native file chooser's file as a staged input; null when the person cancels. */
-    suspend fun chooseInput(args: BrainChooseInput): BrainArtifact?
-    suspend fun readOutput(args: BrainReadOutput): BrainOutputPage
-}
 
 /** Mirrors BRAIN_LIMITS in event-contracts, checked against `fixtures/limits.json`. [INPUTS] bounds the inputs one message attaches. */
 object BrainLimits {
@@ -138,10 +112,7 @@ data class BrainConfiguration(
     val coordinator: CoordinatorRole,
     val specialists: List<SpecialistRole>,
     val workflow: BrainWorkflow?,
-) {
-    /** Every runtime a role of this brain is bound to. */
-    fun runtimeIds(): Set<RuntimeId> = (listOf(coordinator.binding) + specialists.map { it.binding }).mapNotNull { it?.runtimeId }.toSet()
-}
+)
 
 @Serializable
 data class BrainDocument(val revision: Long, val configuration: BrainConfiguration)
@@ -255,7 +226,7 @@ enum class BrainRunState {
     val active get() = working || this == AWAITING_APPROVAL
     /** Ended; a new request starts the next run. */
     val terminal get() = this == COMPLETED || this == CANCELLED || this == FAILED
-    /** Waiting for the person, so `brain.resume` or `brain.retry` may continue it. */
+    /** Waiting for the person, so their retry of the message that drove it may continue it. */
     val resumable get() = this == PAUSED || this == AWAITING_INPUT || this == AWAITING_APPROVAL || this == FAILED
 }
 
@@ -307,185 +278,6 @@ data class BrainEntry(
     val activity: Activity? = null,
 )
 
-@Serializable
-data class BrainSnapshot(
-    val configurationRevision: Long,
-    val coordinator: BrainRoleSnapshot?,
-    val messages: List<BrainEntry>,
-    val run: BrainRun?,
-    val attempts: List<BrainAttempt>,
-    val artifacts: List<BrainArtifact>,
-    val waiting: BrainWaiting?,
-    val voice: ChatVoice,
-    val cursor: String,
-    val notice: String? = null,
-) {
-    /** Every runtime this snapshot names. */
-    fun runtimeIds(): Set<RuntimeId> =
-        (listOfNotNull(coordinator) + messages.mapNotNull { it.role } + attempts.map { it.role }).map { it.binding.runtimeId }.toSet()
-}
-
-/** The four IDs every lease call carries. Mirrors `brainLease`, which is `chatScope` without `hearing`. */
-sealed interface BrainLeased {
-    val profile: String
-    val companionId: String
-    val name: String
-    val sessionId: String
-
-    fun lease() = BrainLease(profile, companionId, name, sessionId)
-}
-
-@Serializable
-data class BrainLease(
-    override val profile: String,
-    override val companionId: String,
-    override val name: String,
-    override val sessionId: String,
-) : BrainLeased
-
-/**
- * [supportedRuntimes] names the runtimes the page decodes, known or not. A page that predates it omits it, and the
- * host then assumes [SharedRules.LEGACY_RUNTIMES].
- */
-@Serializable
-data class BrainRead(val profile: String, val companionId: String, val supportedRuntimes: List<String>? = null)
-
-@Serializable
-data class BrainSave(
-    val profile: String,
-    val companionId: String,
-    val expectedRevision: Long,
-    val mutationId: String,
-    val configuration: BrainConfiguration,
-)
-
-/** As [BrainRead.supportedRuntimes]; the lease keeps that vocabulary until it closes. */
-@Serializable
-data class BrainOpen(
-    override val profile: String,
-    override val companionId: String,
-    override val name: String,
-    override val sessionId: String,
-    val supportedRuntimes: List<String>? = null,
-) : BrainLeased
-
-/** [text] is trimmed before its bound applies, as for `chat.send`. */
-@Serializable
-data class BrainSend(
-    override val profile: String,
-    override val companionId: String,
-    override val name: String,
-    override val sessionId: String,
-    val requestId: String,
-    val expectedRevision: Long,
-    val text: String,
-    val inputIds: List<String>,
-    val speak: Boolean,
-) : BrainLeased
-
-@Serializable
-data class BrainSnapshotRequest(
-    override val profile: String,
-    override val companionId: String,
-    override val name: String,
-    override val sessionId: String,
-    val cursor: String? = null,
-) : BrainLeased
-
-@Serializable
-data class BrainRetry(
-    override val profile: String,
-    override val companionId: String,
-    override val name: String,
-    override val sessionId: String,
-    val runId: String,
-    val expectedRunRevision: Long,
-    val requestId: String,
-    val attemptId: String,
-) : BrainLeased
-
-@Serializable
-data class BrainResume(
-    override val profile: String,
-    override val companionId: String,
-    override val name: String,
-    override val sessionId: String,
-    val runId: String,
-    val expectedRunRevision: Long,
-    val requestId: String,
-    val targetRevision: Long? = null,
-) : BrainLeased
-
-@Serializable
-data class BrainShowApproval(
-    override val profile: String,
-    override val companionId: String,
-    override val name: String,
-    override val sessionId: String,
-    val runId: String,
-    val approvalId: String,
-) : BrainLeased
-
-/** [title] may arrive padded; it is trimmed before its bound applies. [text] is kept as given. */
-@Serializable
-data class BrainAddInput(
-    override val profile: String,
-    override val companionId: String,
-    override val name: String,
-    override val sessionId: String,
-    val messageId: String,
-    val title: String,
-    val text: String,
-) : BrainLeased
-
-@Serializable
-data class BrainChooseInput(
-    override val profile: String,
-    override val companionId: String,
-    override val name: String,
-    override val sessionId: String,
-    val messageId: String,
-) : BrainLeased
-
-/** [cursor] is a character offset into the artifact's text. */
-@Serializable
-data class BrainReadOutput(
-    override val profile: String,
-    override val companionId: String,
-    override val name: String,
-    override val sessionId: String,
-    val runId: String,
-    val artifactId: String,
-    val cursor: Int,
-) : BrainLeased
-
-@OptIn(ExperimentalSerializationApi::class)
-@Serializable
-@JsonClassDiscriminator("status")
-sealed interface BrainReadResult {
-    @Serializable @SerialName("absent")
-    data object Absent : BrainReadResult
-
-    @Serializable @SerialName("found")
-    data class Found(val document: BrainDocument, val issues: List<BrainIssue>) : BrainReadResult
-}
-
-/** A configuration that fails [BrainRules.configuration] never reaches the store: the bridge answers `invalid`. */
-@OptIn(ExperimentalSerializationApi::class)
-@Serializable
-@JsonClassDiscriminator("status")
-sealed interface BrainSaveResult {
-    @Serializable @SerialName("saved")
-    data class Saved(val document: BrainDocument, val issues: List<BrainIssue>) : BrainSaveResult
-
-    @Serializable @SerialName("conflict")
-    data class Conflict(val currentRevision: Long) : BrainSaveResult
-}
-
-/** One page of an output's text; [nextCursor] is null on the last page. */
-@Serializable
-data class BrainOutputPage(val text: String, val nextCursor: Int?)
-
 /**
  * [value] as the contract's JSON. The Kotlin declaration says which nulls travel: a nullable
  * property with a default is `.optional()` in event-contracts and is left out when null; one
@@ -522,8 +314,8 @@ private fun withoutOptionalNulls(element: JsonElement, descriptor: SerialDescrip
 }
 
 /**
- * Carries a brain type over the bridge as the contract shapes it. Writing uses [brainWire]. Reading accepts only that
- * exact form, as `z.strictObject` does: an optional field sent as `null`, a missing required one, or a quoted number or
+ * Reads and writes a brain type as the contract shapes it. Writing uses [brainWire]. Reading accepts only that exact
+ * form, as `z.strictObject` does: an optional field sent as `null`, a missing required one, or a quoted number or
  * boolean is refused like an unknown key.
  */
 internal class BrainWireSerializer<T>(private val inner: KSerializer<T>) : KSerializer<T> {
@@ -535,22 +327,14 @@ internal class BrainWireSerializer<T>(private val inner: KSerializer<T>) : KSeri
     }
 }
 
-/** Strict structure checks shared by bridge input and persisted records. */
+/** Strict structure checks of a brain configuration and its records. */
 object BrainRules {
     fun uuid(value: String) = BridgeProtocol.UUID_PATTERN.matches(value)
     fun label(value: String, max: Int = BrainLimits.LABEL) = value.isNotEmpty() && value == value.trimEcma() && value.length <= max
     fun binding(value: BrainBinding?) = value == null || SharedRules.isModelId(value.modelId)
-    fun key(profile: String, companionId: String) = SharedRules.isProfileId(profile) && uuid(companionId)
-    fun lease(value: BrainLeased) =
-        key(value.profile, value.companionId) && SharedRules.isCompanionName(value.name) && uuid(value.sessionId)
     /** A `brainRevision` of at least [min]. */
     fun revision(value: Long, min: Long = 0) = value in min..BrainLimits.REVISION
-    /** A run command names the run, the run revision it saw and its own request. */
-    fun runCommand(runId: String, expectedRunRevision: Long, requestId: String) =
-        uuid(runId) && revision(expectedRunRevision) && uuid(requestId)
     fun inputs(ids: List<String>) = ids.size <= BrainLimits.INPUTS && ids.all(::uuid)
-    /** A declared client vocabulary, or none from a page that predates it. */
-    fun runtimes(names: List<String>?) = names == null || SharedRules.validClientRuntimes(names)
 
     fun configuration(value: BrainConfiguration): Boolean {
         val coordinator = value.coordinator
@@ -595,74 +379,4 @@ object BrainRules {
         }
         return brainWire(value).toString().length <= BrainLimits.CONFIGURATION
     }
-}
-
-/**
- * The same capability method set as BRAIN_METHODS in event-contracts. Each method reads its arguments in exactly the
- * contract's form ([BrainWireSerializer]) and writes its result with the contract's nulls.
- */
-object BrainMethods {
-    private fun <A, R> method(name: String, args: KSerializer<A>, result: KSerializer<R>, accepts: (A) -> Boolean) =
-        BridgeMethod("brain.$name", BrainWireSerializer(args), result, accepts = accepts)
-    private fun <A : BrainLeased> snapshot(name: String, args: KSerializer<A>, accepts: (A) -> Boolean = { true }) =
-        method(name, args, BrainWireSerializer(BrainSnapshot.serializer())) { BrainRules.lease(it) && accepts(it) }
-
-    val READ = method("read", BrainRead.serializer(), BrainWireSerializer(BrainReadResult.serializer())) {
-        BrainRules.key(it.profile, it.companionId) && BrainRules.runtimes(it.supportedRuntimes)
-    }
-    val SAVE = method("save", BrainSave.serializer(), BrainWireSerializer(BrainSaveResult.serializer())) {
-        BrainRules.key(it.profile, it.companionId) && BrainRules.revision(it.expectedRevision) && BrainRules.uuid(it.mutationId) &&
-            BrainRules.configuration(it.configuration)
-    }
-    val OPEN = snapshot("open", BrainOpen.serializer()) { BrainRules.runtimes(it.supportedRuntimes) }
-    val CLOSE = method("close", BrainLease.serializer(), NoResult.serializer(), BrainRules::lease)
-    val SEND = snapshot("send", BrainSend.serializer()) {
-        BrainRules.uuid(it.requestId) && BrainRules.revision(it.expectedRevision, min = 1) &&
-            it.text.trimEcma().length in 1..ChatLimits.MESSAGE && BrainRules.inputs(it.inputIds)
-    }
-    val SNAPSHOT = snapshot("snapshot", BrainSnapshotRequest.serializer()) { (it.cursor?.length ?: 0) <= BrainLimits.CURSOR }
-    val STOP = snapshot("stop", BrainLease.serializer())
-    val STOP_SPEAKING = snapshot("stopSpeaking", BrainLease.serializer())
-    val RETRY = snapshot("retry", BrainRetry.serializer()) {
-        BrainRules.runCommand(it.runId, it.expectedRunRevision, it.requestId) && BrainRules.uuid(it.attemptId)
-    }
-    val RESUME = snapshot("resume", BrainResume.serializer()) {
-        val target = it.targetRevision
-        BrainRules.runCommand(it.runId, it.expectedRunRevision, it.requestId) && (target == null || BrainRules.revision(target, min = 1))
-    }
-    val SHOW_APPROVAL = method("showApproval", BrainShowApproval.serializer(), NoResult.serializer()) {
-        BrainRules.lease(it) && BrainRules.uuid(it.runId) && BrainRules.uuid(it.approvalId)
-    }
-    val ADD_INPUT = method("addInput", BrainAddInput.serializer(), BrainWireSerializer(BrainArtifact.serializer())) {
-        BrainRules.lease(it) && BrainRules.uuid(it.messageId) && it.text.length in 1..BrainLimits.INPUT &&
-            BrainRules.label(it.title.trimEcma())
-    }
-    /** The person may take a while in the native file chooser. */
-    val CHOOSE_INPUT = BridgeMethod(
-        "brain.chooseInput",
-        BrainWireSerializer(BrainChooseInput.serializer()),
-        BrainWireSerializer(BrainArtifact.serializer()).nullable,
-        timeout = 10.minutes,
-    ) { BrainRules.lease(it) && BrainRules.uuid(it.messageId) }
-    val READ_OUTPUT = method("readOutput", BrainReadOutput.serializer(), BrainWireSerializer(BrainOutputPage.serializer())) {
-        BrainRules.lease(it) && BrainRules.uuid(it.runId) && BrainRules.uuid(it.artifactId) && it.cursor >= 0
-    }
-
-    fun pack(brain: Capability<BrainCapability>): CapabilityPack = binder.pack(brain)
-    internal val binder = CapabilityBinder("brain", listOf<CapabilityHandler<BrainCapability>>(
-        READ.handle { brain, args -> brain.read(args) },
-        SAVE.handle { brain, args -> brain.save(args) },
-        OPEN.handle { brain, args -> brain.open(args) },
-        CLOSE.handle { brain, args -> brain.close(args); NoResult },
-        SEND.handle { brain, args -> brain.send(args) },
-        SNAPSHOT.handle { brain, args -> brain.snapshot(args) },
-        STOP.handle { brain, args -> brain.stop(args) },
-        STOP_SPEAKING.handle { brain, args -> brain.stopSpeaking(args) },
-        RETRY.handle { brain, args -> brain.retry(args) },
-        RESUME.handle { brain, args -> brain.resume(args) },
-        SHOW_APPROVAL.handle { brain, args -> brain.showApproval(args); NoResult },
-        ADD_INPUT.handle { brain, args -> brain.addInput(args) },
-        CHOOSE_INPUT.handle { brain, args -> brain.chooseInput(args) },
-        READ_OUTPUT.handle { brain, args -> brain.readOutput(args) },
-    ))
 }

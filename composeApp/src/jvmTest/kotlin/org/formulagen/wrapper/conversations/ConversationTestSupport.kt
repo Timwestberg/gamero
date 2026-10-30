@@ -369,7 +369,6 @@ internal open class ScriptedRuntime(override val id: RuntimeId, val chunk: Int =
         return TurnHandle { stops += turn }
     }
 
-    override fun summarize(request: SummaryRequest) = "Summary"
     override fun release(lease: String) { released += lease }
     override fun release() = Unit
     override fun close() = Unit
@@ -380,8 +379,7 @@ internal class ConnectedProviders(private val offered: Set<RuntimeId> = RuntimeI
     @Volatile var connected = true
     override suspend fun perform(action: ProviderAction, scope: ProviderScope) =
         ProviderStatus(scope.runtimeId, if (connected && scope.runtimeId in offered) ProviderState.CONNECTED else ProviderState.DISCONNECTED)
-    override suspend fun list(profile: String) = ProviderList(offered.toList(), emptyList())
-    override suspend fun listForClient(args: ProviderListForClientArgs) = list(args.profile)
+    override suspend fun list() = ProviderList(offered.toList(), emptyList())
     override suspend fun models(scope: ProviderScope) =
         ProviderModels(listOf(ProviderModel("Test model", true, "test-model", listOf(ModelEffort.HIGH))), scope.runtimeId)
     override suspend fun usage(scope: ProviderScope) = ProviderUsage(scope.runtimeId, 1_000, ProviderUsageWindow(12.5, 1_800_000_000))

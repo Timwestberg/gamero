@@ -93,7 +93,7 @@ internal class ProviderTurns(
      */
     fun resolved(call: TurnCall, role: BrainRoleSnapshot): BrainRoleSnapshot {
         val unavailable = ProviderFailure(ChatFailure.ModelUnavailable, role.binding.runtimeId, role.roleId, false)
-        val scope = ProviderScope(call.profile, role.binding.runtimeId)
+        val scope = ProviderScope(role.binding.runtimeId)
         val models = runCatching { runBlocking { providers.models(scope).models } }.getOrNull()
             ?: throw unavailable
         val model = role.binding.model(models) ?: throw unavailable
@@ -104,7 +104,7 @@ internal class ProviderTurns(
     /** Why [role] cannot run on this Mac now ([roleIssues]): a talk role also needs its talk runtime here. */
     fun issues(call: TurnCall, role: BrainRoleSnapshot): List<BrainIssue> {
         val binding = role.binding
-        val scope = ProviderScope(call.profile, binding.runtimeId)
+        val scope = ProviderScope(binding.runtimeId)
         val status = runCatching { runBlocking { providers.perform(ProviderAction.STATUS, scope) }.state }.getOrNull()
         val signedIn = status == ProviderState.CONNECTED
         val offered = role.mode == MemberMode.WORK || binding.runtimeId in talk

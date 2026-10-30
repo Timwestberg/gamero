@@ -57,12 +57,9 @@ internal fun hovelWebUrl(intent: Intent?, context: Context): String? {
  */
 internal fun hovelBridgePacks(): List<CapabilityPack> = listOf(
     CompanionMethods.pack(Capability.Unsupported),
-    org.formulagen.wrapper.bridge.BrainMethods.pack(Capability.Unsupported),
-    org.formulagen.wrapper.bridge.ChatMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.ProviderMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.PetMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.GameMethods.pack(Capability.Unsupported),
-    org.formulagen.wrapper.bridge.WorkspaceMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.ProjectMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.ConversationVoiceMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.ApprovalMethods.pack(Capability.Unsupported),

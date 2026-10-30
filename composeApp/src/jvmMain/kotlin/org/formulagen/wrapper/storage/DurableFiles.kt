@@ -12,7 +12,7 @@ import java.nio.file.attribute.PosixFilePermissions
 import java.security.MessageDigest
 
 /*
- * The local stores' file discipline, as `ExecutionJournal` and `BrainStore` keep it: private folders
+ * The local stores' file discipline, as `ExecutionJournal` keeps it: private folders
  * (0700), private files (0600), and a record replaced only after its complete new content is synced
  * to disk, then the folder synced, so a crash leaves the old record or the new one. Conversations and
  * project folders use these; the older stores keep their own copies until they move here.

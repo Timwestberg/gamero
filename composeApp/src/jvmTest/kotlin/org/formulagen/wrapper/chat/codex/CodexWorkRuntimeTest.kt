@@ -49,7 +49,6 @@ class CodexWorkRuntimeTest {
     private class Events : TurnEvents {
         val seen = CopyOnWriteArrayList<String>()
         val activities = CopyOnWriteArrayList<Activity>()
-        val waitings = CopyOnWriteArrayList<ChatWaiting?>()
         val end = CompletableFuture<String>()
         override fun opened(conversation: String) { seen += "opened $conversation" }
         override fun accepted() { seen += "accepted" }
@@ -57,7 +56,6 @@ class CodexWorkRuntimeTest {
         override fun completed(text: String, conversation: String) { seen += "completed $text"; end.complete("completed") }
         override fun failed(failure: ChatFailure) { seen += "failed $failure"; end.complete("failed $failure") }
         override fun activity(activity: Activity) { activities += activity }
-        override fun waiting(waiting: ChatWaiting?) { waitings += waiting }
     }
 
     private class Broker(vararg answers: ApprovalDecision) : ApprovalBroker {
@@ -115,9 +113,7 @@ class CodexWorkRuntimeTest {
                 buildJsonObject { putJsonObject("permissions") {}; put("scope", "turn") }, null, buildJsonObject { put("decision", "decline") }), answers.toList())
             // The dialog names the file from its item and the command without its shell wrapper.
             assertEquals(listOf(ApprovalKind.EDIT to "Edit $folder/tests/date.test.ts", ApprovalKind.COMMAND to "npm test"), broker.asked.map { it.kind to it.title })
-            assertEquals("Ember wants to edit files: Edit tests/date.test.ts", broker.asked[0].summary())
             assertEquals("Allow `npm test` for this conversation", broker.asked[1].sessionLabel)
-            assertEquals(WaitingKind.APPROVAL, events.waitings.first()?.kind); assertNull(events.waitings.last())
             assertEquals(listOf(
                 ActivityStep(ActivityKind.EDIT, "tests/date.test.ts", ActivityStatus.DONE, "+2 -1"),
                 ActivityStep(ActivityKind.COMMAND, "npm test", ActivityStatus.DONE, "13 passing"),
@@ -134,8 +130,9 @@ class CodexWorkRuntimeTest {
     @Test fun aStopCancelsWhatWaitsAndInterruptsTheTurn() {
         val servers = CopyOnWriteArrayList<Server>()
         val answer = CompletableFuture<JsonObject?>()
-        val broker = ApprovalBroker { _, cancel, shown ->
-            shown()
+        val asking = CompletableFuture<Unit>()
+        val broker = ApprovalBroker { _, cancel, _ ->
+            asking.complete(Unit)
             while (!cancel.isCancelled) Thread.sleep(10)
             ApprovalDecision.ALLOW_ONCE
         }
@@ -147,7 +144,7 @@ class CodexWorkRuntimeTest {
             val events = Events()
             val handle = codex.startTurn(request(), events)
             val until = System.nanoTime() + 5_000_000_000L
-            while (events.waitings.isEmpty()) { check(System.nanoTime() < until); Thread.sleep(10) }
+            asking.get(5, TimeUnit.SECONDS)
             handle.stop()
             assertEquals(buildJsonObject { put("decision", "cancel") }, answer.get(5, TimeUnit.SECONDS))
             while (servers.single().calls.none { it.first == "turn/interrupt" }) { check(System.nanoTime() < until); Thread.sleep(10) }

@@ -2,12 +2,10 @@ package org.formulagen.wrapper.chat
 
 import java.nio.file.Path
 import java.util.UUID
-import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeoutException
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.ChatLimits
 import org.formulagen.wrapper.bridge.RuntimeId
@@ -33,7 +31,7 @@ import org.formulagen.wrapper.providers.codexModelList
  * One app-server serves the active profile and is kept between turns;
  * it is dropped on [release], on a closed transport, on a refused tool request and when the account
  * is not ChatGPT, and the next turn starts a new one and resumes the thread again. A thread Codex no
- * longer has is a lost conversation, which the chat starts over with the recent messages. Stopping
+ * longer has is a lost conversation, which the next turn starts fresh. Stopping
  * a turn closes the app-server, including a turn that is still starting.
  */
 internal class CodexChatRuntime(
@@ -62,8 +60,6 @@ internal class CodexChatRuntime(
         /** The thread this app-server has resumed or started; any other thread is resumed first. */
         var thread: String? = null
         var turn: Turn? = null
-        /** Ephemeral summary threads by thread id. */
-        val summaries = ConcurrentHashMap<String, Summary>()
     }
 
     private class Turn(val thread: String, val events: TurnEvents) {
@@ -107,31 +103,6 @@ internal class CodexChatRuntime(
             early?.forEach { (method, params) -> handle(connection, active, method, params) }
         }
         return TurnHandle { detach(connection) }
-    }
-
-    /** An ephemeral thread with one turn: nothing reaches the companion's own thread. */
-    override fun summarize(request: SummaryRequest): String {
-        val model = explicitModel(request.model) ?: error("Unknown model")
-        val connection = connect(request.profile)
-        check(account(connection) == Readiness.Ready) { "ChatGPT account required" }
-        val overrides = checkNotNull(overrides(connection)) { "Codex configuration unreadable" }
-        val started = connection.rpc.call("thread/start", chatThreadParams(request.persona, connection.folder.toString(), null, ephemeral = true, overrides))
-        val thread = started.getValue("thread").jsonObject.getValue("id").jsonPrimitive.content
-        val summary = Summary().also { connection.summaries[thread] = it }
-        try {
-            synchronized(lock) { if (this.connection !== connection) summary.fail() }
-            val turn = connection.rpc.call("turn/start", buildJsonObject {
-                put("threadId", thread)
-                putJsonArray("input") { add(buildJsonObject { put("type", "text"); put("text", summaryInstruction(request.transcript)) }) }
-                model.takeIf { it.isNotEmpty() }?.let { put("model", it) }
-            })["turn"]?.jsonObject?.get("id")?.jsonPrimitive?.contentOrNull
-            return try {
-                boundSummary(summary.result.get(request.timeout.inWholeMilliseconds, TimeUnit.MILLISECONDS))
-            } catch (error: TimeoutException) {
-                turn?.let { runCatching { connection.rpc.call("turn/interrupt", buildJsonObject { put("threadId", thread); put("turnId", it) }) } }
-                throw error
-            }
-        } finally { connection.summaries.remove(thread) }
     }
 
     override fun release() = synchronized(lock) { detachLocked() }
@@ -219,21 +190,18 @@ internal class CodexChatRuntime(
             // A talk-only conversation never runs an MCP server; one starting means the overrides did not hold.
             log(LogLevel.Warn, "codex", "Codex chat refused; an MCP server started")
             val turn = synchronized(lock) { connection.turn.also { connection.turn = null } }
-            connection.summaries.values.forEach { it.fail() }
             detach(connection)
             turn?.events?.failed(ChatFailure.Lockdown)
             return@synchronized
         }
         if (method == "transport/closed" || method == "request/refused") {
             val turn = synchronized(lock) { connection.turn.also { connection.turn = null } }
-            connection.summaries.values.forEach { it.fail() }
             // A dead app-server is never reused: the next turn starts a new one and resumes the thread again.
             if (turn != null || method == "transport/closed") detach(connection)
             turn?.events?.failed(ChatFailure.Temporary)
             return@synchronized
         }
         val thread = (params["threadId"] as? JsonPrimitive)?.contentOrNull
-        thread?.let(connection.summaries::get)?.let { it.receive(method, params); return@synchronized }
         var overflow: Turn? = null
         val turn = synchronized(lock) {
             val turn = connection.turn?.takeIf { it.thread == thread } ?: return@synchronized null
@@ -281,25 +249,7 @@ internal class CodexChatRuntime(
         epoch++
         val dropped = connection ?: return
         connection = null
-        dropped.summaries.values.forEach { it.fail() }
         try { releaser.execute { dropped.rpc.close() } } catch (_: RejectedExecutionException) { dropped.rpc.close() }
-    }
-
-    /** The one reply of an ephemeral summary thread. Fed with [delivery] held. */
-    private class Summary {
-        val result = CompletableFuture<String>()
-        private val reply = ReplyText()
-
-        fun receive(method: String, params: JsonObject) {
-            if (reply.receive(method, params)) return
-            when (method) {
-                "turn/completed" -> if (((params["turn"] as? JsonObject)?.get("status") as? JsonPrimitive)?.contentOrNull == "completed") result.complete(reply.text)
-                    else fail()
-                "error" -> if (params["willRetry"] != JsonPrimitive(true)) fail()
-            }
-        }
-
-        fun fail() { result.completeExceptionally(IllegalStateException("Codex did not write a summary")) }
     }
 }
 

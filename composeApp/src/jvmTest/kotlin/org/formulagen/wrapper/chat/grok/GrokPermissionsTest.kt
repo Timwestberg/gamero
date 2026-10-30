@@ -8,7 +8,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.*
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.approvals.*
-import org.formulagen.wrapper.bridge.ChatWaiting
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.TeamMember
 import org.formulagen.wrapper.chat.ChatFailure
@@ -80,7 +79,6 @@ class GrokPermissionsTest {
             assertEquals(ApprovalSubject.Command("echo hello", work.folder, null, null), request.subject)
             assertNull(request.sessionLabel)
             assertEquals(work.member, request.member)
-            assertEquals(2, events.waitingCalls.get())
         }
     }
 
@@ -180,13 +178,11 @@ class GrokPermissionsTest {
     }
 
     private class RecordingEvents : TurnEvents {
-        val waitingCalls = AtomicInteger()
         override fun opened(conversation: String) = Unit
         override fun accepted() = Unit
         override fun partial(text: String) = Unit
         override fun completed(text: String, conversation: String) = Unit
         override fun failed(failure: ChatFailure) = Unit
-        override fun waiting(waiting: ChatWaiting?) { waitingCalls.incrementAndGet() }
     }
 
     @Test fun structuredPermissionsRoundTripThroughTheNativeBroker(): Unit = FakeGrokAcp("native-permission").use { fake ->

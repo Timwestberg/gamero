@@ -7,7 +7,6 @@ import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
 import org.formulagen.wrapper.providers.ClaudeConnection
@@ -190,24 +189,6 @@ class ClaudeChatRuntimeTest {
         assertTrue(events.seen.none { it.startsWith("completed") || it.startsWith("failed") })
     }
 
-    @Test fun aSummaryEndsAtOnceWhenItsTurnIsAbandoned() {
-        val fake = FakeClaude()
-        fake.scenario(turn = FakeClaude.fixture("turn-sigint.ndjson"))
-        claude(fake).use { claude ->
-            val failure = java.util.concurrent.CompletableFuture<Throwable>()
-            Thread.ofPlatform().daemon().start {
-                runCatching { claude.summarize(SummaryRequest(profile, persona, "haiku", "user: Hello", timeout = 60.seconds)) }
-                    .exceptionOrNull().let { failure.complete(it) }
-            }
-            await { fake.turns().isNotEmpty() }
-            Thread.sleep(200)
-            val started = System.nanoTime()
-            claude.release()
-            assertNotNull(failure.get(5, TimeUnit.SECONDS), "A cancelled handover does not wait for the summary's timeout")
-            assertTrue(System.nanoTime() - started < TimeUnit.SECONDS.toNanos(5))
-        }
-    }
-
     @Test fun aFailureWhileReadingIsReported() {
         val fake = FakeClaude()
         val events = object : TurnEvents {
@@ -253,24 +234,6 @@ class ClaudeChatRuntimeTest {
         val failed = Events()
         claude(fake).use { it.startTurn(request(), failed); await { failed.ended() } }
         assertEquals("failed Unexpected", failed.seen.last())
-    }
-
-    @Test fun aSummaryIsNeverSavedAsASession() {
-        val fake = FakeClaude()
-        val long = "s".repeat(3000)
-        fake.scenario(turn = FakeClaude.fixture("turn-success.ndjson").replace("You asked me to say \\\"hello,\\\" and my name is Ember.", long))
-        val summary = claude(fake).use { it.summarize(SummaryRequest(profile, persona, "haiku", "user: Hello\nassistant: Hi", timeout = 10.seconds)) }
-        assertEquals("s".repeat(SUMMARY_LIMIT), summary)
-        val call = fake.turns().single()
-        assertEquals(claudeTurnArguments("haiku", persona) + "--no-session-persistence", call.argv())
-        assertEquals(userMessage(summaryInstruction("user: Hello\nassistant: Hi")) + "\n", call.getValue("stdin").jsonPrimitive.content)
-
-        fake.scenario(turn = FakeClaude.fixture("turn-bad-model.ndjson"), exit = 1)
-        assertFails { claude(fake).use { it.summarize(SummaryRequest(profile, persona, "haiku", "user: Hello")) } }
-        fake.scenario(turn = FakeClaude.fixture("turn-sigint.ndjson"))
-        val started = System.nanoTime()
-        assertFails { claude(fake).use { it.summarize(SummaryRequest(profile, persona, "haiku", "user: Hello", timeout = 1.seconds)) } }
-        assertTrue(System.nanoTime() - started < TimeUnit.SECONDS.toNanos(5))
     }
 
     @Test fun readinessFollowsTheProviderStatus() {

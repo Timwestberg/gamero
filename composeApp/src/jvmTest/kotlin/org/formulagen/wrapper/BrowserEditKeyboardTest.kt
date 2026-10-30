@@ -178,17 +178,4 @@ class BrowserEditKeyboardTest {
         assertEquals(16, shapes.count { !it.command })
         assertEquals(16, shapes.count { it.command })
     }
-
-    @Test fun `bare escape is handled by the voice session and otherwise stays with the page`() {
-        assertTrue(isConversationEscape(event(code = 27, modifiers = 0)))
-        assertFalse(isConversationEscape(event(code = 27, modifiers = EVENTFLAG_SHIFT_DOWN)))
-        assertFalse(isConversationEscape(event(code = 27, modifiers = 0, type = EventType.KEYEVENT_KEYUP)))
-        var handled = false
-        val voice = BrowserEditKeyboard({ target }, { active }, { _, _ -> }, onEscape = { handled = true; true })
-        assertTrue(voice.onKeyEvent(native, event(code = 27, modifiers = 0)))
-        assertTrue(handled)
-        val page = BrowserEditKeyboard({ target }, { active }, { _, _ -> }, onEscape = { false })
-        assertFalse(page.onKeyEvent(native, event(code = 27, modifiers = 0)))
-        assertTrue(calls.isEmpty())
-    }
 }

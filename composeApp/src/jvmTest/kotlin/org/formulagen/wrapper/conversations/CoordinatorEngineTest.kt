@@ -11,7 +11,6 @@ import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.chat.*
-import org.formulagen.wrapper.workspace.FolderPicker
 
 class CoordinatorEngineTest {
     /** One engine on a fake server, with a coordinator and specialists the test scripts. */

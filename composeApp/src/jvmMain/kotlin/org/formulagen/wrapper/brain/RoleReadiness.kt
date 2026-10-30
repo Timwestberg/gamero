@@ -3,8 +3,7 @@ package org.formulagen.wrapper.brain
 import org.formulagen.wrapper.bridge.*
 
 /*
- * Rules both coordinators apply (the brain's DesktopBrain and a conversation's CoordinatorEngine), as pure
- * functions so they cannot drift apart.
+ * Rules a conversation's coordinator (CoordinatorEngine) applies to its roles, as pure functions.
  */
 
 /** The catalog model this binding runs on: the runtime's default for [SharedRules.RUNTIME_DEFAULT_MODEL], else the one named. */

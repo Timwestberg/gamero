@@ -3,7 +3,6 @@ package org.formulagen.wrapper.chat
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
-import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.SharedRules.RUNTIME_DEFAULT_MODEL
 import org.formulagen.wrapper.providers.CodexAppServer
@@ -12,7 +11,6 @@ import kotlin.test.*
 
 class CodexChatRuntimeTest {
     private val thread = "10000000-0000-4000-8000-000000000001"
-    private val ephemeral = "10000000-0000-4000-8000-0000000000e1"
     private val persona = Persona.companion("Ember")
 
     /** Records every call; [onTurn] plays the app-server's notifications for a started turn. */
@@ -150,44 +148,6 @@ class CodexChatRuntimeTest {
         }
     }
 
-    @Test fun summarizesInAnEphemeralThreadWithoutTouchingTheCompanionThread() {
-        val root = Files.createTempDirectory("codex-summary")
-        val rpcs = mutableListOf<Rpc>()
-        runtime(root, rpcs) { rpc -> rpc.startedThread = ephemeral; rpc.onTurn = { complete(rpc, ephemeral, "  " + "s".repeat(3000)) } }.use { codex ->
-            val summary = codex.summarize(SummaryRequest("local", persona, "gpt-6-sol", "user: Hello\nassistant: Hi"))
-            assertEquals("s".repeat(SUMMARY_LIMIT), summary)
-            val rpc = rpcs.single()
-            val start = rpc.calls("thread/start").single()
-            assertEquals(JsonPrimitive(true), start["ephemeral"])
-            assertNull(start["threadId"])
-            assertEquals(persona.instructions, start["baseInstructions"]?.jsonPrimitive?.content)
-            val turn = rpc.calls("turn/start").single()
-            assertEquals(JsonPrimitive(ephemeral), turn["threadId"])
-            assertEquals(JsonPrimitive("gpt-6-sol"), turn["model"])
-            val input = turn.getValue("input").jsonArray.single().jsonObject.getValue("text").jsonPrimitive.content
-            assertEquals(summaryInstruction("user: Hello\nassistant: Hi"), input)
-            assertContains(input, "<<<\nuser: Hello\nassistant: Hi\n>>>")
-            assertTrue(rpc.calls("thread/resume").isEmpty())
-        }
-    }
-
-    @Test fun aSummaryFailsWhenCodexStopsOrTakesTooLong() {
-        val root = Files.createTempDirectory("codex-summary-fail")
-        val rpcs = mutableListOf<Rpc>()
-        runtime(root, rpcs) { rpc -> rpc.startedThread = ephemeral; rpc.onTurn = { rpc.notify("transport/closed", buildJsonObject {}) } }.use { codex ->
-            assertFails { codex.summarize(SummaryRequest("local", persona, null, "user: Hello")) }
-            val until = System.nanoTime() + 5_000_000_000
-            while (!rpcs.single().closed) { check(System.nanoTime() < until) { "App-server not closed" }; Thread.sleep(10) }
-        }
-        runtime(root, rpcs) { rpc -> rpc.startedThread = ephemeral }.use { codex ->
-            assertFails { codex.summarize(SummaryRequest("local", persona, null, "user: Hello", timeout = 50.milliseconds)) }
-            assertEquals(1, rpcs.last().calls("turn/interrupt").size)
-        }
-        runtime(root, rpcs) { rpc -> rpc.startedThread = ephemeral; rpc.onTurn = { complete(rpc, ephemeral, "   ") } }.use { codex ->
-            assertFails { codex.summarize(SummaryRequest("local", persona, null, "user: Hello")) }
-        }
-    }
-
     @Test fun turnErrorsBecomeRuntimeNeutralFailures() {
         fun error(info: JsonElement) = buildJsonObject { put("message", "raw"); put("codexErrorInfo", info) }
         assertEquals(ChatFailure.UsageLimit(null), codexFailure(error(JsonPrimitive("usageLimitExceeded"))))
@@ -239,8 +199,6 @@ class CodexChatRuntimeTest {
             // The configuration is read as a thread in the profile's own empty folder sees it.
             assertEquals(start["cwd"], rpc.calls("config/read").single()["cwd"])
             assertEquals(root.resolve("local").resolve("codex-chat").toString(), start["cwd"]?.jsonPrimitive?.content)
-            codex.summarize(SummaryRequest("local", persona, null, "Person: Hi"))
-            assertEquals(off, rpc.calls("thread/start").last()["config"])
         }
         // A Codex that cannot say what the player's configuration turns on starts no thread.
         runtime(root, rpcs) { rpc -> rpc.startedThread = thread; rpc.config = null }.use { codex ->
@@ -248,7 +206,6 @@ class CodexChatRuntimeTest {
             codex.startTurn(request(null), refused)
             assertEquals(listOf("failed Lockdown"), refused.seen)
             assertTrue(rpcs.last().calls("thread/start").isEmpty())
-            assertFails { codex.summarize(SummaryRequest("local", persona, null, "Person: Hi")) }
         }
         val arguments = chatProcessArguments()
         assertTrue(arguments.windowed(2).any { it == listOf("-c", "notify=[]") }, "The player's notify program never runs for chat")

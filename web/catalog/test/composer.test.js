@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createComposer, LOCAL_KOKORO_LINE, NO_HOST_NOTICE, PERMISSION_COPY } from "../src/composer.js";
+import { createComposer, LOCAL_KOKORO_LINE, PERMISSION_COPY } from "../src/composer.js";
 
 function stubSpeaker() {
   return {
@@ -31,14 +31,15 @@ function speakTurn(composer) {
   return null;
 }
 
-test("without a host the turn speaks the Kokoro line and chat stays unavailable", () => {
+test("a finished turn speaks the Kokoro line", () => {
   const speaker = stubSpeaker();
-  const composer = createComposer({ host: null, speaker, aecAvailable: true, selfCheck: "pass" });
-  assert.equal(composer.chatNotice, NO_HOST_NOTICE);
+  const composer = createComposer({ speaker, aecAvailable: true, selfCheck: "pass" });
   assert.equal(composer.permission, PERMISSION_COPY);
   composer.session.click();
   assert.equal(speaker.prepared, 1, "the talk click opens audio output and starts the voice download");
+  assert.equal(composer.heard, null);
   assert.ok(speakTurn(composer));
+  assert.equal(composer.heard, "hello there");
   assert.deepEqual(speaker.spoken, [LOCAL_KOKORO_LINE]);
   assert.equal(composer.session.phase, "thinking");
   speaker.starts[0]();
@@ -48,17 +49,9 @@ test("without a host the turn speaks the Kokoro line and chat stays unavailable"
   assert.equal(composer.session.phase, "listening");
 });
 
-test("with a host the turn is chat.hearing then chat.send, and a host reply is spoken", () => {
+test("a reply from the page is spoken through the slot", () => {
   const speaker = stubSpeaker();
-  const host = { chatState: "ready", calls: [], hearing(action) { this.calls.push(["hearing", action]); }, send(text) { this.calls.push(["send", text]); }, stop() { this.calls.push(["stop"]); } };
-  const composer = createComposer({ host, speaker, aecAvailable: true, selfCheck: "pass" });
-  assert.equal(composer.chatNotice, null);
-  composer.session.click();
-  assert.deepEqual(host.calls[0], ["hearing", "press"]);
-  assert.ok(speakTurn(composer));
-  assert.deepEqual(host.calls.at(-1), ["send", "hello there"]);
-  assert.equal(composer.session.phase, "thinking");
-  assert.deepEqual(speaker.spoken, []);
+  const composer = createComposer({ speaker, aecAvailable: true, selfCheck: "pass" });
   composer.reply("The answer is four.");
   assert.deepEqual(speaker.spoken, ["The answer is four."]);
 });

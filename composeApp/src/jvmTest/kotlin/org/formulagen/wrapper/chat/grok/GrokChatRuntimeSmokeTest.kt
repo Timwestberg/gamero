@@ -16,7 +16,7 @@ class GrokChatRuntimeSmokeTest {
         val root = Files.createTempDirectory("grok-adapter-smoke")
         try {
             val connection = GrokConnection(env)
-            assertEquals(ProviderState.CONNECTED, GrokProvider(connection).status("local", ProviderAction.STATUS).state)
+            assertEquals(ProviderState.CONNECTED, GrokProvider(connection).status(ProviderAction.STATUS).state)
             val first = TalkEvents()
             GrokChatRuntime(root, env, connection).use { runtime ->
                 runtime.startTurn(talkRequest().copy(text = "Remember HOVEL_ORCHID for this conversation. Reply briefly."), first)

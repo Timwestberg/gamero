@@ -4,16 +4,16 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
- * A profile's runtime connections and explicit provider-owned setup. Tokens, keys and login URLs stay native.
+ * The person's runtime connections on this Mac and explicit provider-owned setup. Tokens, keys and login URLs stay native.
  */
 interface ProviderCapability {
     suspend fun perform(action: ProviderAction, scope: ProviderScope): ProviderStatus
 
-    /** The runtimes this host offers [profile]. A gated runtime is absent, so the page shows no card for it. */
-    suspend fun list(profile: String): ProviderList
-
-    /** List runtimes the requesting page can decode. */
-    suspend fun listForClient(args: ProviderListForClientArgs): ProviderList
+    /**
+     * The runtimes this host offers. A gated runtime is absent, so the page shows no card for it, and so is one newer
+     * than the contract the page sent in `host.contract` ([HovelContract.RUNTIMES]).
+     */
+    suspend fun list(): ProviderList
 
     /** The models a team member on [ProviderScope.runtimeId] may use. */
     suspend fun models(scope: ProviderScope): ProviderModels
@@ -50,21 +50,14 @@ object ProviderLimits { // mirrors PROVIDER_LIMITS
 @Serializable
 enum class ProviderState {
     @SerialName("disconnected") DISCONNECTED,
-    @SerialName("signing-in") SIGNING_IN,
     @SerialName("connected") CONNECTED,
     @SerialName("unavailable") UNAVAILABLE,
     @SerialName("error") ERROR,
 }
 
-/** One profile's connection to one runtime. Every profile shares the person's own sign-in of each runtime on the Mac. */
+/** The person's connection to one runtime: their own sign-in of it on this Mac. */
 @Serializable
-data class ProviderScope(val profile: String, val runtimeId: RuntimeId)
-
-@Serializable
-data class ProviderListArgs(val profile: String)
-
-@Serializable
-data class ProviderListForClientArgs(val profile: String, val supportedRuntimes: List<String>)
+data class ProviderScope(val runtimeId: RuntimeId)
 
 /**
  * The case behind a state, so the page need not match message text: `not-installed`, `outdated` and
@@ -101,7 +94,7 @@ data class ProviderStatus(
 }
 
 /**
- * The runtimes a host offers a profile, each shown as one card. [working] lists those this host
+ * The runtimes a host offers, each shown as one card. [working] lists those this host
  * lets work in a project folder: the page offers "Works in the project" only for these, and a
  * gated runtime is absent.
  */
@@ -156,29 +149,25 @@ data class ProviderLogin(val runtimeId: RuntimeId, val launched: Boolean)
 /** Mirrors event-contracts/host-bridge/providers.ts. */
 object ProviderMethods {
     private fun method(action: ProviderAction) = BridgeMethod("providers.${action.wireName}", ProviderScope.serializer(),
-        ProviderStatus.serializer()) { SharedRules.isProfileId(it.profile) }
+        ProviderStatus.serializer())
 
     val STATUS = method(ProviderAction.STATUS)
     val CONNECT = method(ProviderAction.CONNECT)
     val CANCEL = method(ProviderAction.CANCEL)
     val REOPEN = method(ProviderAction.REOPEN)
     val DISCONNECT = method(ProviderAction.DISCONNECT)
-    val LIST = BridgeMethod("providers.list", ProviderListArgs.serializer(), ProviderList.serializer()) { SharedRules.isProfileId(it.profile) }
-    val LIST_FOR_CLIENT = BridgeMethod("providers.listForClient", ProviderListForClientArgs.serializer(), ProviderList.serializer()) {
-        SharedRules.isProfileId(it.profile) && SharedRules.validClientRuntimes(it.supportedRuntimes)
-    }
-    val MODELS = BridgeMethod("providers.models", ProviderScope.serializer(), ProviderModels.serializer()) { SharedRules.isProfileId(it.profile) }
-    val USAGE = BridgeMethod("providers.usage", ProviderScope.serializer(), ProviderUsage.serializer()) { SharedRules.isProfileId(it.profile) }
-    val SETUP = BridgeMethod("providers.setup", ProviderScope.serializer(), ProviderSetup.serializer()) { SharedRules.isProfileId(it.profile) }
-    val START_LOGIN = BridgeMethod("providers.startLogin", ProviderScope.serializer(), ProviderLogin.serializer()) { SharedRules.isProfileId(it.profile) }
+    val LIST = BridgeMethod("providers.list", NoArgs.serializer(), ProviderList.serializer())
+    val MODELS = BridgeMethod("providers.models", ProviderScope.serializer(), ProviderModels.serializer())
+    val USAGE = BridgeMethod("providers.usage", ProviderScope.serializer(), ProviderUsage.serializer())
+    val SETUP = BridgeMethod("providers.setup", ProviderScope.serializer(), ProviderSetup.serializer())
+    val START_LOGIN = BridgeMethod("providers.startLogin", ProviderScope.serializer(), ProviderLogin.serializer())
 
     fun pack(providers: Capability<ProviderCapability>): CapabilityPack = binder.pack(providers)
 
     internal val binder = CapabilityBinder("providers", listOf(STATUS, CONNECT, CANCEL, REOPEN, DISCONNECT)
         .zip(ProviderAction.entries)
         .map { (method, action) -> method.handle { providers: ProviderCapability, scope -> providers.perform(action, scope) } } + listOf(
-        LIST.handle { providers: ProviderCapability, args -> providers.list(args.profile) },
-        LIST_FOR_CLIENT.handle { providers: ProviderCapability, args -> providers.listForClient(args) },
+        LIST.handle { providers: ProviderCapability, _ -> providers.list() },
         MODELS.handle { providers: ProviderCapability, scope -> providers.models(scope) },
         USAGE.handle { providers: ProviderCapability, scope -> providers.usage(scope) },
         SETUP.handle { providers: ProviderCapability, scope -> providers.setup(scope) },

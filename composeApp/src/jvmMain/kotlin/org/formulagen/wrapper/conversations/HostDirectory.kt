@@ -39,7 +39,6 @@ import org.formulagen.wrapper.bridge.RuntimeProviderId
  */
 internal class HostDirectory(
     private val providers: ProviderCapability,
-    private val profile: String,
     private val hostId: String,
     /** The runtimes this build offers; one gated off reads `unavailable`. */
     private val offered: Set<RuntimeId>,
@@ -71,7 +70,7 @@ internal class HostDirectory(
 
     private fun read(now: Instant) = ProviderDirectory(now.truncatedTo(ChronoUnit.MILLIS).toString(), RuntimeId.entries.map { runtime ->
         if (runtime !in offered) return@map ProviderRuntime(false, emptyList(), ProviderReadiness.UNAVAILABLE, runtime)
-        val scope = ProviderScope(profile, runtime)
+        val scope = ProviderScope(runtime)
         val status = runCatching { runBlocking { providers.perform(ProviderAction.STATUS, scope) } }.getOrNull()
         val readiness = when {
             status?.state == ProviderState.CONNECTED -> ProviderReadiness.READY
@@ -87,7 +86,7 @@ internal class HostDirectory(
     private fun usage(directory: ProviderDirectory): List<RuntimeAllowance> = directory.runtimes
         .filter { it.readiness == ProviderReadiness.READY }
         .mapNotNull { runtime ->
-            val reading = runCatching { runBlocking { providers.usage(ProviderScope(profile, runtime.runtimeId)) } }.getOrNull() ?: return@mapNotNull null
+            val reading = runCatching { runBlocking { providers.usage(ProviderScope(runtime.runtimeId)) } }.getOrNull() ?: return@mapNotNull null
             RuntimeAllowance(runtime.runtimeId, allowanceSnapshot(reading, hostId))
         }
 }

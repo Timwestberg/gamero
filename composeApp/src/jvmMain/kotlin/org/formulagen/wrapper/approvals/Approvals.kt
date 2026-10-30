@@ -76,21 +76,6 @@ internal data class ApprovalRequest(
         is ApprovalSubject.Connector -> it.input
         is ApprovalSubject.Other -> it.description
     }.shortened(ApprovalLimits.PREVIEW)
-
-    /**
-     * What the page may show while the dialog is up ("Ember wants to run a command: npm test"), with
-     * paths relative to the project folder and the home folder as `~`, bounded like a notice.
-     */
-    fun summary(): String {
-        val paths = WorkPaths(folder)
-        val what = when (val it = subject) {
-            is ApprovalSubject.Edit -> "${it.verb} ${it.files.joinToString(", ") { file -> paths.label(file.toString()) }}"
-            is ApprovalSubject.Command -> paths.scrub(it.command)
-            is ApprovalSubject.Connector -> "${it.server} · ${it.tool}"
-            is ApprovalSubject.Other -> it.name
-        }
-        return "$companionName wants to ${verb(kind)}: $what".shortened(ApprovalLimits.WAITING_SUMMARY)
-    }
 }
 
 /** The person's answer. Anything but an explicit allow (a closed dialog, a timeout, a stopped reply) is [DENY]. */
@@ -121,12 +106,6 @@ internal class CancelSignal {
         if (fired.get() && listeners.remove(action)) action()
         return AutoCloseable { listeners.remove(action) }
     }
-}
-
-/** The broker behind the native dialog: one approval at a time, in the order asked, denied after the dialogs' timeout. */
-internal class DialogApprovalBroker(private val dialogs: NativeDialogs) : ApprovalBroker {
-    override fun ask(request: ApprovalRequest, cancel: CancelSignal, shown: () -> Unit): ApprovalDecision =
-        dialogs.ask(approvalDialog(request), cancel, shown) ?: ApprovalDecision.DENY
 }
 
 /**
@@ -180,8 +159,6 @@ private fun verb(kind: ApprovalKind) = when (kind) {
 
 /** Bounds of what approvals show: the page's from the contract, the dialog's own. */
 internal object ApprovalLimits {
-    /** The page's "waiting for your approval" summary is bounded like a notice (the contract's `waiting.summary`). */
-    const val WAITING_SUMMARY = ChatLimits.NOTICE
     /** How much of a change or a provider's description the native dialog shows. Native only. */
     const val PREVIEW = 4_000
     /** A label the page sees in activity (the contract's `ACTIVITY_LIMITS.label`). */

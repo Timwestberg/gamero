@@ -4,20 +4,13 @@ import kotlin.test.*
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.conversations.CONVERSATION_PROTOCOL
 import org.formulagen.wrapper.conversations.brain
-import org.formulagen.wrapper.storage.sha256
 
-/** The rules DesktopBrain and CoordinatorEngine share, so a fix in one reaches the other. */
+/** The role and protocol rules a conversation's coordinator (CoordinatorEngine) applies. */
 class SharedCoordinatorRulesTest {
     private val models = listOf(ProviderModel("Test model", true, "test-model", listOf(ModelEffort.HIGH)))
 
-    @Test fun theBrainsProtocolIsTheTextItAlwaysWas() {
-        // DesktopBrain is frozen: building its protocol from the shared lines must not change a byte of it.
-        assertEquals("51d9e712e8f9a090fa74201268bfc389b041095840868118f708fa35859e0999", sha256(COORDINATOR_PROTOCOL.toByteArray()))
-    }
-
-    @Test fun bothProtocolsCarryEverySharedLine() {
+    @Test fun theProtocolCarriesEveryCoordinatorRule() {
         for (line in COORDINATOR_EVIDENCE_RULES + COORDINATOR_WORKFLOW_RULES + COORDINATOR_DECISION_SHAPES) {
-            assertTrue(line in COORDINATOR_PROTOCOL, line)
             assertTrue(line in CONVERSATION_PROTOCOL, line)
         }
     }
