@@ -14,6 +14,22 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 
 ## Happy paths
 
+The Mac app's manual path is in [docs/hovel-native-validation.md](docs/hovel-native-validation.md).
+It launches with `GAMERO_PRODUCT=hovel`, without which Connect computer stays
+disabled:
+
+```sh
+# game-platform: serve the app over loopback HTTP on 8133 (GAMERO_CATALOG_PORT changes it).
+# JCEF rejects the dev server's basic-ssl certificate, so use this launcher, not the HTTPS dev server.
+(cd <game-platform>/apps/game-bridge-host && node --import tsx tools/companionLauncher.ts)
+
+# gamero, from the repository root (Gradle on JDK 21):
+GAMERO_PRODUCT=hovel \
+GAMERO_WEB_URL=http://127.0.0.1:8133/hovel \
+GAMERO_BROWSER_JAVA_HOME="<JBR with JCEF>/Contents/Home" \
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :composeApp:run
+```
+
 ### 1. Smoke test passes
 
 - **Preconditions:** Hovel is served. No simulator is required in advance.

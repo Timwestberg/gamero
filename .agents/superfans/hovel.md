@@ -243,7 +243,7 @@ and say so.
 - **Lives in:** module `:composeApp`, package `org.formulagen.wrapper`.
   `jvmMain/.../main.kt`, `BrowserLifecycle.kt`, `BrowserReadiness.kt`,
   `PersistentDesktopBrowser.kt`, `companion/NativeBridge.kt`,
-  `hovel/HovelCompanion.kt`, `HovelHostAdapter.kt`, `HovelHostSession.kt`,
+  `hovel/HovelCompanion.kt`, `HovelHostAdapter.kt`, `MemoryJobLane.kt`,
   `companion/MacHostCredentials.kt`; the shared host-bridge.v2 kit in
   `commonMain/.../bridge/` (`HostBridge.kt`, `BridgeRouter.kt`,
   `BridgeProtocol.kt`, `HostCapabilities.kt`, `CompanionCapability.kt`,
@@ -253,9 +253,11 @@ and say so.
   `docs/browser-profile-review.md`.
 - **Healthy looks like:** `GAMERO_JCEF_INITIALIZED` before the browser shows,
   no `GAMERO_RUNTIME_FAILED`, close within 15 s. The bridge accepts only the
-  trusted origin's main frame (origin from native frame facts), requests of at most
-  4096 characters for v1 and untrusted queries (a trusted v2 request may be up to
-  64 Ki characters, `BridgeProtocol.MAX_REQUEST_CHARS`), a context id plus frame id on every call, and reload invalidates.
+  trusted origin's main frame (origin from native frame facts, any path, so
+  `/hovel` and `/companions/...` both get it), version 2 only (anything else is
+  `400 Invalid native protocol`), at most 4096 characters parsed from an untrusted
+  query (a trusted v2 request may be up to 64 Ki characters,
+  `BridgeProtocol.MAX_REQUEST_CHARS`), a context id on every call, and reload invalidates.
   Companion: one native call at a time, user-approval dialog,
   `registration.json` 0600 in a 0700 dir, the web side sees only the token hash,
   transport 15 s timeout, 16 MiB cap, no redirects, heartbeat every 10 s.
@@ -276,34 +278,33 @@ and say so.
   FOR-117/FOR-118) and its transport shapes as server-platform #153. The kit,
   the JCEF, Android and iOS transports and the parity tests merged as #16 to
   #23, #25, #28 and #30; #32 stops events to a watch a newer watch replaced.
-  On desktop, v2 and the v1 companion protocol share the `gameroQuery` router;
-  `JcefHostBridge` claims v2 first, and v1 stays until `nativeCompanion.ts`
-  moves (task B4). Companion calls time out after 5 min (prepare, which covers approval and
+  On desktop the `gameroQuery` router carries v2 only; the v1 companion
+  protocol is gone. A page below contract 3 is answered update-required on
+  `host.contract` and on `companion.*`, `project.*` and `providers.*`. Companion calls time out after 5 min (prepare, which covers approval and
   Keychain) and 2 min (activate) in `CompanionCapability.kt`. Desktop links,
   haptics and lifecycle answer `unsupported` for now.
 - **Cares most about:** failing loudly, bounded shutdown, and trusting only
   native frame facts.
 
-### 6. Gamero execution journal, Codex and Brain workers (gamero)
+### 6. Gamero execution journal and Codex memory jobs (gamero)
 
 - **Lives in:** `jvmMain/.../companion/ExecutionJournal.kt`,
-  `ExecutionCoordinator.kt`, `CodexCliProvider.kt`; `hovel/BrainCodexWorker.kt`,
-  `BrainHovelRemote.kt`. Doc `docs/desktop-execution.md`.
+  `ExecutionCoordinator.kt`, `CodexCliProvider.kt`; `hovel/MemoryJobLane.kt`.
+  Doc `docs/desktop-execution.md` (describes the removed task lane until step H
+  rewrites it).
 - **Healthy looks like:** phases PREPARED, LAUNCHING, SUCCEEDED or FAILED; a
   crash after LAUNCHING becomes RECONCILIATION_REQUIRED and is never relaunched;
   same claim id on retry; `host.lock` has one owner; atomic fsync writes; corrupt
-  files fail closed. Codex runs `-a never -c forced_login_method="chatgpt" exec
-  --ignore-user-config --ephemeral --sandbox read-only --skip-git-repo-check`
-  (ChatGPT login is forced, so a paid API key is never used), prompt on stdin, `OPENAI_*`/`CODEX_API_KEY` stripped,
-  10-minute timeout with process-tree kill. Brain keeps separate execution and
-  presentation journals.
+  files fail closed, and a record written before step E still reads. A memory
+  job runs `codex -a never exec --ignore-user-config --ephemeral --sandbox
+  read-only --skip-git-repo-check` on the player's ChatGPT login, input on
+  stdin, `OPENAI_*`/`CODEX_API_KEY` stripped, 10-minute timeout with
+  process-tree kill. Codex readiness is asked only when a queued job needs it.
 - **Watch:** `ExecutionCoordinatorTest`, `CodexCliProviderTest` (fixtures do not
-  prove live CLI compatibility), `BrainCodexWorkerTest`.
-- **Known quirks:** the Brain worker is not installed in `HovelHostSession` yet
-  (`BrainCodexWorker.kt:64`); Brain routes are gated off
-  (`HovelHostAdapter.kt:30`, `brainEnabled=false`) until server native ingress is
-  enabled. Read-only sandbox only.
-- **Cares most about:** never running a task twice.
+  prove live CLI compatibility), `MemoryJobLaneTest`.
+- **Known quirks:** Hovel tasks and the hosted Brain worker are gone (step E);
+  the journal runs memory jobs only. Read-only sandbox only.
+- **Cares most about:** never running a memory job twice.
 
 ### 7. Gamero mobile shells and shared code (gamero)
 

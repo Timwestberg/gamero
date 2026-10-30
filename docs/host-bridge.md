@@ -160,10 +160,15 @@ event: `games.launch` opens a game and `games.closed` says the player is back.
      binder.pack(capability)` to the object, as `CompanionMethods.pack` does.
      Then add the pack to each platform's Hovel pack list, `Unsupported` where
      the platform has none. There are three lists, with different names:
-     - desktop: `desktopProductPacks(product, companion, chat, providers, pet, games)`
-       in `jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt`. Every
-       desktop product registers chat, providers, pet and games (the catalog
-       app is the Gamero product); Hovel adds its companion;
+     - desktop: `desktopProductPacks(product, companion, providers, pet, games,
+       projects, hostContract, conversationVoice, pageCheck)` in
+       `jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt`. Every
+       desktop product registers providers, pet and games (the catalog app is
+       the Gamero product); Hovel adds its companion, `project`,
+       `conversationVoice`, `host.contract` and the unsupported phone
+       approvals. A method whose answer a contract changed goes behind
+       `pageCheck` (`guardedBy`), as `companion.*`, `project.*` and
+       `providers.*` do for contract 3;
      - Android: `hovelBridgePacks()` in
        `androidMain/kotlin/org/formulagen/wrapper/hovel/HovelAndroid.kt`;
      - iOS: `iosHovelBridgePacks()` in `iosMain/.../IosHostCapabilities.kt`.

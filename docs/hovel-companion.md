@@ -35,6 +35,21 @@ All paths below are under
 
 ## When the companion exists
 
+Launch it for Hovel like this (see [desktop.md](desktop.md) for the browser
+runtime):
+
+```sh
+# game-platform: serve the app over loopback HTTP on 8133 (GAMERO_CATALOG_PORT changes it).
+# JCEF rejects the dev server's basic-ssl certificate, so use this launcher, not the HTTPS dev server.
+(cd <game-platform>/apps/game-bridge-host && node --import tsx tools/companionLauncher.ts)
+
+# gamero, from the repository root (Gradle on JDK 21):
+GAMERO_PRODUCT=hovel \
+GAMERO_WEB_URL=http://127.0.0.1:8133/hovel \
+GAMERO_BROWSER_JAVA_HOME="<JBR with JCEF>/Contents/Home" \
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :composeApp:run
+```
+
 `DesktopServices.create` creates a `HovelCompanion` when `GAMERO_PRODUCT` (or
 `-Dgamero.product`) is `hovel` and the OS is macOS. Codex (`GAMERO_CODEX_PATH`,
 else `codex` on `PATH` or an installed location) is optional: without it the

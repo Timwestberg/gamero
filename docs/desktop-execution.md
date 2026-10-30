@@ -1,5 +1,7 @@
 # Desktop execution core
 
+> Describes removed behavior; rewritten in step H.
+
 This reusable JVM core has no Hovel domain dependency and is not yet connected to
 the WebView or a server. The product adapter supplies `ExecutionRemote`; native
 configuration supplies one registered host ID, private journal/output directories,
