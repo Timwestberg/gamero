@@ -14,13 +14,10 @@ import kotlin.test.Test
 
 class DesktopParityTest {
     /**
-     * Phase C of the host bridge plan ships the platform methods on desktop, and voice in conversations ships
-     * conversation voice. Project folders and the contract handshake are the conversation runner's.
+     * Phase C of the host bridge plan ships the platform methods on desktop. Project folders, the contract
+     * handshake and conversation voice are the conversation runner's.
      */
-    private val pending = setOf(
-        "lifecycle.pause", "lifecycle.resume",
-        "conversationVoice.dictation", "conversationVoice.hearing", "conversationVoice.voiceStatus",
-    )
+    private val pending = setOf("lifecycle.pause", "lifecycle.resume")
 
     private class FakeProjects : ProjectCapability {
         override suspend fun chooseFolder(args: ProjectChooseFolderArgs) = ProjectFoldersStatus(emptyList())
@@ -42,7 +39,7 @@ class DesktopParityTest {
             capabilities = desktopHostCapabilities(),
             products = desktopProductPacks(HOVEL_PRODUCT, HovelCompanionCapability(companion), FakeChatCapability(),
                 FakeProviderCapability(), FakePetCapability(), FakeGameCapability(), FakeWorkspaceCapability(), FakeBrainCapability(),
-                FakeProjects(), DesktopHostContract()),
+                FakeProjects(), DesktopHostContract(), FakeConversationVoiceCapability()),
             scope = scope,
             transport = {},
         )

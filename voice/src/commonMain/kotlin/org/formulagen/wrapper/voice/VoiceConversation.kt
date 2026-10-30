@@ -131,33 +131,6 @@ fun duplexStatusLabel(mode: HearingDuplex, reason: String): String = when (mode)
     HearingDuplex.HALF -> "Half duplex · $reason"
 }
 
-/**
- * What the catalog row shows. [showTalk] is false once the page has sent press, so the
- * native icon and the composer cannot arm two captures. The launcher product shows none of this.
- */
-data class CatalogControls(
-    val showTalk: Boolean,
-    val showVoicePicker: Boolean,
-    val showFillers: Boolean,
-    val duplexLabel: String,
-)
-
-fun catalogControls(
-    product: String,
-    chatOpen: Boolean,
-    kokoro: Boolean,
-    pageOwnsTalk: Boolean,
-    duplex: DuplexChoice,
-): CatalogControls {
-    val owned = catalogOwnsConversationControls(product) && chatOpen && kokoro
-    return CatalogControls(
-        showTalk = owned && !pageOwnsTalk,
-        showVoicePicker = owned,
-        showFillers = owned,
-        duplexLabel = if (owned) duplexStatusLabel(duplex.mode, duplex.reason) else "",
-    )
-}
-
 /** The next hearing state for one page action. A missing host never asks for a microphone. */
 data class HearingStep(val state: String, val requestMicrophone: Boolean)
 

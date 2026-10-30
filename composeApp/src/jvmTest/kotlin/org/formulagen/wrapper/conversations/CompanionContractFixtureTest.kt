@@ -29,6 +29,8 @@ class CompanionContractFixtureTest {
         "companionProject" to CompanionProject.serializer(),
         "artifactTextPage" to ArtifactTextPage.serializer(),
         "heartbeatInput" to HostHeartbeat.serializer(),
+        "messageSend" to MessageSend.serializer(),
+        "conversationMessage" to ConversationMessage.serializer(),
     )
 
     @Suppress("UNCHECKED_CAST")
@@ -55,8 +57,7 @@ class CompanionContractFixtureTest {
         val outside = setOf(NativeRoute.TASK_CLAIM, NativeRoute.TASK_PROGRESS, NativeRoute.MEMORY_CLAIM, NativeRoute.MEMORY_PROGRESS,
             NativeRoute.MEMORY_CONSOLIDATE)
         val mac = (NativeRoute.entries - outside).map { spelled(it.method, it.template) }.toSet()
-        // The Mac does not send heard voice turns yet.
-        assertEquals(served.filterKeys { it != "messageSend" }.values.toSet(), mac)
+        assertEquals(served.values.toSet(), mac)
         assertFalse(served.values.any { it.endsWith("/answer") }, "an answer travels only as approval.closed")
     }
 
@@ -66,6 +67,12 @@ class CompanionContractFixtureTest {
         assertEquals("Prefers short answers.", claim.claim.recalledMemory)
         assertEquals(MessageState.CLAIMED, claim.claim.message.state)
         assertEquals(ClaimResponse.MacUpdateRequired(2), fromWire(ClaimResponse.serializer(), fixtures.getValue("claim.macUpdateRequired").getValue("value")))
+        for ((name, state) in listOf("claim.stopRequested" to MessageState.CLAIMED, "claim.stopRequestedRunning" to MessageState.RUNNING)) {
+            val stop = fromWire(ClaimResponse.serializer(), fixtures.getValue(name).getValue("value")) as ClaimResponse.StopRequested
+            assertEquals(state, stop.message.state, name)
+            assertEquals(MessageAuthor.USER, stop.message.author, name)
+        }
+        assertEquals(MessageState.STOPPED, fromWire(MessageProgress.serializer(), fixtures.getValue("progress.stopped").getValue("value")).state)
         val answered = fromWire(AgentApproval.serializer(), fixtures.getValue("approval.answeredByPhone").getValue("value"))
         assertEquals(ApprovalSurface.PHONE, answered.answer?.by)
         val events = fixtures.filterKeys { it.startsWith("hostEvent.") }.values.map { HostEvents.decode(it.getValue("value").toString()) }
@@ -73,6 +80,11 @@ class CompanionContractFixtureTest {
         val heartbeat = fromWire(HostHeartbeat.serializer(), fixtures.getValue("heartbeat").getValue("value"))
         assertEquals("ready", heartbeat.providerState)
         assertEquals(hovelHostFeatures(tasks = true, memory = true), heartbeat.features)
+        val heard = fromWire(MessageSend.serializer(), fixtures.getValue("messageSend.heard").getValue("value"))
+        assertEquals(MessageSend(heard.id, emptyList(), "What time is it?", null), heard,
+            "a heard turn attaches nothing, in the main conversation")
+        val queued = fromWire(ConversationMessage.serializer(), fixtures.getValue("message.queued").getValue("value"))
+        assertEquals(MessageState.QUEUED to MessageAuthor.USER, queued.state to queued.author)
         val first = fromWire(ArtifactTextPage.serializer(), fixtures.getValue("artifactText.page").getValue("value"))
         val last = fromWire(ArtifactTextPage.serializer(), fixtures.getValue("artifactText.last").getValue("value"))
         assertEquals(first.text.length, first.nextCursor)

@@ -369,6 +369,132 @@ The server expiry allows three dialog timeouts, since dialogs show one at a time
 and the Mac withdraws an approval itself when its dialog ends unanswered. Folder
 trust stays a Mac-only dialog.
 
+### Voice
+
+Mac voice runs in project conversations through `conversationVoice.*`
+(`DesktopConversationVoice`). The talk loop is the one team chat uses:
+`chat/TalkLoop.kt` holds the hands-free state machine, fillers, barge-in, the
+reply spoken sentence by sentence through `SentenceCursor`, dictation and the
+latency marks, and its host (`TalkHost`) is the conversation. `DesktopChat`
+hosts the same loop for team chat until step E removes it. A `…Locked` member
+of the loop needs its host's lock; `click`, `escape` and `toggleFillers` take
+it themselves.
+
+- **One conversation at a time.** `VoiceConversation` is bound to one
+  conversation id, with its own share of the microphone. A page's action moves
+  the voice to the conversation it names, unless Talk or dictation is on in
+  another; the answer then names the conversation the voice serves, and the
+  page shows its own controls as waiting.
+- **A heard turn** is decided as in team chat (empty text and noise under
+  240 ms send nothing; a reply in progress ignores it) and posted, off the
+  lock, as the owner's message through `POST conversations/:id/messages`
+  (`messageSend`, at most 16,000 characters, no inputs). An unreachable server
+  is tried twice more with the same id; a 403 or 404 says "Talk works in
+  conversations whose project runs on this Mac.". After the post the runner
+  claims the conversation's next message at once (`ConversationRunner.wake`),
+  with the same claim, journal and fencing as `work.available`. A stored turn
+  not claimed within 30 seconds (this Mac is busy) lets Talk listen again, and
+  Talk says "What you said is waiting in the conversation. It runs when this
+  Mac is free." From then on it is the person's message in the conversation:
+  ending Talk, moving the voice or quitting never gives it up, and it runs when
+  claimed. Stop on the page still cancels it.
+- **The reply in progress** is the conversation's claimed main message, from
+  its claim to its end (`ReplyListeners`, asked once the claim lands; a thread
+  reply's claim is not one). Its coordinator replies are spoken as they stream
+  (`ClaimOutput.delta` and `ClaimOutput.wrote`, before either reaches the
+  server) when it is this Talk session's heard turn, Talk is on, or the
+  conversation's `speak` is on; never while the page dictates. A non-streamed coordinator message (a
+  question, a delegation's announcement) is spoken whole, and each new reply
+  cuts off what is left of the previous one. Threads are never spoken. A
+  claimed message of a conversation the voice does not serve is read aloud
+  only when that conversation's `speak` is on and nothing is in progress, and
+  the voice then serves it; the first reply keeps the speaker.
+- **Barge-in** (speech in full duplex, a press, or Escape) always flushes the
+  speaker. It stops the message, as Stop does, only while that message is this
+  Talk session's own heard turn (one claimed after the 30 second wait
+  included) and no thread has started (`threadStarted`). Once the coordinator
+  has delegated, the agents' run continues: the reply being said goes quiet and
+  a later reply in the run is still spoken. The person's Stop on the page still
+  stops everything. A barge-in during a run never abandons a newer heard turn
+  waiting behind it.
+- **While agents work** on a run Talk waits for, Talk says "Agents are working
+  on this. Talk listens again when they finish; Stop interrupts them." until
+  the run ends: the microphone stays closed in half duplex, and in full duplex
+  what is heard is not sent.
+- **Ending Talk**, a microphone failure included, flushes the speaker,
+  abandons a heard turn not claimed yet (not one Talk said is waiting), and
+  says nothing more of the run. It never stops a claimed message, and it ends
+  the microphone session only when one was on, so a dictation holding the
+  microphone goes on. A capture that starts after Talk ended (the row's icon,
+  while the page's capture was starting) lets the microphone go.
+- **The page's actions** keep `ember-hearing.v1`'s words, with these meanings
+  in a conversation: `handsFree` arms Talk (or interrupts a reply when it is
+  on); `press` interrupts a reply and never arms (the page's Escape); `release`
+  quiets the speaker and mutes the rest of the run, leaving Talk and dictation
+  on (Speak replies off); `off` ends Talk, and with Talk off only quiets;
+  `mute` and `unmute` hold the microphone. Only `handsFree` makes the page
+  Talk's owner.
+- **An abandoned heard turn never runs.** Its id is kept by
+  `DesktopConversationVoice` and checked before any routing, its remaining post
+  attempts are skipped, and `ConversationRunner.stopOnClaim` journals a stop on
+  claim in `ConversationStore` (`stop-on-claim/<message id>.json`). Whenever it
+  is claimed, after the voice moved, the page went away or Hovel restarted, it
+  settles `stopped` with no provider turn, and the mark is cleared once that
+  outcome is journaled. At quit or sign-out the voice gives up its heard turn
+  not claimed yet while the account link is still up (`connected(null)`), so it
+  is journaled too; one given up with no link is logged and held in memory
+  only. A mark older than a queued message lives (24 hours,
+  `CompanionLimits.QUEUED_MESSAGE_MS`) is dropped at startup, unless its
+  message has a claim journaled.
+  The project runs on one Mac, so this Mac's journal is the whole rule; no
+  server route is involved.
+- **The microphone** is one `SharedHearing`: team chat holds one share and each
+  conversation its own, and only one captures at a time. The other, or a
+  capture that cannot start, is told "The microphone is in use. Try again in a
+  moment.".
+- **This Mac's projects only.** `project.folderStatus` asks the account
+  (`GET projects/:id`) whether the project runs on this Mac and fails for any
+  other, so a page offers voice, and folders, only on the project's own Mac.
+  The answer is recorded as `ProjectFolderPublisher` records a read: this
+  Mac's project is claimed, so its folders can be chosen again, and another
+  computer's is marked foreign. A project the account confirmed answers at
+  once and is checked again in the background; when the account cannot be
+  reached, what this Mac last learned stands.
+- **Escape.** The page owns Escape for conversations: it sends `press` only
+  when it has no other use for the key and the key is not ending a
+  composition. No page Escape reaches conversation voice natively: the JCEF
+  keyboard hook (`BrowserEditKeyboard`) and the window's key handler are team
+  chat's, as before, and the conversation's voice row hears Escape only while
+  it has focus, where it interrupts or ends that conversation's Talk.
+- **The voice row** shows the served conversation in Hovel too (its page has no
+  voice choice or filler toggle). Its icon ends a session the page started and
+  never starts one the page owns.
+- **Settings** are one `TalkSettings` for team chat and every conversation:
+  the filler choice (remembered in `~/.gamero/voice-fillers`), the duplex mode
+  (the hearing route's, which falls back to half duplex when the graph fails),
+  and the timings. A choice made anywhere holds in the next conversation and
+  after the page reloads. Every arm, the row icon's included, warms the voice
+  engine (`ChatSpeech.warm`) and, when fillers are on, the fillers; serving a
+  conversation warms nothing. A new spoken stream re-reads the voice choice.
+- **The page going away** lets go of the microphone and stops speaking; the
+  conversation's messages keep running.
+
+Known limits until step E, when team chat's speaker goes away: team chat and
+conversations each have their own `DesktopSpeech`, so the two can talk over
+each other and using both loads Kokoro twice. In full duplex both play into one
+voice-processing graph, so a flush by one (`EmberAudio.flush`) also cuts the
+other's audio.
+
+Latency, measured hermetically (`ConversationVoiceLatencyTest`, run with
+`HOVEL_VOICE_LATENCY=1`: an instant provider and a fake server). Endpoint to
+the first sentence queued at the speaker is about 1 ms in team chat and about
+35 to 40 ms in a conversation. The difference is the claim journal's four
+durable writes before the provider turn (claiming, claimed, launching,
+running), each a file and folder sync. A real server adds three round trips
+(send, claim, running) before the provider's own first token. The log lines are
+`latency endpoint_to_posted_ms` and `latency endpoint_to_claimed_ms`, beside
+team chat's stage latencies.
+
 ### `host.contract`
 
 `DesktopHostContract` answers the page's contract with `HovelContract.CURRENT`
@@ -488,7 +614,17 @@ after quitting, final and update-required refusals, a refusal mid-run, expiry,
 reconnects and the idle watchdog, lane eviction), `CoordinatorEngineTest`
 (direct streaming, delegation and threads, workflow returns, `THREAD_REPLY` and
 the newer thread revision, Stop, quitting, retry review, the outbox, whole input
-text, crash recovery of threads, context folders), `RemoteApprovalsTest` (races,
+text, crash recovery of threads, context folders), `VoiceConversationTest`
+(a heard turn posted, claimed at once and spoken sentence by sentence, the
+16,000-character bound, the mic held while thinking, barge-in before and after
+delegation, ending Talk or a failed microphone never stopping a claimed reply,
+an abandoned turn across a move, the page going away and a restart, `speak`
+and turning it off, one reply cutting off the last, threads never spoken,
+refusals, retries and a resend after a lost answer, the claim wait, dictation,
+one microphone and one conversation at a time, the voice row, the filler
+choice across conversations and reloads), `TalkLoopTest` (the loop with a fake
+host), `ConversationVoiceLatencyTest` (with `HOVEL_VOICE_LATENCY=1`),
+`RemoteApprovalsTest` (races,
 refused closes and late answers), `PresentApprovalTest`, `ProjectFoldersTest`,
 `ContextFoldersTest`, `ConversationStoreTest` and the wire tests.
 `SharedCoordinatorRulesTest` pins the frozen brain's protocol and the shared

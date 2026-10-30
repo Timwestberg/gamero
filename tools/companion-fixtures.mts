@@ -87,6 +87,12 @@ add('claim.claimed', 'claimResponse', c.claimResponse, { claim: s.claim, status:
 add('claim.thread', 'claimResponse', c.claimResponse, { claim: threadClaim, status: 'claimed' });
 add('claim.empty', 'claimResponse', c.claimResponse, { status: 'empty' });
 add('claim.macUpdateRequired', 'claimResponse', c.claimResponse, { minimumContract: 2, status: 'mac-update-required' });
+// Contract 2: the in-flight message the person stopped, for the Mac to settle `stopped` at its revision.
+add('claim.stopRequested', 'claimResponse', c.claimResponse, { message: s.claimed, status: 'stop-requested' });
+add('claim.stopRequestedRunning', 'claimResponse', c.claimResponse, {
+  message: { ...s.claimed, revision: 3, state: 'running' },
+  status: 'stop-requested'
+});
 add('claimRequest', 'claimRequest', c.claimRequest, { claimId: ids.claim, conversationId: ids.conversation });
 
 checkpoint('threadUpserted', { kind: 'thread.upserted', thread: s.task });
@@ -125,11 +131,16 @@ add('delta', 'replyDeltaRequest', c.replyDeltaRequest, {
   delta: { messageId: ids.reply, seq: 0, text: 'Hel', threadId: ids.thread }
 });
 add('progress.running', 'messageProgress', c.messageProgress, { ...claimed, expectedRevision: 2, state: 'running' });
+add('progress.stopped', 'messageProgress', c.messageProgress, { ...claimed, expectedRevision: 2, state: 'stopped' });
 add('progress.reconciliation', 'messageProgress', c.messageProgress, {
   ...claimed,
   expectedRevision: 3,
   state: 'reconciliation-required'
 });
+
+// A heard voice turn the Mac sends as the owner's message, and the queued message the server answers.
+add('messageSend.heard', 'messageSend', c.messageSend, { id: ids.message, inputs: [], text: 'What time is it?', threadId: null });
+add('message.queued', 'conversationMessage', c.conversationMessage, s.sent);
 
 add('approval.answeredByPhone', 'agentApproval', c.agentApproval, {
   ...s.openApproval,

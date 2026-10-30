@@ -95,6 +95,17 @@ internal data class ConversationMessage(
     val threadId: String?,
 )
 
+/** `artifactInput`: a text a sent message attaches. A heard voice turn attaches none. */
+@Serializable
+internal data class ArtifactInput(val id: String, val mediaType: String, val text: String, val title: String)
+
+/**
+ * `messageSend`: the owner's message, which the Mac sends only for a heard voice turn, in the main
+ * conversation. Its `id` is the client's; a retry with the same id must be deep-equal.
+ */
+@Serializable
+internal data class MessageSend(val id: String, val inputs: List<ArtifactInput>, val text: String, val threadId: String?)
+
 /** `messageAppend`: a reply or note the Mac appends; never a user message. */
 @Serializable
 internal data class MessageAppend(
@@ -207,6 +218,14 @@ internal sealed interface ClaimResponse {
     /** The message needs a newer contract than this Mac sent; it stays queued until the Mac updates or it expires. */
     @Serializable @SerialName("mac-update-required")
     data class MacUpdateRequired(val minimumContract: Int) : ClaimResponse
+
+    /**
+     * The conversation's claimed or running user message, which the person asked to stop, now under this claim:
+     * the replay of a claim that never learned its message, or a claim that took over one the Mac lost. The Mac
+     * settles it `stopped` at its revision; nothing runs on.
+     */
+    @Serializable @SerialName("stop-requested")
+    data class StopRequested(val message: ConversationMessage) : ClaimResponse
 }
 
 /** `APPROVAL_KINDS`. */

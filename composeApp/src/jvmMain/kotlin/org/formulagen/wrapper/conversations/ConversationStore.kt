@@ -20,6 +20,7 @@ import org.formulagen.wrapper.bridge.BrainAttemptState
 import org.formulagen.wrapper.bridge.BrainLimits
 import org.formulagen.wrapper.bridge.BrainRoleSnapshot
 import org.formulagen.wrapper.bridge.BrainSource
+import org.formulagen.wrapper.bridge.CompanionLimits
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.bridge.brainJson
 import org.formulagen.wrapper.bridge.trimEcma
@@ -104,9 +105,9 @@ internal data class ClaimEntry(
 
 /**
  * The account's conversations on this Mac, at `<root>/<accountId>/conversations/<id>/`: each one's
- * [ConversationRecord], its claim journal and its artifacts (outputs, and inputs whose bytes stay
- * here). Folders and files are private and every record is replaced atomically; reading never creates
- * anything. [open] takes the account's runner lock, so only one Hovel runs this account's conversations,
+ * [ConversationRecord], its claim journal, its artifacts (outputs, and inputs whose bytes stay
+ * here), and the messages to stop as soon as they are claimed ([stopOnClaim]). Folders and files are
+ * private and every record is replaced atomically; reading never creates anything. [open] takes the account's runner lock, so only one Hovel runs this account's conversations,
  * and loads the journal into memory: [pendingClaims] and [claims] answer from it, and every change is
  * written through.
  */
@@ -130,6 +131,7 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
         if (held == null) { channel.close(); error("Another Hovel runs this account's conversations") }
         lock = channel to held
         loadJournal()
+        pruneStopMarks()
     }
 
     @Synchronized override fun close() {
@@ -163,6 +165,29 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
         writeDurably(file, brainJson.encodeToString(ClaimEntry.serializer(), entry).toByteArray())
         pending[entry.claimId] = entry
         entry
+    }
+
+    /**
+     * Stop [messageId] as soon as this Mac claims it: a heard voice turn given up on before its claim landed. Durable,
+     * so the turn never runs, even when Hovel restarts before the claim. The project runs only on this Mac, so this
+     * Mac's own record is the whole rule.
+     */
+    fun stopOnClaim(conversationId: String, messageId: String) = gated(conversationId) {
+        require(SharedRules.isRecordId(messageId))
+        writeDurably(privateFolder(folder(conversationId).resolve(STOPS)).resolve("$messageId.json"), STOP_MARK)
+    }
+
+    /** Whether [messageId] is to stop as soon as it is claimed. */
+    fun stopsOnClaim(conversationId: String, messageId: String): Boolean = gated(conversationId) {
+        require(SharedRules.isRecordId(messageId))
+        Files.exists(folder(conversationId).resolve(STOPS).resolve("$messageId.json"), NOFOLLOW_LINKS)
+    }
+
+    /** [messageId]'s stop is journaled as its outcome: the mark has done its work. */
+    fun clearStopOnClaim(conversationId: String, messageId: String) = gated(conversationId) {
+        require(SharedRules.isRecordId(messageId))
+        Files.deleteIfExists(folder(conversationId).resolve(STOPS).resolve("$messageId.json"))
+        Unit
     }
 
     /** The claim is settled or never happened: forget it. */
@@ -221,6 +246,30 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
         }
     }
 
+    /**
+     * Drop stop marks older than a queued message lives ([CompanionLimits.QUEUED_MESSAGE_MS]): the account has expired
+     * those messages, so no claim comes. A mark whose message has a claim journaled stays until that claim settles. One
+     * that cannot be read or removed waits for the next launch.
+     */
+    private fun pruneStopMarks(now: Long = System.currentTimeMillis()) {
+        if (!Files.isDirectory(base, NOFOLLOW_LINKS)) return
+        val claimed = pending.values.mapNotNullTo(HashSet()) { it.messageId }
+        val folders = Files.list(base).use { it.toList() }
+            .filter { Files.isDirectory(it, NOFOLLOW_LINKS) && SharedRules.isRecordId(it.fileName.toString()) }
+        for (folder in folders) {
+            val marks = folder.resolve(STOPS)
+            if (!Files.isDirectory(marks, NOFOLLOW_LINKS)) continue
+            for (mark in Files.list(marks).use { it.toList() }) {
+                if (mark.fileName.toString().removeSuffix(".json") in claimed) continue
+                runCatching {
+                    if (now - Files.getLastModifiedTime(mark, NOFOLLOW_LINKS).toMillis() > CompanionLimits.QUEUED_MESSAGE_MS) {
+                        Files.deleteIfExists(mark)
+                    }
+                }.onFailure { log(LogLevel.Warn, "conversations", "A stale stop mark was kept: $mark", it) }
+            }
+        }
+    }
+
     private fun folder(conversationId: String): Path {
         require(SharedRules.isRecordId(conversationId)) { "Invalid conversation" }
         return base.resolve(conversationId)
@@ -233,6 +282,8 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
         private const val RECORD = "conversation.json"
         private const val JOURNAL = "journal"
         private const val ARTIFACTS = "artifacts"
+        private const val STOPS = "stop-on-claim"
+        private val STOP_MARK = "{}".toByteArray()
         private const val RECORD_BYTES = 16_000_000L
         private const val ENTRY_BYTES = 16_384L
 

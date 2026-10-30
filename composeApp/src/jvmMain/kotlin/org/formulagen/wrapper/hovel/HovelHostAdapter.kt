@@ -25,11 +25,19 @@ fun interface NativeExchange { fun exchange(method: String, route: String, body:
 class HovelRejectedException(val code: String? = null) : IllegalStateException("Host server returned HTTP 409")
 
 /**
- * The server answered with [status], neither success nor a 409 refusal. A 400, 403 or 404 is [final]: the request
- * names something the server does not have, or this computer may not use, and sending it again cannot help.
+ * The server answered with [status], neither success nor a 409 refusal; [code] is the body's code when it names one,
+ * such as a `hovelContractError`'s. A 400, 403 or 404 is [final]: the request names something the server does not
+ * have, or this computer may not use, and sending it again cannot help. A [serverOlder] refusal never is.
  */
-class HovelStatusException(val status: Int) : IllegalStateException("Host server returned HTTP $status") {
-    val final: Boolean get() = status == 400 || status == 403 || status == 404
+class HovelStatusException(val status: Int, val code: String? = null) : IllegalStateException("Host server returned HTTP $status") {
+    /** A 400 `unsupported-contract`: the service is older than this build's contract, so the work waits for it. */
+    val serverOlder: Boolean get() = status == 400 && code == UNSUPPORTED_CONTRACT
+    val final: Boolean get() = (status == 400 || status == 403 || status == 404) && !serverOlder
+
+    companion object {
+        /** The contract's refusal of a client newer than the server. */
+        const val UNSUPPORTED_CONTRACT = "unsupported-contract"
+    }
 }
 
 /**
@@ -59,7 +67,7 @@ class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val
         try {
             val response = future.get(timeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
             if (response.statusCode() == 409) throw HovelRejectedException(refusalCode(response.body()))
-            if (response.statusCode() !in 200..299) throw HovelStatusException(response.statusCode())
+            if (response.statusCode() !in 200..299) throw HovelStatusException(response.statusCode(), refusalCode(response.body()))
             return Json.parseToJsonElement(response.body().toString(Charsets.UTF_8)).jsonObject.getValue("data").jsonObject
         } finally { if (!future.isDone) future.cancel(true) }
     }
@@ -73,9 +81,10 @@ class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val
         val request = builder(NativeRoute.STREAM.path()).header("Accept", "text/event-stream").GET().build()
         val response = client.send(request, HttpResponse.BodyHandlers.ofLines())
         if (response.statusCode() !in 200..299) {
-            response.body().close()
-            if (response.statusCode() == 409) throw HovelRejectedException()
-            throw HovelStatusException(response.statusCode())
+            // A refusal body is a small JSON object, such as a `hovelContractError`.
+            val body = response.body().use { it.limit(64).toList().joinToString("\n").take(16 * 1024) }.toByteArray()
+            if (response.statusCode() == 409) throw HovelRejectedException(refusalCode(body))
+            throw HovelStatusException(response.statusCode(), refusalCode(body))
         }
         val lines = response.body()
         return object : HovelEventLines {

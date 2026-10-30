@@ -39,6 +39,8 @@ internal interface ChatSpeech : AutoCloseable {
     fun previewVoice(id: String) {}
     /** Called after the spoken state changes, and never while this speech object holds its own lock. */
     fun onVoice(listener: () -> Unit) {}
+    /** Load the voice ahead of the first sentence, off the caller's thread, whatever the filler choice. */
+    fun warm() {}
     fun setFillersEnabled(enabled: Boolean) {}
     /** Synthesize [lines] for every Kokoro blend and keep the PCM. A later play does not call the model. */
     fun warmFillers(lines: List<String>) {}
@@ -67,6 +69,8 @@ internal class DesktopSpeech(
     private val worker = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-voice"))
     private var voiceConfig: VoiceConfig? = config
     private var engine: EmberVoice? = null
+    /** Bumped whenever [engine] is dropped for another voice, so a load that started before keeps nothing. */
+    private var engineEpoch = 0
     private var line: PcmLine? = null
     /** Audio waiting for the speaker. Synthesis keeps filling this while a sentence is still playing. */
     private var playQueue: LinkedBlockingQueue<PlayChunk>? = null
@@ -89,6 +93,38 @@ internal class DesktopSpeech(
 
     override fun onVoice(listener: () -> Unit) {
         synchronized(gate) { onVoice = listener }
+    }
+
+    /** Load the engine on the voice worker, so Talk's first sentence does not wait for it. A failure waits for the first speak. */
+    override fun warm() = synchronized(gate) {
+        if (closed || voiceConfig == null || unavailable != null) return@synchronized
+        runCatching {
+            worker.execute {
+                runCatching { loadedEngine() }.onFailure { if (it is VirtualMachineError) throw it }
+            }
+        }
+        Unit
+    }
+
+    /**
+     * The engine, loaded on the voice worker if there is none. The load runs outside [gate], so a caller on the UI thread
+     * ([status], [stop], [enqueue]) never waits on a model load. A load the voice changed under, or that finished after
+     * [close], is released; the next voice is loaded instead. Null once closed or with no voice installed.
+     */
+    private fun loadedEngine(): EmberVoice? {
+        while (true) {
+            val (active, epoch) = synchronized(gate) {
+                if (closed) return null
+                engine?.let { return it }
+                (voiceConfig ?: return null) to engineEpoch
+            }
+            val loaded = EmberVoice(openEngine(active), active)
+            val kept = synchronized(gate) {
+                if (!closed && engine == null && epoch == engineEpoch) loaded.also { engine = it } else null
+            }
+            if (kept != null) return kept
+            runCatching { loaded.release() }
+        }
     }
 
     override fun setFillersEnabled(enabled: Boolean) = synchronized(gate) {
@@ -174,11 +210,7 @@ internal class DesktopSpeech(
     }
 
     private fun warmFillersOnWorker(lines: List<String>) {
-        val voice = synchronized(gate) {
-            if (closed) return
-            val active = voiceConfig ?: return
-            engine ?: EmberVoice(openEngine(active), active).also { engine = it }
-        }
+        val voice = loadedEngine() ?: return
         val selected = synchronized(gate) {
             voiceConfig?.kokoroVoiceId?.ifEmpty { null } ?: kokoroCatalog().defaultId
         }
@@ -219,6 +251,7 @@ internal class DesktopSpeech(
         stopLocked()
         val previous = engine
         engine = null
+        engineEpoch++
         worker.execute { runCatching { previous?.release() } }
         warmFillers(FILLER_LINES)
     }
@@ -242,11 +275,9 @@ internal class DesktopSpeech(
             stale?.let { runCatching { it.release() } }
             if (settings == null) return@execute
             try {
-                val voice = synchronized(gate) {
-                    if (closed || ticket != generation) return@execute
-                    val active = voiceConfig ?: return@execute
-                    engine ?: EmberVoice(openEngine(active), active).also { engine = it }
-                }
+                if (synchronized(gate) { closed || ticket != generation }) return@execute
+                val voice = loadedEngine() ?: return@execute
+                if (synchronized(gate) { closed || ticket != generation }) return@execute
                 // The speaker thread blocks in the device buffer. Synthesis stays on this
                 // worker, so the next sentence is generated while the current one plays.
                 val queue = LinkedBlockingQueue<PlayChunk>()
@@ -325,9 +356,13 @@ internal class DesktopSpeech(
         }
     }
 
-    /** Caller holds [gate]. A stream already open for this generation is left alone. */
+    /**
+     * Caller holds [gate]. A stream already open for this generation is left alone. A new one picks up a voice chosen
+     * meanwhile in the voice file, by another speaker included; the old engine is released after any synthesis queued.
+     */
     private fun ensureStreamLocked() {
         if (playQueue != null && streamTicket == generation) return
+        refreshKokoroChoiceLocked()?.let { stale -> runCatching { worker.execute { runCatching { stale.release() } } } }
         val ticket = generation
         streamTicket = ticket
         streamIndex = 0
@@ -356,12 +391,10 @@ internal class DesktopSpeech(
         settings: VoiceConfig,
         index: Int,
     ) {
-        val voice = synchronized(gate) {
-            if (closed || ticket != generation) return
-            val active = voiceConfig ?: return
-            engine ?: EmberVoice(openEngine(active), active).also { engine = it }
-        }
+        if (synchronized(gate) { closed || ticket != generation }) return
         try {
+            val voice = loadedEngine() ?: return
+            if (synchronized(gate) { closed || ticket != generation }) return
             voice.speakStreaming(piece) { samples, rate ->
                 if (synchronized(gate) { closed || ticket != generation }) return@speakStreaming false
                 if (index > 0 && settings.resolvedSentenceGapMs > 0 && rate > 0) {
@@ -390,6 +423,7 @@ internal class DesktopSpeech(
         voiceConfig = current.copy(kokoroVoiceId = id)
         val previous = engine
         engine = null
+        engineEpoch++
         return previous
     }
 
