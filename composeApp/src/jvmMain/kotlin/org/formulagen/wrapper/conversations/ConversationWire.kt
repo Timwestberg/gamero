@@ -203,6 +203,8 @@ internal data class ClaimResult(
     val project: CompanionProject,
     val recalledMemory: String? = null,
     val thread: ConversationThread?,
+    val specialistAdvice: SpecialistAdvice? = null,
+    val workflowEvidence: Boolean? = null,
 )
 
 /** `claimResponse`. */
@@ -258,6 +260,9 @@ internal sealed interface MessageCheckpoint {
 
     @Serializable @SerialName("run.changed")
     data class RunChanged(val run: ConversationRun) : MessageCheckpoint
+
+    @Serializable @SerialName("workflow.evidence")
+    data class WorkflowEvidenceStored(val evidence: WorkflowEvidence) : MessageCheckpoint
 
     @Serializable @SerialName("approval.opened")
     data class ApprovalOpened(val approval: AgentApproval) : MessageCheckpoint
@@ -356,3 +361,28 @@ internal data class ProjectFoldersSave(val expectedRevision: Long, val folders: 
 /** `artifactTextPage`: one page of an artifact's text, from the requested cursor; [nextCursor] is null at the end. */
 @Serializable
 internal data class ArtifactTextPage(val nextCursor: Int?, val text: String)
+
+/** Optional, short-lived evidence for the coordinator, never a dispatch command. */
+@Serializable
+internal data class SpecialistAdvice(val roleId: String, val requestId: String, val messageId: String,
+    val configurationRevision: Long, val confidence: Double, val model: String, val expiresAt: Long)
+
+
+/** Host-attested binding; the server independently reconciles the approval answer and input text. */
+@Serializable
+internal data class WorkflowEvidence(
+    val version: Int = 1,
+    val runId: String,
+    val runRevision: Long,
+    val configurationRevision: Long,
+    val attemptId: String,
+    val stepId: String?,
+    val threadId: String,
+    val approvalId: String?,
+    val state: String,
+    val option: ApprovalOption?,
+    val inputs: List<WorkflowEvidenceInput>,
+)
+
+@Serializable
+internal data class WorkflowEvidenceInput(val artifactId: String, val digest: String, val current: Boolean)

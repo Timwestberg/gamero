@@ -41,6 +41,7 @@ internal data class RunRecord(
     val dispatchesAllowance: Int = BrainLimits.DISPATCHES,
     val contexts: Map<String, NativeConversation> = emptyMap(),
     val invalidated: List<String> = emptyList(),
+    val stageConsents: Map<String, StageConsentRecord> = emptyMap(),
 )
 
 /** A companion's coordinator conversation, its current run and the request receipts that keep retries single. */
