@@ -35,7 +35,7 @@ class DesktopGamesTest {
      * that names it; nothing the launch decides comes in from the app's own environment.
      */
     @Test fun eachLaunchGetsOnlyItsOwnSaveAndProfile() {
-        val app = mapOf("HOME" to "/Users/player", SAVE_VARIABLE to "/saves/app.json", PROFILE_VARIABLE to "/stale.json",
+        val app = mapOf("HOVEL_EMBEDDED" to "1", "HOME" to "/Users/player", SAVE_VARIABLE to "/saves/app.json", PROFILE_VARIABLE to "/stale.json",
             PRESENTATION_PORT_VARIABLE to "1", PRESENTATION_SESSION_VARIABLE to "stale")
         val save = Path.of("/saves/save.json")
         val profile = Path.of("/profiles/ember.json")
@@ -81,4 +81,15 @@ class DesktopGamesTest {
         assertEquals(listOf(engine, "--path", "/games/ember-overclock", "res://game/main.tscn"),
             DesktopGameHost.gameCommand(overclock, emptyList(), hooks))
     }
+    @Test fun configuredSaveMustBeAbsoluteBeforeAnyFolderCreation() {
+        assertNull(configuredCompanionSave(emptyMap()))
+        assertEquals(Path.of("/saves/ember.json"), configuredCompanionSave(mapOf(SAVE_VARIABLE to "/saves/ember.json")))
+        for (relative in listOf("save.json", "saves/save.json", "")) {
+            assertFailsWith<IllegalArgumentException> { configuredCompanionSave(mapOf(SAVE_VARIABLE to relative)) }
+        }
+        assertFailsWith<IllegalArgumentException> { launchEnvironment(emptyMap(), companions, Path.of("save.json"), null) }
+        assertEquals(mapOf("PATH" to "/usr/bin"), DesktopGameHost.childEnvironment(
+            mapOf("PATH" to "/usr/bin", "HOVEL_EMBEDDED" to "1"), emptyMap(), emptyMap()))
+    }
+
 }
