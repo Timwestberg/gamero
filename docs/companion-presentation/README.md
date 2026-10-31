@@ -9,7 +9,7 @@ For the macOS prototype with the game and these screens in **one window**, use [
 HOVEL_GAMES_ROOT=/absolute/game-platform/games ./gradlew :composeApp:runCompanions
 ```
 
-Use `games/ember-tower/scripts/play-companions-glass.sh` in the game checkout to handle import and launch together. It must set `HOVEL_GAMES_ROOT` (the checkout's `games` folder); game-platform's GP5 moves it from the old `HOVEL_GAME_PROJECT`, which this launcher no longer reads, so use both changes together. `HOVEL_REDUCED_EFFECTS=1` starts with motion/transparency reduced. The normal Gamero WebView entry point is unchanged.
+Use `games/ember-tower/scripts/play-companions-glass.sh` in the game checkout to handle import and launch together. It must set `HOVEL_GAMES_ROOT` (the checkout's `games` folder); The catalog launcher no longer accepts only `HOVEL_GAME_PROJECT`; use the games root for all three entries. `HOVEL_REDUCED_EFFECTS=1` starts with motion/transparency reduced. The normal Gamero WebView entry point is unchanged.
 
 - `PresentationTypes.kt`: versioned wire types and validation.
 - `PresentationController.kt`: preview, confirm, retry and refresh state.
