@@ -13,7 +13,7 @@ import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.progression.GAMES_ROOT_VARIABLE
 import org.formulagen.wrapper.progression.GodotGame
-import org.formulagen.wrapper.progression.SAVE_VARIABLE
+import org.formulagen.wrapper.progression.configuredCompanionSave
 import org.formulagen.wrapper.progression.desktopGame
 import org.formulagen.wrapper.progression.launchEnvironment
 
@@ -39,10 +39,12 @@ internal class DesktopGameLauncher(
         check(System.getProperty("os.name").contains("Mac")) { "Native adventures require macOS" }
         // The page sees only `failed`, so each refusal names the missing piece in the log.
         val game = logged { installedGame(environment, gameId) }
-        val save = if (game.presentation) {
-            (environment[SAVE_VARIABLE]?.let(Path::of) ?: support.resolve("companions").resolve("save.json"))
-                .also { it.parent.toFile().mkdirs() }
-        } else null
+        val save = logged {
+            if (game.presentation) {
+                (configuredCompanionSave(environment) ?: support.resolve("companions").resolve("save.json"))
+                    .also { java.nio.file.Files.createDirectories(it.parent) }
+            } else null
+        }
         val profile = companion?.let { logged { profiles.save(it) } }
         closedListeners.track(gameId) { returned ->
             val launch = EmbeddedGameWindow(game, frame, launchEnvironment(environment, game, save, profile)) {

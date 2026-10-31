@@ -6,8 +6,8 @@ package org.formulagen.wrapper.bridge
  * in `host.contract`, so neither side shows what the other cannot render.
  */
 object HovelContract {
-    /** `HOVEL_CONTRACT`. Contract 5 adds negotiated workflow evidence checkpoints. */
-    const val CURRENT = 5
+    /** `HOVEL_CONTRACT`. Contract 6: robot looks, specialist advice and workflow evidence. */
+    const val CURRENT = 6
 
     /** `HOVEL_FIRST_CONTRACT`: what a document naming nothing newer needs. */
     const val FIRST = 1
@@ -18,9 +18,10 @@ object HovelContract {
      */
     val FEATURES: Map<String, Int> = mapOf(
         "companionsOnly" to 3,
-        "specialistAdvice" to 4,
-        "workflowEvidence" to 5,
+        "specialistAdvice" to 5,
+        "workflowEvidence" to 6,
         "messagePageThreads" to 2,
+        "robotLook" to 4,
         "stopRequestedClaim" to 2,
     )
 

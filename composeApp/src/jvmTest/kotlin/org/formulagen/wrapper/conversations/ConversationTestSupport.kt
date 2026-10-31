@@ -52,7 +52,10 @@ internal class TestConversation(val id: String = id(), val projectId: String = i
     fun claim(claimId: String, message: ConversationMessage, document: BrainDocument, history: List<ConversationMessage> = emptyList(),
         thread: ConversationThread? = null, recalledMemory: String? = null, projectRevision: Long = 3,
         speak: Boolean = false) = ClaimResult(
-        document, claimId, AccountCompanion(companionId, buildJsonObject { put("body", "round") }, "Ember", 1),
+        document, claimId, AccountCompanion(companionId, buildJsonObject {
+            put("shell_color", "#b3a185"); put("frame_color", "#856b4e")
+            put("face_color", "#ed8f40"); put("eye_color", "#ffde9c")
+        }, "Ember", 1),
         Conversation(false, id, AT, projectId, 2, null, speak, "Add sign-in"), history, message,
         CompanionProject(false, companionId, computerId, emptyList(), projectId, "Hovel notes", projectRevision), recalledMemory, thread,
     )
