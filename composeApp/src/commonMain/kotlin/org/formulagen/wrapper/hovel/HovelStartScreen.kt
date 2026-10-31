@@ -64,7 +64,7 @@ import org.jetbrains.compose.ui.tooling.preview.Preview
 import westbergwrapper.composeapp.generated.resources.Res
 import westbergwrapper.composeapp.generated.resources.hovel_furniture_sheet
 import westbergwrapper.composeapp.generated.resources.hovel_room_shell
-import westbergwrapper.composeapp.generated.resources.hovel_traveler_atlas
+import westbergwrapper.composeapp.generated.resources.hovel_robot
 import westbergwrapper.composeapp.generated.resources.pixelify_sans
 
 /**
@@ -100,16 +100,16 @@ private object HovelPalette {
 // Game art
 // ---------------------------------------------------------------------------------------------
 
-class HovelArt(val shell: ImageBitmap, val furniture: ImageBitmap, val characters: ImageBitmap, val display: FontFamily)
+class HovelArt(val shell: ImageBitmap, val furniture: ImageBitmap, val robot: ImageBitmap, val display: FontFamily)
 
 @Composable
 fun rememberHovelArt(): HovelArt {
     val shell = imageResource(Res.drawable.hovel_room_shell)
     val furniture = imageResource(Res.drawable.hovel_furniture_sheet)
-    val characters = imageResource(Res.drawable.hovel_traveler_atlas)
+    val robot = imageResource(Res.drawable.hovel_robot)
     val font = Font(Res.font.pixelify_sans)
     val display = remember(font) { FontFamily(font) }
-    return remember(shell, furniture, characters, display) { HovelArt(shell, furniture, characters, display) }
+    return remember(shell, furniture, robot, display) { HovelArt(shell, furniture, robot, display) }
 }
 
 /** A sprite placed like room.tscn places it: [anchor] (atlas pixels) lands on [position] (room pixels). */
@@ -126,8 +126,8 @@ private val Furniture = listOf(
     Sprite(IntOffset(668, 600), IntSize(428, 308), Offset(214f, 292f), Offset(594f, 336f), 0.2436555f), // bench
     Sprite(IntOffset(1188, 596), IntSize(256, 316), Offset(128f, 296f), Offset(504f, 336f), 0.217194f), // side table
 )
-// The assembled traveler in the character atlas, scaled to the kit's 110 px room height.
-private val Keeper = Sprite(IntOffset(1165, 520), IntSize(230, 485), Offset(115f, 482f), Offset(384f, 331f), 110f / 490f)
+// The shared room robot, rendered on transparency, with its feet at the room anchor.
+private val Keeper = Sprite(IntOffset.Zero, IntSize(512, 512), Offset(256f, 490f), Offset(384f, 331f), 110f / 372f)
 private val Doorway = Offset(384f, 478f)
 private val Windows = listOf(Offset(256f, 84f), Offset(511f, 84f))
 
@@ -159,7 +159,7 @@ private fun DrawScope.drawStarterRoom(art: HovelArt, frame: RoomFrame, keeperAt:
     drawSprite(art.furniture, Rug, frame)
     val actors = Furniture.map { it to it.position } + listOfNotNull(keeperAt?.let { Keeper to it })
     actors.sortedBy { it.second.y }.forEach { (sprite, at) ->
-        if (sprite === Keeper) drawSprite(art.characters, sprite, frame, at, keeperScale) else drawSprite(art.furniture, sprite, frame)
+        if (sprite === Keeper) drawSprite(art.robot, sprite, frame, at, keeperScale) else drawSprite(art.furniture, sprite, frame)
     }
 }
 

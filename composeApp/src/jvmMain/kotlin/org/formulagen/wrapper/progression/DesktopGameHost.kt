@@ -26,7 +26,7 @@ class DesktopGameHost(
     private val game: GodotGame,
     private val scope: CoroutineScope,
     val controller: PresentationController,
-    private val environment: Map<String, String> = System.getenv(),
+    private val environment: Map<String, String>,
     private val gameArguments: List<String> = emptyList(),
 ) : AutoCloseable {
     private val session = UUID.randomUUID().toString()
