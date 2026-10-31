@@ -4,7 +4,7 @@
 `StageConsentRecord`. Each record binds run ID, configuration revision, step,
 attempt, input IDs/digests, broker approval ID, state and applied option/surface.
 Its states are NOT_REQUIRED, PENDING, ANSWERED and WITHDRAWN. An absent record
-means unknown. No shared wire type changes in this slice.
+means unknown. Contract 6 negotiates publication through workflow evidence checkpoints.
 
 `RemoteApprovals.ask` has optional open/settled callbacks. The coordinator uses
 these only for stage dialogs. Opening persists the actual broker ID before the
@@ -21,7 +21,7 @@ never consulted to skip a dialog. Disk writes use the existing coordinator chang
 and ConversationStore path.
 
 The broker can apply a local answer while offline. This record describes that
-applied answer, not a guarantee that the server agrees. Before future advisor
-consumption, reconcile the actual approval ID with authenticated server evidence
-and classify unresolved/conflicting receipts as unknown. No model sees this data
-yet. A crash before settlement leaves pending evidence; recovery must ask again.
+applied answer, not a guarantee that the server agrees. Before Advisor observation, the server reconciles the actual approval ID with
+authenticated evidence and classifies unresolved/conflicting receipts as unknown.
+Observations remain shadow-only. A crash before settlement leaves pending
+evidence; recovery must ask again.
