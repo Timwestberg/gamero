@@ -61,6 +61,9 @@ internal class CoordinatorEngine(
 
         /** The conversation's record. Provider callbacks change it too ([update]), so every change holds this run's lock. */
         @Volatile var record = store.read(conversationId)
+        val advice = validSpecialistAdvice(claim)?.takeUnless { record.brain.receipts.containsKey(message.id) || record.brain.run?.summary?.state?.terminal == false }
+        var adviceUsed = false
+
 
         fun run(): MessageState {
             flush(strict = false)
@@ -216,14 +219,28 @@ internal class CoordinatorEngine(
             val current = currentRun()
             val coordinator = turns.resolved(call, coordinatorRole(), coordinator = true)
             val allowed = allowedDecisions(current)
+            val hint = advice?.takeIf { !adviceUsed && current.attempts.isEmpty() && current.configuration.workflow?.enabled != true &&
+                current.summary.configurationRevision == it.configurationRevision && it.expiresAt > System.currentTimeMillis() }
+            if (hint != null) {
+                adviceUsed = true
+                val role = current.configuration.specialists.first { it.id == hint.roleId }
+                append(MessageAuthor.SYSTEM, hint.requestId, "Jev recommends ${role.name}. This is advisory; the coordinator decides.", null)
+            }
+
             val (decision, replyId) = decide(coordinator, allowed, null) { kinds ->
                 val input = handoff(current.artifacts.filter { it.id in current.inputs }.map { it.id }, files = false)
                 val latest = current.attempts.lastOrNull()?.outputIds?.let { handoff(it, files = false) } ?: ""
                 val request = coordinatorRequest(uuid(), current, kinds, input, latest, record.brain.messages.takeLast(10))
-                conversationRequest(request, claim.recalledMemory)
+                conversationRequest(request, claim.recalledMemory, hint)
             } ?: run {
                 change { it.paused(INVALID_DECISION, BrainWaitingKind.INPUT) }
                 return
+            }
+            if (hint != null) {
+                val selected = (decision as? CoordinatorDecision.Delegate)?.specialistId
+                val agreement = if (selected == hint.roleId) "agrees with" else "differs from"
+                val outcomeId = UUID.nameUUIDFromBytes((hint.requestId + ":coordinator").toByteArray()).toString()
+                append(MessageAuthor.SYSTEM, outcomeId, "Jev pilot: the coordinator's decision $agreement the recommendation.", null)
             }
             var first = true
             change { brain ->
@@ -250,7 +267,11 @@ internal class CoordinatorEngine(
             change { it.copy(run = checkNotNull(it.run).withLast(attempt)) }
             val step = current.configuration.workflow?.steps?.find { it.id == attempt.stepId }
             val threadId = checkNotNull(record.attemptThreads[attempt.id])
-            if (asksBeforeStarting(current.configuration, role, step) && !approveStage(current, attempt, step, threadId)) return
+            if (asksBeforeStarting(current.configuration, role, step)) {
+                if (!approveStage(current, attempt, step, threadId)) return
+            } else {
+                change { it.recordStageConsent(attempt, null) }
+            }
             if (role.mode == MemberMode.WORK && !startWork(role, threadId) { change { it.declined(attempt, notApproved(role)) } }) return
             change { it.dispatched(attempt) }
             val entryId = uuid()
@@ -275,7 +296,10 @@ internal class CoordinatorEngine(
             val options = listOf(ApprovalOption.CONTINUE to StageChoice.CONTINUE, ApprovalOption.REQUEST_CHANGES to StageChoice.CHANGES,
                 ApprovalOption.NOT_NOW to StageChoice.PAUSE, ApprovalOption.STOP to StageChoice.STOP)
             val dialog = stageDialog(role, run, step, handoff(attempt.inputIds, false))
-            when (approvals.ask(scope(threadId), ApprovalKind.STAGE, dialog, options, cancel)) {
+            val choice = approvals.ask(scope(threadId), ApprovalKind.STAGE, dialog, options, cancel,
+                onOpened = { id -> change { it.recordStageConsent(attempt, id) } },
+                onSettled = { receipt -> change { it.settleStageConsent(attempt.id, receipt.id, receipt.option, receipt.by) } })
+            when (choice) {
                 StageChoice.CONTINUE -> return true
                 StageChoice.CHANGES -> change { it.declined(attempt, "Describe the changes before this step starts.") }
                 StageChoice.STOP -> throw StoppedException()
@@ -486,7 +510,26 @@ internal class CoordinatorEngine(
             val notice = waiting?.let {
                 MessageCheckpoint.MessageAppended(MessageAppend(MessageAuthor.SYSTEM, uuid(), null, it.summary, null))
             }
-            return main.map(::appended) + threads + inThreads.map(::appended) + listOfNotNull(run, notice)
+            val evidence = if (claim.workflowEvidence == true) {
+                val current = after.brain.run
+                current?.stageConsents?.values.orEmpty().filter { consent ->
+                    consent != before.brain.run?.stageConsents?.get(consent.attemptId)
+                        && consent.attemptId == current?.summary?.currentAttemptId
+                }.mapNotNull { consent ->
+                    val threadId = after.attemptThreads[consent.attemptId] ?: return@mapNotNull null
+                    val summary = checkNotNull(current).summary
+                    MessageCheckpoint.WorkflowEvidenceStored(WorkflowEvidence(
+                        runId = consent.runId, runRevision = summary.revision,
+                        configurationRevision = consent.configurationRevision, attemptId = consent.attemptId,
+                        stepId = consent.stepId, threadId = threadId, approvalId = consent.approvalId,
+                        state = consent.state.name, option = consent.option,
+                        inputs = consent.inputs.map { (id, digest) ->
+                            val artifact = current.artifacts.find { it.id == id }
+                            WorkflowEvidenceInput(id, digest, artifact != null && artifact.source.attemptId !in current.invalidated)
+                        }))
+                }
+            } else emptyList()
+            return main.map(::appended) + threads + inThreads.map(::appended) + listOfNotNull(run, notice) + evidence
         }
 
         fun append(author: MessageAuthor, id: String, text: String, threadId: String?, note: CoordinatorNote? = null) {

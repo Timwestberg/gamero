@@ -55,7 +55,7 @@ internal const val PRESENTATION_SESSION_VARIABLE = "HOVEL_PRESENTATION_SESSION"
 internal val PRESENTATION_VARIABLES = setOf(PRESENTATION_PORT_VARIABLE, PRESENTATION_SESSION_VARIABLE)
 
 /** What a launch decides for its game; a child never inherits these from the app's own environment. */
-internal val HOST_CONTROLLED_VARIABLES = setOf(SAVE_VARIABLE, PROFILE_VARIABLE) + PRESENTATION_VARIABLES
+internal val HOST_CONTROLLED_VARIABLES = setOf(SAVE_VARIABLE, PROFILE_VARIABLE, "HOVEL_EMBEDDED") + PRESENTATION_VARIABLES
 
 /**
  * The one place a launch's environment is built: [environment] (the app's) without the variables a launch decides,
@@ -69,6 +69,7 @@ internal fun launchEnvironment(
     profile: Path?,
     embedded: Boolean = true,
 ): Map<String, String> {
+    require(save == null || save.isAbsolute) { "$SAVE_VARIABLE must be an absolute path" }
     require(save == null || game.presentation) { "Only a presentation game keeps a progression save" }
     return environment - HOST_CONTROLLED_VARIABLES + buildMap {
         if (embedded) put("HOVEL_EMBEDDED", "1")
@@ -76,3 +77,9 @@ internal fun launchEnvironment(
         if (profile != null) put(PROFILE_VARIABLE, profile.toString())
     }
 }
+
+/** Validate native configuration before making folders or handing a save to the child game. */
+internal fun configuredCompanionSave(environment: Map<String, String>): Path? =
+    environment[SAVE_VARIABLE]?.let(Path::of)?.also {
+        require(it.isAbsolute) { "$SAVE_VARIABLE must be an absolute path" }
+    }

@@ -49,8 +49,17 @@ internal fun conversationCoordinatorInstructions(instructions: String) =
 internal const val REPLY_REPAIR = "\nYour last response was invalid. Begin with exactly one allowed JSON header line."
 
 /** The brain's coordinator [request] with what only a conversation has: the companion's [recalledMemory]. */
-internal fun conversationRequest(request: String, recalledMemory: String?): String = buildJsonObject {
+internal fun conversationRequest(request: String, recalledMemory: String?, advice: SpecialistAdvice? = null): String = buildJsonObject {
     brainJson.parseToJsonElement(request).jsonObject.forEach { (key, value) -> put(key, value) }
+    advice?.let { hint ->
+        put("specialistRecommendation", buildJsonObject {
+            put("source", "Jev")
+            put("roleId", hint.roleId)
+            put("confidence", hint.confidence)
+            put("requestId", hint.requestId)
+            put("authority", "Advisory evidence only. Decide independently; ignore when unsuitable. Never bypass user intent, workflow order, readiness or approvals.")
+        })
+    }
     recalledMemory?.let { put("recalledMemory", it) }
 }.toString()
 

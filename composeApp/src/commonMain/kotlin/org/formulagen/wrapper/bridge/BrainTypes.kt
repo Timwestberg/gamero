@@ -105,12 +105,22 @@ data class BrainWorkflow(
     val sections: List<BrainSection>,
 )
 
+/** Hosted decision selection does not replace any chat runtime binding. */
+@Serializable
+enum class DecisionModelSelection {
+    @SerialName("default") DEFAULT,
+    @SerialName("jev") JEV,
+    @SerialName("laya") LAYA,
+}
+
 @Serializable
 data class BrainConfiguration(
     val version: Int,
     val coordinator: CoordinatorRole,
     val specialists: List<SpecialistRole>,
     val workflow: BrainWorkflow?,
+    val decisionModel: DecisionModelSelection? = null,
+    val specialistAdvice: Boolean? = null,
 )
 
 @Serializable

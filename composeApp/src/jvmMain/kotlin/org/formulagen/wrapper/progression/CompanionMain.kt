@@ -23,7 +23,7 @@ fun main() {
         val game = desktopGame(environment, GameId.HOVEL_COMPANIONS)
             ?: error("Set HOVEL_GAMES_ROOT to the absolute games folder of the game-platform checkout.")
         // Two windows, not embedded; the game keeps its own save unless HOVEL_COMPANION_SAVE names one.
-        val launch = launchEnvironment(environment, game, environment[SAVE_VARIABLE]?.let(Path::of), profile = null, embedded = false)
+        val launch = launchEnvironment(environment, game, configuredCompanionSave(environment), profile = null, embedded = false)
         val scope = rememberCoroutineScope()
         val controller = remember { PresentationController { UUID.randomUUID().toString() } }
         val host = remember { DesktopGameHost(game, scope, controller, launch) }

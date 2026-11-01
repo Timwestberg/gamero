@@ -184,6 +184,34 @@ class CoordinatorEngineTest {
         assertEquals(listOf(opened.id to ApprovalOption.CONTINUE), fixture.server.answers, "answered through approval.closed")
     }
 
+    @Test fun stageConsentIsPersistedWithTheActualDialogAndSurvivesStoreReload() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.TALK, workflow = true, askBeforeStarting = true))
+        val step = fixture.document.configuration.workflow!!.steps.first()
+        fixture.decide = { turn ->
+            when {
+                "enter-workflow" in fixture.allowed(turn) -> """{"kind":"enter-workflow","entryStepId":"${step.id}","inputIds":[],"skipped":[],"reason":"Start"}"""
+                "start-step" in fixture.allowed(turn) -> """{"kind":"start-step","stepId":"${step.id}","inputIds":[]}"""
+                "step-result" in fixture.allowed(turn) -> {
+                    val attempt = fixture.request(turn).getValue("attempts").jsonArray.last().jsonObject.getValue("id").jsonPrimitive.content
+                    """{"kind":"step-result","attemptId":"$attempt","outcome":"ready","explanation":"Done"}"""
+                }
+                else -> "{\"kind\":\"answer\"}\nDone."
+            }
+        }
+        assertEquals(MessageState.ANSWERED, fixture.run(fixture.claim("Run workflow").copy(workflowEvidence = true)))
+        val opened = fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.ApprovalOpened>().single { it.approval.kind == ApprovalKind.STAGE }.approval
+        val restored = ConversationStore(fixture.root, fixture.account).read(fixture.talk.id).brain.run!!
+        val consent = restored.stageConsents.values.single()
+        val evidence = fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.WorkflowEvidenceStored>()
+        assertEquals(listOf("PENDING", "ANSWERED"), evidence.map { it.evidence.state })
+        assertTrue(evidence.all { it.evidence.approvalId == opened.id })
+        assertEquals(ApprovalOption.CONTINUE, evidence.last().evidence.option)
+        assertEquals(opened.id, consent.approvalId)
+        assertEquals(ApprovalOption.CONTINUE, consent.option)
+        assertEquals(restored.attempts.single().id, consent.attemptId)
+        assertEquals(BrainRunState.COMPLETED, restored.summary.state)
+    }
+
     @Test fun anInvalidReplyIsRepairedOnceThenWaitsForThePerson() {
         val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
         fixture.decide = { "Sure! I will get right on it." }
@@ -571,6 +599,23 @@ class CoordinatorEngineTest {
         assertEquals(MessageState.FAILED, fixture.send("Can someone review it?", threadId))
         assertEquals("Assign a provider to Reviewer in Configure brain.", fixture.server.appended().last { it.author == MessageAuthor.SYSTEM }.text)
         assertEquals(listOf(threadId), fixture.server.threads().map { it.id }.distinct(), "no thread opens for it")
+    }
+
+    @Test fun specialistAdviceIsVisibleButTheCoordinatorCanIgnoreIt() {
+        val base = brain("Reviewer" to MemberMode.TALK)
+        val fixture = Fixture(base.copy(configuration = base.configuration.copy(specialistAdvice = true)))
+        val claim = fixture.claim("Review this code")
+        val hint = SpecialistAdvice(fixture.implementer.id, id(), claim.message.id, claim.brain.revision, 0.95, "jev-1.14.0", System.currentTimeMillis() + 20_000)
+        assertEquals(MessageState.ANSWERED, fixture.run(claim.copy(specialistAdvice = hint)))
+        assertTrue(fixture.coordinatorTurns().single().text.contains("specialistRecommendation"))
+        assertTrue(fixture.server.appended().any { it.author == MessageAuthor.SYSTEM && it.text.contains("Jev recommends") })
+        assertTrue(fixture.server.appended().any { it.text.contains("differs from the recommendation") })
+        assertTrue(fixture.server.threads().isEmpty(), "advice must not dispatch a specialist")
+        assertNull(validSpecialistAdvice(claim.copy(specialistAdvice = hint.copy(messageId = id()))))
+        assertNull(validSpecialistAdvice(claim.copy(specialistAdvice = hint.copy(configurationRevision = claim.brain.revision + 1))))
+        assertNull(validSpecialistAdvice(claim.copy(specialistAdvice = hint.copy(expiresAt = 1))))
+        assertNull(validSpecialistAdvice(claim.copy(specialistAdvice = hint.copy(roleId = id()))))
+        assertNull(validSpecialistAdvice(claim.copy(specialistAdvice = hint, brain = base)))
     }
 
     @Test fun anUnexpectedErrorStillSaysToTryAgain() {

@@ -13,6 +13,20 @@ server-platform `event-contracts/src/hovel/companions`.
 All paths below are under
 `composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/` unless stated.
 
+## Robot identity (contract 4)
+
+`HovelContract.CURRENT` is 4. The account companion's `look` is the four robot
+colors, passed unchanged to the pet. `games.launch` supports Hovel Companions,
+Ember Tower and Ember: Overclock with an optional selected companion; native
+configuration chooses files beneath `HOVEL_GAMES_ROOT`. The start screen uses
+`hovel_robot.png`, a still rendered from the shared robot, with provenance in
+the resources. See [robot validation](companion-presentation/robot-look.TEST.md).
+
+The launcher controls `HOVEL_EMBEDDED`. When configured,
+`HOVEL_COMPANION_SAVE` must be absolute. Page messages cannot supply paths or shell commands.
+Native HTTP contract acceptance passed against the real contract-4 service;
+that does not prove JCEF visuals, embedded Overclock or provider execution.
+
 ## The parts
 
 | Part | File | Job |
@@ -500,7 +514,7 @@ token. The log lines are `latency endpoint_to_posted_ms` and
 ### `host.contract`
 
 `DesktopHostContract` answers the page's contract with `HovelContract.CURRENT`
-(3) and keeps the page's for its context. A page below contract 3
+(4) and keeps the page's for its context. A page below contract 3
 (`HovelContract.COMPANIONS_ONLY`, the contract's
 `HOVEL_CONTRACT_FEATURES.companionsOnly`) is from before step E: the handshake
 answers it `failed` with the update message (`BridgeUpdateRequiredException`),
@@ -541,8 +555,9 @@ field asks for an update instead of being skipped in silence.
 A memory job runs the server-built `input` exactly as given: no character
 section and no recalled memory. It runs on the job's `model` and `effort`,
 which the player chose in Hovel's memory settings (defaults: `runtime-default`
-model, `low` effort); see [desktop-execution.md](desktop-execution.md) for the
-Codex flags. It goes through `ExecutionCoordinator` on `memory/claim` and
+model, `low` effort). The argument builder is
+`companion/CodexCliProvider.kt`; see [execution and recovery](desktop-execution.md)
+for the journal lifecycle. It goes through `ExecutionCoordinator` on `memory/claim` and
 `memory/progress` with `jobId` (`HovelMemoryJobRemote`). A successful result
 over 65,536 characters is reported `failed` with its length, never cut short
 into broken JSON.
