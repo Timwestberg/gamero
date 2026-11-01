@@ -54,6 +54,10 @@ internal enum class NativeRoute(val method: String, val template: String) {
     /** `?cursor=` → `artifactTextPage`: a message input's whole text, page by page. */
     ARTIFACT_TEXT("GET", "artifacts/:artifactId/text"),
 
+    /** Ephemeral project image relay metadata and bounded chunks. */
+    IMAGE_RELAY_READ("GET", "image-relays/:requestId"),
+    IMAGE_RELAY_CHUNK("POST", "image-relays/:requestId/chunks"),
+
     /** Memory jobs. */
     MEMORY_CLAIM("POST", "memory/claim"),
     MEMORY_PROGRESS("POST", "memory/progress"),

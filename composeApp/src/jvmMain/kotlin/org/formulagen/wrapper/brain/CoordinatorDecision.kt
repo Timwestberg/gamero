@@ -37,10 +37,10 @@ internal enum class StepOutcome(val graded: BrainAttemptOutcome?) {
 @JsonClassDiscriminator("kind")
 internal sealed interface CoordinatorDecision {
     @Serializable @SerialName("answer")
-    data class Answer(val text: String) : CoordinatorDecision
+    data class Answer(val text: String, val reaction: String? = null) : CoordinatorDecision
 
     @Serializable @SerialName("ask")
-    data class Ask(val question: String) : CoordinatorDecision
+    data class Ask(val question: String, val choices: List<String>? = null) : CoordinatorDecision
 
     @Serializable @SerialName("delegate")
     data class Delegate(val specialistId: String, val task: String, val inputIds: List<String>) : CoordinatorDecision
@@ -92,8 +92,14 @@ internal fun parseDecision(text: String, allowed: Set<DecisionKind>): Coordinato
     fun ids(values: List<String>) = require(BrainRules.inputs(values))
     fun id(value: String) = require(BrainRules.uuid(value))
     when (decision) {
-        is CoordinatorDecision.Answer -> text(decision.text, BrainLimits.OUTPUT)
-        is CoordinatorDecision.Ask -> text(decision.question, BrainLimits.OUTPUT)
+        is CoordinatorDecision.Answer -> {
+            text(decision.text, BrainLimits.OUTPUT)
+            decision.reaction?.let { require(it in COORDINATOR_REACTIONS) }
+        }
+        is CoordinatorDecision.Ask -> {
+            text(decision.question, BrainLimits.OUTPUT)
+            BrainQuestion(decision.choices.orEmpty())
+        }
         is CoordinatorDecision.Delegate -> {
             id(decision.specialistId); text(decision.task, BrainLimits.STEP_INSTRUCTIONS); ids(decision.inputIds)
         }
@@ -129,3 +135,6 @@ internal fun allowedDecisions(run: RunRecord): Set<DecisionKind> = when (run.pha
  * delegate a new task, which opens a new thread. Nothing else, so a reply never steers a workflow.
  */
 internal val THREAD_REPLY_DECISIONS = setOf(DecisionKind.FORWARD, DecisionKind.ANSWER, DecisionKind.DELEGATE)
+
+/** Expressive acknowledgements; never an approval or an execution instruction. */
+internal val COORDINATOR_REACTIONS = setOf("👍", "❤️", "🎉", "🤔", "👀", "🙌", "💡", "✨", "😊", "🙏")

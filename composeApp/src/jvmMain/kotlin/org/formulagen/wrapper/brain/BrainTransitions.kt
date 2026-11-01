@@ -32,7 +32,8 @@ internal fun BrainRecord.withEntry(
     text: String,
     role: BrainRoleSnapshot? = null,
     activity: Activity? = null,
-) = copy(messages = (messages + BrainEntry(id, author, text.take(BrainLimits.OUTPUT), role, activity)).takeLast(BrainLimits.HISTORY))
+    question: BrainQuestion? = null,
+) = copy(messages = (messages + BrainEntry(id, author, text.take(BrainLimits.OUTPUT), role, activity, question)).takeLast(BrainLimits.HISTORY))
 
 private fun BrainRecord.withRun(run: RunRecord) = copy(run = run)
 private fun BrainRecord.requireRun() = checkNotNull(run)
@@ -153,7 +154,7 @@ internal fun BrainRecord.decided(decision: CoordinatorDecision, coordinator: Bra
             withEntry(newId(), BrainAuthor.COORDINATOR, decision.text, coordinator)
                 .withRun(run.copy(summary = run.summary.copy(state = BrainRunState.COMPLETED)))
         }
-        is CoordinatorDecision.Ask -> withEntry(newId(), BrainAuthor.COORDINATOR, decision.question, coordinator).copy(
+        is CoordinatorDecision.Ask -> withEntry(newId(), BrainAuthor.COORDINATOR, decision.question, coordinator, question = BrainQuestion(decision.choices.orEmpty())).copy(
             run = run.copy(summary = run.summary.copy(state = BrainRunState.AWAITING_INPUT)),
             waiting = BrainWaiting(BrainWaitingKind.INPUT, decision.question.take(BrainLimits.DESCRIPTION)),
         )

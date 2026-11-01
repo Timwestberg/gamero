@@ -47,6 +47,10 @@ internal interface ConversationApi {
 
     /** One page of an artifact's text, from character [cursor]. */
     fun artifactText(artifactId: String, cursor: Int): ArtifactTextPage
+
+    /** Ephemeral preview transport, never journaled as conversation output. */
+    fun imageWork(requestId: String): ImageRelayWork = throw UnsupportedOperationException()
+    fun imageChunk(requestId: String, chunk: JsonObject) { throw UnsupportedOperationException() }
 }
 
 /** [ConversationApi] over the host transport: each call is the route's payload, in the contract's form. */
@@ -87,6 +91,13 @@ internal class HttpConversationApi(private val exchange: NativeExchange, private
 
     override fun artifactText(artifactId: String, cursor: Int): ArtifactTextPage =
         fromWire(ArtifactTextPage.serializer(), send(NativeRoute.ARTIFACT_TEXT, NativeRoute.ARTIFACT_TEXT.path(artifactId, cursor = cursor), null))
+
+    override fun imageWork(requestId: String): ImageRelayWork =
+        fromWire(ImageRelayWork.serializer(), send(NativeRoute.IMAGE_RELAY_READ, NativeRoute.IMAGE_RELAY_READ.path(requestId), null))
+
+    override fun imageChunk(requestId: String, chunk: JsonObject) {
+        send(NativeRoute.IMAGE_RELAY_CHUNK, NativeRoute.IMAGE_RELAY_CHUNK.path(requestId), chunk)
+    }
 
     private fun send(route: NativeRoute, path: String, body: JsonObject?) = exchange.exchange(route.method, path, body)
 

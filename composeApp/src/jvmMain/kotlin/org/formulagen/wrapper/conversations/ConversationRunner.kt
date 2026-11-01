@@ -96,6 +96,7 @@ internal class ConversationRunner(
     private val now: () -> Long = System::nanoTime,
     /** Who hears each claimed message's replies on this Mac: voice, when it speaks them. */
     private val replies: ReplyListeners = ReplyListeners.NONE,
+    private val imageRequested: (String) -> Unit = {},
 ) : AutoCloseable {
     private val sessions = ConcurrentHashMap<String, Session>()
     private val slots = Semaphore(maxRunning, true)
@@ -207,6 +208,7 @@ internal class ConversationRunner(
     internal fun dispatch(event: HostStreamEvent) {
         if (closed.get()) return
         when (event) {
+            is HostStreamEvent.ImageRequested -> imageRequested(event.requestId)
             is HostStreamEvent.WorkAvailable -> session(event.conversationId).poke()
             is HostStreamEvent.StopRequested -> session(event.conversationId).stop()
             is HostStreamEvent.MessageCancelled -> sessions.values.forEach { it.cancel(event.messageId) }

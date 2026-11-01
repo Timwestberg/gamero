@@ -16,6 +16,21 @@ class CoordinatorReplyTest {
         assertEquals(CoordinatorDecision.Answer("Hi"), parseCoordinatorReply("{\"kind\":\"answer\",\"text\":\"Hi\"}", all))
     }
 
+    @Test fun reactionsAreMetadataAndDirectRepliesRemainCompatible() {
+        val raw = """{"kind":"answer","reaction":"🎉"}""" + "\nHappy to help."
+        assertEquals(CoordinatorDecision.Answer("Happy to help.", "🎉"), parseCoordinatorReply(raw, all))
+        assertEquals(CoordinatorDecision.Answer("Happy to help.", "🎉"), parseDirectCoordinatorReply(raw))
+        assertEquals(CoordinatorDecision.Answer("Plain answer"), parseDirectCoordinatorReply("Plain answer"))
+        assertFails { parseDirectCoordinatorReply("""{"kind":"answer","reaction":"invalid"}""" + "\nHi") }
+        val sent = mutableListOf<String>()
+        val stream = ReplyStream(headed = true, optionalHeader = true) { sent += it }
+        stream.partial(raw)
+        assertEquals(listOf("Happy to help."), sent)
+        val plain = ReplyStream(headed = true, optionalHeader = true) { sent += it }
+        plain.partial("Plain answer")
+        assertEquals(listOf("Happy to help.", "Plain answer"), sent)
+    }
+
     @Test fun anAnswerNeedsItsTextWithinTheMessageLimit() {
         assertFails { parseCoordinatorReply("{\"kind\":\"answer\"}", all) }
         assertFails { parseCoordinatorReply("{\"kind\":\"answer\"}\n   \n", all) }

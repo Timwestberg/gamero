@@ -82,8 +82,9 @@ internal class ConversationHost(
             val publisher = ProjectFolderPublisher(folders, api, registration.ownerId, registration.id, engine::readableBy)
             val directory = HostDirectory(providers, registration.id, offered,
                 working.intersect(workRuntimes.map { it.id }.toSet()), connection.features)
+            val images = ProjectImageRelay(api, folders, registration.ownerId, registration.id).also { owned += it }
             val runner = ConversationRunner(api, store, engine, approvals, folders, publisher, directory::heartbeat, connection.heartbeat,
-                connection.status, replies = voice ?: ReplyListeners.NONE)
+                connection.status, replies = voice ?: ReplyListeners.NONE, imageRequested = images::request)
             owned += runner
             val onThisMac = ProjectsOnThisMac(api, folders, registration.ownerId, registration.id, publishing)
             running = Running(registration.ownerId, publisher, engine::readableBy, onThisMac::isOnThisMac)

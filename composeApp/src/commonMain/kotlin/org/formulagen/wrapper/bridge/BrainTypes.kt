@@ -267,6 +267,16 @@ enum class BrainAuthor {
     @SerialName("system") SYSTEM,
 }
 
+/** Explicit choices for an ordinary coordinator question, never approval options. */
+@Serializable
+data class BrainQuestion(val choices: List<String> = emptyList()) {
+    init {
+        require(choices.size <= 4)
+        require(choices.all { it.isNotBlank() && it.length <= 240 })
+        require(choices.map { it.trim() }.distinct().size == choices.size)
+    }
+}
+
 /** One conversation entry. [role] is the role as it was when it wrote the entry, so renaming it later rewrites nothing. */
 @Serializable
 data class BrainEntry(
@@ -275,6 +285,7 @@ data class BrainEntry(
     val text: String,
     val role: BrainRoleSnapshot? = null,
     val activity: Activity? = null,
+    val question: BrainQuestion? = null,
 )
 
 /**

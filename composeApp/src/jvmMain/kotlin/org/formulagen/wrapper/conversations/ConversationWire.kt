@@ -9,6 +9,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import org.formulagen.wrapper.conversation.ActivityStep
+import org.formulagen.wrapper.bridge.BrainQuestion
 import org.formulagen.wrapper.bridge.BrainAttemptOutcome
 import org.formulagen.wrapper.bridge.BrainAttemptState
 import org.formulagen.wrapper.bridge.BrainDocument
@@ -94,6 +95,7 @@ internal data class ConversationMessage(
     val state: MessageState? = null,
     val text: String,
     val threadId: String?,
+    val question: BrainQuestion? = null,
 )
 
 /** `artifactInput`: a text a sent message attaches. A heard voice turn attaches none. */
@@ -115,8 +117,10 @@ internal data class MessageAppend(
     val note: CoordinatorNote? = null,
     val text: String,
     val threadId: String?,
+    val question: BrainQuestion? = null,
 ) {
     init {
+        require(question == null || (author == MessageAuthor.COORDINATOR && threadId == null && note == null))
         require(author != MessageAuthor.USER) { "The Mac never writes the person's messages" }
         require(author != MessageAuthor.SPECIALIST || threadId != null) { "A specialist writes only in its thread" }
         require(note == null || (author == MessageAuthor.COORDINATOR && threadId != null)) { "Only the coordinator notes, in a thread" }
@@ -246,6 +250,10 @@ internal sealed interface ApprovalOutcome {
 @Serializable
 @JsonClassDiscriminator("kind")
 internal sealed interface MessageCheckpoint {
+    /** React to the user message this claim is answering, never an arbitrary message. */
+    @Serializable @SerialName("message.reacted")
+    data class MessageReacted(val emoji: String) : MessageCheckpoint
+
     @Serializable @SerialName("thread.upserted")
     data class ThreadUpserted(val thread: ConversationThread) : MessageCheckpoint
 
@@ -289,6 +297,9 @@ internal data class MessageProgress(val claimId: String, val claimedMessageId: S
 @Serializable
 @JsonClassDiscriminator("type")
 internal sealed interface HostStreamEvent {
+    @Serializable @SerialName("artifact.image.requested")
+    data class ImageRequested(val requestId: String) : HostStreamEvent
+
     @Serializable @SerialName("work.available")
     data class WorkAvailable(val conversationId: String) : HostStreamEvent
 
@@ -356,3 +367,7 @@ internal data class ProjectFoldersSave(val expectedRevision: Long, val folders: 
 /** `artifactTextPage`: one page of an artifact's text, from the requested cursor; [nextCursor] is null at the end. */
 @Serializable
 internal data class ArtifactTextPage(val nextCursor: Int?, val text: String)
+
+/** Expiring metadata for an authenticated project-image request. */
+@Serializable
+internal data class ImageRelayWork(val projectId: String, val path: String, val expiresAt: String)

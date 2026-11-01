@@ -93,6 +93,33 @@ class CoordinatorEngineTest {
         }
     }
 
+    @Test fun aQuestionKeepsItsChoicesInStorageAndTheCheckpoint() {
+        val fixture = Fixture(brain("Reviewer" to MemberMode.TALK))
+        fixture.decide = { """{"kind":"ask","question":"How much detail?","choices":["Focused","Detailed"]}""" }
+        assertEquals(MessageState.ANSWERED, fixture.send("Review the UX"))
+        val question = fixture.server.appended().single { it.question != null }
+        assertEquals(listOf("Focused", "Detailed"), question.question?.choices)
+        assertEquals(question.question, fixture.record().brain.messages.last().question)
+        assertEquals(BrainRunState.AWAITING_INPUT, fixture.record().brain.run?.summary?.state)
+        fixture.decide = { "{\"kind\":\"answer\"}\nI will keep it focused." }
+        assertEquals(MessageState.ANSWERED, fixture.send("Focused"))
+        assertEquals(BrainRunState.COMPLETED, fixture.record().brain.run?.summary?.state)
+    }
+
+    @Test fun coordinatorReactionsWorkForDirectAndRoutedAnswers() {
+        for (document in listOf(brain(), brain("Reviewer" to MemberMode.TALK))) {
+            val fixture = Fixture(document)
+            val response = """{"kind":"answer","reaction":"🎉"}""" + "\nGlad it worked!"
+            fixture.decide = { response }
+            fixture.chat.reply = { response }
+            assertEquals(MessageState.ANSWERED, fixture.send("It works!"))
+            assertEquals(listOf(MessageCheckpoint.MessageReacted("🎉")),
+                fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.MessageReacted>())
+            assertEquals("Glad it worked!", fixture.server.appended().last().text)
+            assertFalse(fixture.server.deltas.any { "reaction" in it.text })
+        }
+    }
+
     @Test fun aBrainWithoutSpecialistsStreamsAPlainAnswer() {
         val fixture = Fixture(brain())
         fixture.decide = { "unused" }

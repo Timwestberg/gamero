@@ -5,6 +5,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import org.formulagen.wrapper.bridge.FolderRole
+import org.formulagen.wrapper.bridge.ProjectImageArgs
+import org.formulagen.wrapper.bridge.ProjectImageResult
 import org.formulagen.wrapper.bridge.ProjectCapability
 import org.formulagen.wrapper.bridge.ProjectChooseFolderArgs
 import org.formulagen.wrapper.bridge.ProjectFolderStatus
@@ -34,6 +36,15 @@ internal class DesktopProjects(
     private val owns: (accountId: String, projectId: String) -> Boolean? = { _, _ -> null },
 ) : ProjectCapability {
     private val picking = AtomicBoolean()
+
+    override suspend fun image(args: ProjectImageArgs): ProjectImageResult = runInterruptible(Dispatchers.IO) {
+        val accountId = registered()
+        check(owns(accountId, args.projectId) == true) { "Connect to verify this project belongs to this Mac" }
+        val root = store.folders(accountId, args.projectId).singleOrNull { it.role == FolderRole.WORKING }?.path
+            ?: error("This project has no working folder")
+        readProjectImage(root, args.path)
+    }
+
 
     override suspend fun chooseFolder(args: ProjectChooseFolderArgs): ProjectFoldersStatus {
         val accountId = registered()

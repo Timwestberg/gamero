@@ -103,16 +103,19 @@ internal class CoordinatorEngine(
         /** A brain with no specialists: the coordinator answers as a plain, streaming talk turn. */
         fun direct(): MessageState {
             val role = turns.resolved(call, coordinatorRole(), coordinator = true)
-            val persona = Persona.role(companion, role.name, roleInstructions(role), false)
+            val persona = Persona.role(companion, role.name, roleInstructions(role) + "\n" + COORDINATOR_REACTION_INSTRUCTIONS, false)
             val key = contextKey(role)
             val conversation = record.brain.coordinatorContexts[key]?.takeIf { it.personaHash == persona.hash }
             val replyId = uuid()
             val threadId = message.threadId
             val recent = if (conversation != null) emptyList() else claim.history.filter { it.id != message.id && it.threadId == null }
                 .takeLast(10).map { it.author.name.lowercase() to it.text }
-            val stream = ReplyStream(headed = false) { out.delta(replyId, threadId, it) }
-            val text = turns.talk(call, role, persona, directInput(message.text, claim.recalledMemory, recent), conversation, key,
+            val stream = ReplyStream(headed = true, optionalHeader = true) { out.delta(replyId, threadId, it) }
+            val raw = turns.talk(call, role, persona, directInput(message.text, claim.recalledMemory, recent), conversation, key,
                 coordinator = true, stream = stream, opened = rememberCoordinator(key)).first.trim().take(CompanionLimits.MESSAGE)
+            val answer = parseDirectCoordinatorReply(raw)
+            val text = answer.text
+            answer.reaction?.let { emit(MessageCheckpoint.MessageReacted(it)) }
             check(text.isNotEmpty()) { "The coordinator answered nothing" }
             append(MessageAuthor.COORDINATOR, replyId, text, threadId, threadId?.let { CoordinatorNote(NoteKind.ANSWERED, it) })
             return MessageState.ANSWERED
@@ -255,7 +258,7 @@ internal class CoordinatorEngine(
             val (output, activity) = specialist(threadId, role, input, entryId)
             val source = BrainSource(BrainSourceKind.ATTEMPT, attemptId = attempt.id)
             val artifact = store.artifact(conversationId, step?.name ?: role.name, source, output.toByteArray(), "text/markdown")
-            emit(MessageCheckpoint.ArtifactStored(ref(artifact), output.take(BrainLimits.OUTPUT)))
+            emit(MessageCheckpoint.ArtifactStored(ref(artifact), sharedArtifactText(output)))
             change(entries = mapOf(entryId to threadId), adjust = { record ->
                 val thread = record.threads.getValue(threadId).withOutput(artifact, shareableActivity(activity, local))
                 record.copy(threads = record.threads + (threadId to thread))
@@ -377,7 +380,7 @@ internal class CoordinatorEngine(
             }
             val source = BrainSource(BrainSourceKind.ATTEMPT, attemptId = threadId)
             val artifact = store.artifact(conversationId, role.name, source, output.toByteArray(), "text/markdown")
-            emit(MessageCheckpoint.ArtifactStored(ref(artifact), output.take(BrainLimits.OUTPUT)))
+            emit(MessageCheckpoint.ArtifactStored(ref(artifact), sharedArtifactText(output)))
             putThread(threadId, running.withOutput(artifact, shareableActivity(activity, local))
                 .copy(state = BrainAttemptState.COMPLETED, revision = running.revision + 1))
             append(MessageAuthor.SPECIALIST, entryId, output.ifEmpty { "(no reply)" }, threadId)
@@ -404,7 +407,10 @@ internal class CoordinatorEngine(
                 val text = turns.talk(call, coordinator, persona, input + if (attempt == 1) REPLY_REPAIR else "", conversation, key,
                     coordinator = true, stream = stream, opened = rememberCoordinator(key)).first
                 val decision = runCatching { parseCoordinatorReply(text, allowed) }.getOrNull()?.takeIf { fits(it, threadId) }
-                if (decision != null) return decision to replyId
+                if (decision != null) {
+                    (decision as? CoordinatorDecision.Answer)?.reaction?.let { emit(MessageCheckpoint.MessageReacted(it)) }
+                    return decision to replyId
+                }
             }
             return null
         }
@@ -467,7 +473,7 @@ internal class CoordinatorEngine(
                 }
                 val threadId = if (author == MessageAuthor.SYSTEM) null else entries[entry.id]
                 val text = entry.text.take(CompanionLimits.MESSAGE)
-                return MessageCheckpoint.MessageAppended(MessageAppend(author, entry.id, null, text, threadId))
+                return MessageCheckpoint.MessageAppended(MessageAppend(author, entry.id, null, text, threadId, entry.question))
             }
             val (inThreads, main) = added.partition { entries[it.id] != null && it.author != BrainAuthor.SYSTEM }
             val threads = after.threads.filter { (id, thread) -> thread != before.threads[id] }
@@ -564,7 +570,7 @@ internal class CoordinatorEngine(
                     MessageAuthor.SYSTEM -> BrainAuthor.SYSTEM
                     MessageAuthor.SPECIALIST -> return@mapNotNull null
                 }
-                BrainEntry(entry.id, author, entry.text.take(BrainLimits.OUTPUT))
+                BrainEntry(entry.id, author, entry.text.take(BrainLimits.OUTPUT), question = entry.question)
             }.takeLast(BrainLimits.HISTORY)
             update { it.copy(brain = it.brain.copy(messages = entries)) }
         }
@@ -646,4 +652,10 @@ internal class CoordinatorEngine(
 
         fun uuid() = UUID.randomUUID().toString()
     }
+}
+
+/** Keep synced text bounded while making any omitted tail explicit to the viewer. */
+internal fun sharedArtifactText(text: String): String {
+    val notice = "\n\n[Output shortened for sync. The complete output remains on the project Mac.]"
+    return if (text.length <= BrainLimits.OUTPUT) text else text.take(BrainLimits.OUTPUT - notice.length) + notice
 }
