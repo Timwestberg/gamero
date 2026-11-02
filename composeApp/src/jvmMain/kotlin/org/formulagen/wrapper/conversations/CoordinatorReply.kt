@@ -22,7 +22,8 @@ import org.formulagen.wrapper.brain.parseDecision
  * Any other decision is its header alone. Throws when the reply fits none of these.
  */
 internal fun parseCoordinatorReply(text: String, allowed: Set<DecisionKind>): CoordinatorDecision {
-    val (header, body) = splitHeader(text)
+    val (rawHeader, body) = splitHeader(text)
+    val header = understandingHeader(rawHeader).first
     if (isAnswerHeader(header)) {
         require(DecisionKind.ANSWER in allowed)
         val answer = body.trim()
@@ -54,7 +55,7 @@ internal fun isAnswerHeader(header: String): Boolean {
  * When a partial no longer extends what was sent (a runtime restarted its text), streaming stops for
  * this reply; its `message.appended` checkpoint is the truth either way.
  */
-internal class ReplyStream(private val headed: Boolean, private val allowAnswer: Boolean = true, private val optionalHeader: Boolean = false, private val send: (String) -> Unit) {
+internal class ReplyStream(private val headed: Boolean, private val allowAnswer: Boolean = true, private val optionalHeader: Boolean = false, private val acceptHeader: (String) -> Boolean = { true }, private val onUnderstanding: (SharedUnderstanding) -> Unit = {}, private val onProgress: (ConversationCommunication.Progress) -> Unit = {}, private val send: (String) -> Unit) {
     private var mode = if (headed) Mode.WAITING else Mode.STREAMING
     private var start = 0
     private var sent = ""
@@ -69,7 +70,11 @@ internal class ReplyStream(private val headed: Boolean, private val allowAnswer:
         if (mode == Mode.WAITING) {
             val newline = text.indexOf('\n')
             if (newline < 0) return
-            mode = if (allowAnswer && isAnswerHeader(text.substring(0, newline))) Mode.STREAMING else Mode.SILENT
+            if (!acceptHeader(text.substring(0, newline))) { mode = Mode.SILENT; return }
+            val header = runCatching { understandingHeader(text.substring(0, newline)) }.getOrNull()
+            header?.second?.let(onUnderstanding)
+            if (header != null) (communicationHeader(text.substring(0, newline)) as? ConversationCommunication.Progress)?.let(onProgress)
+            mode = if (allowAnswer && header != null && isAnswerHeader(header.first)) Mode.STREAMING else Mode.SILENT
             start = newline + 1
         }
         if (mode != Mode.STREAMING) return

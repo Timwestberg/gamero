@@ -96,6 +96,9 @@ internal data class ConversationMessage(
     val text: String,
     val threadId: String?,
     val question: BrainQuestion? = null,
+    val understanding: SharedUnderstanding? = null,
+    val communication: ConversationCommunication? = null,
+    val direction: MessageDirection? = null,
 )
 
 /** `artifactInput`: a text a sent message attaches. A heard voice turn attaches none. */
@@ -107,7 +110,13 @@ internal data class ArtifactInput(val id: String, val mediaType: String, val tex
  * conversation. Its `id` is the client's; a retry with the same id must be deep-equal.
  */
 @Serializable
-internal data class MessageSend(val id: String, val inputs: List<ArtifactInput>, val text: String, val threadId: String?)
+internal data class MessageSend(val id: String, val inputs: List<ArtifactInput>, val text: String, val threadId: String?, val direction: MessageDirection? = null)
+
+@Serializable
+internal data class MessageDirection(val targetMessageId: String)
+
+@Serializable
+internal data class PendingDirection(val pending: Boolean)
 
 /** `messageAppend`: a reply or note the Mac appends; never a user message. */
 @Serializable
@@ -118,8 +127,11 @@ internal data class MessageAppend(
     val text: String,
     val threadId: String?,
     val question: BrainQuestion? = null,
+    val understanding: SharedUnderstanding? = null,
+    val communication: ConversationCommunication? = null,
 ) {
     init {
+        require(understanding == null || (author == MessageAuthor.COORDINATOR && threadId == null && note == null && question == null))
         require(question == null || (author == MessageAuthor.COORDINATOR && threadId == null && note == null))
         require(author != MessageAuthor.USER) { "The Mac never writes the person's messages" }
         require(author != MessageAuthor.SPECIALIST || threadId != null) { "A specialist writes only in its thread" }

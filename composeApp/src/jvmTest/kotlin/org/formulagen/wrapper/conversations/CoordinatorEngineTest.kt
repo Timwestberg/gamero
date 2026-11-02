@@ -120,6 +120,105 @@ class CoordinatorEngineTest {
         }
     }
 
+    @Test fun understandingIsPublishedOnceAndBeforeTheNormalReply() {
+        for (document in listOf(brain(), brain("Reviewer" to MemberMode.TALK))) {
+            val fixture = Fixture(document)
+            val response = """{"kind":"answer","understanding":{"goal":"Readable UI","keep":"Drafts","assumption":"Main view"}}""" + "\nStarting now."
+            fixture.decide = { response }
+            fixture.chat.reply = { response }
+            assertEquals(MessageState.ANSWERED, fixture.send("Improve the mobile layout"))
+            val messages = fixture.server.appended()
+            assertEquals(1, messages.count { it.understanding != null })
+            assertEquals("Readable UI", messages.first().understanding?.goal)
+            assertEquals("Starting now.", messages.last().text)
+        }
+    }
+
+    @Test fun understandingReachesTheConversationBeforeSpecialistDispatch() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        fixture.delegateThenAnswer()
+        val decide = fixture.decide
+        fixture.decide = { turn -> decide(turn)?.let { reply ->
+            if (reply.contains("\"kind\":\"delegate\"")) reply.replaceFirst("{", """{"understanding":{"goal":"Add sign-in","keep":"Existing routes","assumption":"Use the current form"},""") else reply
+        } }
+        fixture.worker.reply = {
+            assertEquals("Add sign-in", fixture.server.appended().first().understanding?.goal)
+            "Implemented sign-in."
+        }
+        assertEquals(MessageState.ANSWERED, fixture.send("Add sign-in"))
+        assertEquals(1, fixture.server.appended().count { it.understanding != null })
+    }
+
+    @Test fun correctionReportsBindToTheClaimAndHandoffsKeepUnrunChecksExplicit() {
+        val fixture = Fixture(brain())
+        fixture.chat.reply = { """{"kind":"answer","understanding":{"goal":"Readable UI","keep":"Drafts","assumption":"Main only"},"communication":{"kind":"correction","status":"applied","change":"Main only","earlierWork":"No edits need reverting"}}
+I will focus on the main view.""" }
+        val messageId = id()
+        assertEquals(MessageState.ANSWERED, fixture.send("Update shared understanding (message old)\nChange Assumption to: Main only", messageId = messageId))
+        val report = fixture.server.appended().single { it.communication != null }
+        assertEquals(messageId, (report.communication as ConversationCommunication.Correction).correctionMessageId)
+        assertEquals("Main only", report.understanding?.assumption)
+        fixture.chat.reply = { """{"kind":"answer","communication":{"kind":"handoff","changed":"Layout","checks":[{"label":"Phone","result":"not-run","evidence":"Needs a physical device"}],"attention":"Check readability"}}
+Ready for review.""" }
+        assertEquals(MessageState.ANSWERED, fixture.send("Finish up"))
+        val handoff = fixture.server.appended().mapNotNull { it.communication as? ConversationCommunication.Handoff }.single()
+        assertEquals("not-run", handoff.checks.single().result)
+    }
+
+    @Test fun missingDirectionReportRepairsBeforeDispatchAndNeverClaimsItApplied() {
+        val fixture = Fixture(brain("Reviewer" to MemberMode.TALK))
+        fixture.delegateThenAnswer()
+        val delegate = fixture.decide
+        var attempts = 0
+        fixture.decide = { turn ->
+            if (++attempts == 1) delegate(turn) else """{"kind":"answer","communication":{"kind":"direction","status":"applied","change":"Mobile only","earlierWork":"Keep prior review"}}
+Mobile only from here."""
+        }
+        val claim = fixture.claim("Mobile only")
+        assertEquals(MessageState.ANSWERED, fixture.run(claim.copy(message = claim.message.copy(direction = MessageDirection(id())))))
+        assertEquals(2, fixture.coordinatorTurns().size)
+        assertTrue(fixture.record().threads.isEmpty(), "unacknowledged delegation must not run")
+        assertEquals(1, fixture.server.appended().count { it.communication is ConversationCommunication.Direction })
+        val direct = Fixture(brain())
+        direct.chat.reply = { "Okay, mobile only." }
+        val plain = direct.claim("Mobile only")
+        assertEquals(MessageState.FAILED, direct.run(plain.copy(message = plain.message.copy(direction = MessageDirection(id())))))
+        assertFalse(direct.server.appended().any { it.communication is ConversationCommunication.Direction })
+    }
+
+    @Test fun aDirectionArrivingDuringASpecialistKeepsItsResultAndYieldsBeforeAnotherDecision() {
+        val fixture = Fixture(brain("Reviewer" to MemberMode.TALK))
+        fixture.delegateThenAnswer()
+        fixture.chat.reply = { turn ->
+            if (Fixture.isCoordinator(turn)) fixture.decide(turn) else {
+                fixture.server.directionPending = { true }
+                "Mobile review complete. Keep the composer changes."
+            }
+        }
+        assertEquals(MessageState.ANSWERED, fixture.send("Review mobile layout"))
+        assertEquals(1, fixture.coordinatorTurns().size)
+        assertTrue(fixture.server.appended().any { it.text.contains("Mobile review complete") })
+        assertTrue(fixture.record().threads.values.any { it.state == BrainAttemptState.COMPLETED })
+    }
+
+    @Test fun aDirectionYieldsBeforeTheNextSpecialistAndBindsItsAcknowledgement() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        fixture.delegateThenAnswer()
+        fixture.server.directionPending = { fixture.coordinatorTurns().isNotEmpty() }
+        assertEquals(MessageState.ANSWERED, fixture.send("Improve the layout"))
+        assertTrue(fixture.worker.requests.isEmpty(), "no specialist starts after a direction is waiting")
+        assertEquals(BrainRunState.CANCELLED, fixture.record().brain.run?.summary?.state)
+        assertTrue(fixture.server.appended().any { it.text.contains("Reading your new direction") })
+        val direct = Fixture(brain())
+        direct.chat.reply = { """{"kind":"answer","communication":{"kind":"direction","status":"applied","change":"Mobile first","earlierWork":"Keep the composer edits"}}
+Mobile first from here.""" }
+        val claim = direct.claim("Mobile first")
+        assertEquals(MessageState.ANSWERED, direct.run(claim.copy(message = claim.message.copy(direction = MessageDirection(id())))))
+        val report = direct.server.appended().mapNotNull { it.communication as? ConversationCommunication.Direction }.single()
+        assertEquals(claim.message.id, report.directionMessageId)
+        assertEquals("Mobile first", report.change)
+    }
+
     @Test fun aBrainWithoutSpecialistsStreamsAPlainAnswer() {
         val fixture = Fixture(brain())
         fixture.decide = { "unused" }
@@ -161,6 +260,23 @@ class CoordinatorEngineTest {
         val stored = fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.ArtifactStored>().single()
         assertEquals("Implemented sign-in.", stored.text)
         assertEquals(listOf(stored.artifact), finished.outputs)
+        val origin = fixture.record().outputOrigins.getValue(stored.artifact.id)
+        assertEquals(fixture.talk.projectId, origin.projectId)
+        assertEquals(fixture.record().threadContexts.getValue(threadId).id, origin.sessionId)
+        val open = ProjectOpenOutputArgs(fixture.talk.projectId, fixture.talk.id, stored.artifact.id)
+        var launches = 0
+        val launcher: (OutputOrigin) -> Boolean = { saved -> assertEquals(origin, saved); launches++; true }
+        assertEquals("opened", openProviderOutput(fixture.record(), open, launcher).status)
+        assertEquals(1, launches)
+        assertEquals("unavailable", openProviderOutput(fixture.record(), open.copy(projectId = id()), launcher).status)
+        assertEquals("unavailable", openProviderOutput(fixture.record().copy(outputOrigins = emptyMap()), open, launcher).status)
+        val active = fixture.record().let { it.copy(threads = it.threads + (threadId to it.threads.getValue(threadId).copy(state = BrainAttemptState.RUNNING))) }
+        assertEquals("busy", openProviderOutput(active, open, launcher).status)
+        assertEquals(1, launches, "foreign, legacy and active outputs never launch")
+        assertEquals("unavailable", openProviderOutput(fixture.record(), open) { false }.status)
+        val rotated = fixture.record().copy(threadContexts = emptyMap())
+        assertEquals("opened", openProviderOutput(rotated, open, launcher).status)
+
         val specialist = appended.single { it.author == MessageAuthor.SPECIALIST }
         assertEquals(MessageAppend(MessageAuthor.SPECIALIST, specialist.id, null, "Implemented sign-in.", threadId), specialist)
         val streamed = fixture.server.deltas.filter { it.messageId == specialist.id }

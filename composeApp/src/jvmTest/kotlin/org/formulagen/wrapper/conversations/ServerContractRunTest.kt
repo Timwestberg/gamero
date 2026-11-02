@@ -150,6 +150,7 @@ class ServerContractRunTest {
             val answer: Answer = when (route) {
                 "heartbeat" -> { expect("heartbeatInput"); Answer.Data(buildJsonObject {}) }
                 "conversationClaim" -> { expect("claimRequest"); claim(body ?: buildJsonObject {}, claims.getAndIncrement()) }
+                "messageDirection" -> { expect("claimRequest"); Answer.Data(buildJsonObject { put("pending", false) }) }
                 "messageProgress" -> {
                     expect("messageProgress")
                     Answer.Data(JsonObject(message + mapOf("state" to body!!.getValue("state"),
@@ -233,7 +234,7 @@ class ServerContractRunTest {
                 mac.runner.close()
                 assertEquals(emptyList(), served.violations)
                 assertTrue(served.called.containsAll(setOf("heartbeat", "stream", "conversationClaim", "messageProgress", "messageCheckpoint",
-                    "messageDelta", "artifactText", "projectFolders", "messageSend")), "routes called: ${served.called}")
+                    "messageDelta", "messageDirection", "artifactText", "projectFolders", "messageSend")), "routes called: ${served.called}")
                 val reply = served.bodies("messageCheckpoint").map { it.getValue("checkpoint").jsonObject }
                     .last { it.getValue("kind").jsonPrimitive.content == "message.appended" }
                 assertEquals("Sign-in is on its way.", reply.getValue("message").jsonObject.getValue("text").jsonPrimitive.content)

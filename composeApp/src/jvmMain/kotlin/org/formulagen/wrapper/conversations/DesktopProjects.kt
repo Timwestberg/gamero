@@ -4,6 +4,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
+import org.formulagen.wrapper.bridge.ProjectOpenOutputArgs
+import org.formulagen.wrapper.bridge.ProjectOpenOutputResult
 import org.formulagen.wrapper.bridge.FolderRole
 import org.formulagen.wrapper.bridge.ProjectImageArgs
 import org.formulagen.wrapper.bridge.ProjectImageResult
@@ -34,7 +36,14 @@ internal class DesktopProjects(
     private val changed: (accountId: String, projectId: String) -> Unit,
     /** Whether the account says the project runs on this Mac; null when it cannot be asked now. */
     private val owns: (accountId: String, projectId: String) -> Boolean? = { _, _ -> null },
+    private val output: (String, ProjectOpenOutputArgs) -> ProjectOpenOutputResult = { _, _ -> ProjectOpenOutputResult("unavailable") },
 ) : ProjectCapability {
+    override suspend fun openOutput(args: ProjectOpenOutputArgs): ProjectOpenOutputResult = runInterruptible(Dispatchers.IO) {
+        val accountId = registered()
+        check(owns(accountId, args.projectId) == true) { "Connect to verify this project belongs to this Mac" }
+        output(accountId, args)
+    }
+
     private val picking = AtomicBoolean()
 
     override suspend fun image(args: ProjectImageArgs): ProjectImageResult = runInterruptible(Dispatchers.IO) {
