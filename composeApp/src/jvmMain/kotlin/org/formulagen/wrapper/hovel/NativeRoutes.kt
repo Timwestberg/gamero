@@ -16,6 +16,7 @@ internal enum class NativeRoute(val method: String, val template: String) {
     STREAM("GET", "stream"),
 
     /** `claimRequest` → `claimResponse`. */
+    MESSAGE_DIRECTION("POST", "messages/:messageId/direction"),
     CONVERSATION_CLAIM("POST", "conversations/claim"),
 
     /** `messageSend` → `conversationMessage`, queued: a heard voice turn, as the owner's message, in this Mac's projects only. */

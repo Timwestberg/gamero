@@ -29,6 +29,8 @@ internal val CONVERSATION_PROTOCOL = (listOf(
     "To answer the user, the header is {\"kind\":\"answer\"}; " +
         "write your answer for the user on the lines after it, as plain text of at most ${CompanionLimits.MESSAGE} characters.",
     COORDINATOR_REACTION_INSTRUCTIONS,
+    UNDERSTANDING_INSTRUCTIONS,
+    COMMUNICATION_INSTRUCTIONS,
     "Every other decision is its complete JSON object on the header line, with nothing after it.",
     "Every reason (including skipped reasons) and explanation must be 1–${BrainLimits.DESCRIPTION} characters. " +
         "Tasks must be 1–${BrainLimits.STEP_INSTRUCTIONS} characters.",

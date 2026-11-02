@@ -56,6 +56,8 @@ internal data class ConversationRecord(
      * at the start of the conversation's next run and before a message settles, under the claim of the time.
      */
     val outbox: List<MessageCheckpoint> = emptyList(),
+    /** Immutable provider provenance, device-only and absent on older outputs. */
+    val outputOrigins: Map<String, OutputOrigin> = emptyMap(),
 )
 
 /** A thread's visible state, as its next `thread.upserted` sends it. */

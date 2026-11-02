@@ -6,8 +6,8 @@ package org.formulagen.wrapper.bridge
  * in `host.contract`, so neither side shows what the other cannot render.
  */
 object HovelContract {
-    /** Contract 7 adds conversation questions and coordinator reactions. */
-    const val CURRENT = 7
+    /** Contract 10 adds direction instructions and acknowledgements. */
+    const val CURRENT = 10
 
     /** `HOVEL_FIRST_CONTRACT`: what a document naming nothing newer needs. */
     const val FIRST = 1
@@ -19,6 +19,9 @@ object HovelContract {
     val FEATURES: Map<String, Int> = mapOf(
         "companionsOnly" to 3,
         "conversationQuestions" to 7,
+        "sharedUnderstanding" to 8,
+        "communicationReports" to 9,
+        "conversationDirection" to 10,
         "specialistAdvice" to 5,
         "workflowEvidence" to 6,
         "messagePageThreads" to 2,

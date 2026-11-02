@@ -75,6 +75,8 @@ internal class Queued(val message: ConversationMessage, val build: (claimId: Str
  * by the test.
  */
 internal class FakeServer(val hostId: String = id()) : ConversationApi {
+    var directionPending: () -> Boolean = { false }
+    override fun direction(messageId: String, request: ClaimRequest): Boolean = directionPending()
     private val queues = ConcurrentHashMap<String, ArrayDeque<Queued>>()
     private val claims = HashMap<String, ClaimResult>()
     /** Each claimed message's current claim id. */

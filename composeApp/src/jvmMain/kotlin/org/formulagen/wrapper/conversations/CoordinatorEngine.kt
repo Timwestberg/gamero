@@ -63,6 +63,8 @@ internal class CoordinatorEngine(
         @Volatile var record = store.read(conversationId)
         val advice = validSpecialistAdvice(claim)?.takeUnless { record.brain.receipts.containsKey(message.id) || record.brain.run?.summary?.state?.terminal == false }
         var adviceUsed = false
+        private var understandingPublished = false
+        private val publishedReports = mutableSetOf<ConversationCommunication>()
 
 
         fun run(): MessageState {
@@ -103,20 +105,70 @@ internal class CoordinatorEngine(
 
         // ---- The three kinds of message ----------------------------------------------------------
 
+        /** Publish once per message, before any routed decision dispatch. */
+        fun publishUnderstanding(value: SharedUnderstanding) {
+            if (message.threadId != null || understandingPublished) return
+            understandingPublished = true
+            emit(MessageCheckpoint.MessageAppended(MessageAppend(MessageAuthor.COORDINATOR, uuid(),
+                text = value.text(), threadId = null, understanding = value)))
+        }
+
+        /** Bind reports to the current turn; applied-to-plan always carries the revised plan. */
+        fun publishReport(value: ConversationCommunication, understanding: SharedUnderstanding? = null) {
+            if (message.threadId != null || value in publishedReports) return
+            val report = if (value is ConversationCommunication.Correction) {
+                if (!message.text.startsWith("Update shared understanding (message ")) return
+                if (value.status == "applied" && understanding == null) return
+                value.copy(correctionMessageId = message.id)
+            } else if (value is ConversationCommunication.Direction) {
+                if (message.direction == null) return
+                value.copy(directionMessageId = message.id)
+            } else value
+            publishedReports.add(value)
+            emit(MessageCheckpoint.MessageAppended(MessageAppend(MessageAuthor.COORDINATOR, uuid(),
+                text = report.text(), threadId = null, understanding = understanding, communication = report)))
+        }
+
+        /** A direction needs its own explicit acknowledgement before any further decision is dispatched. */
+        fun acceptsDirectionHeader(header: String): Boolean = message.direction == null ||
+            publishedReports.any { it is ConversationCommunication.Direction } ||
+            runCatching { communicationHeader(header) is ConversationCommunication.Direction }.getOrDefault(false)
+
+        /** Final reports wait for a valid decision; handoffs are only allowed with an answer. */
+        fun publishReportHeader(text: String, answer: Boolean) {
+            val header = splitHeader(text).first
+            val report = communicationHeader(header) ?: return
+            if (report is ConversationCommunication.Handoff && !answer) return
+            val objectValue = brainJson.parseToJsonElement(header) as kotlinx.serialization.json.JsonObject
+            val understanding = if (report is ConversationCommunication.Correction) objectValue["understanding"]?.let {
+                brainJson.decodeFromJsonElement(SharedUnderstanding.serializer(), it)
+            } else null
+            publishReport(report, understanding)
+        }
+
         /** A brain with no specialists: the coordinator answers as a plain, streaming talk turn. */
         fun direct(): MessageState {
             val role = turns.resolved(call, coordinatorRole(), coordinator = true)
-            val persona = Persona.role(companion, role.name, roleInstructions(role) + "\n" + COORDINATOR_REACTION_INSTRUCTIONS, false)
+            val persona = Persona.role(companion, role.name, roleInstructions(role) + "\n" + COORDINATOR_REACTION_INSTRUCTIONS + "\n" + UNDERSTANDING_INSTRUCTIONS + "\n" + COMMUNICATION_INSTRUCTIONS, false)
             val key = contextKey(role)
             val conversation = record.brain.coordinatorContexts[key]?.takeIf { it.personaHash == persona.hash }
             val replyId = uuid()
             val threadId = message.threadId
             val recent = if (conversation != null) emptyList() else claim.history.filter { it.id != message.id && it.threadId == null }
                 .takeLast(10).map { it.author.name.lowercase() to it.text }
-            val stream = ReplyStream(headed = true, optionalHeader = true) { out.delta(replyId, threadId, it) }
-            val raw = turns.talk(call, role, persona, directInput(message.text, claim.recalledMemory, recent), conversation, key,
-                coordinator = true, stream = stream, opened = rememberCoordinator(key)).first.trim().take(CompanionLimits.MESSAGE)
+            var raw = ""
+            for (attempt in 0..1) {
+                val stream = ReplyStream(headed = true, optionalHeader = message.direction == null, acceptHeader = ::acceptsDirectionHeader, onUnderstanding = ::publishUnderstanding, onProgress = { publishReport(it) }) { out.delta(replyId, threadId, it) }
+                val context = record.brain.coordinatorContexts[key]?.takeIf { it.personaHash == persona.hash }
+                val input = directionInput() + if (attempt == 1) DIRECTION_REPORT_REQUIRED else ""
+                raw = turns.talk(call, role, persona, directInput(input, claim.recalledMemory, recent), context, key,
+                    coordinator = true, stream = stream, opened = rememberCoordinator(key)).first.trim().take(CompanionLimits.MESSAGE)
+                if (acceptsDirectionHeader(splitHeader(raw).first)) break
+            }
+            check(acceptsDirectionHeader(splitHeader(raw).first)) { "Direction acknowledgement was not provided" }
             val answer = parseDirectCoordinatorReply(raw)
+            publishReportHeader(raw, answer = true)
+            understandingHeader(splitHeader(raw).first).second?.let(::publishUnderstanding)
             val text = answer.text
             answer.reaction?.let { emit(MessageCheckpoint.MessageReacted(it)) }
             check(text.isNotEmpty()) { "The coordinator answered nothing" }
@@ -137,7 +189,7 @@ internal class CoordinatorEngine(
                 return loop()
             }
             val inputs = inputs()
-            val text = message.text.trimEcma()
+            val text = directionInput().trimEcma()
             val answering = existing?.takeIf { it.summary.state == BrainRunState.AWAITING_INPUT }
             if (answering == null && existing != null && !existing.summary.state.terminal) {
                 // A run nobody finished ends here, and its threads say so: a new request starts the next run.
@@ -196,10 +248,19 @@ internal class CoordinatorEngine(
 
         // ---- The run loop over the brain's transitions ------------------------------------------
 
+        /** Direction metadata identifies a new instruction without relying on a user-authored prefix. */
+        fun directionInput(): String = if (message.direction == null) message.text else
+            "Change direction for earlier work. Follow these instructions before further work. $DIRECTION_REPORT_REQUIRED\n${message.text}"
+
         /** Work the run until it waits or ends, then the state that settles this message. */
         fun loop(): MessageState {
             while (record.brain.run?.summary?.state?.working == true) {
                 call.live()
+                if (out.direction(conversationId)) {
+                    change { it.copy(run = checkNotNull(it.run).halted(BrainRunState.CANCELLED), waiting = null) }
+                    system("The current step has finished. Reading your new direction before starting more work.", null)
+                    return MessageState.ANSWERED
+                }
                 try {
                     if (record.brain.run?.phase == BrainPhase.EXECUTE) execute() else decideRun()
                 } catch (failure: ProviderFailure) {
@@ -279,6 +340,11 @@ internal class CoordinatorEngine(
             val (output, activity) = specialist(threadId, role, input, entryId)
             val source = BrainSource(BrainSourceKind.ATTEMPT, attemptId = attempt.id)
             val artifact = store.artifact(conversationId, step?.name ?: role.name, source, output.toByteArray(), "text/markdown")
+            update { saved ->
+                val context = saved.threadContexts[threadId]
+                if (context == null) saved else saved.copy(outputOrigins = saved.outputOrigins +
+                    (artifact.id to OutputOrigin(projectId, threadId, role.binding.runtimeId, context.id)))
+            }
             emit(MessageCheckpoint.ArtifactStored(ref(artifact), sharedArtifactText(output)))
             change(entries = mapOf(entryId to threadId), adjust = { record ->
                 val thread = record.threads.getValue(threadId).withOutput(artifact, shareableActivity(activity, local))
@@ -404,6 +470,11 @@ internal class CoordinatorEngine(
             }
             val source = BrainSource(BrainSourceKind.ATTEMPT, attemptId = threadId)
             val artifact = store.artifact(conversationId, role.name, source, output.toByteArray(), "text/markdown")
+            update { saved ->
+                val context = saved.threadContexts[threadId]
+                if (context == null) saved else saved.copy(outputOrigins = saved.outputOrigins +
+                    (artifact.id to OutputOrigin(projectId, threadId, role.binding.runtimeId, context.id)))
+            }
             emit(MessageCheckpoint.ArtifactStored(ref(artifact), sharedArtifactText(output)))
             putThread(threadId, running.withOutput(artifact, shareableActivity(activity, local))
                 .copy(state = BrainAttemptState.COMPLETED, revision = running.revision + 1))
@@ -426,12 +497,14 @@ internal class CoordinatorEngine(
             val input = request(allowed)
             repeat(2) { attempt ->
                 val replyId = uuid()
-                val stream = ReplyStream(headed = true, allowAnswer = DecisionKind.ANSWER in allowed) { out.delta(replyId, threadId, it) }
+                val stream = ReplyStream(headed = true, allowAnswer = DecisionKind.ANSWER in allowed, acceptHeader = ::acceptsDirectionHeader, onUnderstanding = ::publishUnderstanding, onProgress = { publishReport(it) }) { out.delta(replyId, threadId, it) }
                 val conversation = record.brain.coordinatorContexts[key]?.takeIf { it.personaHash == persona.hash }
-                val text = turns.talk(call, coordinator, persona, input + if (attempt == 1) REPLY_REPAIR else "", conversation, key,
+                val text = turns.talk(call, coordinator, persona, input + if (attempt == 1) REPLY_REPAIR + if (message.direction != null) DIRECTION_REPORT_REQUIRED else "" else "", conversation, key,
                     coordinator = true, stream = stream, opened = rememberCoordinator(key)).first
-                val decision = runCatching { parseCoordinatorReply(text, allowed) }.getOrNull()?.takeIf { fits(it, threadId) }
+                val decision = runCatching { parseCoordinatorReply(text, allowed) }.getOrNull()?.takeIf { fits(it, threadId) && acceptsDirectionHeader(splitHeader(text).first) }
                 if (decision != null) {
+                    publishReportHeader(text, answer = decision is CoordinatorDecision.Answer)
+                    understandingHeader(splitHeader(text).first).second?.let(::publishUnderstanding)
                     (decision as? CoordinatorDecision.Answer)?.reaction?.let { emit(MessageCheckpoint.MessageReacted(it)) }
                     return decision to replyId
                 }

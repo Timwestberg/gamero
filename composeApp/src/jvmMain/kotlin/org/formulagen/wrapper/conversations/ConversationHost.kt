@@ -50,6 +50,7 @@ internal class ConversationHost(
     /** The account the runner serves, how its folders reach the account, and whether a project is this Mac's. */
     private class Running(
         val accountId: String,
+        val store: ConversationStore,
         val publisher: ProjectFolderPublisher,
         val readableBy: () -> List<RuntimeId>,
         val owns: (projectId: String) -> Boolean?,
@@ -63,6 +64,10 @@ internal class ConversationHost(
             }
         },
         owns = { accountId, projectId -> running?.takeIf { it.accountId == accountId }?.owns?.invoke(projectId) },
+        output = { accountId, args ->
+            val current = checkNotNull(running?.takeIf { it.accountId == accountId }) { "The connected account changed; retry" }
+            openProviderOutput(current.store.read(args.conversationId), args)
+        },
     )
 
     /** Start the runner for [connection]'s account. Closing the answer stops it and its runtimes. */
@@ -87,7 +92,7 @@ internal class ConversationHost(
                 connection.status, replies = voice ?: ReplyListeners.NONE, imageRequested = images::request)
             owned += runner
             val onThisMac = ProjectsOnThisMac(api, folders, registration.ownerId, registration.id, publishing)
-            running = Running(registration.ownerId, publisher, engine::readableBy, onThisMac::isOnThisMac)
+            running = Running(registration.ownerId, store, publisher, engine::readableBy, onThisMac::isOnThisMac)
             runner.start()
             voice?.connected(heardTurns(api, runner))
             return AutoCloseable {

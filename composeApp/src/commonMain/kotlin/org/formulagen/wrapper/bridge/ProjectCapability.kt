@@ -11,6 +11,8 @@ import kotlin.time.Duration.Companion.minutes
  * bounded bytes without persisting a copy. Desktop only; the conversation runner implements this.
  */
 interface ProjectCapability {
+    /** Open a locally recorded provider session, never a command supplied by the page. */
+    suspend fun openOutput(args: ProjectOpenOutputArgs): ProjectOpenOutputResult = ProjectOpenOutputResult("unavailable")
     /** Read an explicitly requested image on this project's Mac, without copying or uploading it. */
     suspend fun image(args: ProjectImageArgs): ProjectImageResult = throw UnsupportedOperationException("Local image preview is unavailable")
     /** Opens the Mac's folder picker natively; the chosen folder joins the status, which is unchanged when cancelled. */
@@ -19,6 +21,11 @@ interface ProjectCapability {
     suspend fun forgetFolder(args: ProjectForgetFolderArgs): ProjectFoldersStatus
     suspend fun folderStatus(scope: ProjectScope): ProjectFoldersStatus
 }
+
+@Serializable
+data class ProjectOpenOutputArgs(val projectId: String, val conversationId: String, val artifactId: String)
+@Serializable
+data class ProjectOpenOutputResult(val status: String)
 
 @Serializable
 data class ProjectImageArgs(val projectId: String, val path: String)
@@ -133,6 +140,9 @@ data class ProjectFoldersStatus(val folders: List<ProjectFolderStatus>) {
 
 /** Mirrors event-contracts/host-bridge/project.ts. */
 object ProjectMethods {
+    val OPEN_OUTPUT = BridgeMethod("project.openOutput", ProjectOpenOutputArgs.serializer(), ProjectOpenOutputResult.serializer()) {
+        SharedRules.isRecordId(it.projectId) && SharedRules.isRecordId(it.conversationId) && SharedRules.isRecordId(it.artifactId)
+    }
     val IMAGE = BridgeMethod("project.image", ProjectImageArgs.serializer(), ProjectImageResult.serializer()) {
         SharedRules.isRecordId(it.projectId) && it.path.length in 1..4096
     }
@@ -150,6 +160,7 @@ object ProjectMethods {
     fun pack(project: Capability<ProjectCapability>): CapabilityPack = binder.pack(project)
 
     internal val binder = CapabilityBinder("project", listOf<CapabilityHandler<ProjectCapability>>(
+        OPEN_OUTPUT.handle { project, args -> project.openOutput(args) },
         IMAGE.handle { project, args -> project.image(args) },
         CHOOSE_FOLDER.handle { project, args -> project.chooseFolder(args) },
         FORGET_FOLDER.handle { project, args -> project.forgetFolder(args) },

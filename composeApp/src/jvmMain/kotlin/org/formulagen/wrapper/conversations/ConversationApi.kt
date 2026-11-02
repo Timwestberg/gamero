@@ -23,6 +23,9 @@ internal interface ConversationApi {
 
     fun claim(request: ClaimRequest): ClaimResponse
 
+    /** Whether a new direction is waiting at a safe step boundary. */
+    fun direction(messageId: String, request: ClaimRequest): Boolean = false
+
     /**
      * Sends a heard voice turn as the owner's message in [conversationId], which must be in this computer's
      * projects. Answers it as stored (queued), or null when this build cannot read the answer.
@@ -61,6 +64,9 @@ internal class HttpConversationApi(private val exchange: NativeExchange, private
 
     override fun claim(request: ClaimRequest): ClaimResponse = fromWire(ClaimResponse.serializer(),
         send(NativeRoute.CONVERSATION_CLAIM, NativeRoute.CONVERSATION_CLAIM.path(), wire(ClaimRequest.serializer(), request)))
+
+    override fun direction(messageId: String, request: ClaimRequest): Boolean = fromWire(PendingDirection.serializer(),
+        send(NativeRoute.MESSAGE_DIRECTION, NativeRoute.MESSAGE_DIRECTION.path(messageId), wire(ClaimRequest.serializer(), request))).pending
 
     override fun send(conversationId: String, request: MessageSend): ConversationMessage? {
         val data = send(NativeRoute.MESSAGE_SEND, NativeRoute.MESSAGE_SEND.path(conversationId), wire(MessageSend.serializer(), request))

@@ -39,6 +39,9 @@ internal class ClaimOutput(
     private val sequence = HashMap<String, Int>()
     private var flushing = false
 
+    /** Check a safe boundary and honor a Stop even when its stream event was lost. */
+    fun direction(conversationId: String): Boolean = stopAware { api.direction(messageId, ClaimRequest(claimId, conversationId)) }
+
     /** Store [checkpoint], retrying until it is stored. Throws when the claim is refused or the server stays unreachable. */
     fun checkpoint(checkpoint: MessageCheckpoint) {
         var wait = backoffMillis
