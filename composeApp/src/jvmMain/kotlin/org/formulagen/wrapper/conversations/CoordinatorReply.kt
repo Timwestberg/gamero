@@ -4,6 +4,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.formulagen.wrapper.bridge.CompanionLimits
 import org.formulagen.wrapper.bridge.brainJson
+import org.formulagen.wrapper.brain.COORDINATOR_REACTIONS
 import org.formulagen.wrapper.brain.CoordinatorDecision
 import org.formulagen.wrapper.brain.DecisionKind
 import org.formulagen.wrapper.brain.parseDecision
@@ -21,12 +22,14 @@ import org.formulagen.wrapper.brain.parseDecision
  * Any other decision is its header alone. Throws when the reply fits none of these.
  */
 internal fun parseCoordinatorReply(text: String, allowed: Set<DecisionKind>): CoordinatorDecision {
-    val (header, body) = splitHeader(text)
+    val (rawHeader, body) = splitHeader(text)
+    val header = understandingHeader(rawHeader).first
     if (isAnswerHeader(header)) {
         require(DecisionKind.ANSWER in allowed)
         val answer = body.trim()
         require(answer.isNotEmpty() && answer.length <= CompanionLimits.MESSAGE) { "An answer needs its text" }
-        return CoordinatorDecision.Answer(answer)
+        val value = brainJson.parseToJsonElement(header.trim()) as JsonObject
+        return CoordinatorDecision.Answer(answer, (value["reaction"] as? JsonPrimitive)?.content)
     }
     require(body.isBlank()) { "Only an answer has a body" }
     return parseDecision(header.trim(), allowed)
@@ -41,7 +44,9 @@ internal fun splitHeader(text: String): Pair<String, String> {
 /** Whether [header] is exactly `{"kind":"answer"}`, the header whose body streams. */
 internal fun isAnswerHeader(header: String): Boolean {
     val value = runCatching { brainJson.parseToJsonElement(header.trim()) }.getOrNull() as? JsonObject ?: return false
-    return value.keys == setOf("kind") && value["kind"] == JsonPrimitive("answer")
+    val reaction = value["reaction"]
+    return value.keys.all { it == "kind" || it == "reaction" } && value["kind"] == JsonPrimitive("answer") &&
+        (reaction == null || (reaction is JsonPrimitive && reaction.isString && reaction.content in COORDINATOR_REACTIONS))
 }
 
 /**
@@ -50,7 +55,7 @@ internal fun isAnswerHeader(header: String): Boolean {
  * When a partial no longer extends what was sent (a runtime restarted its text), streaming stops for
  * this reply; its `message.appended` checkpoint is the truth either way.
  */
-internal class ReplyStream(private val headed: Boolean, private val allowAnswer: Boolean = true, private val send: (String) -> Unit) {
+internal class ReplyStream(private val headed: Boolean, private val allowAnswer: Boolean = true, private val optionalHeader: Boolean = false, private val acceptHeader: (String) -> Boolean = { true }, private val onUnderstanding: (SharedUnderstanding) -> Unit = {}, private val onProgress: (ConversationCommunication.Progress) -> Unit = {}, private val send: (String) -> Unit) {
     private var mode = if (headed) Mode.WAITING else Mode.STREAMING
     private var start = 0
     private var sent = ""
@@ -59,10 +64,17 @@ internal class ReplyStream(private val headed: Boolean, private val allowAnswer:
 
     /** The reply so far. Sends what is new, if anything. */
     @Synchronized fun partial(text: String) {
+        if (mode == Mode.WAITING && optionalHeader && text.trimStart().isNotEmpty() && !text.trimStart().startsWith("{")) {
+            mode = Mode.STREAMING
+        }
         if (mode == Mode.WAITING) {
             val newline = text.indexOf('\n')
             if (newline < 0) return
-            mode = if (allowAnswer && isAnswerHeader(text.substring(0, newline))) Mode.STREAMING else Mode.SILENT
+            if (!acceptHeader(text.substring(0, newline))) { mode = Mode.SILENT; return }
+            val header = runCatching { understandingHeader(text.substring(0, newline)) }.getOrNull()
+            header?.second?.let(onUnderstanding)
+            if (header != null) (communicationHeader(text.substring(0, newline)) as? ConversationCommunication.Progress)?.let(onProgress)
+            mode = if (allowAnswer && header != null && isAnswerHeader(header.first)) Mode.STREAMING else Mode.SILENT
             start = newline + 1
         }
         if (mode != Mode.STREAMING) return
@@ -76,4 +88,12 @@ internal class ReplyStream(private val headed: Boolean, private val allowAnswer:
 
     /** Whether any text was streamed. */
     @get:Synchronized val streamed: Boolean get() = sent.isNotEmpty()
+}
+
+/** Direct talk remains plain text unless it deliberately uses an answer metadata header. */
+internal fun parseDirectCoordinatorReply(text: String): CoordinatorDecision.Answer {
+    val header = runCatching { brainJson.parseToJsonElement(splitHeader(text).first.trim()) }.getOrNull() as? JsonObject
+    return if (header?.get("kind") == JsonPrimitive("answer")) {
+        parseCoordinatorReply(text, setOf(DecisionKind.ANSWER)) as CoordinatorDecision.Answer
+    } else CoordinatorDecision.Answer(text.trim())
 }

@@ -7,7 +7,7 @@ import { fakeMicrophoneScript, launch, serve, voiceAssets, webRoot } from "./sup
 const ready = existsSync(path.join(voiceAssets, "hearing/encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx"));
 const oracle = JSON.parse(readFileSync(path.join(webRoot, "hearing/fixtures/hearing-oracle.json"), "utf8"));
 
-test("Chrome hears a spoken turn from the microphone and sends the finished text", { skip: ready ? false : "run node web/hearing/scripts/fetch-web-voice.mjs first", timeout: 300_000 }, async () => {
+test("Chrome hears a spoken turn from the microphone and finishes it with the recognized text", { skip: ready ? false : "run node web/hearing/scripts/fetch-web-voice.mjs first", timeout: 300_000 }, async () => {
   const server = await serve();
   const browser = await launch();
   const page = await browser.newPage();
@@ -17,7 +17,7 @@ test("Chrome hears a spoken turn from the microphone and sends the finished text
   });
   try {
     await page.addInitScript(fakeMicrophoneScript());
-    await page.goto(`http://127.0.0.1:${server.port}/catalog/index.html?host=1&voice=stub`);
+    await page.goto(`http://127.0.0.1:${server.port}/catalog/index.html?voice=stub`);
     await page.waitForFunction(() => window.__app);
     assert.match(await page.locator("#hearing-status").textContent(), /loads when you first talk/);
     assert.equal(await page.locator("#duplex").textContent(), "Full duplex");
@@ -32,15 +32,13 @@ test("Chrome hears a spoken turn from the microphone and sends the finished text
     const playStart = Date.now();
     const played = page.evaluate(() => window.__fakeMic.play("/hearing/fixtures/hearing/hello-there.wav")).catch(() => {});
     await page.waitForFunction(() => document.querySelector("#partial").textContent.includes("THERE"), null, { timeout: 30_000, polling: 50 });
-    await page.waitForFunction(() => window.__app.state().calls.some((call) => call[0] === "send"), null, { timeout: 30_000, polling: 20 });
+    await page.waitForFunction(() => window.__app.state().heard !== null, null, { timeout: 30_000, polling: 20 });
     const sentAt = Date.now();
     const state = await page.evaluate(() => window.__app.state());
-    const send = state.calls.find((call) => call[0] === "send");
-    assert.deepEqual(state.calls[0], ["hearing", "press"]);
     // Exact parity with sherpa is hearing-asr.test.js, on identical samples. Here the clip lands on
     // different 100 ms chunk boundaries each run (and may be resampled by the MediaStream path), so
     // the first vowel can go either way: HELLO or HULLO.
-    assert.match(send[1], /^H[EU]LLO THERE HOW ARE YOU TO DAY$/, `sherpa hears "${clip.final}"`);
+    assert.match(state.heard, /^H[EU]LLO THERE HOW ARE YOU TO DAY$/, `sherpa hears "${clip.final}"`);
     assert.equal(state.phase, "thinking");
     assert.deepEqual(posts, [], "nothing was posted");
     const report = await page.evaluate(() => window.__app.hearing.report());
@@ -55,7 +53,7 @@ test("Chrome hears a spoken turn from the microphone and sends the finished text
     const cached = await page.evaluate(() => window.__app.hearing.report());
     assert.ok(Object.values(cached.files).every((file) => file.source === "cache"), "a reload reads the hearing files from Cache Storage");
     assert.equal(cached.downloadedBytes, 0);
-    console.log(`HEARING_METRICS ${JSON.stringify({ sent: send[1], clickToReadyMs: readyAt - clicked, cachedClickToReadyMs: cachedReadyMs, speechEndToSendMs: Math.round(sentAt - playStart - speechEndMs), first: { downloadedBytes: report.downloadedBytes, sessionMs: report.sessionMs, warmupMs: report.warmupMs, readyMs: report.readyMs }, cached: { sessionMs: cached.sessionMs, warmupMs: cached.warmupMs, readyMs: cached.readyMs } })}`);
+    console.log(`HEARING_METRICS ${JSON.stringify({ sent: state.heard, clickToReadyMs: readyAt - clicked, cachedClickToReadyMs: cachedReadyMs, speechEndToSendMs: Math.round(sentAt - playStart - speechEndMs), first: { downloadedBytes: report.downloadedBytes, sessionMs: report.sessionMs, warmupMs: report.warmupMs, readyMs: report.readyMs }, cached: { sessionMs: cached.sessionMs, warmupMs: cached.warmupMs, readyMs: cached.readyMs } })}`);
   } finally {
     await browser.close();
     await server.close();
@@ -68,7 +66,7 @@ test("speaking over Ember's real voice barges in through the microphone and keep
   const page = await browser.newPage();
   try {
     await page.addInitScript(fakeMicrophoneScript());
-    await page.goto(`http://127.0.0.1:${server.port}/catalog/index.html?host=1`);
+    await page.goto(`http://127.0.0.1:${server.port}/catalog/index.html`);
     await page.waitForFunction(() => window.__app);
     await page.locator("#talk").click();
     await page.waitForFunction(() => window.__app.state().hearingStatus === "Ember can hear you." && /ready/.test(window.__app.state().voiceStatus), null, { timeout: 180_000 });
@@ -85,7 +83,7 @@ test("speaking over Ember's real voice barges in through the microphone and keep
     const flush = await page.evaluate(() => window.__app.voice.stats().flushes.at(-1));
     assert.ok(flush.heardAfterStop <= 2400, `heard ${flush.heardAfterStop} frames after the barge-in`);
     assert.ok(flush.dropped > 0, "the rest of her reply was dropped");
-    assert.equal(state.calls.some((call) => call[0] === "send"), false, "the barge-in itself is not a turn");
+    assert.equal(state.heard, null, "the barge-in itself is not a turn");
     console.log(`BARGE_METRICS ${JSON.stringify({ bargedAfterMs, heardAfterStop: flush.heardAfterStop })}`);
   } finally {
     await browser.close();

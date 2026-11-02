@@ -28,25 +28,19 @@ import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.RuntimeProviderId
 
 /**
- * What this computer's heartbeat reports: hovel-service's heartbeat ([features], and `providerState`) and
- * `computerHeartbeat` (each runtime's readiness and models, for Codex, Claude Code and Grok Build alike, and
- * their usage). Provider checks can start processes, so the directory is refreshed every [directoryEvery] and
+ * What this computer's heartbeat reports: hovel-service's heartbeat ([features], and `providerState` from the
+ * directory) and `computerHeartbeat` (each runtime's readiness and models, for Codex, Claude Code and Grok Build alike,
+ * and their usage). Provider checks can start processes, so the directory is refreshed every [directoryEvery] and
  * usage every [usageEvery]; heartbeats in between send the last reading.
- *
- * `providerState` is read only by hovel-service's task routing, so it is the task lane's own Codex readiness
- * ([taskProviderState]) and `unavailable` without a task lane: web Hovel never queues a task to a Mac that cannot
- * run it. Conversation routing reads each runtime's readiness from the directory.
  */
 internal class HostDirectory(
     private val providers: ProviderCapability,
-    private val profile: String,
     private val hostId: String,
     /** The runtimes this build offers; one gated off reads `unavailable`. */
     private val offered: Set<RuntimeId>,
     /** The runtimes that may work in a project folder here. */
     private val working: Set<RuntimeId>,
     private val features: List<String>,
-    private val taskProviderState: () -> String? = { null },
     private val clock: Clock = Clock.systemUTC(),
     private val directoryEvery: Duration = 60.seconds,
     private val usageEvery: Duration = 5.minutes,
@@ -61,17 +55,12 @@ internal class HostDirectory(
             ?: read(now).also { directory = now to it }
         val allowances = usage?.takeIf { now < it.first.plusMillis(usageEvery.inWholeMilliseconds) }?.second
             ?: usage(current).also { usage = now to it }
-        return HostHeartbeat(allowances, current, features, taskProviderState() ?: NO_TASK_LANE)
-    }
-
-    private companion object {
-        /** `providerState` of a Mac that runs no Hovel tasks. */
-        const val NO_TASK_LANE = "unavailable"
+        return HostHeartbeat(allowances, current, features, current.providerState())
     }
 
     private fun read(now: Instant) = ProviderDirectory(now.truncatedTo(ChronoUnit.MILLIS).toString(), RuntimeId.entries.map { runtime ->
         if (runtime !in offered) return@map ProviderRuntime(false, emptyList(), ProviderReadiness.UNAVAILABLE, runtime)
-        val scope = ProviderScope(profile, runtime)
+        val scope = ProviderScope(runtime)
         val status = runCatching { runBlocking { providers.perform(ProviderAction.STATUS, scope) } }.getOrNull()
         val readiness = when {
             status?.state == ProviderState.CONNECTED -> ProviderReadiness.READY
@@ -87,7 +76,7 @@ internal class HostDirectory(
     private fun usage(directory: ProviderDirectory): List<RuntimeAllowance> = directory.runtimes
         .filter { it.readiness == ProviderReadiness.READY }
         .mapNotNull { runtime ->
-            val reading = runCatching { runBlocking { providers.usage(ProviderScope(profile, runtime.runtimeId)) } }.getOrNull() ?: return@mapNotNull null
+            val reading = runCatching { runBlocking { providers.usage(ProviderScope(runtime.runtimeId)) } }.getOrNull() ?: return@mapNotNull null
             RuntimeAllowance(runtime.runtimeId, allowanceSnapshot(reading, hostId))
         }
 }

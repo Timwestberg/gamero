@@ -8,21 +8,21 @@ import org.formulagen.wrapper.bridge.CompanionLimits
 import org.formulagen.wrapper.bridge.ConversationDictation
 import org.formulagen.wrapper.bridge.ConversationHearing
 import org.formulagen.wrapper.bridge.ConversationVoiceStatus
-import org.formulagen.wrapper.bridge.DictationAction
-import org.formulagen.wrapper.bridge.DictationState
-import org.formulagen.wrapper.bridge.HearingAction
-import org.formulagen.wrapper.bridge.VoiceState
-import org.formulagen.wrapper.chat.ChatSpeech
-import org.formulagen.wrapper.chat.DictationStep
-import org.formulagen.wrapper.chat.Hearing
-import org.formulagen.wrapper.chat.HearingCommit
-import org.formulagen.wrapper.chat.TALK_WHILE_DICTATING
-import org.formulagen.wrapper.chat.TalkHost
-import org.formulagen.wrapper.chat.TalkLoop
-import org.formulagen.wrapper.chat.TalkReply
-import org.formulagen.wrapper.chat.TalkSettings
-import org.formulagen.wrapper.chat.VoicePickerState
-import org.formulagen.wrapper.chat.decideHeard
+import org.formulagen.wrapper.conversation.DictationAction
+import org.formulagen.wrapper.conversation.DictationState
+import org.formulagen.wrapper.conversation.HearingAction
+import org.formulagen.wrapper.conversation.VoiceState
+import org.formulagen.wrapper.conversation.voice.ChatSpeech
+import org.formulagen.wrapper.conversation.voice.DictationStep
+import org.formulagen.wrapper.conversation.voice.Hearing
+import org.formulagen.wrapper.conversation.voice.HearingCommit
+import org.formulagen.wrapper.conversation.voice.TALK_WHILE_DICTATING
+import org.formulagen.wrapper.conversation.voice.TalkHost
+import org.formulagen.wrapper.conversation.voice.TalkLoop
+import org.formulagen.wrapper.conversation.voice.TalkReply
+import org.formulagen.wrapper.conversation.voice.TalkSettings
+import org.formulagen.wrapper.conversation.voice.VoicePickerState
+import org.formulagen.wrapper.conversation.voice.decideHeard
 import org.formulagen.wrapper.hovel.HovelRejectedException
 import org.formulagen.wrapper.hovel.HovelStatusException
 import org.formulagen.wrapper.logger.LogLevel
@@ -105,7 +105,7 @@ internal class VoiceConversation(
     private val sleep: (Long) -> Unit = Thread::sleep,
 ) : TalkHost {
     private val gate = Any()
-    internal val talk = TalkLoop(gate, this, speech, hearing, settings, timer, CompanionLimits.MESSAGE, rowEndsPageTalk = true, now = now)
+    internal val talk = TalkLoop(gate, this, speech, hearing, settings, timer, CompanionLimits.MESSAGE, now = now)
     /** The heard turn on its way: posted or posting, and not claimed yet. */
     private var pending: Pending? = null
     /**
@@ -249,8 +249,8 @@ internal class VoiceConversation(
             dictation?.let { ConversationDictation(it.state, partial = it.partial, notice = it.notice) })
     }
 
-    /** The native voice row for this conversation, shown in every product. */
-    fun pickerLocked(product: String): VoicePickerState = talk.pickerLocked(open = !closed, product = product, owned = true)
+    /** The native voice row for this conversation. */
+    fun pickerLocked(): VoicePickerState = talk.pickerLocked(open = !closed)
 
     /** Talk, dictation, a heard turn or a reply is in progress, or the speaker is still saying one. */
     val busy: Boolean get() = synchronized(gate) {

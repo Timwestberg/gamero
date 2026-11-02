@@ -9,13 +9,14 @@ import org.formulagen.wrapper.bridge.SharedRules
  * `HOVEL_COMPANION_ROUTES.native`; each payload is named by its `hovel/companions` schema.
  */
 internal enum class NativeRoute(val method: String, val template: String) {
-    /** The hovel heartbeat body (`providerState`, `features`) plus `computerHeartbeat`'s directory and usage. */
+    /** The hovel heartbeat body (`providerState`, `features`) plus `computerHeartbeat`'s directory and usage; answers `{ host }` and, for a memory-extraction computer, `memoryJobs`. */
     HEARTBEAT("POST", "heartbeat"),
 
     /** Server-sent events whose payload is a `hostStreamEvent`. */
     STREAM("GET", "stream"),
 
     /** `claimRequest` → `claimResponse`. */
+    MESSAGE_DIRECTION("POST", "messages/:messageId/direction"),
     CONVERSATION_CLAIM("POST", "conversations/claim"),
 
     /** `messageSend` → `conversationMessage`, queued: a heard voice turn, as the owner's message, in this Mac's projects only. */
@@ -39,12 +40,24 @@ internal enum class NativeRoute(val method: String, val template: String) {
     /** → `agentApproval`: the winner after `approval.answered`, or after the Mac's own close was refused. */
     APPROVAL("GET", "approvals/:approvalId"),
 
+    /** → `approvalDeviceList`: the phones this Mac confirmed. */
+    DEVICES("GET", "devices"),
+
+    /** `devicePairRequest` → `approvalDevice`, unchanged: the phone a typed code names, so the window asks first. */
+    DEVICE_LOOKUP("POST", "devices/lookup"),
+
+    /** `devicePairRequest` → `approvalDevice`: once the person confirmed it in "Pair a phone…", that phone is paired. */
+    DEVICE_PAIR("POST", "devices/pair"),
+
+    /** → `approvalDevice`: this Mac lets one phone go. */
+    DEVICE_UNPAIR("POST", "devices/:deviceId/unpair"),
+
     /** `?cursor=` → `artifactTextPage`: a message input's whole text, page by page. */
     ARTIFACT_TEXT("GET", "artifacts/:artifactId/text"),
 
-    /** Hovel tasks, until step E removes them with the web task UI. */
-    TASK_CLAIM("POST", "claim"),
-    TASK_PROGRESS("POST", "progress"),
+    /** Ephemeral project image relay metadata and bounded chunks. */
+    IMAGE_RELAY_READ("GET", "image-relays/:requestId"),
+    IMAGE_RELAY_CHUNK("POST", "image-relays/:requestId/chunks"),
 
     /** Memory jobs. */
     MEMORY_CLAIM("POST", "memory/claim"),

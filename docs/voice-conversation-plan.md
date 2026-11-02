@@ -12,7 +12,7 @@
 
 ## What the draft stack shipped
 
-> **Moved to conversations (companion projects step G).** Mac voice now runs in project conversations through `conversationVoice.*`: a heard turn is the owner's message in the conversation and the coordinator's streamed answer is spoken. Barge-in there stops the reply only before the coordinator delegates; after that it only silences the speaker, and ending Talk never stops a claimed message. The talk loop below is `chat/TalkLoop.kt`, shared with team chat until team chat is removed. See [hovel-companion.md](hovel-companion.md#voice).
+> **Moved to conversations (companion projects step G).** Mac voice now runs in project conversations through `conversationVoice.*`: a heard turn is the owner's message in the conversation and the coordinator's streamed answer is spoken. Barge-in there stops the reply only before the coordinator delegates; after that it only silences the speaker, and ending Talk never stops a claimed message. Team chat is removed (step E): `DesktopChat`, the `chat.*` methods and `ChatCapability.kt` are gone, the talk loop is `conversation/voice/TalkLoop.kt`, and the voice files this plan names under `chat/` (`DesktopSpeech`, `DesktopHearing`, `SentenceCursor`, `KokoroVoicePicker`, `SharedHearing`) live in `conversation/voice/`, with the shared types in `conversation/ConversationTypes.kt`. The rest of this plan is kept as written. See [hovel-companion.md](hovel-companion.md#voice).
 
 Phases 1–4 are on `main`. Milestone 5, the browser loop, is a draft in this repo under `web/` because tool-webkit and game-platform were not readable from the agent that wrote it. Milestones 6–7 are not started.
 

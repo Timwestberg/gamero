@@ -9,8 +9,8 @@ import org.cef.callback.CefQueryCallback
 
 /** How the JCEF transport handles one query, decided before any product code runs. */
 internal enum class JcefQueryKind {
-    /** The Hovel companion protocol that `nativeCompanion.ts` speaks until it moves to the v2 client. */
-    V1,
+    /** Anything that is not version 2, such as the companion protocol's old version 1: refused. */
+    NOT_V2,
     /** A persistent `watchContext`: the reply opens the context, and later successes carry events. */
     V2_WATCH,
     V2_CALL,
@@ -19,10 +19,10 @@ internal enum class JcefQueryKind {
 }
 
 internal fun classifyJcefQuery(request: String, persistent: Boolean): JcefQueryKind {
-    if (request.length > BridgeProtocol.MAX_REQUEST_CHARS) return JcefQueryKind.V1
-    val message = runCatching { Json.parseToJsonElement(request) }.getOrNull() as? JsonObject ?: return JcefQueryKind.V1
+    if (request.length > BridgeProtocol.MAX_REQUEST_CHARS) return JcefQueryKind.NOT_V2
+    val message = runCatching { Json.parseToJsonElement(request) }.getOrNull() as? JsonObject ?: return JcefQueryKind.NOT_V2
     val version = message["version"] as? JsonPrimitive
-    if (version == null || version.isString || version.intOrNull != BridgeProtocol.VERSION) return JcefQueryKind.V1
+    if (version == null || version.isString || version.intOrNull != BridgeProtocol.VERSION) return JcefQueryKind.NOT_V2
     val watch = (message["method"] as? JsonPrimitive)?.content == BridgeProtocol.WATCH_CONTEXT
     return when {
         watch && persistent -> JcefQueryKind.V2_WATCH
@@ -39,7 +39,8 @@ internal fun classifyJcefQuery(request: String, persistent: Boolean): JcefQueryK
  *
  * The frame comes first: a query from a child frame or another origin is
  * answered before anything else reads it, and only its first
- * [UNTRUSTED_MAX_CHARS] characters are parsed, the same cap version 1 has.
+ * [UNTRUSTED_MAX_CHARS] characters are parsed. A query that is not version 2
+ * is refused with a CEF failure, never a v2 envelope.
  *
  * [NativeBridge][org.formulagen.wrapper.companion.NativeBridge] checks the
  * browser and frame, then calls this from the CEF UI thread.
@@ -58,23 +59,17 @@ class JcefHostBridge(private val bridge: HostBridge, private val onContextEnded:
     /** Watch queries the router has not answered yet. A cancel removes its id, so the late reply knows. */
     private val pendingWatches = mutableSetOf<Long>()
 
-    /**
-     * Answers a version 2 query, or any query from an untrusted frame, and
-     * returns true. Returns false for a version 1 query from the trusted main frame.
-     */
-    fun onQuery(request: String, persistent: Boolean, mainFrame: Boolean, frameUrl: String, queryId: Long, callback: CefQueryCallback): Boolean {
+    /** Answers every query: a version 2 one through the bridge, anything else with a refusal. */
+    fun onQuery(request: String, persistent: Boolean, mainFrame: Boolean, frameUrl: String, queryId: Long, callback: CefQueryCallback) {
         if (!mainFrame || !bridge.origin.matches(frameUrl)) {
-            val kind = if (request.length > UNTRUSTED_MAX_CHARS) JcefQueryKind.V1 else classifyJcefQuery(request, persistent)
-            if (kind == JcefQueryKind.V1) callback.failure(403, "Native request unavailable for this frame")
+            val kind = if (request.length > UNTRUSTED_MAX_CHARS) JcefQueryKind.NOT_V2 else classifyJcefQuery(request, persistent)
+            if (kind == JcefQueryKind.NOT_V2) callback.failure(403, "Native request unavailable for this frame")
             else callback.success(bridgeFailureEnvelope(BridgeErrorCode.FORBIDDEN))
-            return true
+            return
         }
         val kind = classifyJcefQuery(request, persistent)
-        if (kind == JcefQueryKind.V1) return false
-        if (kind == JcefQueryKind.V2_MISUSE) {
-            callback.success(bridgeFailureEnvelope(BridgeErrorCode.INVALID))
-            return true
-        }
+        if (kind == JcefQueryKind.NOT_V2) return callback.failure(400, "Invalid native protocol")
+        if (kind == JcefQueryKind.V2_MISUSE) return callback.success(bridgeFailureEnvelope(BridgeErrorCode.INVALID))
         if (kind == JcefQueryKind.V2_WATCH) synchronized(lock) { pendingWatches += queryId }
         bridge.receive(request, PageFrame(mainFrame, frameUrl), object : BridgeChannel {
             override fun reply(json: String) {
@@ -98,7 +93,6 @@ class JcefHostBridge(private val bridge: HostBridge, private val onContextEnded:
                 true
             }
         })
-        return true
     }
 
     /**
@@ -129,7 +123,7 @@ class JcefHostBridge(private val bridge: HostBridge, private val onContextEnded:
     private companion object {
         const val NONE = Long.MIN_VALUE
 
-        /** Version 1's request cap. An untrusted frame never gets more parsed than this. */
+        /** An untrusted frame never gets more parsed than this. */
         const val UNTRUSTED_MAX_CHARS = 4096
     }
 }

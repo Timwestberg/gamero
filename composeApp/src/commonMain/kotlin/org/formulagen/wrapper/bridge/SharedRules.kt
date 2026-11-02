@@ -34,29 +34,8 @@ enum class ModelEffort(val value: String) {
 
 /** Rules more than one capability uses. Mirrors event-contracts `host-bridge/shared.ts`. */
 object SharedRules {
-    /** The runtime vocabulary understood by legacy bridge calls. */
-    val LEGACY_RUNTIMES = setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE)
-    /** Most runtime names a page declares it can decode. Mirrors `CLIENT_RUNTIME_LIMIT`. */
-    const val CLIENT_RUNTIME_LIMIT = 8
-    /** One declared runtime name, known or a future one. Mirrors `CLIENT_RUNTIME_PATTERN`. */
-    const val CLIENT_RUNTIME_PATTERN = "^[a-z][a-z0-9-]{0,63}$"
-    private val CLIENT_RUNTIME = Regex(CLIENT_RUNTIME_PATTERN)
-    /** Client declarations allow bounded future names, never duplicate names. */
-    fun validClientRuntimes(names: List<String>): Boolean =
-        names.size <= CLIENT_RUNTIME_LIMIT && names.distinct().size == names.size && names.all(CLIENT_RUNTIME::matches)
-    /** Recognized names only; advertising a name does not offer its runtime. */
-    fun clientRuntimes(names: List<String>): Set<RuntimeId> = RuntimeId.entries.filter { it.wireName in names }.toSet()
-    /** The runtimes a page decodes: those it declared, or [LEGACY_RUNTIMES] for a page that predates declaring them. */
-    fun understood(names: List<String>?): Set<RuntimeId> {
-        if (names == null) return LEGACY_RUNTIMES
-        require(validClientRuntimes(names))
-        return clientRuntimes(names)
-    }
-
-    /** The profile of a person who is not signed in. */
-    const val LOCAL_PROFILE = "local"
     const val COMPANION_NAME_LIMIT = 40
-    /** Hovel Brain's sentinel model: the runtime's own default, or for Claude Code the profile's default Claude model. */
+    /** Hovel Brain's sentinel model: the runtime's own default, or for Claude Code the default model of the person's Claude login. */
     const val RUNTIME_DEFAULT_MODEL = "runtime-default"
     /**
      * A model as its runtime names it, or [RUNTIME_DEFAULT_MODEL]: one lower-case token of at most
@@ -71,22 +50,82 @@ object SharedRules {
     fun isModelId(value: String): Boolean = MODEL_ID.matches(value)
 
     /**
-     * `local`, or a signed-in account's UUID in canonical lower case. Native code builds folder
-     * paths from it, so an upper-case profile is invalid rather than folded into the same folder.
+     * An account record's id, such as the account's own or a project's: a UUID in canonical lower case. Native code keys
+     * local stores and folder paths by it, so an upper-case id is invalid rather than folded into the same folder.
      */
-    fun isProfileId(value: String): Boolean =
-        value == LOCAL_PROFILE || (BridgeProtocol.UUID_PATTERN.matches(value) && value == value.lowercase())
-
-    /** An account record's id, such as a project's: a UUID in canonical lower case, since native code keys local stores by it. */
     fun isRecordId(value: String): Boolean = BridgeProtocol.UUID_PATTERN.matches(value) && value == value.lowercase()
 
     /**
      * A companion's display name: untrusted text that native code places in model instructions,
-     * so it has no control characters and no whitespace at either end. A padded name is
-     * rejected, never trimmed.
+     * so it follows event-contracts `displayText` ([isDisplayText]). A padded name is rejected,
+     * never trimmed.
      */
-    fun isCompanionName(value: String): Boolean = value.length in 1..COMPANION_NAME_LIMIT &&
-        value.none { it.code < 0x20 || it.code == 0x7F } && value == value.trimEcma()
+    fun isCompanionName(value: String): Boolean = value.length in 1..COMPANION_NAME_LIMIT && isDisplayText(value)
+
+    /**
+     * Event-contracts `displayText`, for names and titles a person types: one line with no C0
+     * control or DEL, and no whitespace at either end. Emoji stay whole, joiners included.
+     */
+    fun isDisplayText(value: String): Boolean = value.none { it.code < 0x20 || it.code == 0x7F } && value == value.trimEcma()
+
+    /**
+     * Event-contracts `dialogName`, for a computer's or phone's name a native dialog shows: one line
+     * with no control (Cc), format (Cf: bidirectional, zero-width and joiner characters, tags) or
+     * line and paragraph separator (Zl, Zp) characters, and no whitespace at either end.
+     */
+    fun isDialogName(value: String): Boolean = value.unicodePoints().none(::isDialogRefused) && value == value.trimEcma()
+
+    /**
+     * [value] as a native dialog shows a name: what [isDialogName] refuses taken out, then trimmed;
+     * [fallback] when nothing is left. Names are read as stored, so a dialog cleans each one.
+     */
+    fun dialogName(value: String, fallback: String): String {
+        val kept = StringBuilder()
+        var index = 0
+        while (index < value.length) {
+            val point = value.unicodePointAt(index)
+            val width = if (point > 0xFFFF) 2 else 1
+            if (!isDialogRefused(point)) kept.appendRange(value, index, index + width)
+            index += width
+        }
+        return kept.toString().trimEcma().ifEmpty { fallback }
+    }
+
+    /** Cc, Cf, Zl and Zp, the categories `dialogName` refuses, for one code point. */
+    private fun isDialogRefused(point: Int): Boolean = if (point <= 0xFFFF) {
+        point.toChar().category in DIALOG_REFUSED_CATEGORIES
+    } else {
+        ASTRAL_FORMAT.any { point in it }
+    }
+
+    private val DIALOG_REFUSED_CATEGORIES = setOf(
+        CharCategory.CONTROL, CharCategory.FORMAT, CharCategory.LINE_SEPARATOR, CharCategory.PARAGRAPH_SEPARATOR,
+    )
+
+    /** The format (Cf) characters past the Basic Multilingual Plane, as Unicode 16 lists them. */
+    private val ASTRAL_FORMAT = listOf(
+        0x110BD..0x110BD, 0x110CD..0x110CD, 0x13430..0x1343F, 0x1BCA0..0x1BCA3, 0x1D173..0x1D17A, 0xE0001..0xE0001,
+        0xE0020..0xE007F,
+    )
+
+    /** [this] string's code points; an unpaired surrogate is its own code point (Cs, which `dialogName` lets through). */
+    private fun String.unicodePoints(): Sequence<Int> = sequence {
+        var index = 0
+        while (index < length) {
+            val point = unicodePointAt(index)
+            yield(point)
+            index += if (point > 0xFFFF) 2 else 1
+        }
+    }
+
+    /** The code point at [index], joining a surrogate pair. */
+    private fun String.unicodePointAt(index: Int): Int {
+        val high = this[index]
+        if (high.isHighSurrogate() && index + 1 < length && this[index + 1].isLowSurrogate()) {
+            return ((high.code - 0xD800) shl 10) + (this[index + 1].code - 0xDC00) + 0x10000
+        }
+        return high.code
+    }
 }
 
 /**

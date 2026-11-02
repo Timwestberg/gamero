@@ -1,9 +1,14 @@
 package org.formulagen.wrapper.brain
 
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.ChatFailure
-import org.formulagen.wrapper.chat.NativeConversation
+import org.formulagen.wrapper.runtimes.ChatFailure
+import org.formulagen.wrapper.runtimes.NativeConversation
 import kotlin.test.*
+import org.formulagen.wrapper.conversation.Activity
+import org.formulagen.wrapper.conversation.ActivityKind
+import org.formulagen.wrapper.conversation.ActivityStatus
+import org.formulagen.wrapper.conversation.ActivityStep
+import org.formulagen.wrapper.conversation.MemberMode
 
 /** The pure run transitions, one table row per case: a record and an input in, the next record (or a refusal) out. */
 class BrainTransitionsTest {
@@ -148,35 +153,6 @@ class BrainTransitionsTest {
         }
     }
 
-    @Test fun closingReopeningAndStoppingPauseOnlyUnfinishedWork() {
-        val running = attempt(writer, null, BrainAttemptState.RUNNING)
-        // (state before, cancelled) to the state after; null leaves the record as it was.
-        val rows = listOf(
-            Triple(BrainRunState.RUNNING, false, BrainRunState.PAUSED),
-            Triple(BrainRunState.RUNNING, true, BrainRunState.CANCELLED),
-            Triple(BrainRunState.AWAITING_APPROVAL, false, BrainRunState.PAUSED),
-            Triple(BrainRunState.AWAITING_INPUT, false, null),
-            Triple(BrainRunState.AWAITING_INPUT, true, BrainRunState.CANCELLED),
-            Triple(BrainRunState.PAUSED, false, BrainRunState.PAUSED),
-            Triple(BrainRunState.COMPLETED, true, null),
-            Triple(BrainRunState.FAILED, false, null),
-        )
-        for ((state, cancelled, after) in rows) {
-            val before = record(attempts = listOf(running), state = state)
-            val ended = before.ended(cancelled)
-            assertEquals(after, ended?.r?.summary?.state, "$state cancelled=$cancelled")
-            if (ended != null) {
-                assertEquals(BrainAttemptState.INTERRUPTED, ended.r.attempts.single().state)
-                assertEquals(6L, ended.r.summary.revision)
-                assertEquals(if (cancelled) null else BrainWaitingKind.RECOVERY, ended.waiting?.kind)
-            }
-            // Reopening pauses the same runs, without a revision of its own; a cancelled run is never reopened.
-            val reopened = before.reopened()
-            if (!cancelled) assertEquals(after ?: state, reopened.r.summary.state, "reopen $state")
-            if (after == null) assertSame(before, reopened)
-        }
-    }
-
     @Test fun aPauseInterruptsRunningWorkAndSaysWhy() {
         val before = record(attempts = listOf(attempt(writer, null, BrainAttemptState.RUNNING)), state = BrainRunState.RUNNING)
         for ((kind, state) in listOf(BrainWaitingKind.INPUT to BrainRunState.AWAITING_INPUT, BrainWaitingKind.LIMIT to BrainRunState.PAUSED,
@@ -211,6 +187,13 @@ class BrainTransitionsTest {
         assertTrue(lost.afterFailure(failure(ChatFailure.ConversationLost), "Paused.").r.contexts.isEmpty())
         assertEquals("Writer", lost.failingRole)
         assertEquals("the coordinator", record().failingRole)
+    }
+
+    @Test fun aResumeToASpecialistThatLostItsProviderSaysToAssignOne() {
+        val unbound = configuration.copy(specialists = configuration.specialists.map { if (it.id == writer.id) it.copy(binding = null) else it })
+        val before = record(BrainPhase.EXECUTE, attempts = listOf(attempt(writer, steps[0], BrainAttemptState.QUEUED)), inWorkflow = true).r
+        val refusal = assertFailsWith<BrainConfigurationException> { before.resumed(true, BrainDocument(2, unbound), 9, ::newId) }
+        assertEquals("Assign a provider to ${writer.name} in Configure brain.", refusal.message)
     }
 
     @Test fun anApprovedResumeReplacesWorkThatNeverStartedAndAppendsWorkThatDid() {
@@ -259,7 +242,7 @@ class BrainTransitionsTest {
             assertEquals(next, sent.run)
             assertEquals(BrainEntry("40000000-0000-4000-8000-000000000001", BrainAuthor.USER, "The first"), sent.messages.single())
             assertEquals(listOf(null, null, emptyList<BrainArtifact>()), listOf(sent.waiting, sent.notice, sent.staged))
-            assertTrue(sent.replays("40000000-0000-4000-8000-000000000001", "digest"))
+            assertEquals("digest", sent.receipts["40000000-0000-4000-8000-000000000001"])
         }
     }
 
@@ -270,14 +253,6 @@ class BrainTransitionsTest {
         val paused = record(BrainPhase.EXECUTE, attempts = listOf(queued), inWorkflow = true, state = BrainRunState.PAUSED)
         val earlier = BrainWaiting(BrainWaitingKind.LIMIT, "Allowance used")
         val rows = listOf(
-            Step("a stale send only explains itself", paused, { it.staleSend() }) {
-                assertEquals(paused.run, it.run)
-                assertEquals("The brain changed. Review the current coordinator and send again.", it.notice)
-            },
-            Step("a refused adoption only explains itself", paused, { it.adoptionRefused() }) {
-                assertEquals(paused.run, it.run)
-                assertTrue(it.notice!!.startsWith("These changes alter roles or workflow structure."))
-            },
             Step("Not now keeps the stage queued and pauses", paused.copy(run = paused.r.copy(summary = paused.r.summary.copy(state = BrainRunState.AWAITING_APPROVAL))),
                 { it.stagePostponed(queued, "Writer") }) {
                 assertEquals(listOf(BrainAttemptState.QUEUED, BrainRunState.PAUSED), listOf(it.r.attempts.single().state, it.r.summary.state))
@@ -342,11 +317,9 @@ class BrainTransitionsTest {
         for ((change, expected) in rows) assertEquals(expected, adoptable(configuration, change.second), change.first)
     }
 
-    @Test fun receiptsReplayTheSameRequestAndRefuseItsReuse() {
+    @Test fun receiptsKeepTheNewestRequests() {
         val record = BrainRecord().withReceipt("a", "digest")
-        assertTrue(record.replays("a", "digest"))
-        assertFalse(record.replays("b", "digest"))
-        assertFails { record.replays("a", "other") }
+        assertEquals(mapOf("a" to "digest"), record.receipts)
         val full = (1..REQUEST_RECEIPTS + 1).fold(BrainRecord()) { value, n -> value.withReceipt("$n", "d$n") }
         assertEquals(REQUEST_RECEIPTS, full.receipts.size)
         assertFalse("1" in full.receipts)

@@ -1,7 +1,6 @@
 /**
- * Catalog wiring. With a host, a finished turn is chat.hearing / chat.send.
- * Without a host, chat stays unavailable and Kokoro reads one fixed line.
- * Ember's replies go through the session's speech slot (hearing/src/speaker.js).
+ * Catalog voice wiring: a finished turn makes Kokoro read one fixed line, and replies go through the
+ * session's speech slot (hearing/src/speaker.js). The page talks to no host.
  */
 
 import { createListener, createMicCapture } from "../../hearing/src/listener.js";
@@ -10,7 +9,6 @@ import { WEB_MIC_CONSTRAINTS } from "../../hearing/src/media.js";
 
 export const LOCAL_KOKORO_LINE = "Hi, I'm Sam.";
 export const PERMISSION_COPY = "Ember hears you on this Mac to turn what you say into a chat message. The recording is not saved.";
-export const NO_HOST_NOTICE = "Open Hovel on your Mac to connect…";
 export const MIC_SETTINGS_NOTICE = "Turn the microphone on for Gamero Adventures in System Settings.";
 
 export const POLICY = {
@@ -30,15 +28,15 @@ export const POLICY = {
  * hearing (hearing-client.js) and micStream: the real microphone. The talk click opens a 16 kHz
  * capture and starts the hearing models; chunks are ignored until they are ready.
  */
-export function createComposer({ host, speaker, hearing = null, micStream = null, capture = createMicCapture, aecAvailable, selfCheck, now = () => globalThis.performance?.now() ?? 0, onChange }) {
+export function createComposer({ speaker, hearing = null, micStream = null, capture = createMicCapture, aecAvailable, selfCheck, now = () => globalThis.performance?.now() ?? 0, onChange }) {
   let listener = null;
+  let heard = null;
   const session = createSession({
     policy: POLICY,
     now,
     aecAvailable,
     selfCheck,
-    hostPresent: host != null,
-    chatState: host?.chatState,
+    hostPresent: false,
     speech: speaker,
     onChange,
     onBargeIn: () => listener?.restartWithPreRoll(),
@@ -53,16 +51,10 @@ export function createComposer({ host, speaker, hearing = null, micStream = null
             onChange?.();
           });
         }
-        if (host) host.hearing("press");
       },
-      stop() {
-        if (host) host.stop();
-      },
+      stop() {},
       commit(text) {
-        if (host) {
-          host.send(text);
-          return "thinking";
-        }
+        heard = text;
         session.say(LOCAL_KOKORO_LINE);
         return "thinking";
       },
@@ -74,12 +66,15 @@ export function createComposer({ host, speaker, hearing = null, micStream = null
   return {
     session,
     listener,
-    /** Ember's reply from the host (or the test page): spoken through the slot. */
+    /** Ember's reply from the test page: spoken through the slot. */
     reply(text) {
       return session.say(text);
     },
+    /** The last finished turn's text, or null before one. */
+    get heard() {
+      return heard;
+    },
     permission: PERMISSION_COPY,
-    chatNotice: host ? null : NO_HOST_NOTICE,
     micConstraints: WEB_MIC_CONSTRAINTS,
   };
 }

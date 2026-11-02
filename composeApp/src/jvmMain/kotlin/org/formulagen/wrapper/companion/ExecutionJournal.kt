@@ -14,30 +14,19 @@ import java.nio.file.StandardOpenOption.*
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
 
-/**
- * What runs one request. The fields added after the first release are left out of a record
- * while they hold their default, so a record without them reads the same in an older companion.
- */
+/** What runs one request, such as a memory job: the provider gets [prompt] as it is. */
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class ExecutionRequest(
     val id: String,
     val hostId: String,
     val prompt: String,
-    val context: String = "",
-    /** Generated memory notes the server chose for a task, given to the provider in their own section. */
-    @EncodeDefault(EncodeDefault.Mode.NEVER) val recalledMemory: String? = null,
-    /** The provider gets [prompt] as it is, with no character section: a memory job's input is already complete. */
-    @EncodeDefault(EncodeDefault.Mode.NEVER) val rawPrompt: Boolean = false,
     /** The model and effort to run on; null leaves both to the provider. */
     @EncodeDefault(EncodeDefault.Mode.NEVER) val choice: ProviderChoice? = null,
 ) {
     companion object {
-        /** The longest prompt a provider is given: a Hovel follow-up's whole conversation (event-contracts `HOVEL_LIMITS.providerInput`), or a memory job's input (`HOVEL_MEMORY_LIMITS.jobInput`). */
+        /** The longest prompt a provider is given: a memory job's input (event-contracts `HOVEL_MEMORY_LIMITS.jobInput`). */
         const val MAX_PROMPT_CHARS = 131_072
-        const val MAX_CONTEXT_CHARS = 16_384
-        /** event-contracts `HOVEL_MEMORY_LIMITS.recalledMemory`. */
-        const val MAX_RECALLED_MEMORY_CHARS = 12_288
     }
 }
 
@@ -74,7 +63,9 @@ data class ExecutionRecord(
 
 /** One process owns a host journal. Ambiguous launches are retained, never reset. */
 class ExecutionJournal(private val directory: Path, private val hostId: String) : AutoCloseable {
-    private val json = Json { encodeDefaults = true }
+    // Records written before Hovel tasks were removed also carry `context`, `recalledMemory` and `rawPrompt`; a
+    // memory job's record from then is the same request, so it reads as one rather than being offered forever.
+    private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
     private val lockChannel: FileChannel
     private val processLock: java.nio.channels.FileLock
     private var closed = false
@@ -95,14 +86,11 @@ class ExecutionJournal(private val directory: Path, private val hostId: String) 
     @Synchronized
     fun prepare(request: ExecutionRequest): ExecutionRecord {
         checkOpen()
-        require(request.hostId == hostId) { "Task belongs to another computer" }
+        require(request.hostId == hostId) { "Request belongs to another computer" }
         UUID.fromString(request.id)
-        require(request.prompt.isNotBlank() && request.prompt.length <= ExecutionRequest.MAX_PROMPT_CHARS &&
-            request.context.length <= ExecutionRequest.MAX_CONTEXT_CHARS)
-        request.recalledMemory?.let { require(it.isNotEmpty() && it.length <= ExecutionRequest.MAX_RECALLED_MEMORY_CHARS) }
-        if (request.rawPrompt) require(request.context.isEmpty() && request.recalledMemory == null) { "A raw prompt runs alone" }
+        require(request.prompt.isNotBlank() && request.prompt.length <= ExecutionRequest.MAX_PROMPT_CHARS)
         read(request.id)?.let {
-            require(it.request == request) { "Task identity has changed" }
+            require(it.request == request) { "Request identity has changed" }
             return it
         }
         return ExecutionRecord(request, UUID.randomUUID().toString()).also(::write)

@@ -1,9 +1,9 @@
 ---
 name: run-gamero
-description: Build, launch, stop and drive the Gamero desktop catalog app (Hovel companions: chat, Claude/Codex providers, teams, working members) on macOS. Use when asked to run, start, launch, restart or stop Gamero or Hovel, check whether it is running, read its logs, or screenshot its catalog UI.
+description: Build, launch, stop and drive the Gamero desktop catalog app (Hovel companions: project conversations, Claude/Codex providers, working members) on macOS. Use when asked to run, start, launch, restart or stop Gamero or Hovel, check whether it is running, read its logs, or screenshot its catalog UI.
 ---
 
-Gamero's catalog app is a JCEF window around the game-platform catalog page, with native capabilities (chat, providers, workspaces, pet, embedded Godot game) behind the host bridge. Drive it with `.claude/skills/run-gamero/driver.sh`: `start` builds, launches and waits until it is ready; `page` drives the same catalog page in a headless Chromium and screenshots it; `stop` ends everything.
+Gamero's catalog app is a JCEF window around the game-platform catalog page, with native capabilities (providers, project folders, conversation voice, pet, embedded Godot game) behind the host bridge. Drive it with `.claude/skills/run-gamero/driver.sh`: `start` builds, launches and waits until it is ready; `page` drives the same catalog page in a headless Chromium and screenshots it; `stop` ends everything.
 
 All paths are relative to the gamero checkout. It expects sibling checkouts beside it: `../game-platform` and `../server-platform`.
 
@@ -36,7 +36,7 @@ After pulling new contracts, refresh the copy game-platform installs (it is a `f
 - `page <out.png> [text ...]` opens `http://127.0.0.1:8133/`, clicks each text in order (button, link or tab first, then any text), screenshots, and prints `{errors, heading, title, url}`. Read the PNG.
 - `stop` ends the app and the catalog server and waits until the port is free.
 
-The native window itself (approval dialogs, start-of-work confirmation, native picker, chat backed by the host) can only be inspected with the user's screen-access grant (computer-use `app_screenshot` on bundle `com.gamero.adventures.prototype`). Ask; don't fall back to `screencapture`.
+The native window itself (approval dialogs, start-of-work confirmation, native picker, the voice row) can only be inspected with the user's screen-access grant (computer-use `app_screenshot` on bundle `com.gamero.adventures.prototype`). Ask; don't fall back to `screencapture`.
 
 ## Run (human path)
 

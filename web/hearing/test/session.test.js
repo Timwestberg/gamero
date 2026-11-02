@@ -28,7 +28,6 @@ function harness(extra = {}) {
     aecAvailable: extra.aecAvailable !== false,
     selfCheck: extra.selfCheck || "pass",
     hostPresent: extra.hostPresent !== false,
-    chatState: extra.chatState,
     duplexRequest: extra.duplexRequest,
   });
   return { session, calls, setClock(ms) { clock = ms; } };
@@ -122,13 +121,6 @@ test("half duplex drops the mic while Ember speaks and for the guard after", () 
 test("a missing echo canceller stays half duplex", () => {
   const { session } = harness({ aecAvailable: false });
   assert.equal(session.duplex.reason, "aec-unavailable");
-});
-
-test("an approval dialog does not arm the microphone", () => {
-  const { session, calls } = harness({ chatState: "awaiting-you" });
-  assert.equal(session.click(), "refused");
-  assert.equal(session.notice, "Answer the approval first.");
-  assert.deepEqual(calls, []);
 });
 
 function speechHarness() {

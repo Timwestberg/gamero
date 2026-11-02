@@ -30,6 +30,15 @@ class ClaimOutputTest {
         assertEquals(listOf(0, 1), long.map { it.seq })
     }
 
+    @Test fun boundaryReadHonorsAStopWhoseEventWasMissed() {
+        var stopped = false
+        server.directionPending = { throw HovelRejectedException(code = ClaimOutput.STOP_REQUESTED) }
+        ClaimOutput(server, claim.claimId, claim.message.id, onStopRequested = { stopped = true }).use { output ->
+            assertFailsWith<HovelRejectedException> { output.direction(talk.id) }
+            assertTrue(stopped)
+        }
+    }
+
     @Test fun piecesNeverSplitASurrogatePair() {
         val text = "a".repeat(CompanionLimits.DELTA - 1) + "😀" + "b"
         val pieces = ClaimOutput.pieces(text)

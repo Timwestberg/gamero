@@ -10,20 +10,26 @@ import kotlin.time.Duration.Companion.hours
 import kotlinx.coroutines.runBlocking
 import org.formulagen.wrapper.approvals.CancelSignal
 import org.formulagen.wrapper.bridge.*
+import org.formulagen.wrapper.brain.BrainConfigurationException
 import org.formulagen.wrapper.brain.ProviderFailure
 import org.formulagen.wrapper.brain.model
 import org.formulagen.wrapper.brain.roleIssues
-import org.formulagen.wrapper.chat.*
+import org.formulagen.wrapper.providers.copy
+import org.formulagen.wrapper.runtimes.*
+import org.formulagen.wrapper.conversation.voice.*
+import org.formulagen.wrapper.util.*
+import org.formulagen.wrapper.conversation.Activity
+import org.formulagen.wrapper.conversation.MemberMode
 
 /** The person stopped the message (or Hovel is quitting), or a stage dialog's Stop ended the run. */
 internal class StoppedException : RuntimeException("Stopped")
 
 /**
- * Who one claimed message's provider turns run for: the account ([profile]), the companion, the project's
+ * Who one claimed message's provider turns run for: the account ([accountId]), the companion, the project's
  * [folders], and the message's [cancel], which ends any turn or wait.
  */
 internal class TurnCall(
-    val profile: String,
+    val accountId: String,
     val companionId: String,
     val companion: String,
     val folders: ProjectFolders,
@@ -62,7 +68,7 @@ internal class ProviderTurns(
     fun talk(call: TurnCall, role: BrainRoleSnapshot, persona: Persona, input: String, conversation: NativeConversation?, context: String,
         coordinator: Boolean, stream: ReplyStream, opened: (NativeConversation) -> Unit): Pair<String, Activity?> {
         val runtime = ready(call, talk[role.binding.runtimeId], role, context, coordinator)
-        val request = TurnRequest(call.profile, call.companionId, persona, role.binding.modelId, conversation, null, input, null,
+        val request = TurnRequest(call.accountId, call.companionId, persona, role.binding.modelId, conversation, input, null,
             role.binding.effort)
         return gated(call, runtime.id) { turn(call, request, role, coordinator, context, stream, runtime::startTurn, opened) }
     }
@@ -75,7 +81,7 @@ internal class ProviderTurns(
         scope: ApprovalScope, stream: ReplyStream, opened: (NativeConversation) -> Unit): Pair<String, Activity?> {
         val worker = ready(call, work[role.binding.runtimeId], role, threadId, coordinator = false)
         val folders = WorkScope(call.folders.forRuntime(worker.contextFolders), threadId, call.companion, role.binding.member())
-        val request = TurnRequest(call.profile, call.companionId, persona, role.binding.modelId, conversation, null, input, folders,
+        val request = TurnRequest(call.accountId, call.companionId, persona, role.binding.modelId, conversation, input, folders,
             role.binding.effort)
         val relay = approvals.register(threadId, scope)
         try {
@@ -89,11 +95,13 @@ internal class ProviderTurns(
 
     /**
      * [role] with the model its runtime actually runs for its binding; an unavailable model or effort fails as the
-     * provider's refusal.
+     * provider's refusal. A runtime this Mac does not run for the role is the brain's configuration to change
+     * ([offered]), never a refusal to retry. [coordinator] names the role in that line.
      */
-    fun resolved(call: TurnCall, role: BrainRoleSnapshot): BrainRoleSnapshot {
+    fun resolved(call: TurnCall, role: BrainRoleSnapshot, coordinator: Boolean = false): BrainRoleSnapshot {
+        offered(role, coordinator)
         val unavailable = ProviderFailure(ChatFailure.ModelUnavailable, role.binding.runtimeId, role.roleId, false)
-        val scope = ProviderScope(call.profile, role.binding.runtimeId)
+        val scope = ProviderScope(role.binding.runtimeId)
         val models = runCatching { runBlocking { providers.models(scope).models } }.getOrNull()
             ?: throw unavailable
         val model = role.binding.model(models) ?: throw unavailable
@@ -104,7 +112,7 @@ internal class ProviderTurns(
     /** Why [role] cannot run on this Mac now ([roleIssues]): a talk role also needs its talk runtime here. */
     fun issues(call: TurnCall, role: BrainRoleSnapshot): List<BrainIssue> {
         val binding = role.binding
-        val scope = ProviderScope(call.profile, binding.runtimeId)
+        val scope = ProviderScope(binding.runtimeId)
         val status = runCatching { runBlocking { providers.perform(ProviderAction.STATUS, scope) }.state }.getOrNull()
         val signedIn = status == ProviderState.CONNECTED
         val offered = role.mode == MemberMode.WORK || binding.runtimeId in talk
@@ -120,11 +128,21 @@ internal class ProviderTurns(
         try { return action() } finally { gate.release() }
     }
 
+    /** Throws [BrainConfigurationException] when [role]'s runtime is not one this Mac runs for its mode. */
+    private fun offered(role: BrainRoleSnapshot, coordinator: Boolean) {
+        val working = role.mode == MemberMode.WORK
+        val runtime = role.binding.runtimeId
+        if (runtime in (if (working) work else talk)) return
+        throw BrainConfigurationException.notOnThisMac(if (coordinator) BrainConfigurationException.COORDINATOR else role.name,
+            runtime.copy.product, working)
+    }
+
     /** [runtime] when it can take [role]'s turn now; otherwise the failure its readiness names (signed out, or unavailable). */
     private fun <R : Any> ready(call: TurnCall, runtime: R?, role: BrainRoleSnapshot, context: String, coordinator: Boolean): R {
+        if (runtime == null) offered(role, coordinator)
         val readiness = when (runtime) {
-            is ChatRuntime -> runtime.readiness(call.profile)
-            is WorkRuntime -> runtime.readiness(call.profile)
+            is ChatRuntime -> runtime.readiness(call.accountId)
+            is WorkRuntime -> runtime.readiness(call.accountId)
             else -> Readiness.Unavailable("Not offered on this Mac")
         }
         if (runtime == null || readiness != Readiness.Ready) {

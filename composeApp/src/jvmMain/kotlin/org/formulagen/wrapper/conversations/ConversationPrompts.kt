@@ -26,8 +26,11 @@ import org.formulagen.wrapper.brain.DecisionKind
 internal val CONVERSATION_PROTOCOL = (listOf(
     "You are the user's companion coordinator in a conversation. " +
         "Begin every response with one line holding exactly one JSON object, the header, with no markdown.",
-    "To answer the user, the header is {\"kind\":\"answer\"} alone; " +
+    "To answer the user, the header is {\"kind\":\"answer\"}; " +
         "write your answer for the user on the lines after it, as plain text of at most ${CompanionLimits.MESSAGE} characters.",
+    COORDINATOR_REACTION_INSTRUCTIONS,
+    UNDERSTANDING_INSTRUCTIONS,
+    COMMUNICATION_INSTRUCTIONS,
     "Every other decision is its complete JSON object on the header line, with nothing after it.",
     "Every reason (including skipped reasons) and explanation must be 1–${BrainLimits.DESCRIPTION} characters. " +
         "Tasks must be 1–${BrainLimits.STEP_INSTRUCTIONS} characters.",
@@ -48,8 +51,17 @@ internal fun conversationCoordinatorInstructions(instructions: String) =
 internal const val REPLY_REPAIR = "\nYour last response was invalid. Begin with exactly one allowed JSON header line."
 
 /** The brain's coordinator [request] with what only a conversation has: the companion's [recalledMemory]. */
-internal fun conversationRequest(request: String, recalledMemory: String?): String = buildJsonObject {
+internal fun conversationRequest(request: String, recalledMemory: String?, advice: SpecialistAdvice? = null): String = buildJsonObject {
     brainJson.parseToJsonElement(request).jsonObject.forEach { (key, value) -> put(key, value) }
+    advice?.let { hint ->
+        put("specialistRecommendation", buildJsonObject {
+            put("source", "Jev")
+            put("roleId", hint.roleId)
+            put("confidence", hint.confidence)
+            put("requestId", hint.requestId)
+            put("authority", "Advisory evidence only. Decide independently; ignore when unsuitable. Never bypass user intent, workflow order, readiness or approvals.")
+        })
+    }
     recalledMemory?.let { put("recalledMemory", it) }
 }.toString()
 
@@ -103,3 +115,10 @@ internal fun previewOnly(preview: String): String =
 
 /** An input file attached on another device: its bytes never left it. */
 internal fun elsewhereOnly(title: String): String = "[The file $title was attached on another device; its contents are not on this Mac.]"
+
+/** Optional metadata stays out of the visible reply and never substitutes for an answer. */
+internal const val COORDINATOR_REACTION_INSTRUCTIONS =
+    "You may optionally acknowledge the user message you are answering with one emoji reaction. " +
+    "Use an answer header such as {\"kind\":\"answer\",\"reaction\":\"❤️\"} followed by a newline and your normal answer. " +
+    "Allowed reactions: 👍 ❤️ 🎉 🤔 👀 🙌 💡 ✨ 😊 🙏. Use them sparingly and only when appropriate; omit by default. " +
+    "A reaction is not approval, proof of success, or a substitute for requested work. Do not react to distress with celebration."

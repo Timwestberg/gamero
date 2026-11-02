@@ -2,20 +2,35 @@ package org.formulagen.wrapper.bridge
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.formulagen.wrapper.util.takeWhole
 import kotlin.time.Duration.Companion.minutes
 
 /**
- * A companion project's folders on the project's own Mac. Native code owns the paths: a page never
- * supplies one and never sees one. Every method answers the folders' status, and native code records
- * the change in the account. Desktop only; the conversation runner brings the implementation.
+ * A companion project's folders and image reads on its own Mac. Native code owns absolute paths;
+ * folder selection stays native. Image requests accept only project-relative paths and return
+ * bounded bytes without persisting a copy. Desktop only; the conversation runner implements this.
  */
 interface ProjectCapability {
+    /** Open a locally recorded provider session, never a command supplied by the page. */
+    suspend fun openOutput(args: ProjectOpenOutputArgs): ProjectOpenOutputResult = ProjectOpenOutputResult("unavailable")
+    /** Read an explicitly requested image on this project's Mac, without copying or uploading it. */
+    suspend fun image(args: ProjectImageArgs): ProjectImageResult = throw UnsupportedOperationException("Local image preview is unavailable")
     /** Opens the Mac's folder picker natively; the chosen folder joins the status, which is unchanged when cancelled. */
     suspend fun chooseFolder(args: ProjectChooseFolderArgs): ProjectFoldersStatus
     /** Forgets the folder. It does not touch the folder or its files. */
     suspend fun forgetFolder(args: ProjectForgetFolderArgs): ProjectFoldersStatus
     suspend fun folderStatus(scope: ProjectScope): ProjectFoldersStatus
 }
+
+@Serializable
+data class ProjectOpenOutputArgs(val projectId: String, val conversationId: String, val artifactId: String)
+@Serializable
+data class ProjectOpenOutputResult(val status: String)
+
+@Serializable
+data class ProjectImageArgs(val projectId: String, val path: String)
+@Serializable
+data class ProjectImageResult(val mediaType: String, val base64: String)
 
 /** The companion contract's bounds that native code mirrors so far. */
 object CompanionLimits { // mirrors COMPANION_LIMITS (limits.json)
@@ -82,8 +97,7 @@ object ProjectFolderNames {
     /** [text] in at most [limit] characters, never ending inside a surrogate pair or on whitespace. */
     private fun cut(text: String, limit: Int): String {
         if (text.length <= limit) return text
-        val head = text.take(limit)
-        return (if (head.last().isHighSurrogate()) head.dropLast(1) else head).trimEcma().ifEmpty { FALLBACK }
+        return text.takeWhole(limit).trimEcma().ifEmpty { FALLBACK }
     }
 
     private const val FALLBACK = "folder"
@@ -126,6 +140,12 @@ data class ProjectFoldersStatus(val folders: List<ProjectFolderStatus>) {
 
 /** Mirrors event-contracts/host-bridge/project.ts. */
 object ProjectMethods {
+    val OPEN_OUTPUT = BridgeMethod("project.openOutput", ProjectOpenOutputArgs.serializer(), ProjectOpenOutputResult.serializer()) {
+        SharedRules.isRecordId(it.projectId) && SharedRules.isRecordId(it.conversationId) && SharedRules.isRecordId(it.artifactId)
+    }
+    val IMAGE = BridgeMethod("project.image", ProjectImageArgs.serializer(), ProjectImageResult.serializer()) {
+        SharedRules.isRecordId(it.projectId) && it.path.length in 1..4096
+    }
     /** The person may browse for a while before choosing. */
     val CHOOSE_FOLDER = BridgeMethod(
         "project.chooseFolder", ProjectChooseFolderArgs.serializer(), ProjectFoldersStatus.serializer(), timeout = 10.minutes,
@@ -140,6 +160,8 @@ object ProjectMethods {
     fun pack(project: Capability<ProjectCapability>): CapabilityPack = binder.pack(project)
 
     internal val binder = CapabilityBinder("project", listOf<CapabilityHandler<ProjectCapability>>(
+        OPEN_OUTPUT.handle { project, args -> project.openOutput(args) },
+        IMAGE.handle { project, args -> project.image(args) },
         CHOOSE_FOLDER.handle { project, args -> project.chooseFolder(args) },
         FORGET_FOLDER.handle { project, args -> project.forgetFolder(args) },
         FOLDER_STATUS.handle { project, scope -> project.folderStatus(scope) },

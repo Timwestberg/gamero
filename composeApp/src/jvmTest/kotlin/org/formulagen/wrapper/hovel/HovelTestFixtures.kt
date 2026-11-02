@@ -2,17 +2,10 @@ package org.formulagen.wrapper.hovel
 
 import kotlinx.serialization.json.*
 
-/** Tasks and memory jobs shaped as the server sends them, for the Hovel tests. */
+/** Memory jobs shaped as the server sends them, for the Hovel tests. */
 internal object HovelTestFixtures {
     const val MEMORY_JOB_INPUT = "Extract memory notes from these exchanges."
     val QUEUED = buildJsonObject { put("state", "queued") }
-
-    /** A local task with character context and no follow-up. */
-    fun task(host: String, owner: String, id: String, progress: JsonObject = QUEUED, revision: Int = 0) = buildJsonObject {
-        put("ownerId", owner); put("characterMemory", "Ada remembers")
-        put("revision", revision); put("progress", progress)
-        put("request", buildJsonObject { put("id", id); put("hostId", host); put("mode", "local"); put("prompt", "Inspect") })
-    }
 
     /** A memory job with every field event-contracts `hovelMemoryJob` requires. */
     fun memoryJob(

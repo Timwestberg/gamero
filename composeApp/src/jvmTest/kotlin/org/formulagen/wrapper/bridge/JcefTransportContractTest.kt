@@ -45,7 +45,7 @@ class JcefTransportContractTest : TransportContractTest() {
                 }
             }
             page.open += queryId
-            check(transport.onQuery(raw, persistent, mainFrame, url, queryId, callback)) { "a v2 request was not handled" }
+            transport.onQuery(raw, persistent, mainFrame, url, queryId, callback)
             return replies
         }
 
@@ -87,7 +87,7 @@ class JcefHostBridgeTest {
 
     private fun TestScope.ask(transport: JcefHostBridge, request: String, persistent: Boolean = false, main: Boolean = true, url: String = trusted, queryId: Long = 1): Answers {
         val answers = Answers()
-        assertTrue(transport.onQuery(request, persistent, main, url, queryId, answers), "the query went to version 1")
+        transport.onQuery(request, persistent, main, url, queryId, answers)
         settle()
         return answers
     }
@@ -102,6 +102,21 @@ class JcefHostBridgeTest {
             assertEquals(listOf(403), ask(transport, """{"version":1,"method":"watchContext","args":{}}""", persistent = true, main = main, url = url).failures)
             val large = ask(transport, """{"version":2,"method":"watchContext","args":{"pad":"${"a".repeat(5000)}"}}""", main = main, url = url)
             assertEquals(listOf(403), large.failures, "an untrusted frame got more than 4096 characters parsed")
+        }
+    }
+
+    @Test
+    fun aQueryThatIsNotVersionTwoIsRefused() = runTest {
+        // The companion's old version 1 protocol is gone: its watch and its calls get a failure and reach no product.
+        val transport = transport()
+        for ((request, persistent) in listOf(
+            """{"version":1,"method":"watchContext","args":{}}""" to true,
+            """{"version":1,"contextId":"6f1c2d3e-4a5b-4c6d-8e7f-901234567890","method":"prepareConnection","args":{}}""" to false,
+            "not json" to false,
+        )) {
+            val answers = ask(transport, request, persistent = persistent)
+            assertEquals(listOf(400), answers.failures, request)
+            assertEquals(emptyList(), answers.successes, request)
         }
     }
 
@@ -188,6 +203,21 @@ class JcefHostBridgeTest {
         settle()
         assertEquals(0, ended)
         assertEquals(null, ask(transport, call(contextId), queryId = 3).code())
+    }
+
+    @Test
+    fun thePageMovesBetweenTheRoomAndCompanionsOnTheSameOrigin() = runTest {
+        // The app opens /hovel; the room links to /companions/... and back. Every same-origin document gets the bridge.
+        val transport = transport()
+        var queryId = 1L
+        for (url in listOf("https://hovel.example/hovel", "https://hovel.example/companions/6f1c2d3e?conversation=1", "https://hovel.example/hovel")) {
+            val watchId = queryId++
+            val watchAnswers = ask(transport, watch, persistent = true, url = url, queryId = watchId)
+            val contextId = Json.parseToJsonElement(watchAnswers.successes.single()).jsonObject.getValue("contextId").jsonPrimitive.content
+            assertEquals(null, ask(transport, call(contextId), url = url, queryId = queryId++).code(), url)
+            // Navigating away cancels the document's open watch, as JCEF does.
+            assertTrue(transport.onQueryCanceled(watchId))
+        }
     }
 
     private fun TestScope.assertContextOpen(transport: JcefHostBridge, watchAnswers: Answers) {

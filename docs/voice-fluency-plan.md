@@ -4,6 +4,8 @@
 >
 > Drafts: #53 synthesis (base `main`), #54 streaming (base #53), #56 Kokoro chat (base #54; Mac chat no longer uses Pocket), #55 iOS FluidAudio (base #53, merges after #56). Merge #52, then #53, #54, #56, then #55.
 
+> **Since then:** team chat is removed (companion projects step E). `DesktopChat`, `chat.stopSpeaking` and `ChatCapability.kt` are gone; `DesktopSpeech` lives in `composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversation/voice/` and speaks project conversations ([hovel-companion.md](hovel-companion.md#voice)). Paths below are as of the plan's evidence commit.
+
 **Goal:** Make Ember's spoken replies one continuous voice across a conversation, with sentence audio that flows instead of restarting every few dozen characters.
 
 **Architecture:** Keep the one `SherpaPocketEngine` and its cached speaker embedding for the life of the desktop chat. Change `:voice` so a reply is split only on sentence boundaries, pieces are joined without a silence insert, and a truncation retry uses the same seed. Play the first sentence through a streaming audio line while the next sentence synthesizes. Manual stop already exists; microphone barge-in does not.

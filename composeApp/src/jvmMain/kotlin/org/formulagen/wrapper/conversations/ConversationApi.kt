@@ -15,13 +15,16 @@ import org.formulagen.wrapper.hovel.NativeRoute
  * committed request.
  */
 internal interface ConversationApi {
-    /** Reports readiness, the provider directory and usage. Answers the heartbeat's data, which carries tasks and memory jobs. */
+    /** Reports readiness, the provider directory and usage. Answers the heartbeat's data, which carries memory jobs. */
     fun heartbeat(beat: HostHeartbeat): JsonObject
 
     /** Opens the host event stream; reading its lines blocks until the server ends it or it is closed. */
     fun openStream(): HovelEventLines
 
     fun claim(request: ClaimRequest): ClaimResponse
+
+    /** Whether a new direction is waiting at a safe step boundary. */
+    fun direction(messageId: String, request: ClaimRequest): Boolean = false
 
     /**
      * Sends a heard voice turn as the owner's message in [conversationId], which must be in this computer's
@@ -47,6 +50,10 @@ internal interface ConversationApi {
 
     /** One page of an artifact's text, from character [cursor]. */
     fun artifactText(artifactId: String, cursor: Int): ArtifactTextPage
+
+    /** Ephemeral preview transport, never journaled as conversation output. */
+    fun imageWork(requestId: String): ImageRelayWork = throw UnsupportedOperationException()
+    fun imageChunk(requestId: String, chunk: JsonObject) { throw UnsupportedOperationException() }
 }
 
 /** [ConversationApi] over the host transport: each call is the route's payload, in the contract's form. */
@@ -57,6 +64,9 @@ internal class HttpConversationApi(private val exchange: NativeExchange, private
 
     override fun claim(request: ClaimRequest): ClaimResponse = fromWire(ClaimResponse.serializer(),
         send(NativeRoute.CONVERSATION_CLAIM, NativeRoute.CONVERSATION_CLAIM.path(), wire(ClaimRequest.serializer(), request)))
+
+    override fun direction(messageId: String, request: ClaimRequest): Boolean = fromWire(PendingDirection.serializer(),
+        send(NativeRoute.MESSAGE_DIRECTION, NativeRoute.MESSAGE_DIRECTION.path(messageId), wire(ClaimRequest.serializer(), request))).pending
 
     override fun send(conversationId: String, request: MessageSend): ConversationMessage? {
         val data = send(NativeRoute.MESSAGE_SEND, NativeRoute.MESSAGE_SEND.path(conversationId), wire(MessageSend.serializer(), request))
@@ -87,6 +97,13 @@ internal class HttpConversationApi(private val exchange: NativeExchange, private
 
     override fun artifactText(artifactId: String, cursor: Int): ArtifactTextPage =
         fromWire(ArtifactTextPage.serializer(), send(NativeRoute.ARTIFACT_TEXT, NativeRoute.ARTIFACT_TEXT.path(artifactId, cursor = cursor), null))
+
+    override fun imageWork(requestId: String): ImageRelayWork =
+        fromWire(ImageRelayWork.serializer(), send(NativeRoute.IMAGE_RELAY_READ, NativeRoute.IMAGE_RELAY_READ.path(requestId), null))
+
+    override fun imageChunk(requestId: String, chunk: JsonObject) {
+        send(NativeRoute.IMAGE_RELAY_CHUNK, NativeRoute.IMAGE_RELAY_CHUNK.path(requestId), chunk)
+    }
 
     private fun send(route: NativeRoute, path: String, body: JsonObject?) = exchange.exchange(route.method, path, body)
 

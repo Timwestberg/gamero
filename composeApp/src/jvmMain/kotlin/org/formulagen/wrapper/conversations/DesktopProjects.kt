@@ -4,7 +4,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
+import org.formulagen.wrapper.bridge.ProjectOpenOutputArgs
+import org.formulagen.wrapper.bridge.ProjectOpenOutputResult
 import org.formulagen.wrapper.bridge.FolderRole
+import org.formulagen.wrapper.bridge.ProjectImageArgs
+import org.formulagen.wrapper.bridge.ProjectImageResult
 import org.formulagen.wrapper.bridge.ProjectCapability
 import org.formulagen.wrapper.bridge.ProjectChooseFolderArgs
 import org.formulagen.wrapper.bridge.ProjectFolderStatus
@@ -32,8 +36,24 @@ internal class DesktopProjects(
     private val changed: (accountId: String, projectId: String) -> Unit,
     /** Whether the account says the project runs on this Mac; null when it cannot be asked now. */
     private val owns: (accountId: String, projectId: String) -> Boolean? = { _, _ -> null },
+    private val output: (String, ProjectOpenOutputArgs) -> ProjectOpenOutputResult = { _, _ -> ProjectOpenOutputResult("unavailable") },
 ) : ProjectCapability {
+    override suspend fun openOutput(args: ProjectOpenOutputArgs): ProjectOpenOutputResult = runInterruptible(Dispatchers.IO) {
+        val accountId = registered()
+        check(owns(accountId, args.projectId) == true) { "Connect to verify this project belongs to this Mac" }
+        output(accountId, args)
+    }
+
     private val picking = AtomicBoolean()
+
+    override suspend fun image(args: ProjectImageArgs): ProjectImageResult = runInterruptible(Dispatchers.IO) {
+        val accountId = registered()
+        check(owns(accountId, args.projectId) == true) { "Connect to verify this project belongs to this Mac" }
+        val root = store.folders(accountId, args.projectId).singleOrNull { it.role == FolderRole.WORKING }?.path
+            ?: error("This project has no working folder")
+        readProjectImage(root, args.path)
+    }
+
 
     override suspend fun chooseFolder(args: ProjectChooseFolderArgs): ProjectFoldersStatus {
         val accountId = registered()
@@ -123,12 +143,16 @@ internal class ProjectFolderPublisher(
         WireProjectFolder(folder.id, folder.name, if (folder.role == FolderRole.CONTEXT) readableBy() else emptyList(), folder.role)
     }
 
-    /** The project as the account has it, remembered; null when it runs on another computer. */
-    private fun read(projectId: String): CompanionProject? = try {
-        val project = api.project(projectId)
-        if (project.computerId != hostId) { store.foreign(accountId, projectId); null } else project.also { store.claimed(accountId, it) }
-    } catch (error: HovelStatusException) {
-        if (error.final) store.foreign(accountId, projectId)
-        null
+    /** The project as the account has it, remembered unless a newer answer was; null when it runs on another computer. */
+    private fun read(projectId: String): CompanionProject? {
+        val request = store.requestSequence(accountId, projectId)
+        return try {
+            val project = api.project(projectId).takeIf { it.computerId == hostId }
+            store.answered(accountId, projectId, project, request)
+            project
+        } catch (error: HovelStatusException) {
+            if (error.final) store.answered(accountId, projectId, null, request)
+            null
+        }
     }
 }

@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><meta charset="utf-8"><title>Gamero native bridge smoke</title>
 <body><h1>Gamero embedded interface</h1><p id="agent"></p>
-<button id="probe">Check native bridge</button><button id="probe2">Check host bridge v2</button><button id="navigate">Reload this page</button>
+<button id="probe">Check version 1 is refused</button><button id="probe2">Check host bridge v2</button><button id="navigate">Reload this page</button>
 <pre id="result">No native request made.</pre>
 <iframe title="Untrusted child" sandbox="allow-scripts" srcdoc="<p>Opaque child frame</p>"></iframe>
 <script>
@@ -16,11 +16,11 @@ function query(method, args, contextId, persistent = false) {
       onSuccess: value => resolve(JSON.parse(value)), onFailure: (code, message) => reject(new Error(code + ': ' + message))});
   });
 }
+// The old version 1 protocol is gone: expect "400: Invalid native protocol".
 document.querySelector('#probe').onclick = async () => {
   try {
     const context = await query('watchContext', {}, null, true);
-    const capabilities = await query('capabilities', {}, context.contextId);
-    output.textContent = JSON.stringify({context, capabilities}, null, 2);
+    output.textContent = 'Unexpected: version 1 answered ' + JSON.stringify(context);
   } catch (error) { output.textContent = String(error); }
 };
 // host-bridge.v2: one persistent watchContext query; every reply is an envelope.

@@ -16,11 +16,9 @@ export function mount(root, composer, voice = null) {
   partial.id = "partial";
   const notice = document.createElement("p");
   notice.id = "notice";
-  const chat = document.createElement("p");
-  chat.id = "chat-status";
   const duplex = document.createElement("p");
   duplex.id = "duplex";
-  root.append(talk, partial, notice, chat, duplex);
+  root.append(talk, partial, notice, duplex);
 
   let picker = null;
   let voiceStatus = null;
@@ -74,7 +72,6 @@ export function mount(root, composer, voice = null) {
     partial.textContent = session.partial;
     if (!session.explained && session.phase === "off") notice.textContent = PERMISSION_COPY;
     else notice.textContent = session.notice || "";
-    chat.textContent = composer.chatNotice || "";
     duplex.textContent = session.duplex.mode === "full" ? "Full duplex" : `Half duplex · ${session.duplex.reason}`;
     if (voice) {
       picker.value = voice.selected();

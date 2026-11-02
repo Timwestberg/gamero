@@ -1,6 +1,6 @@
 package org.formulagen.wrapper.conversations
 
-import org.formulagen.wrapper.bridge.ActivityStep
+import org.formulagen.wrapper.conversation.ActivityStep
 import org.formulagen.wrapper.bridge.BrainArtifact
 import org.formulagen.wrapper.bridge.BrainAttempt
 import org.formulagen.wrapper.bridge.BrainAuthor
@@ -18,7 +18,11 @@ import org.formulagen.wrapper.util.shortened
  * returns stay in it, so its specialist keeps one provider conversation for the whole task.
  */
 
-/** A thread's title: role and task on one line, as "Implementer · add sign-in". */
+/**
+ * A thread's title: role and task on one line, as "Implementer · add sign-in", which event-contracts `displayText`
+ * always takes: no C0 control or DEL, emoji kept whole (joiners included), and a cut to the limit never splits a
+ * character.
+ */
 internal fun threadTitle(role: String, task: String): String {
     val oneLine = task.map { if (it.code < 0x20 || it.code == 0x7F) ' ' else it }.joinToString("").replace(Regex(" {2,}"), " ").trimEcma()
     return "$role · ${oneLine.ifEmpty { "task" }}".shortened(CompanionLimits.THREAD_TITLE).trimEcma()

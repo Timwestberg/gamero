@@ -14,10 +14,14 @@ import kotlinx.serialization.json.put
 import org.formulagen.wrapper.approvals.DialogPresenter
 import org.formulagen.wrapper.approvals.NativeDialog
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.*
+import org.formulagen.wrapper.runtimes.*
+import org.formulagen.wrapper.conversation.voice.*
+import org.formulagen.wrapper.util.*
 import org.formulagen.wrapper.hovel.HovelEventLines
 import org.formulagen.wrapper.hovel.HovelRejectedException
 import org.formulagen.wrapper.hovel.HovelStatusException
+import org.formulagen.wrapper.conversation.Activity
+import org.formulagen.wrapper.conversation.MemberMode
 
 /** Shared fixtures for the conversation tests: ids, brains, claims, a fake server and fake runtimes. */
 
@@ -48,7 +52,10 @@ internal class TestConversation(val id: String = id(), val projectId: String = i
     fun claim(claimId: String, message: ConversationMessage, document: BrainDocument, history: List<ConversationMessage> = emptyList(),
         thread: ConversationThread? = null, recalledMemory: String? = null, projectRevision: Long = 3,
         speak: Boolean = false) = ClaimResult(
-        document, claimId, AccountCompanion(companionId, buildJsonObject { put("body", "round") }, "Ember", 1),
+        document, claimId, AccountCompanion(companionId, buildJsonObject {
+            put("shell_color", "#b3a185"); put("frame_color", "#856b4e")
+            put("face_color", "#ed8f40"); put("eye_color", "#ffde9c")
+        }, "Ember", 1),
         Conversation(false, id, AT, projectId, 2, null, speak, "Add sign-in"), history, message,
         CompanionProject(false, companionId, computerId, emptyList(), projectId, "Hovel notes", projectRevision), recalledMemory, thread,
     )
@@ -68,6 +75,8 @@ internal class Queued(val message: ConversationMessage, val build: (claimId: Str
  * by the test.
  */
 internal class FakeServer(val hostId: String = id()) : ConversationApi {
+    var directionPending: () -> Boolean = { false }
+    override fun direction(messageId: String, request: ClaimRequest): Boolean = directionPending()
     private val queues = ConcurrentHashMap<String, ArrayDeque<Queued>>()
     private val claims = HashMap<String, ClaimResult>()
     /** Each claimed message's current claim id. */
@@ -162,9 +171,13 @@ internal class FakeServer(val hostId: String = id()) : ConversationApi {
 
     fun threads(): List<ConversationThread> = checkpoints.filterIsInstance<MessageCheckpoint.ThreadUpserted>().map { it.thread }
 
+    /** As hovel-service answers a Mac below the heartbeat's contract: the beat is stored, then refused. */
+    @Volatile var heartbeatUpdateRequired = false
+
     override fun heartbeat(beat: HostHeartbeat): JsonObject {
         if (offline) throw java.io.IOException("offline")
         heartbeats += beat
+        if (heartbeatUpdateRequired) throw HovelRejectedException(ConversationRunner.UPDATE_REQUIRED_CODE)
         return buildJsonObject { put("ok", true) }
     }
 
@@ -353,7 +366,7 @@ internal open class ScriptedRuntime(override val id: RuntimeId, val chunk: Int =
     override val contextFolders: ContextFolderSupport get() = support
     val started = CountDownLatch(1)
 
-    override fun readiness(profile: String) = Readiness.Ready
+    override fun readiness(accountId: String) = Readiness.Ready
 
     override fun startTurn(turn: TurnRequest, events: TurnEvents): TurnHandle {
         requests += turn
@@ -369,7 +382,6 @@ internal open class ScriptedRuntime(override val id: RuntimeId, val chunk: Int =
         return TurnHandle { stops += turn }
     }
 
-    override fun summarize(request: SummaryRequest) = "Summary"
     override fun release(lease: String) { released += lease }
     override fun release() = Unit
     override fun close() = Unit
@@ -380,8 +392,7 @@ internal class ConnectedProviders(private val offered: Set<RuntimeId> = RuntimeI
     @Volatile var connected = true
     override suspend fun perform(action: ProviderAction, scope: ProviderScope) =
         ProviderStatus(scope.runtimeId, if (connected && scope.runtimeId in offered) ProviderState.CONNECTED else ProviderState.DISCONNECTED)
-    override suspend fun list(profile: String) = ProviderList(offered.toList(), emptyList())
-    override suspend fun listForClient(args: ProviderListForClientArgs) = list(args.profile)
+    override suspend fun list() = ProviderList(offered.toList(), emptyList())
     override suspend fun models(scope: ProviderScope) =
         ProviderModels(listOf(ProviderModel("Test model", true, "test-model", listOf(ModelEffort.HIGH))), scope.runtimeId)
     override suspend fun usage(scope: ProviderScope) = ProviderUsage(scope.runtimeId, 1_000, ProviderUsageWindow(12.5, 1_800_000_000))
