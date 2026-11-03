@@ -189,9 +189,10 @@ keeps the system's `QuitResponse` open while the app decides. With nothing busy,
 person chooses Quit, the app's own shutdown ends the process, and a pending logout or restart
 goes on. Cancel calls `cancelQuit()`, which cancels that logout or restart, as any Mac app
 that asks does. A quit that arrives while the question is up joins it; one that arrives once
-the exit has started is ignored, and the exit ends it. The JDK lets the response be answered
-later from any thread, and nothing waits on it at exit. A release build installs no handler
-and keeps the JDK's quit.
+the exit has started is ignored, and the exit ends it. The exit calls `exitApplication()`
+even when closing an open game fails, so a started exit always ends the app. The JDK lets
+the response be answered later from any thread, and nothing waits on it at exit. A release
+build installs no handler and keeps the JDK's quit.
 
 #### Confirmation sheets
 
