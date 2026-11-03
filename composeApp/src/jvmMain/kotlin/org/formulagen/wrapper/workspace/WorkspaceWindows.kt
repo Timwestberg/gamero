@@ -13,6 +13,7 @@ import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
@@ -67,11 +68,11 @@ internal class WorkspaceWindows(confirmer: Confirmer = SheetConfirmer, host: () 
     fun requestClose(window: WorkspaceWindowState) {
         if (window.closeRequested || window !in windows) return
         window.closeRequested = true
-        window.busyTabs().whenComplete { busy, _ ->
+        window.busyTabs().thenAccept { busy ->
             onAwt {
                 window.closeRequested = false
                 if (window !in windows) return@onAwt
-                val question = Confirmations.closeWindow(window.title, busy.orEmpty())
+                val question = Confirmations.closeWindow(window.title, busy)
                 if (question == null || confirmer.confirm(window.awtWindow, question)) close(window)
             }
         }
@@ -103,10 +104,10 @@ internal class WorkspaceWindows(confirmer: Confirmer = SheetConfirmer, host: () 
         if (open.isEmpty()) { quit(); return }
         quitting = true
         val checks = open.map { window -> window.busyTabs().thenApply { BusyWindow(window.title, it) } }
-        CompletableFuture.allOf(*checks.toTypedArray()).whenComplete { _, _ ->
+        CompletableFuture.allOf(*checks.toTypedArray()).thenRun {
             onAwt {
                 quitting = false
-                val busy = checks.map { it.getNow(null) ?: BusyWindow("", emptyList()) }
+                val busy = checks.map { it.join() }
                 val question = Confirmations.quit(appName, busy) ?: return@onAwt quit()
                 val owner = open[busy.indexOfFirst { it.tabs.isNotEmpty() }]
                 owner.bringForward()
@@ -316,17 +317,11 @@ internal class WorkspaceWindowState(
     fun requestCloseTab(tab: WorkspaceTab) {
         if (tab.closeRequested || tab !in tabs) return
         tab.closeRequested = true
-        val session = tab.session
-        val check = try {
-            CompletableFuture.supplyAsync({ session?.busy() }, workers)
-        } catch (error: Exception) {
-            CompletableFuture.completedFuture<Busy?>(Busy.NoAnswer(tab.label))
-        }
-        check.whenComplete { busy, failure ->
+        checkBusy(tab).thenAccept { busy ->
             onAwt {
                 tab.closeRequested = false
                 if (tab !in tabs) return@onAwt
-                val question = Confirmations.closeTab(if (failure != null) Busy.NoAnswer(tab.label) else busy)
+                val question = Confirmations.closeTab(busy)
                 if (question == null || confirmer().confirm(awtWindow, question)) closeTab(tab)
             }
         }
@@ -343,28 +338,38 @@ internal class WorkspaceWindowState(
 
     /**
      * Every busy tab, checked in parallel on the workers: what a window close or a quit would end.
-     * Called on the AWT thread; completes on a worker. A check that fails counts as busy.
+     * Called on the AWT thread; completes on a worker, and never fails ([checkBusy]).
      */
     fun busyTabs(): CompletableFuture<List<BusyTab>> {
         val checks = tabs.mapIndexed { index, tab ->
             val name = "${tab.label} (tab ${index + 1})"
-            val session = tab.session
-            try {
-                CompletableFuture.supplyAsync({ session?.busy()?.let { BusyTab(name, it) } }, workers)
-                    .exceptionally { BusyTab(name, Busy.NoAnswer(tab.label)) }
-            } catch (error: Exception) {
-                CompletableFuture.completedFuture(BusyTab(name, Busy.NoAnswer(tab.label)))
-            }
+            checkBusy(tab).thenApply { busy -> busy?.let { BusyTab(name, it) } }
         }
         return CompletableFuture.allOf(*checks.toTypedArray()).thenApply { checks.mapNotNull { it.join() } }
     }
 
-    /** Refresh each running tab's busy state for the tab bar. Off the AWT thread. */
+    /** Refresh each running tab's busy state for the tab bar. Off the AWT thread; never throws but fatally. */
     fun pollBusy() {
         for (tab in tabs.toList()) {
-            val busy = tab.session?.takeIf { tab.state == TabState.Running }?.busy()
+            val busy = if (tab.state == TabState.Running) askBusy(tab) else null
             if (busy != tab.busy) onAwt { tab.busy = busy }
         }
+    }
+
+    /** [tab]'s busy state, asked on this thread. A check that fails counts as busy. */
+    private fun askBusy(tab: WorkspaceTab): Busy? = try {
+        tab.session?.busy()
+    } catch (error: Throwable) {
+        rethrowIfFatal(error)
+        log(LogLevel.Warn, TAG, "Could not ask ${tab.label} whether it is busy", error)
+        Busy.NoAnswer(tab.label)
+    }
+
+    /** [askBusy] on a worker. The future never fails: a refused or failed check counts as busy. */
+    private fun checkBusy(tab: WorkspaceTab): CompletableFuture<Busy?> = try {
+        CompletableFuture.supplyAsync({ askBusy(tab) }, workers).exceptionally { Busy.NoAnswer(tab.label) }
+    } catch (_: RejectedExecutionException) {
+        CompletableFuture.completedFuture(Busy.NoAnswer(tab.label))
     }
 
     private fun tabLabel(launch: Launch): String = when (launch) {

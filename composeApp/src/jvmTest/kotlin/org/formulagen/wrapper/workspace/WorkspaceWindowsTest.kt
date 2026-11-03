@@ -36,9 +36,11 @@ class WorkspaceWindowsTest {
     private class FakeSession : Session {
         val closed = CountDownLatch(1)
         @Volatile var busy: Busy? = null
+        /** [busy] throws instead of answering. */
+        @Volatile var busyFails = false
         @Volatile var viewer: SessionViewer? = null
         override val title = "Shell"
-        override fun busy() = busy
+        override fun busy(): Busy? = if (busyFails) throw IllegalStateException("busy boom") else busy
         override fun attach(viewer: SessionViewer): Attachment {
             this.viewer = viewer
             return object : Attachment {
@@ -161,6 +163,32 @@ class WorkspaceWindowsTest {
         EventQueue.invokeAndWait { workspaces.requestClose(window) }
         eventually("closed on yes") { window !in workspaces.windows }
         host.sessions.forEach { assertTrue(it.closed.await(5, SECONDS)) }
+    }
+
+    @Test fun aCheckThatThrowsCountsAsBusyEverywhere() {
+        val window = open()
+        running(window, 1)
+        host.sessions.single().busyFails = true
+        EventQueue.invokeAndWait { window.requestCloseTab(window.tabs.single()) }
+        eventually("asked to close the tab") { asked.size == 1 }
+        assertEquals(listOf("Shell did not answer, so it may have unsaved work. Closing the tab ends it."), asked[0].lines)
+        EventQueue.invokeAndWait { workspaces.requestClose(window) }
+        eventually("asked to close the window") { asked.size == 2 }
+        var quits = 0
+        EventQueue.invokeAndWait { workspaces.confirmQuit("Hovel") { quits++ } }
+        eventually("asked to quit") { asked.size == 3 }
+        assertEquals(0, quits, "no keeps the app")
+        window.pollBusy()
+        eventually("the tab bar shows it busy") { window.tabs.single().busy == Busy.NoAnswer("Shell") }
+    }
+
+    @Test fun aCheckTheWorkersRefuseCountsAsBusy() {
+        val window = open()
+        running(window, 1)
+        workspaces.close()
+        EventQueue.invokeAndWait { window.requestCloseTab(window.tabs.single()) }
+        eventually("asked") { asked.size == 1 }
+        assertEquals(1, onAwtNow { window.tabs.size })
     }
 
     @Test fun anIdleWindowClosesWithoutAsking() {
