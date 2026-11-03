@@ -106,7 +106,7 @@ class ShellIntegrationTest {
         fake.writeText("#!/bin/sh\nprintf '%s=[%s] ARG0=[%s] ARGS=[%s|%s|%s]\\n' TOOL \"\$PATH\" \"\$0\" \"\$#\" \"\$1\" \"\$2\"\n")
         Files.setPosixFilePermissions(fake, PosixFilePermissions.fromString("rwx------"))
         // A short folder: a socket path must fit in 103 bytes.
-        val sockets = Files.createTempDirectory("hv").also { it.toFile().deleteOnExit() }
+        val sockets = shortTempFolder()
         for (shell in listOf("/bin/zsh", "/bin/bash") + listOfNotNull(System.getenv("HOVEL_TEST_FISH"))) {
             val tab = start(shell, Launch.Tool(WorkspaceTool.NEOVIM), EditorSockets(sockets))
             val match = tab.viewer.await(Regex("TOOL=\\[([^\\]]*)\\] ARG0=\\[([^\\]]*)\\] ARGS=\\[([^\\]]*)\\]"))

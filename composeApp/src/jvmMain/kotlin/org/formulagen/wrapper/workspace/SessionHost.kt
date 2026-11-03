@@ -67,8 +67,9 @@ interface Session {
     /**
      * What closing the session would end, or null when it holds nothing to lose: an idle shell
      * (background jobs and prompt helpers do not count), a catalog tool with no work of its own, an
-     * editor with every buffer saved, or a session that has ended. Bounded in time (about 1.5 seconds
-     * at most, when an editor does not answer); call it off the AWT thread.
+     * editor with every buffer saved, or a session that has ended. Bounded in time: about 3 seconds at
+     * most, when Neovim does not answer (its 1-second limit, then up to 2 seconds to stop the client
+     * or read its answer). Call it off the AWT thread.
      */
     fun busy(): Busy?
 

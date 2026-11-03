@@ -12,6 +12,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.formulagen.wrapper.conversations.eventually
 import org.junit.Assume.assumeTrue
 
 /** Collects a session's output as text and its exit code. */
@@ -127,9 +128,9 @@ class PtySessionHostTest {
         assertTrue(commands.size >= 2 && commands.any { it.endsWith("/sleep") }, "$commands")
     }
 
-    @Test fun aShellWithNoJobControlIsBusyWhileItHasLiveChildren() {
+    @Test fun aShellWithNoJobControlIsIdleWhileItsChildrenShareItsGroup() {
         // /bin/sh -c runs its children in its own process group, the terminal's foreground one, so
-        // the foreground rule sees nothing; the children say it is working.
+        // the foreground rule sees no job: a known limit, as no Shell tab runs without job control.
         val idle = start("read _")
         idle.attach(CollectingViewer())
         Thread.sleep(200)
@@ -221,13 +222,13 @@ class PtySessionHostTest {
         scripts[tool] = listOf("/bin/sh", "-c", script)
         val lazygit = host.start(SessionSpec("p1", "lazygit", folder, tool, TermSize(80, 24)))
         lazygit.attach(CollectingViewer())
-        Thread.sleep(300)
-        assertNull(lazygit.busy(), "a tool's own helper is part of the tool")
+        eventually("the helper runs") { lazygit.processes().size == 2 }
+        // Settled: macOS's /bin/sh re-executes itself as another shell.
+        assertNull(awaitBusy(lazygit) { it == null }, "a tool's own helper is part of the tool")
         scripts[tool] = listOf("/bin/sh", "-c", "sleep 30 & wait")
         val working = host.start(SessionSpec("p1", "lazygit", folder, tool, TermSize(80, 24)))
         working.attach(CollectingViewer())
-        Thread.sleep(300)
-        assertEquals(Busy.Running("sleep 30"), working.busy(), "anything else it starts is work")
+        assertEquals(Busy.Running("sleep 30"), awaitBusy(working) { it != null }, "anything else it starts is work")
     }
 
     @Test fun anEndedSessionIsNotBusy() {

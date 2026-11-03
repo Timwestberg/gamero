@@ -5,7 +5,6 @@ import java.net.UnixDomainSocketAddress
 import java.nio.channels.ServerSocketChannel
 import java.nio.file.Files
 import java.nio.file.Path
-import kotlin.io.path.createTempDirectory
 import kotlin.io.path.isExecutable
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -19,7 +18,7 @@ import org.junit.Assume.assumeTrue
 /** Neovim's answers, parsed and from a real Neovim; and the names a confirmation shows. */
 class BusyChecksTest {
     // Short: a Unix socket's whole path must fit in 103 bytes.
-    private val root: Path = createTempDirectory("hv")
+    private val root: Path = shortTempFolder()
     private val sockets = root.resolve("nvim")
     private val hosts = mutableListOf<PtySessionHost>()
 
