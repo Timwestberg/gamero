@@ -118,6 +118,12 @@ kotlin {
             implementation("org.jogamp.jogl:jogl-all:2.6.0")
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutinesSwing)
+            // Project workspace terminal. pty4j (EPL-1.0, Maven Central) runs each tab's process on a
+            // pseudo-terminal; JediTerm (dual LGPLv3/Apache-2.0, used under Apache-2.0; JetBrains'
+            // repository, see settings.gradle.kts) draws it in Swing.
+            implementation("org.jetbrains.pty4j:pty4j:0.14.0")
+            implementation("org.jetbrains.jediterm:jediterm-core:3.76")
+            implementation("org.jetbrains.jediterm:jediterm-ui:3.76")
         }
     }
 }

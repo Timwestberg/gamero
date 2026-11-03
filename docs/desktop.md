@@ -65,6 +65,29 @@ The app never signs in to Codex or any other runtime. Do not use native launch
 alone as Hovel conversation or reconnect acceptance; follow
 [hovel-native-validation.md](hovel-native-validation.md).
 
+### Project workspace (development builds)
+
+A development build (`-Dgamero.dev=true`: Gradle runs and the local launchers) can open
+a project workspace window: a native terminal with a Shell tab in a folder
+(`jvmMain/.../workspace/`; spec and architecture in game-platform
+`docs/launcher/project-workspace.*`). Release builds never offer it.
+
+- **Develop → Open Workspace…** in the main window picks a folder.
+  `HOVEL_WORKSPACE_FOLDER=<folder>` opens one at launch instead.
+- **Shell → New Tab** (⌘T) and **Close Tab** (⌘W). The window's **Develop** menu, or
+  **+**, opens Neovim, lazygit or yazi in a tab, started through the login shell.
+- `HOVEL_WORKSPACE_BIN=<folder>` is the folder kept first in each tab's `PATH`
+  (default `~/Library/Application Support/Gamero/workspace/bin`, where the tool
+  manager will put its wrappers). A tool tab runs that folder's wrapper when it has
+  one, otherwise the player's installed tool.
+- `HOVEL_WORKSPACE_SHELL=<path>` tries another shell in place of the login shell.
+- `HOVEL_WORKSPACE_PROBE=<steps file>`, with `HOVEL_WORKSPACE_FOLDER`, drives the window
+  from a script and writes screen text and images beside the file, for checks with no
+  one at the screen (`WorkspaceProbe` lists the steps).
+
+Hovel's shell startup files go to `~/Library/Caches/org.formulagen.wrapper/workspace/shell/`.
+The fish integration test runs only when `HOVEL_TEST_FISH` names a fish executable.
+
 ## Build boundaries
 
 Desktop is the default target. `-Pgamero.iosTargets=true` adds only the iOS

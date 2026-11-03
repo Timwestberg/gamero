@@ -1,0 +1,27 @@
+# Hovel workspace, zsh step 1 of 4 (.zshenv).
+#
+# Hovel starts zsh with ZDOTDIR pointing at this folder, so these four files run around the
+# player's own. Each step sets ZDOTDIR to the player's folder, sources the player's file as zsh
+# would, notes any ZDOTDIR change the file made, and points ZDOTDIR back here for the next step.
+# Step 4 (.zlogin) hands ZDOTDIR back for good. Hovel never edits the player's files.
+
+__hovel_zdotdir=$ZDOTDIR
+__hovel_user_zdotdir=${HOVEL_USER_ZDOTDIR:-$HOME}
+__hovel_path=$HOVEL_PATH_PREPEND
+unset HOVEL_USER_ZDOTDIR HOVEL_PATH_PREPEND
+
+# Put Hovel's entries first, in order, wherever the player's files moved them.
+__hovel_prepend_path() {
+  emulate -L zsh
+  [[ -n $__hovel_path ]] || return 0
+  local -a first
+  first=(${(s.:.)__hovel_path})
+  path=($first ${path:|first})
+}
+
+ZDOTDIR=$__hovel_user_zdotdir
+if [[ $ZDOTDIR != $__hovel_zdotdir && -r $ZDOTDIR/.zshenv ]]; then
+  builtin source "$ZDOTDIR/.zshenv"
+fi
+__hovel_user_zdotdir=$ZDOTDIR
+ZDOTDIR=$__hovel_zdotdir

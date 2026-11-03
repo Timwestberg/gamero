@@ -25,7 +25,14 @@ dependencyResolutionManagement {
             }
         }
         mavenCentral()
-
+        // JediTerm (the workspace terminal) is published only to JetBrains' IntelliJ dependencies
+        // repository. Nothing else may resolve from it.
+        exclusiveContent {
+            forRepository {
+                maven("https://packages.jetbrains.team/maven/p/ij/intellij-dependencies") { name = "jetbrainsIntellijDependencies" }
+            }
+            filter { includeGroup("org.jetbrains.jediterm") }
+        }
     }
 }
 
