@@ -241,7 +241,9 @@ The memory lane rides its heartbeat.
   journal; one journaled only `claiming` never learned its message and is
   dropped. `approval.answered` closes the Mac's dialog when the phone answered
   first. `project.changed` reads the project and publishes its folders when the
-  account's differ.
+  account's differ. `workspaceProfile.changed` (the account's workspace profile
+  was saved at a revision) needs nothing from conversations; the workspace's
+  profile sync will follow it.
 - `mac-update-required`, a 409 `update-required` and a claim this build cannot
   read leave the message queued and set the status line to "Update Hovel on
   this Mac to run every message in its conversations".
