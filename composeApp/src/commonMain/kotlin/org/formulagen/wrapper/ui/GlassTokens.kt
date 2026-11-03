@@ -1,8 +1,13 @@
 package org.formulagen.wrapper.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -14,6 +19,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import org.jetbrains.compose.resources.Font
@@ -27,8 +33,12 @@ import westbergwrapper.composeapp.generated.resources.hovel_sans_medium
 import westbergwrapper.composeapp.generated.resources.hovel_sans_regular
 import westbergwrapper.composeapp.generated.resources.hovel_sans_semibold
 
-// Hovel's Liquid Glass tokens, named after the web host's custom properties in
-// game-platform/apps/game-bridge-host/src/components/liquid-glass/glass.css.
+// Hovel's Liquid Glass tokens. The colors, glassEdge, brandGradient and hovelSans
+// match the web host's custom properties in
+// game-platform/apps/game-bridge-host/src/components/liquid-glass/glass.css
+// (`--fg-*`, `--glass-edge`, `--brand-gradient`, `--font-sans`). radiusPanel (22) and
+// radiusCard (24) are the design system's radius-panel and radius-card tokens, which
+// glass.css does not declare as properties.
 // Native interface chrome uses only these. Warm colors belong to world art and
 // to the colors a game chooses for its companions, never to chrome.
 
@@ -49,6 +59,15 @@ internal val glassEdge = Color.White.copy(alpha = .18f)
 
 internal val radiusPanel = 22.dp
 internal val radiusCard = 24.dp
+
+/**
+ * The panel role: opaque `fg-ink-900` behind a `glass-edge` rim. Text on it keeps its contrast whatever
+ * the art behind it, so danger text (`fg-red-400`, 6.45:1 here) always sits on one.
+ */
+internal fun Modifier.inkPanel(radius: Dp = radiusPanel): Modifier {
+    val shape = RoundedCornerShape(radius)
+    return clip(shape).background(fgInk900).border(1.dp, glassEdge, shape)
+}
 
 /**
  * `brand-gradient`: CSS `linear-gradient(135deg, fg-green-500, fg-blue-500)`.

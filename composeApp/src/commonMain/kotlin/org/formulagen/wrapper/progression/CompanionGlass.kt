@@ -17,7 +17,9 @@ import org.formulagen.wrapper.ui.fgInk900
 
 /** A game-supplied `rrggbb` (or `#rrggbb`) accent, or [fallback] when it is missing or malformed. */
 internal fun glassColor(hex: String?, fallback: Color = fgBlue300): Color =
-    hex?.removePrefix("#")?.takeIf { it.length == 6 }?.toLongOrNull(16)?.let { Color((0xFF000000L or it).toInt()) } ?: fallback
+    hex?.removePrefix("#")?.takeIf { it.length == 6 && it.all(::isHexDigit) }?.let { Color((0xFF000000L or it.toLong(16)).toInt()) } ?: fallback
+
+private fun isHexDigit(char: Char) = char in '0'..'9' || char in 'a'..'f' || char in 'A'..'F'
 
 /** Small illustrated robot portrait in the companion's [tint], brightened after saving, with [eyes] on its dark visor. */
 @Composable

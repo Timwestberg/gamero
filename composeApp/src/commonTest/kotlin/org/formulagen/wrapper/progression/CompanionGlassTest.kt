@@ -11,7 +11,7 @@ class CompanionGlassTest {
     @Test fun gameColorsParseWithAFallback() {
         assertEquals(fgGreen400, glassColor("1ff8b0"))
         assertEquals(fgGreen400, glassColor("#1FF8B0"))
-        for (bad in listOf(null, "", "1ff8b", "1ff8b0ff", "green!")) assertEquals(fgBlue300, glassColor(bad), bad)
+        for (bad in listOf(null, "", "1ff8b", "1ff8b0ff", "green!", "-1ffff", "+1ffff", "#-1fff")) assertEquals(fgBlue300, glassColor(bad), bad)
         assertEquals(Color.White, glassColor(null, Color.White))
     }
 }

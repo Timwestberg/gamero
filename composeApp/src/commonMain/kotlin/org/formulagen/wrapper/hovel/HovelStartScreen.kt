@@ -8,7 +8,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,13 +64,11 @@ import org.formulagen.wrapper.ui.brandGradient
 import org.formulagen.wrapper.ui.fgBlue300
 import org.formulagen.wrapper.ui.fgInk300
 import org.formulagen.wrapper.ui.fgInk700
-import org.formulagen.wrapper.ui.fgInk900
 import org.formulagen.wrapper.ui.fgInk950
 import org.formulagen.wrapper.ui.fgRed400
 import org.formulagen.wrapper.ui.fgWhite
-import org.formulagen.wrapper.ui.glassEdge
 import org.formulagen.wrapper.ui.hovelSans
-import org.formulagen.wrapper.ui.radiusPanel
+import org.formulagen.wrapper.ui.inkPanel
 import org.formulagen.wrapper.ui.titleTracking
 import org.jetbrains.compose.resources.imageResource
 import org.jetbrains.compose.ui.tooling.preview.Preview
@@ -223,7 +220,8 @@ fun HovelLaunchScreen(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Keeper card: a glass panel, as on the web host, beside a close-up of the room.
+// Keeper card: an opaque ink panel with the glass edge (the web's auth card is translucent glass),
+// beside a close-up of the room.
 // ---------------------------------------------------------------------------------------------
 
 /**
@@ -270,9 +268,7 @@ fun KeeperStartScreen(
                     state, onContinue, footnote, compact = false, titleReveal, shown,
                     modifier = panelMotion
                         .widthIn(max = 440.dp)
-                        .clip(RoundedCornerShape(radiusPanel))
-                        .background(fgInk900)
-                        .border(1.dp, glassEdge, RoundedCornerShape(radiusPanel))
+                        .inkPanel()
                         .padding(32.dp),
                 )
             }

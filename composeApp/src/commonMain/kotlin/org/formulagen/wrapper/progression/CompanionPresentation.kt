@@ -40,8 +40,8 @@ import org.formulagen.wrapper.ui.fgInk900
 import org.formulagen.wrapper.ui.fgInk950
 import org.formulagen.wrapper.ui.fgRed400
 import org.formulagen.wrapper.ui.fgWhite
-import org.formulagen.wrapper.ui.glassEdge
 import org.formulagen.wrapper.ui.hovelTypography
+import org.formulagen.wrapper.ui.inkPanel
 import org.formulagen.wrapper.ui.titleTracking
 
 /** Dedicated progression screen: hosts provide state, commands and game-specific artwork. */
@@ -203,7 +203,8 @@ fun CompanionPresentation(
                                 }
                             }
                             if (state.error != null) {
-                                Text(state.error, Modifier.fillMaxWidth().padding(top = 16.dp).semantics { liveRegion = LiveRegionMode.Assertive }, color = fgRed400)
+                                Text(state.error, Modifier.fillMaxWidth().padding(top = 16.dp).inkPanel().padding(horizontal = 18.dp, vertical = 12.dp)
+                                    .semantics { liveRegion = LiveRegionMode.Assertive }, color = fgRed400)
                                 if (state.pending != null) TextButton(onRetry, control("retry").align(Alignment.CenterHorizontally)) { Text("Retry") }
                             }
                             if (acknowledge && snapshot.view != "saved") Text("Upgrade saved", Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp).semantics { liveRegion = LiveRegionMode.Polite }, color = fgBlue300, fontSize = 12.sp)
@@ -278,7 +279,8 @@ private fun ReviewProgress(snapshot: PresentationSnapshot, review: ExpeditionRev
 /** Named receipt groups remain readable on both success and failure. */
 @Composable
 private fun EquipmentGroup(title: String, items: List<String>, accent: Color, modifier: Modifier) {
-    Column(modifier.clip(RoundedCornerShape(16.dp)).border(1.dp, glassEdge, RoundedCornerShape(16.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    // On an ink panel, not straight on the game's art, so every accent (red included) stays readable.
+    Column(modifier.inkPanel().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = accent)
         if (items.isEmpty()) Text("None this adventure", fontSize = 14.sp, color = fgInk300)
         items.forEach { Text(it.lowercase().replaceFirstChar { char -> char.uppercase() }, fontSize = 16.sp) }
