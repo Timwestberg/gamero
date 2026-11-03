@@ -67,8 +67,9 @@ alone as Hovel conversation or reconnect acceptance; follow
 
 ### Project workspace (development builds)
 
-A development build (`-Dgamero.dev=true`: Gradle runs, the local launchers, and a package
-built with `-Pgamero.developmentPackage=true`) can open a project workspace window: a
+A development build (`-Dgamero.dev=true`: the local jpackage launchers, the plain
+`JavaExec` entry points such as `runCompanions`, and Compose's `run` or a package only with
+`-Pgamero.developmentPackage=true`; see below) can open a project workspace window: a
 native terminal with a Shell tab in a folder (`jvmMain/.../workspace/`; spec and
 architecture in game-platform `docs/launcher/project-workspace.*`). Release builds never
 offer it, and do not ship its natives. A development package ships them signed, for
@@ -129,7 +130,8 @@ Hovel's shell startup files go to `~/Library/Caches/org.formulagen.wrapper/works
 The fish integration test runs only when `HOVEL_TEST_FISH` names a fish executable: fish's
 own `fish-<version>.app.zip` release, unzipped anywhere, has one at
 `fish-<version>.app/Contents/Resources/base/usr/local/bin/fish`, with nothing installed. The
-Neovim tests use `/opt/homebrew/bin/nvim` or `HOVEL_TEST_NVIM`, and skip without one.
+Neovim tests use `HOVEL_TEST_NVIM`, `/opt/homebrew/bin/nvim` or `/usr/local/bin/nvim`, and skip
+without one.
 
 #### Quitting
 

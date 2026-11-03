@@ -270,9 +270,10 @@ compose.desktop {
     }
 }
 
-// Development launches (Gradle run tasks and the local jpackage prototypes) are marked, so features gated to
-// development builds may turn on. Packaging uses compose.desktop's jvmArgs, which carry the marker only with
-// -Pgamero.developmentPackage=true (never with gamero.release).
+// The plain JavaExec entry points (registerJvmMain) and the local jpackage prototypes are marked as development
+// launches, so features gated to development builds may turn on. Compose's own run task takes compose.desktop's
+// jvmArgs instead, as packaging does: they carry the marker only with -Pgamero.developmentPackage=true (never with
+// gamero.release), so a plain ./gradlew run is not a development build.
 val developmentJvmOptions = listOf("-Dgamero.dev=true")
 
 // Required by the existing KCEF desktop WebView implementation.
