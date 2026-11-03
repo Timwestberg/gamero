@@ -374,7 +374,7 @@ internal class WorkspaceWindowState(
     }
 }
 
-/** A program's window title as a tab shows it: no control characters, at most 60 characters; blank is none. */
+/** A program's window title as the tab bar and Window menu show it, cleaned by [clip]; blank is none. */
 internal fun programTitle(title: String): String? = clip(title, 60).takeIf { it.isNotEmpty() }
 
 /** Run [block] on the AWT thread, logging anything it throws: an escape there ends the app. */

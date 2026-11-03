@@ -112,6 +112,17 @@ class BusyChecksTest {
         assertEquals("echo ab", commandLabel("/bin/echo", listOf("a\u001b\u0007b")), "control characters are dropped")
     }
 
+    @Test fun namesKeepNoFormatCharactersOrLoneSurrogatesAndNeverSplitAPair() {
+        assertEquals("abc.txt", clip("a\u202Eb\u2066c\u2069.txt", 60), "bidi overrides and isolates")
+        assertEquals("ab", clip("a\u200Bb\uFEFF", 60), "zero widths")
+        assertEquals("ab", clip("a\uD800b\uDC00", 60), "lone surrogates")
+        assertEquals("ok 😀", clip("ok 😀", 60), "a pair is kept")
+        val cut = clip("x" + "😀".repeat(40), 60)
+        assertTrue(cut.length <= 60 && cut.endsWith("…"), cut)
+        assertTrue(cut.dropLast(1).let { it.isEmpty() || !it.last().isHighSurrogate() }, "the cut never leaves half a pair: $cut")
+        assertEquals("vim notes.txt", programTitle("\u202Evim notes.txt\u0007"))
+    }
+
     private fun neovim(): String {
         assumeTrue(System.getProperty("os.name").contains("Mac"))
         val nvim = listOfNotNull(System.getenv("HOVEL_TEST_NVIM"), "/opt/homebrew/bin/nvim", "/usr/local/bin/nvim")

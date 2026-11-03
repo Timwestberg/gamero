@@ -14,6 +14,7 @@ import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.process.SYSTEM_PATH
 import org.formulagen.wrapper.process.runBounded
 import org.formulagen.wrapper.storage.privateFolder
+import org.formulagen.wrapper.util.shortened
 
 /*
  * The pieces [PtySession.busy] asks with: a terminal's foreground process group, Neovim's own answer
@@ -153,11 +154,14 @@ internal fun commandLabel(executable: String?, arguments: List<String>): String 
     return clip(words.joinToString(" "), 60)
 }
 
-/** [text] without control characters, cut to [max] characters with an ellipsis. */
-internal fun clip(text: String, max: Int): String {
-    val clean = text.filterNot { it.isISOControl() }.trim()
-    return if (clean.length <= max) clean else clean.take(max - 1).trimEnd() + "…"
-}
+/** [text] as plain words: no control or format characters, no lone surrogates, at most [max] characters. */
+internal fun clip(text: String, max: Int): String = buildString {
+    text.codePoints().filter(::isShown).forEach { appendCodePoint(it) }
+}.trim().shortened(max)
+
+/** False for controls, format characters (bidi overrides and isolates, zero widths) and lone surrogates. */
+private fun isShown(codePoint: Int): Boolean = !Character.isISOControl(codePoint) &&
+    Character.getType(codePoint).let { it != Character.FORMAT.toInt() && it != Character.SURROGATE.toInt() }
 
 /** `~/Library/Caches/<bundle id>/workspace`: Hovel's workspace files that need a path with no spaces. */
 internal fun workspaceCacheFolder(home: String = System.getProperty("user.home")): Path =

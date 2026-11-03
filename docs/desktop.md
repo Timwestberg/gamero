@@ -139,7 +139,9 @@ Every line is its own `JLabel`, created empty, with `html.disable` set before it
 sheet never hands Swing a `String` message: JBR 21's `BasicOptionPaneUI` draws any string
 that contains `<html>`…`</html>` as HTML, wherever it starts, and `html.disable` on the pane
 does not reach that label. A command line or file name could then make the sheet load a
-remote image.
+remote image. Names in a question, and the titles programs set for their tabs, are cleaned
+first (`clip`): no control or format characters (bidi overrides, zero widths) and no lone
+surrogates, cut without splitting a surrogate pair.
 
 The probe's `run`, `typing` and `cpu` steps measure responsiveness: the time to finish a
 command with the terminal drawing its output, key-to-paint latency, and the app's CPU use and
