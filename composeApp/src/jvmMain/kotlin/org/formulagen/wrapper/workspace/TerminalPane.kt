@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.SwingPanel
 import androidx.compose.ui.graphics.toArgb
+import com.jediterm.terminal.CursorShape
 import com.jediterm.terminal.TerminalColor
 import com.jediterm.terminal.TerminalExecutorServiceManager
 import com.jediterm.terminal.TextStyle
@@ -46,8 +47,8 @@ private const val TAG = "workspace-terminal"
 
 /**
  * JediTerm's settings for workspace tabs: Hovel's colors, the scrollback guard, mouse reporting, ⌘C
- * and ⌘V, the terminal font at [fontSize] points, and, as in Terminal, Option typing characters and
- * a cursor that does not blink.
+ * and ⌘V, the terminal font at [fontSize] points, and, as in Terminal, Option typing characters.
+ * The cursor's period stays JediTerm's: the panel draws every cursor shape steady ([steadyCursor]).
  */
 internal open class HovelTerminalSettings(@Volatile var fontSize: Int = TerminalFont.DEFAULT_SIZE) : DefaultSettingsProvider() {
     override fun getBufferMaxLinesCount(): Int = WorkspaceGuards.SCROLLBACK_LINES
@@ -57,8 +58,6 @@ internal open class HovelTerminalSettings(@Volatile var fontSize: Int = Terminal
     // Option types characters (⌥e e is é), as in Terminal with "Use Option as Meta key" off. ⌥← and
     // ⌥→ still move by word: JediTerm sends ESC b and ESC f for them on a Mac either way.
     override fun altSendsEscape(): Boolean = false
-    // A steady cursor, as Terminal's default profile has. It also leaves an idle tab with nothing to repaint.
-    override fun caretBlinkingMs(): Int = 0
     override fun getDefaultForeground(): TerminalColor = terminalColor(fgInk300.toArgb())
     override fun getDefaultBackground(): TerminalColor = terminalColor(fgInk950.toArgb())
     // Deprecated in JediTerm, but JediTermWidget 3.76 still builds its default cell style from it
@@ -70,6 +69,14 @@ internal open class HovelTerminalSettings(@Volatile var fontSize: Int = Terminal
 }
 
 private fun terminalColor(argb: Int): TerminalColor = Color(argb).let { TerminalColor.rgb(it.red, it.green, it.blue) }
+
+/** [shape] without its blink: a steady cursor, as Terminal's default profile has, never repainted to blink. */
+internal fun steadyCursor(shape: CursorShape): CursorShape = when (shape) {
+    CursorShape.BLINK_BLOCK -> CursorShape.STEADY_BLOCK
+    CursorShape.BLINK_UNDERLINE -> CursorShape.STEADY_UNDERLINE
+    CursorShape.BLINK_VERTICAL_BAR -> CursorShape.STEADY_VERTICAL_BAR
+    CursorShape.STEADY_BLOCK, CursorShape.STEADY_UNDERLINE, CursorShape.STEADY_VERTICAL_BAR -> shape
+}
 
 /**
  * A [TerminalPanel] whose AWT-thread entry points catch and log: its event handlers, its paint, and
@@ -108,7 +115,11 @@ internal class GuardedTerminalPanel(settings: SettingsProvider, buffer: Terminal
         addHierarchyListener { event ->
             if (event.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong() != 0L && !isShowing) frame = null
         }
+        setDefaultCursorShape(CursorShape.STEADY_BLOCK)
     }
+
+    /** A program's cursor shape (DECSCUSR), drawn steady: JediTerm reads `CSI 0 q` as a blinking block. */
+    override fun setCursorShape(cursorShape: CursorShape?) = super.setCursorShape(cursorShape?.let(::steadyCursor))
 
     /** Development probe only: called after each paint with the screen text that paint drew. AWT thread. */
     @Volatile var paintObserver: ((String) -> Unit)? = null

@@ -1,6 +1,10 @@
 package org.formulagen.wrapper.workspace
 
+import com.jediterm.terminal.CursorShape
+import java.awt.Component
+import java.awt.DefaultKeyboardFocusManager
 import java.awt.EventQueue
+import java.awt.KeyboardFocusManager
 import java.awt.event.InputEvent.ALT_DOWN_MASK
 import java.awt.event.InputEvent.CTRL_DOWN_MASK
 import java.awt.event.InputEvent.META_DOWN_MASK
@@ -9,7 +13,10 @@ import java.awt.event.InputMethodEvent
 import java.awt.event.KeyEvent
 import java.text.AttributedString
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
+import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.RepaintManager
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -136,7 +143,44 @@ class TerminalPaneTest {
         assertEquals(TerminalFont.family, font.name)
         assertEquals(13, HovelTerminalSettings().terminalFont.size)
         assertFalse(HovelTerminalSettings().altSendsEscape())
-        assertEquals(0, HovelTerminalSettings().caretBlinkingMs(), "a steady cursor")
+        assertTrue(HovelTerminalSettings().caretBlinkingMs() > 0, "JediTerm's own period: 0 repaints the cursor on every tick")
+    }
+
+    @Test fun everyCursorShapeIsDrawnSteady() {
+        assertEquals(CursorShape.STEADY_BLOCK, steadyCursor(CursorShape.BLINK_BLOCK), "CSI 0 q and CSI 1 q")
+        assertEquals(CursorShape.STEADY_UNDERLINE, steadyCursor(CursorShape.BLINK_UNDERLINE))
+        assertEquals(CursorShape.STEADY_VERTICAL_BAR, steadyCursor(CursorShape.BLINK_VERTICAL_BAR))
+        for (steady in listOf(CursorShape.STEADY_BLOCK, CursorShape.STEADY_UNDERLINE, CursorShape.STEADY_VERTICAL_BAR)) assertEquals(steady, steadyCursor(steady))
+    }
+
+    @Test fun aFocusedIdleTerminalRepaintsOnlyAFewTimesASecond() {
+        val panel = view.panel
+        val repaints = AtomicInteger()
+        val previousRepaints = onAwtNow { RepaintManager.currentManager(panel) }
+        val previousFocus = KeyboardFocusManager.getCurrentKeyboardFocusManager()
+        try {
+            EventQueue.invokeAndWait {
+                RepaintManager.setCurrentManager(object : RepaintManager() {
+                    override fun addDirtyRegion(c: JComponent, x: Int, y: Int, w: Int, h: Int) {
+                        if (c === panel) repaints.incrementAndGet()
+                        super.addDirtyRegion(c, x, y, w, h)
+                    }
+                })
+                // JediTerm's cursor ticks only in the focused tab.
+                KeyboardFocusManager.setCurrentKeyboardFocusManager(object : DefaultKeyboardFocusManager() {
+                    override fun getFocusOwner(): Component = panel
+                })
+            }
+            Thread.sleep(500)
+            repaints.set(0)
+            Thread.sleep(2_000)
+            assertTrue(repaints.get() <= 6, "${repaints.get()} repaints in 2 s while idle; a blink period of 0 gives about 70")
+        } finally {
+            EventQueue.invokeAndWait {
+                RepaintManager.setCurrentManager(previousRepaints)
+                KeyboardFocusManager.setCurrentKeyboardFocusManager(previousFocus)
+            }
+        }
     }
 
     /**
