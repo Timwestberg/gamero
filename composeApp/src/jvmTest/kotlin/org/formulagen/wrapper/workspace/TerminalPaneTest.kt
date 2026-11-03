@@ -13,6 +13,8 @@ import java.awt.event.InputMethodEvent
 import java.awt.event.KeyEvent
 import java.text.AttributedString
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -22,6 +24,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.formulagen.wrapper.conversations.eventually
 
 /** A tab's terminal as the player types into it: Option, the input method, window shortcuts, the font. */
 class TerminalPaneTest {
@@ -206,6 +209,27 @@ class TerminalPaneTest {
         assertEquals(2, cells("日"))
         assertEquals(5, cells("👩\u200d💻"), "ZWJ sequence: zsh counts 4, Neovim 2")
         assertEquals(2, cells("❤\ufe0f"), "with VS16: zsh counts 1, Neovim 2")
+    }
+
+    @Test fun aBurstOfTitlesReachesTheWindowAsItsLatest() {
+        val titles = CopyOnWriteArrayList<String>()
+        val titledConnector = SessionTtyConnector("Shell").also { it.connect(RecordingSession()) }
+        val titled = onAwtNow { TerminalView(titledConnector, TermSize(80, 24), onTitle = { titles.add(it) }) }
+        try {
+            // Hold the AWT thread while the whole burst arrives.
+            val held = CountDownLatch(1)
+            EventQueue.invokeLater { held.await(10, TimeUnit.SECONDS) }
+            val burst = ((1..200).joinToString("") { "\u001b]2;title $it\u0007" } + "ready").toByteArray()
+            titledConnector.output(burst, burst.size)
+            eventually("the burst was read") { "ready" in titled.screenText() }
+            held.countDown()
+            eventually("a title arrived") { titles.isNotEmpty() }
+            onAwtNow {}
+            assertEquals(listOf("title 200"), titles.toList(), "one hop to the AWT thread, with the latest title")
+        } finally {
+            titledConnector.exited(0)
+            EventQueue.invokeAndWait { titled.close() }
+        }
     }
 
     @Test fun zoomRedrawsTheCellsAtTheNewSize() {

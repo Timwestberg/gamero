@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import java.awt.EventQueue
+import java.awt.Frame
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
@@ -216,7 +217,11 @@ internal class WorkspaceWindowState(
     private var keyed: WorkspaceAction? = null
     private var keyedAt = 0L
 
-    fun bringForward() { frontRequests++ }
+    /** Restore the window if it is minimized, then ask it to come to the front: a sheet needs it on screen. */
+    fun bringForward() {
+        (awtWindow as? Frame)?.takeIf { it.extendedState and Frame.ICONIFIED != 0 }?.let { it.extendedState = it.extendedState and Frame.ICONIFIED.inv() }
+        frontRequests++
+    }
 
     val canAddTab: Boolean get() = tabs.size < WorkspaceSettingsLimits.TABS
 
@@ -298,7 +303,7 @@ internal class WorkspaceWindowState(
                     if (closed || tab !in tabs) { workers.execute { session.close() }; return@onAwt }
                     val view = TerminalView(connector, INITIAL_SIZE, fontSize,
                         onShortcut = ::performFromKey,
-                        onTitle = { title -> onAwt { if (tab.session === session) tab.programTitle = programTitle(title) } })
+                        onTitle = { title -> if (tab.session === session) tab.programTitle = programTitle(title) })
                     deck.add(tab.id, view)
                     if (tab.state == TabState.Starting) tab.state = TabState.Running
                     if (selected == tab.id) deck.show(tab.id)

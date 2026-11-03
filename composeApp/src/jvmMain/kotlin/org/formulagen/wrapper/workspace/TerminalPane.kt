@@ -32,6 +32,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JScrollBar
@@ -290,7 +291,7 @@ private class HovelTermWidget(size: TermSize, settings: SettingsProvider) : Jedi
  * tab's session (output waits in it until the widget starts). It lives as long as its tab, whether
  * or not the tab is showing, so switching tabs keeps each screen. AWT thread only, except
  * [screenText]. [onShortcut] gets the window shortcuts pressed in it, on the AWT thread; [onTitle]
- * gets each title the program sets (OSC 0 or 2), on JediTerm's emulator thread.
+ * gets the latest title the program set (OSC 0 or 2), on the AWT thread, once per hop to it.
  */
 internal class TerminalView(
     private val connector: SessionTtyConnector,
@@ -302,14 +303,14 @@ internal class TerminalView(
     private val settings = HovelTerminalSettings(fontSize)
     private val widget: JediTermWidget = HovelTermWidget(size, settings)
     private val guarded = widget.terminalPanel as GuardedTerminalPanel
+    /** The latest title waiting for the AWT thread, or null when none waits. */
+    private val pendingTitle = AtomicReference<String?>(null)
 
     init {
         guarded.onShortcut = onShortcut
+        // One hop to the AWT thread per burst.
         widget.terminal.addApplicationTitleListener { title ->
-            try { onTitle(title) } catch (error: Throwable) {
-                rethrowIfFatal(error)
-                log(LogLevel.Error, TAG, "Could not show a terminal title", error)
-            }
+            if (pendingTitle.getAndSet(title) == null) onAwt { pendingTitle.getAndSet(null)?.let(onTitle) }
         }
         widget.setTtyConnector(connector)
         widget.start()

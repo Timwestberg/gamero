@@ -430,6 +430,22 @@ class WorkspaceWindowsTest {
         assertEquals(60, programTitle("x".repeat(200))!!.length)
     }
 
+    @Test fun aMinimizedWindowIsRestoredBeforeItsQuestion() {
+        val window = open()
+        val frame = java.awt.Frame()
+        try {
+            onAwtNow {
+                frame.extendedState = java.awt.Frame.ICONIFIED
+                window.awtWindow = frame
+                window.bringForward()
+            }
+            assertEquals(java.awt.Frame.NORMAL, frame.extendedState)
+            assertEquals(1, window.frontRequests)
+        } finally {
+            onAwtNow { window.awtWindow = null; frame.dispose() }
+        }
+    }
+
     @Test fun oneTabEndingLeavesTheOthersAsTheyWere() {
         val window = open()
         running(window, 1)
