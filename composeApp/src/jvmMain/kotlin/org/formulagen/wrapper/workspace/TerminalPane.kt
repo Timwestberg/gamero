@@ -17,8 +17,11 @@ import java.awt.CardLayout
 import java.awt.Color
 import java.awt.Font
 import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.image.BufferedImage
 import java.awt.event.ActionEvent
 import java.awt.event.ActionListener
+import java.awt.event.HierarchyEvent
 import java.awt.event.InputMethodEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
@@ -31,6 +34,7 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JScrollBar
 import javax.swing.Timer
+import kotlin.math.ceil
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.ui.fgBlue500
@@ -94,7 +98,62 @@ internal class GuardedTerminalPanel(settings: SettingsProvider, buffer: Terminal
     /** Pick up a new font size from the settings: re-measure the cells and resize the terminal. */
     fun refreshFont() = guard("font") { reinitFontAndResize(); repaint() }
 
-    override fun paintComponent(g: Graphics) = guard("paint") { super.paintComponent(g) }
+    /**
+     * The frame JediTerm draws into, at the screen's scale: see [paintComponent]. Dropped while the
+     * terminal is not showing (another tab is selected), so hidden tabs hold no frame. AWT thread.
+     */
+    private var frame: BufferedImage? = null
+
+    init {
+        addHierarchyListener { event ->
+            if (event.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong() != 0L && !isShowing) frame = null
+        }
+    }
+
+    /** Development probe only: called after each paint with the screen text that paint drew. AWT thread. */
+    @Volatile var paintObserver: ((String) -> Unit)? = null
+
+    /**
+     * JediTerm paints while holding its text buffer's lock, and a paint straight to the screen can
+     * wait on the Metal pipeline: the JDK presents each frame on the AppKit thread under the AWT
+     * lock, and waits up to a second for a drawable while the window is not on screen (the Mac is
+     * locked, say). The emulator, and through back-pressure the tab's own process, would wait with it.
+     * So JediTerm paints into an image in memory, which never waits on the screen, and the image
+     * goes to the screen after the lock is released.
+     */
+    override fun paintComponent(g: Graphics) = guard("paint") {
+        val screen = g as? Graphics2D
+        if (screen == null || width <= 0 || height <= 0) {
+            super.paintComponent(g)
+            return@guard
+        }
+        val scaleX = screen.transform.scaleX
+        val scaleY = screen.transform.scaleY
+        val pixelWidth = ceil(width * scaleX).toInt()
+        val pixelHeight = ceil(height * scaleY).toInt()
+        val image = frame?.takeIf { it.width == pixelWidth && it.height == pixelHeight }
+            ?: BufferedImage(pixelWidth, pixelHeight, BufferedImage.TYPE_INT_RGB).also { frame = it }
+        val offscreen = image.createGraphics()
+        var drawn: String? = null
+        try {
+            offscreen.scale(scaleX, scaleY)
+            screen.clipBounds?.let(offscreen::clip)
+            val observer = paintObserver
+            if (observer == null) super.paintComponent(offscreen) else {
+                // The text this paint draws, read under the same lock.
+                terminalTextBuffer.lock()
+                try {
+                    drawn = terminalTextBuffer.getScreenLines()
+                    super.paintComponent(offscreen)
+                } finally { terminalTextBuffer.unlock() }
+            }
+        } finally {
+            offscreen.dispose()
+        }
+        screen.drawImage(image, 0, 0, width, height, null)
+        drawn?.let { text -> paintObserver?.invoke(text) }
+    }
+
     override fun processKeyEvent(e: KeyEvent) = guard("key") {
         if (e.id == KeyEvent.KEY_PRESSED) {
             shortcutTyped = false
@@ -217,6 +276,11 @@ internal class TerminalView(
         settings.fontSize = size
         guarded.refreshFont()
     }
+
+    /** Development probe only. Called on the AWT thread after each paint, with the screen text it drew. */
+    var paintObserver: ((String) -> Unit)?
+        get() = guarded.paintObserver
+        set(value) { guarded.paintObserver = value }
 
     /** Development probe only. Bytes to the session as if typed, past JediTerm's key handling. */
     fun send(bytes: ByteArray) = connector.write(bytes)
