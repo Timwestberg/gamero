@@ -10,6 +10,7 @@ import javax.swing.JScrollBar
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** JediTerm's repaint timer (cursor blink, scrolling, repaint) throwing must not reach the app's default handler. */
@@ -58,5 +59,23 @@ class TerminalTimerGuardTest {
         } finally {
             Thread.setDefaultUncaughtExceptionHandler(previous)
         }
+    }
+
+    @Test fun aFailureOnEveryTickIsLoggedOnceThenCountedOncePerMinute() {
+        var now = 0L
+        val logged = mutableListOf<Pair<String, Throwable?>>()
+        val failures = RepeatedFailureLog("The timer", periodNanos = 60_000, clock = { now }) { message, error -> logged += message to error }
+        val first = IllegalStateException("boom")
+        failures.failed(first)
+        assertEquals(listOf("The timer failed" to first), logged.toList(), "the first in full")
+        repeat(2_999) { now += 20; failures.failed(IllegalStateException("boom")) }
+        assertEquals(1, logged.size, "a minute of 20 ms ticks adds nothing yet")
+        now += 20
+        failures.failed(IllegalStateException("boom"))
+        assertEquals(2, logged.size)
+        assertEquals("The timer failed 3000 more times since its last report; the latest: java.lang.IllegalStateException: boom", logged[1].first)
+        assertNull(logged[1].second, "a count, not another stack trace")
+        repeat(10) { now += 20; failures.failed(IllegalStateException("boom")) }
+        assertEquals(2, logged.size, "then at most one a minute")
     }
 }

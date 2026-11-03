@@ -31,6 +31,7 @@ import java.lang.reflect.Field
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JScrollBar
@@ -199,21 +200,23 @@ internal class GuardedTerminalPanel(settings: SettingsProvider, buffer: Terminal
             log(LogLevel.Warn, TAG, "JediTerm's repaint timer was not found; its callbacks are not guarded")
             return
         }
+        val failures = RepeatedFailureLog("The terminal's repaint timer")
         for (listener in timer.actionListeners) {
             if (listener is GuardedTimerListener) continue
             timer.removeActionListener(listener)
-            timer.addActionListener(GuardedTimerListener(listener))
+            timer.addActionListener(GuardedTimerListener(listener, failures))
         }
     }
 
     /** Development probe and tests only: the timer [guardRepaintTimer] wrapped. */
     internal fun repaintTimer(): Timer? = try { REPAINT_TIMER?.get(this) as? Timer } catch (_: Exception) { null }
 
-    private class GuardedTimerListener(private val target: ActionListener) : ActionListener {
+    /** One of JediTerm's timer callbacks, catching what it throws into [failures]. */
+    private class GuardedTimerListener(private val target: ActionListener, private val failures: RepeatedFailureLog) : ActionListener {
         override fun actionPerformed(event: ActionEvent) {
             try { target.actionPerformed(event) } catch (error: Throwable) {
                 rethrowIfFatal(error)
-                log(LogLevel.Error, TAG, "The terminal's repaint timer failed", error)
+                failures.failed(error)
             }
         }
     }
@@ -229,6 +232,37 @@ internal class GuardedTerminalPanel(settings: SettingsProvider, buffer: Terminal
         val REPAINT_TIMER: Field? = try {
             TerminalPanel::class.java.getDeclaredField("myRepaintTimer").apply { isAccessible = true }
         } catch (error: Exception) { null }
+    }
+}
+
+/**
+ * Logs a failure that may repeat on every tick: the first in full, then at most one count per
+ * [periodNanos]. One thread at a time (the AWT thread, for the repaint timer).
+ */
+internal class RepeatedFailureLog(
+    private val what: String,
+    private val periodNanos: Long = TimeUnit.MINUTES.toNanos(1),
+    private val clock: () -> Long = System::nanoTime,
+    private val sink: (String, Throwable?) -> Unit = { message, error -> log(LogLevel.Error, TAG, message, error) },
+) {
+    private var reported = false
+    private var reportedAt = 0L
+    private var since = 0
+
+    /** Record [error]: in full the first time, then counted into a summary once a period has passed. */
+    fun failed(error: Throwable) {
+        val now = clock()
+        if (!reported) {
+            reported = true
+            reportedAt = now
+            sink("$what failed", error)
+            return
+        }
+        since++
+        if (now - reportedAt < periodNanos) return
+        sink("$what failed $since more times since its last report; the latest: ${error.javaClass.name}: ${error.message}", null)
+        since = 0
+        reportedAt = now
     }
 }
 
