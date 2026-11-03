@@ -138,10 +138,12 @@ without one.
   `~/Library/Caches/org.formulagen.wrapper/workspace/nvim/`, and Hovel asks with a fixed
   `nvim --clean --headless --server … --remote-expr …`, using the running Neovim's own
   executable (by real path) and an empty environment. The tab's process is asked when it is
-  Neovim; otherwise a Neovim descendant (a wrapper that does not `exec`); with no Neovim in
-  the tab, the tool rule applies. No answer within a second counts as busy. Neovim's LSP
-  servers and its `nvim --embed` server are descendants, so the tool rule cannot be used for
-  it.
+  Neovim; otherwise a Neovim descendant (a wrapper that does not `exec`). With no Neovim in
+  the tab, a tab whose process is still a shell (by name) is not busy: the login shell's
+  startup helpers (`path_helper`, `fnm env`, `rbenv init - zsh`) run before it `exec`s
+  Neovim, and nothing can be unsaved yet. Any other process with no Neovim gets the tool
+  rule. No answer within a second counts as busy. Neovim's LSP servers and its
+  `nvim --embed` server are descendants, so the tool rule cannot be used for it.
 - **Other tools** (lazygit, yazi): busy while a live descendant runs something other than
   the tool's own executable (by real path), such as `git push`.
 

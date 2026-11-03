@@ -186,10 +186,12 @@ internal class PtySession(
     private fun firstChild(counts: (ProcessHandle) -> Boolean): ProcessHandle? =
         tree.descendants().use { children -> children.filter { it.isAlive && counts(it) }.findFirst().orElse(null) }
 
-    /** Neovim's own answer, from the tab's process or a Neovim it started; with no Neovim, the tool rule. */
+    /** Neovim's own answer, from the tab's process or a Neovim it started; with none, a shell is idle, else the tool rule. */
     private fun editorState(editor: String): Busy? {
         val root = commandOf(tree.toHandle()) ?: return Busy.NoAnswer(editor)
-        val neovim = root.takeIf(::isNeovim) ?: firstChild { commandOf(it)?.let(::isNeovim) == true }?.let(::commandOf) ?: return toolChild()
+        val neovim = root.takeIf(::isNeovim) ?: firstChild { commandOf(it)?.let(::isNeovim) == true }?.let(::commandOf)
+            // Still starting: its helpers hold nothing.
+            ?: return if (File(root).name in SHELL_NAMES) null else toolChild()
         val socket = editorSocket ?: return Busy.NoAnswer(editor)
         return askNeovim(neovim, socket, editor)
     }

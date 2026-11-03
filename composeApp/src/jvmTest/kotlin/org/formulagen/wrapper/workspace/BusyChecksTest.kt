@@ -95,8 +95,8 @@ class BusyChecksTest {
 
     @Test fun anEditorTabWithNoNeovimInItUsesTheToolRule() {
         assumeTrue(System.getProperty("os.name").contains("Mac"))
-        val wrapper = script("not-nvim", "#!/bin/sh\n/bin/sleep 30\n")
-        val host = PtySessionHost(EditorSockets(sockets)) { _, toolArguments -> ShellCommand(listOf(wrapper) + toolArguments, mapOf("PATH" to "/usr/bin:/bin")) }.also(hosts::add)
+        // Not a shell: time forks sleep.
+        val host = PtySessionHost(EditorSockets(sockets)) { _, _ -> ShellCommand(listOf("/usr/bin/time", "/bin/sleep", "30"), mapOf("PATH" to "/usr/bin:/bin")) }.also(hosts::add)
         val session = host.start(SessionSpec("p", "Neovim", root, Launch.Tool(WorkspaceTool.NEOVIM), TermSize(80, 24)))
         session.attach(CollectingViewer())
         assertEquals(Busy.Running("sleep 30"), awaitBusy(session) { it != null })
@@ -110,12 +110,12 @@ class BusyChecksTest {
 
     @Test fun beforeNeovimStartsNothingIsUnsaved() {
         assumeTrue(System.getProperty("os.name").contains("Mac"))
-        // The login shell is still starting the tool: the tab's process is not Neovim yet.
-        val host = PtySessionHost(EditorSockets(sockets)) { _, _ -> ShellCommand(listOf("/bin/sh", "-c", "read _"), mapOf("PATH" to "/usr/bin:/bin")) }.also(hosts::add)
+        // Like `.zshrc`'s `rbenv init`, before exec'ing Neovim.
+        val host = PtySessionHost(EditorSockets(sockets)) { _, _ -> ShellCommand(listOf("/bin/zsh", "-f", "-c", "/bin/sleep 30; read _"), mapOf("PATH" to "/usr/bin:/bin")) }.also(hosts::add)
         val session = host.start(SessionSpec("p", "Neovim", root, Launch.Tool(WorkspaceTool.NEOVIM), TermSize(80, 24)))
         session.attach(CollectingViewer())
-        Thread.sleep(200)
-        assertNull(session.busy())
+        eventually("the helper runs") { session.processes().any { it.info().command().orElse("").endsWith("/sleep") } }
+        assertNull(session.busy(), "a shell's startup helper is not work")
     }
 
     @Test fun socketPathsFitAUnixSocketAndStayInTheirFolder() {
