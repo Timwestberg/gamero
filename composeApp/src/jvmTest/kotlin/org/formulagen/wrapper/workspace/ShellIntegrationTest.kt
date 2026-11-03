@@ -107,14 +107,17 @@ class ShellIntegrationTest {
         Files.setPosixFilePermissions(fake, PosixFilePermissions.fromString("rwx------"))
         // A short folder: a socket path must fit in 103 bytes.
         val sockets = shortTempFolder()
-        for (shell in listOf("/bin/zsh", "/bin/bash") + listOfNotNull(System.getenv("HOVEL_TEST_FISH"))) {
-            val tab = start(shell, Launch.Tool(WorkspaceTool.NEOVIM), EditorSockets(sockets))
-            val match = tab.viewer.await(Regex("TOOL=\\[([^\\]]*)\\] ARG0=\\[([^\\]]*)\\] ARGS=\\[([^\\]]*)\\]"))
-            assertTrue(match.groupValues[1].startsWith(hovelFirst), "$shell: ${match.groupValues[1]}")
-            assertEquals(fake.toString(), match.groupValues[2], shell)
-            assertTrue(match.groupValues[3].matches(Regex("2\\|--listen\\|${Regex.escape(sockets.toString())}/[0-9a-f]{12}\\.sock")), "$shell: ${match.groupValues[3]}")
+        try {
+            for (shell in listOf("/bin/zsh", "/bin/bash") + listOfNotNull(System.getenv("HOVEL_TEST_FISH"))) {
+                val tab = start(shell, Launch.Tool(WorkspaceTool.NEOVIM), EditorSockets(sockets))
+                val match = tab.viewer.await(Regex("TOOL=\\[([^\\]]*)\\] ARG0=\\[([^\\]]*)\\] ARGS=\\[([^\\]]*)\\]"))
+                assertTrue(match.groupValues[1].startsWith(hovelFirst), "$shell: ${match.groupValues[1]}")
+                assertEquals(fake.toString(), match.groupValues[2], shell)
+                assertTrue(match.groupValues[3].matches(Regex("2\\|--listen\\|${Regex.escape(sockets.toString())}/[0-9a-f]{12}\\.sock")), "$shell: ${match.groupValues[3]}")
+            }
+        } finally {
+            sockets.toFile().deleteRecursively()
         }
-        sockets.toFile().deleteRecursively()
     }
 
     @Test fun bashEmulatesALoginShellAndKeepsHovelsEntriesFirst() {

@@ -12,6 +12,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.formulagen.wrapper.conversations.eventually
 
 /** JediTerm's repaint timer (cursor blink, scrolling, repaint) throwing must not reach the app's default handler. */
 class TerminalTimerGuardTest {
@@ -24,17 +25,6 @@ class TerminalTimerGuardTest {
         }
     }
 
-    private fun <T> onAwtNow(read: () -> T): T {
-        var value: Result<T>? = null
-        EventQueue.invokeAndWait { value = runCatching(read) }
-        return value!!.getOrThrow()
-    }
-
-    private fun waitFor(condition: () -> Boolean) {
-        val deadline = System.currentTimeMillis() + 5_000
-        while (!condition() && System.currentTimeMillis() < deadline) Thread.sleep(20)
-    }
-
     @Test fun aThrowingRepaintTimerCallbackIsContained() {
         val uncaught = CopyOnWriteArrayList<Throwable>()
         val previous = Thread.getDefaultUncaughtExceptionHandler()
@@ -43,7 +33,7 @@ class TerminalTimerGuardTest {
             // The control: JediTerm's own panel lets the exception escape to the default handler, which ends Hovel.
             val plainSettings = ThrowingSettings()
             val plain = onAwtNow { TerminalPanel(plainSettings, TerminalTextBuffer(80, 24, StyleState()), StyleState()).also { it.init(JScrollBar()) } }
-            waitFor { uncaught.isNotEmpty() }
+            eventually("the unguarded timer threw") { uncaught.isNotEmpty() }
             onAwtNow { plain.dispose() }
             assertTrue(uncaught.any { it.message == "timer boom" }, "the unguarded timer's exception escapes: $uncaught")
             Thread.sleep(100)
@@ -52,7 +42,7 @@ class TerminalTimerGuardTest {
             val settings = ThrowingSettings()
             val guarded = onAwtNow { HovelTerminalPanel(settings, TerminalTextBuffer(80, 24, StyleState()), StyleState()).also { it.init(JScrollBar()) } }
             assertNotNull(guarded.repaintTimer(), "JediTerm's timer was found")
-            waitFor { settings.calls.get() >= 5 }
+            eventually("the guarded timer kept firing") { settings.calls.get() >= 5 }
             onAwtNow { guarded.dispose() }
             assertTrue(settings.calls.get() >= 5, "the timer kept firing and throwing: ${settings.calls.get()} calls")
             assertEquals(emptyList(), uncaught.toList(), "nothing reached the default handler")

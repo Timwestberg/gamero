@@ -31,20 +31,7 @@ import org.formulagen.wrapper.conversations.eventually
 
 /** A tab's terminal as the player types into it: Option, the input method, window shortcuts, the font. */
 class TerminalPaneTest {
-    /** A session that records what the terminal sends it. */
-    private class RecordingSession : Session {
-        val input = CopyOnWriteArrayList<String>()
-        override val title = "Shell"
-        override fun busy(): Busy? = null
-        override fun close() {}
-        override fun attach(viewer: SessionViewer): Attachment = object : Attachment {
-            override fun input(bytes: ByteArray) { input.add(bytes.decodeToString()) }
-            override fun resize(size: TermSize) {}
-            override fun close() {}
-        }
-    }
-
-    private val session = RecordingSession()
+    private val session = FakeSession()
     private val shortcuts = CopyOnWriteArrayList<WorkspaceAction>()
     private val connector = SessionTtyConnector("Shell").also { it.connect(session) }
     private val view: TerminalView = onAwtNow { TerminalView(connector, TermSize(80, 24), onShortcut = { shortcuts.add(it) }) }
@@ -52,12 +39,6 @@ class TerminalPaneTest {
     @AfterTest fun cleanUp() {
         connector.exited(0)
         EventQueue.invokeAndWait { view.close() }
-    }
-
-    private fun <T> onAwtNow(read: () -> T): T {
-        var value: Result<T>? = null
-        EventQueue.invokeAndWait { value = runCatching(read) }
-        return value!!.getOrThrow()
     }
 
     /**
@@ -135,9 +116,9 @@ class TerminalPaneTest {
         // The terminal's own: copy, paste, a plain digit, ⌥1, ⌃1, and typed events.
         for ((code, modifiers) in listOf(KeyEvent.VK_C to META_DOWN_MASK, KeyEvent.VK_V to META_DOWN_MASK, KeyEvent.VK_1 to 0,
             KeyEvent.VK_1 to ALT_DOWN_MASK, KeyEvent.VK_1 to CTRL_DOWN_MASK, KeyEvent.VK_TAB to 0)) {
-            assertEquals(null, key(code, modifiers), "$code with $modifiers")
+            assertNull(key(code, modifiers), "$code with $modifiers")
         }
-        assertEquals(null, workspaceShortcut(KeyEvent(source, KeyEvent.KEY_TYPED, 0, META_DOWN_MASK, KeyEvent.VK_UNDEFINED, '1')))
+        assertNull(workspaceShortcut(KeyEvent(source, KeyEvent.KEY_TYPED, 0, META_DOWN_MASK, KeyEvent.VK_UNDEFINED, '1')))
     }
 
     @Test fun everyMenuShortcutMapsBackToItsAction() {
@@ -235,7 +216,7 @@ class TerminalPaneTest {
 
     @Test fun aBurstOfTitlesReachesTheWindowAsItsLatest() {
         val titles = CopyOnWriteArrayList<String>()
-        val titledConnector = SessionTtyConnector("Shell").also { it.connect(RecordingSession()) }
+        val titledConnector = SessionTtyConnector("Shell").also { it.connect(FakeSession()) }
         val titled = onAwtNow { TerminalView(titledConnector, TermSize(80, 24), onTitle = { titles.add(it) }) }
         try {
             // Hold the AWT thread while the whole burst arrives.

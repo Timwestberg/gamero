@@ -1,7 +1,6 @@
 package org.formulagen.wrapper.workspace
 
 import com.jediterm.core.util.TermSize as JediTermSize
-import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 import kotlin.test.Test
@@ -10,22 +9,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SessionTtyConnectorTest {
-    /** A session that records what its one attachment receives. */
-    private class RecordingSession : Session {
-        val input = CopyOnWriteArrayList<String>()
-        val sizes = CopyOnWriteArrayList<TermSize>()
-        var detached = false
-        override val title = "Shell"
-        override fun busy(): Busy? = null
-        override fun close() {}
-        override fun attach(viewer: SessionViewer): Attachment = object : Attachment {
-            override fun input(bytes: ByteArray) { input.add(bytes.decodeToString()) }
-            override fun resize(size: TermSize) { sizes.add(size) }
-            override fun close() { detached = true }
-        }
-    }
-
-    private fun connector(onExit: (Int) -> Unit = {}) = SessionTtyConnector("Shell", onExit).also { it.connect(RecordingSession()) }
+    private fun connector(onExit: (Int) -> Unit = {}) = SessionTtyConnector("Shell", onExit).also { it.connect(FakeSession()) }
 
     /** Everything the connector yields until it ends, reading [chunk] characters at a time. */
     private fun SessionTtyConnector.drain(chunk: Int = 64): String = buildString {
@@ -116,7 +100,7 @@ class SessionTtyConnectorTest {
     }
 
     @Test fun keysAndResizesGoToTheAttachment() {
-        val session = RecordingSession()
+        val session = FakeSession()
         val connector = SessionTtyConnector("Shell").also { it.connect(session) }
         connector.write("ls\r")
         connector.write(byteArrayOf(0x1b, '['.code.toByte(), 'A'.code.toByte()))
@@ -126,7 +110,7 @@ class SessionTtyConnectorTest {
     }
 
     @Test fun closingDetachesAndEndsReading() {
-        val session = RecordingSession()
+        val session = FakeSession()
         val connector = SessionTtyConnector("Shell").also { it.connect(session) }
         connector.push("x".toByteArray())
         connector.close()

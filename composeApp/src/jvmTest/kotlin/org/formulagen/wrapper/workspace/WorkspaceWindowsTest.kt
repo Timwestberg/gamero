@@ -35,29 +35,6 @@ class WorkspaceWindowsTest {
         other.toFile().deleteRecursively()
     }
 
-    private class FakeSession : Session {
-        val closed = CountDownLatch(1)
-        @Volatile var busy: Busy? = null
-        /** [busy] throws instead of answering. */
-        @Volatile var busyFails = false
-        @Volatile var viewer: SessionViewer? = null
-        val busyCalls = java.util.concurrent.atomic.AtomicInteger()
-        override val title = "Shell"
-        override fun busy(): Busy? {
-            busyCalls.incrementAndGet()
-            return if (busyFails) throw IllegalStateException("busy boom") else busy
-        }
-        override fun attach(viewer: SessionViewer): Attachment {
-            this.viewer = viewer
-            return object : Attachment {
-                override fun input(bytes: ByteArray) {}
-                override fun resize(size: TermSize) {}
-                override fun close() {}
-            }
-        }
-        override fun close() { closed.countDown() }
-    }
-
     /**
      * A host whose [start] waits for [release] (open by default), and whose [closeProject] knows no
      * sessions, as when a start registers its session only after the project was closed: the window
@@ -78,26 +55,11 @@ class WorkspaceWindowsTest {
 
     private fun open(at: Path = folder): WorkspaceWindowState = onAwtNow { workspaces.open(at) }
 
-    private fun <T> onAwtNow(read: () -> T): T {
-        var value: Result<T>? = null
-        EventQueue.invokeAndWait { value = runCatching(read) }
-        return value!!.getOrThrow()
-    }
-
     /** Wait until [condition] holds on the AWT thread, after the workers and posted updates have run. */
-    private fun eventually(what: String, condition: () -> Boolean) {
-        val deadline = System.nanoTime() + SECONDS.toNanos(5)
-        while (System.nanoTime() < deadline) {
-            if (onAwtNow(condition)) return
-            Thread.sleep(20)
-        }
-        throw AssertionError("Timed out: $what")
-    }
+    private fun eventually(what: String, condition: () -> Boolean) = org.formulagen.wrapper.conversations.eventually(what) { onAwtNow(condition) }
 
     private fun running(window: WorkspaceWindowState, count: Int) =
         eventually("$count running tabs") { window.tabs.size == count && window.tabs.all { it.state == TabState.Running } }
-
-    private fun FakeSession.isClosed() = closed.count == 0L
 
     @Test fun closingTheWindowWhileATabStartsEndsTheSessionWhenItArrives() {
         host.release = CountDownLatch(1)

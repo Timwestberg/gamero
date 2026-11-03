@@ -2,7 +2,6 @@ package org.formulagen.wrapper.workspace
 
 import java.awt.Component
 import java.awt.Container
-import java.awt.EventQueue
 import javax.swing.JLabel
 import javax.swing.plaf.basic.BasicHTML
 import kotlin.test.Test
@@ -23,9 +22,7 @@ class WorkspaceConfirmationsTest {
     /** The labels of the sheet built for [busy], built on the AWT thread as the sheet is. */
     private fun sheetLabels(vararg busy: Busy): List<JLabel> {
         val question = Confirmations.quit("Hovel", listOf(BusyWindow("demo · workspace", busy.mapIndexed { index, it -> BusyTab("Shell (tab ${index + 1})", it) })))!!
-        var found = emptyList<JLabel>()
-        EventQueue.invokeAndWait { found = labels(SheetConfirmer.pane(question)) }
-        return found
+        return onAwtNow { labels(SheetConfirmer.pane(question)) }
     }
 
     @Test fun markupInABusyReasonOrFileNameIsDrawnAsPlainText() {
@@ -40,27 +37,21 @@ class WorkspaceConfirmationsTest {
 
     @Test fun theControlAStringMessageWithMarkupAnywhereIsDrawnAsHtml() {
         // Why the sheet never passes Swing a String: this is what it would draw.
-        var found = emptyList<JLabel>()
-        EventQueue.invokeAndWait {
-            found = labels(javax.swing.JOptionPane(arrayOf<Any>("Quitting ends:", "• Shell: “rg <html><b>x</b></html>” is running")))
-        }
+        val found = onAwtNow { labels(javax.swing.JOptionPane(arrayOf<Any>("Quitting ends:", "• Shell: “rg <html><b>x</b></html>” is running"))) }
         assertTrue(found.any { it.getClientProperty(BasicHTML.propertyKey) != null }, "Swing found the markup mid-line")
     }
 
     @Test fun aLineThatIsAllMarkupIsStillPlainText() {
-        var label: JLabel? = null
-        EventQueue.invokeAndWait { label = SheetConfirmer.plainLabel(markup) }
-        assertNull(label!!.getClientProperty(BasicHTML.propertyKey))
-        assertEquals(markup, label!!.text)
+        val label = onAwtNow { SheetConfirmer.plainLabel(markup) }
+        assertNull(label.getClientProperty(BasicHTML.propertyKey))
+        assertEquals(markup, label.text)
     }
 
     @Test fun theDismissButtonIsCancelAndTheDefault() {
         val question = Confirmations.closeTab(Busy.Running("make"))!!
         assertEquals(listOf("Close Tab" to true, "Cancel" to false), question.buttons)
         assertFalse(question.dismiss)
-        var initial: Any? = null
-        EventQueue.invokeAndWait { initial = SheetConfirmer.pane(question).initialValue }
-        assertEquals("Cancel", initial)
+        assertEquals("Cancel", onAwtNow { SheetConfirmer.pane(question).initialValue })
     }
 
     @Test fun confirmationsAreAskedOnlyWhenSomethingIsBusy() {

@@ -10,6 +10,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
@@ -122,9 +123,9 @@ class BusyChecksTest {
         assertTrue(socket.toString().toByteArray().size <= EditorSockets.MAX_SOCKET_PATH_BYTES)
         assertTrue(socket.fileName.toString().matches(Regex("[0-9a-f]{12}\\.sock")))
         assertEquals("rwx------", java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(sockets)))
-        assertTrue(EditorSockets(sockets).next() != socket, "one per session")
+        assertNotEquals(socket, EditorSockets(sockets).next(), "one per session")
         assertNull(EditorSockets(root.resolve("x".repeat(120))).next(), "too long for a socket")
-        assertTrue(EditorSockets.defaultFolder("/Users/p").toString() == "/Users/p/Library/Caches/org.formulagen.wrapper/workspace/nvim")
+        assertEquals("/Users/p/Library/Caches/org.formulagen.wrapper/workspace/nvim", EditorSockets.defaultFolder("/Users/p").toString())
     }
 
     @Test fun aRunningProgramIsNamedByItsScriptNotItsInterpreter() {
@@ -180,12 +181,5 @@ class BusyChecksTest {
             Thread.sleep(50)
         }
         throw AssertionError("Neovim never listened in $sockets")
-    }
-
-    private fun awaitBusy(session: Session, expected: (Busy?) -> Boolean): Busy? {
-        val deadline = System.currentTimeMillis() + 10_000
-        var busy = session.busy()
-        while (!expected(busy) && System.currentTimeMillis() < deadline) { Thread.sleep(100); busy = session.busy() }
-        return busy
     }
 }

@@ -1,6 +1,5 @@
 package org.formulagen.wrapper.workspace
 
-import java.io.ByteArrayOutputStream
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CopyOnWriteArrayList
@@ -14,42 +13,6 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.formulagen.wrapper.conversations.eventually
 import org.junit.Assume.assumeTrue
-
-/** Collects a session's output as text and its exit code. */
-internal class CollectingViewer : SessionViewer {
-    private val bytes = ByteArrayOutputStream()
-    val exit = CompletableFuture<Int>()
-
-    override fun output(bytes: ByteArray, length: Int) { synchronized(this.bytes) { this.bytes.write(bytes, 0, length) } }
-    override fun exited(code: Int) { exit.complete(code) }
-
-    fun text(): String = synchronized(bytes) { bytes.toByteArray().decodeToString() }
-
-    /** Wait until the output matches [pattern]; the match, or a failure naming what arrived. */
-    fun await(pattern: Regex, timeoutMs: Long = 10_000): MatchResult {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            pattern.find(text())?.let { return it }
-            Thread.sleep(20)
-        }
-        throw AssertionError("No match for $pattern in:\n${text()}")
-    }
-
-    fun await(text: String, timeoutMs: Long = 10_000) = await(Regex(Regex.escape(text)), timeoutMs)
-}
-
-/**
- * Answers the queries a terminal answers, as JediTerm does in the app: primary device attributes
- * and the cursor position. fish 4 waits for them at startup and drops what is typed meanwhile.
- */
-internal class TerminalReplies(private val keys: Attachment) : SessionViewer {
-    override fun output(bytes: ByteArray, length: Int) {
-        val text = String(bytes, 0, length, Charsets.ISO_8859_1)
-        repeat(Regex("\u001b\\[0?c").findAll(text).count()) { keys.input("\u001b[?62;22c".toByteArray()) }
-        repeat(Regex("\u001b\\[6n").findAll(text).count()) { keys.input("\u001b[1;1R".toByteArray()) }
-    }
-    override fun exited(code: Int) {}
-}
 
 class PtySessionHostTest {
     private val folder: Path = createTempDirectory("hovel-pty")
@@ -152,13 +115,6 @@ class PtySessionHostTest {
         val keys = session.attach(viewer)
         viewer.await("READY> ")
         return session to keys
-    }
-
-    private fun awaitBusy(session: Session, expected: (Busy?) -> Boolean): Busy? {
-        val deadline = System.currentTimeMillis() + 5_000
-        var busy = session.busy()
-        while (!expected(busy) && System.currentTimeMillis() < deadline) { Thread.sleep(50); busy = session.busy() }
-        return busy
     }
 
     @Test fun aShellTabIsBusyOnlyWhileAForegroundJobRuns() {
