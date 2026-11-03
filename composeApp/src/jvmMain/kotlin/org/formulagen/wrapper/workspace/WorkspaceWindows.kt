@@ -23,6 +23,9 @@ private const val TAG = "workspace-windows"
 /** The size a tab's process starts at. JediTerm resizes it to the pane as soon as it lays out. */
 private val INITIAL_SIZE = TermSize(columns = 100, rows = 30)
 
+/** The busy dot asks an idle Neovim tab only every this many rounds: each ask starts a Neovim client. */
+private const val EDITOR_FALLBACK_ROUNDS = 5
+
 /** How long after a key press a menu item for the same action is taken as its echo (see [workspaceShortcut]). */
 private val MENU_ECHO_NANOS = TimeUnit.MILLISECONDS.toNanos(500)
 
@@ -165,8 +168,20 @@ internal class WorkspaceTab(val launch: Launch, val label: String) {
     /** The tab bar's name: the program's title, else [label]. */
     val title: String get() = programTitle ?: label
     @Volatile var session: Session? = null
+    /** The terminal's connector to [session], whose activity the busy dot follows. */
+    @Volatile var connector: SessionTtyConnector? = null
     /** A close is waiting for its busy check or its question. AWT thread. */
     var closeRequested = false
+    /** The connector's activity at the dot's last ask. Poll thread only. */
+    private var askedAt = -1L
+
+    /** Whether the dot asks this round: after input or output since its last ask, or every few rounds. Poll thread. */
+    fun dueForAsk(round: Int): Boolean {
+        val activity = connector?.activity ?: 0
+        if (activity == askedAt && round % EDITOR_FALLBACK_ROUNDS != 0) return false
+        askedAt = activity
+        return true
+    }
 }
 
 /** One workspace window: its folder, its tabs and their terminals. AWT thread unless noted. */
@@ -195,6 +210,8 @@ internal class WorkspaceWindowState(
     var closeRequested = false
     /** The window has closed: no tab starts or shows again. AWT thread. */
     private var closed = false
+    /** How many times [pollBusy] has run. Poll thread only. */
+    private var pollRound = 0
     /** The action the last window shortcut performed from the keyboard, and when ([performFromMenu]). */
     private var keyed: WorkspaceAction? = null
     private var keyedAt = 0L
@@ -274,6 +291,7 @@ internal class WorkspaceWindowState(
                 tab.session = session
                 // Attached before the terminal exists: output waits in the connector, not lost.
                 val connector = SessionTtyConnector(tab.label) { code -> onAwt { tab.state = TabState.Exited(code) } }
+                tab.connector = connector
                 connector.connect(session)
                 onAwt {
                     // The tab, or its whole window, closed while the process started: nothing will show it.
@@ -308,6 +326,7 @@ internal class WorkspaceWindowState(
         deck.remove(tab.id)
         tab.session?.let { session -> workers.execute { session.close() } }
         tab.session = null
+        tab.connector = null
         start(tab)
     }
 
@@ -350,10 +369,16 @@ internal class WorkspaceWindowState(
         return CompletableFuture.allOf(*checks.toTypedArray()).thenApply { checks.mapNotNull { it.join() } }
     }
 
-    /** Refresh each running tab's busy state for the tab bar. Off the AWT thread; never throws but fatally. */
+    /**
+     * Refresh each running tab's busy state for the tab bar: a Neovim tab only when [WorkspaceTab.dueForAsk].
+     * Off the AWT thread, one call at a time; never throws but fatally.
+     */
     fun pollBusy() {
+        val round = ++pollRound
         for (tab in tabs.toList()) {
-            val busy = if (tab.state == TabState.Running) askBusy(tab) else null
+            val running = tab.state == TabState.Running
+            if (running && tab.launch.isEditor() && !tab.dueForAsk(round)) continue
+            val busy = if (running) askBusy(tab) else null
             if (busy != tab.busy) onAwt { tab.busy = busy }
         }
     }

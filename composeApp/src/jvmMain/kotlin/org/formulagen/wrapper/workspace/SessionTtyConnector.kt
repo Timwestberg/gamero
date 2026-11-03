@@ -9,6 +9,7 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit.MILLISECONDS
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 
@@ -40,6 +41,10 @@ internal class SessionTtyConnector(private val name: String, private val onExit:
     @Volatile private var exitCode = 0
     private val closed = AtomicBoolean(false)
     @Volatile private var attachment: Attachment? = null
+    private val traffic = AtomicLong()
+
+    /** Output chunks received and key writes sent so far: a change means the tab has had activity. */
+    val activity: Long get() = traffic.get()
 
     /** Attach to [session]. Output from now on reaches JediTerm. */
     fun connect(session: Session) {
@@ -48,6 +53,7 @@ internal class SessionTtyConnector(private val name: String, private val onExit:
 
     /** Waits while the queue is full: the back-pressure [SessionViewer.output] allows. */
     override fun output(bytes: ByteArray, length: Int) {
+        traffic.incrementAndGet()
         val copy = bytes.copyOf(length)
         while (!closed.get()) {
             if (chunks.offer(copy, POLL_MS, MILLISECONDS)) return
@@ -102,6 +108,7 @@ internal class SessionTtyConnector(private val name: String, private val onExit:
     }
 
     override fun write(bytes: ByteArray) {
+        traffic.incrementAndGet()
         try { attachment?.input(bytes) } catch (error: Throwable) {
             rethrowIfFatal(error)
             log(LogLevel.Error, TAG, "Could not send keys to $name", error)

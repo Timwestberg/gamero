@@ -41,8 +41,12 @@ class WorkspaceWindowsTest {
         /** [busy] throws instead of answering. */
         @Volatile var busyFails = false
         @Volatile var viewer: SessionViewer? = null
+        val busyCalls = java.util.concurrent.atomic.AtomicInteger()
         override val title = "Shell"
-        override fun busy(): Busy? = if (busyFails) throw IllegalStateException("busy boom") else busy
+        override fun busy(): Busy? {
+            busyCalls.incrementAndGet()
+            return if (busyFails) throw IllegalStateException("busy boom") else busy
+        }
         override fun attach(viewer: SessionViewer): Attachment {
             this.viewer = viewer
             return object : Attachment {
@@ -191,6 +195,26 @@ class WorkspaceWindowsTest {
         EventQueue.invokeAndWait { window.requestCloseTab(window.tabs.single()) }
         eventually("asked") { asked.size == 1 }
         assertEquals(1, onAwtNow { window.tabs.size })
+    }
+
+    @Test fun theDotAsksANeovimTabOnlyAfterActivityOrEveryFifthRound() {
+        val window = open()
+        running(window, 1)
+        onAwtNow { window.addTab(Launch.Tool(WorkspaceTool.NEOVIM)) }
+        running(window, 2)
+        val (shell, editor) = host.sessions
+        repeat(5) { window.pollBusy() }
+        assertEquals(5, shell.busyCalls.get(), "other tabs are asked every round")
+        assertEquals(2, editor.busyCalls.get(), "Neovim: the first round, then the fifth")
+        (editor.viewer as SessionTtyConnector).output("x".toByteArray(), 1)
+        window.pollBusy()
+        assertEquals(3, editor.busyCalls.get(), "output since the last ask")
+        window.pollBusy()
+        assertEquals(3, editor.busyCalls.get())
+        editor.busy = Busy.Unsaved("Neovim", emptyList())
+        EventQueue.invokeAndWait { window.requestCloseTab(window.tabs[1]) }
+        eventually("closing asks fresh") { asked.size == 1 }
+        assertEquals(4, editor.busyCalls.get())
     }
 
     @Test fun anIdleWindowClosesWithoutAsking() {

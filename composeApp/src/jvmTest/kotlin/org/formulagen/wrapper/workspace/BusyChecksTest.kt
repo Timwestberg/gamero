@@ -69,6 +69,11 @@ class BusyChecksTest {
         assertEquals(Busy.Unsaved("Neovim", listOf("notes.txt")), awaitBusy(session) { it != null })
         keys.input(":w\r".toByteArray())
         assertNull(awaitBusy(session) { it == null }, "written")
+        Thread.sleep(300)
+        val drawn = CollectingViewer().also { session.attach(it) }
+        repeat(3) { assertNull(session.busy()) }
+        Thread.sleep(300)
+        assertEquals("", drawn.text(), "being asked draws nothing, so the busy dot's asks are not activity")
         keys.input(":terminal sleep 30\r".toByteArray())
         assertEquals(Busy.EditorTerminal("Neovim"), awaitBusy(session) { it != null })
         session.close()

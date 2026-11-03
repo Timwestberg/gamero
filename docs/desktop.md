@@ -101,6 +101,10 @@ Apple Silicon only ([release.md](release.md#desktop)).
     tab would be;
   - lazygit or yazi is busy while it runs a program of its own, such as `git push`.
 
+  The tab bar marks a busy tab with ●. It asks each tab every second, and a Neovim tab only
+  after input or output, or every fifth second, since each ask starts a Neovim client.
+  Closing and quitting always ask afresh.
+
   With nothing busy they close, or quit, at once. Quitting asks once for every window, then
   runs the app's normal shutdown. See [Confirmation sheets](#confirmation-sheets) and
   [Quitting](#quitting).
