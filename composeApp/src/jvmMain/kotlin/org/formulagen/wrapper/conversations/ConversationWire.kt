@@ -331,6 +331,10 @@ internal sealed interface HostStreamEvent {
 
     @Serializable @SerialName("project.changed")
     data class ProjectChanged(val projectId: String) : HostStreamEvent
+
+    /** The account's workspace profile is saved at [revision]; a Mac holding an older one reads it again. */
+    @Serializable @SerialName("workspaceProfile.changed")
+    data class WorkspaceProfileChanged(val revision: Long) : HostStreamEvent
 }
 
 /** `PROVIDER_READINESS`. */

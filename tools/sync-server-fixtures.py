@@ -23,6 +23,10 @@ contract fixture changes:
 - phone/DeviceContractFixtures.kt (commonTest) from the same run: the approval device
   payloads and device routes (`device.*`, `routes.device`) a phone reads and sends, so the
   phone's types are checked on every platform.
+- workspace/WorkspaceProfileFixtures.kt (jvmTest) from
+  event-contracts/src/hovel/companions/fixtures/workspace-profile: workspace profiles,
+  documents and saves, each with the schema it is checked against and whether the server
+  accepts it, for the Mac's lenient decode.
 """
 import functools
 import json
@@ -91,6 +95,21 @@ internal object EmberHearingFixture {{
 """
 
 
+def workspace_profile(server: Path) -> str:
+    source = "event-contracts/src/hovel/companions/fixtures/workspace-profile"
+    entries = "\n".join(f"        {kotlin_string(path.name)} to {kotlin_string(compact(path))},"
+                        for path in sorted((server / source).glob("*.json")))
+    return HEADER.format(source, source_commit(server, source)) + f"""package org.formulagen.wrapper.workspace
+
+/** Each file as {{"description", "schema": the zod schema it is checked against, "valid": whether the server accepts it, "value"}}. */
+internal object WorkspaceProfileFixtures {{
+    val FILES: Map<String, String> = mapOf(
+{entries}
+    )
+}}
+"""
+
+
 INSTALL_HINT = """Building the companion fixtures needs Node and server-platform's dependencies:
     (cd {server} && pnpm install)"""
 
@@ -154,6 +173,7 @@ OUTPUTS = {
     ROOT / TEST.format("commonTest") / "bridge/EmberHearingFixture.kt": ember_hearing,
     ROOT / TEST.format("jvmTest") / "conversations/CompanionContractFixtures.kt": companion_payloads,
     ROOT / TEST.format("commonTest") / "phone/DeviceContractFixtures.kt": device_payloads,
+    ROOT / TEST.format("jvmTest") / "workspace/WorkspaceProfileFixtures.kt": workspace_profile,
 }
 
 
