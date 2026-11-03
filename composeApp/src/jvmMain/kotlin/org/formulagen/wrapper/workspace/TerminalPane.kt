@@ -19,6 +19,7 @@ import java.awt.Color
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.GraphicsEnvironment
 import java.awt.image.BufferedImage
 import java.awt.event.ActionEvent
 import java.awt.event.ActionListener
@@ -70,6 +71,31 @@ internal open class HovelTerminalSettings(@Volatile var fontSize: Int = Terminal
     // DefaultSettingsProvider binds Copy to ⌘C and Paste to ⌘V on macOS (getCopyActionPresentation).
 }
 
+/** The terminal font, its size and the zoom limits. */
+internal object TerminalFont {
+    /** The owner's choice: SF Mono when AWT can see it by name, else Menlo. Never loaded from a file. */
+    const val PREFERRED = "SF Mono"
+    const val FALLBACK = "Menlo"
+    const val DEFAULT_SIZE = 13
+    const val MIN_SIZE = 9
+    const val MAX_SIZE = 36
+
+    /** The family terminals use on this Mac, looked up once. */
+    val family: String by lazy { resolveFamily(availableFamilies()) }
+
+    internal fun resolveFamily(available: Set<String>): String = if (PREFERRED in available) PREFERRED else FALLBACK
+
+    private fun availableFamilies(): Set<String> = try {
+        GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames.toSet()
+    } catch (error: Throwable) {
+        rethrowIfFatal(error)
+        emptySet()
+    }
+
+    /** [size] moved by [steps] points, within the limits. */
+    fun zoomed(size: Int, steps: Int): Int = (size + steps).coerceIn(MIN_SIZE, MAX_SIZE)
+}
+
 private fun terminalColor(argb: Int): TerminalColor = Color(argb).let { TerminalColor.rgb(it.red, it.green, it.blue) }
 
 /** [shape] without its blink: a steady cursor, as Terminal's default profile has, never repainted to blink. */
@@ -88,7 +114,7 @@ internal fun steadyCursor(shape: CursorShape): CursorShape = when (shape) {
  *
  * Key presses that are window shortcuts ([workspaceShortcut]) go to [onShortcut] instead of the terminal.
  */
-internal class GuardedTerminalPanel(settings: SettingsProvider, buffer: TerminalTextBuffer, style: StyleState) :
+internal class HovelTerminalPanel(settings: SettingsProvider, buffer: TerminalTextBuffer, style: StyleState) :
     TerminalPanel(settings, buffer, style) {
     /** Development probe only. One character cell, in points. */
     val cell: java.awt.Dimension get() = java.awt.Dimension(myCharSize)
@@ -196,7 +222,7 @@ internal class GuardedTerminalPanel(settings: SettingsProvider, buffer: Terminal
      * update renames the field, this logs and leaves the timer as it is; [TerminalTimerGuardTest] fails.
      */
     private fun guardRepaintTimer() {
-        val timer = try { REPAINT_TIMER?.get(this) as? Timer } catch (error: Exception) { null }
+        val timer = repaintTimer()
         if (timer == null) {
             log(LogLevel.Warn, TAG, "JediTerm's repaint timer was not found; its callbacks are not guarded")
             return
@@ -281,7 +307,7 @@ private class DaemonTerminalExecutors : TerminalExecutorServiceManager {
 
 private class HovelTermWidget(size: TermSize, settings: SettingsProvider) : JediTermWidget(size.columns, size.rows, settings) {
     override fun createTerminalPanel(settings: SettingsProvider, style: StyleState, buffer: TerminalTextBuffer): TerminalPanel =
-        GuardedTerminalPanel(settings, buffer, style)
+        HovelTerminalPanel(settings, buffer, style)
 
     override fun createExecutorServiceManager(): TerminalExecutorServiceManager = DaemonTerminalExecutors()
 }
@@ -302,7 +328,7 @@ internal class TerminalView(
 ) {
     private val settings = HovelTerminalSettings(fontSize)
     private val widget: JediTermWidget = HovelTermWidget(size, settings)
-    private val guarded = widget.terminalPanel as GuardedTerminalPanel
+    private val guarded = widget.terminalPanel as HovelTerminalPanel
     /** The latest title waiting for the AWT thread, or null when none waits. */
     private val pendingTitle = AtomicReference<String?>(null)
 

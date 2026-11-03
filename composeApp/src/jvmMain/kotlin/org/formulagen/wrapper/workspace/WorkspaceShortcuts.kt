@@ -65,28 +65,3 @@ private fun byCharacter(char: Char): WorkspaceAction? = when (char) {
     '+' -> WorkspaceAction.ZoomIn
     else -> null
 }
-
-/** The terminal font, its size and the zoom limits. */
-internal object TerminalFont {
-    /** The owner's choice: SF Mono when AWT can see it by name, else Menlo. Never loaded from a file. */
-    const val PREFERRED = "SF Mono"
-    const val FALLBACK = "Menlo"
-    const val DEFAULT_SIZE = 13
-    const val MIN_SIZE = 9
-    const val MAX_SIZE = 36
-
-    /** The family terminals use on this Mac, looked up once. */
-    val family: String by lazy { resolveFamily(availableFamilies()) }
-
-    internal fun resolveFamily(available: Set<String>): String = if (PREFERRED in available) PREFERRED else FALLBACK
-
-    private fun availableFamilies(): Set<String> = try {
-        java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames.toSet()
-    } catch (error: Throwable) {
-        rethrowIfFatal(error)
-        emptySet()
-    }
-
-    /** [size] moved by [steps] points, within the limits. */
-    fun zoomed(size: Int, steps: Int): Int = (size + steps).coerceIn(MIN_SIZE, MAX_SIZE)
-}

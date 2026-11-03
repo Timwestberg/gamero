@@ -19,6 +19,9 @@ sealed interface Launch {
     data class Diff(val file: String, val history: Boolean) : Launch
 }
 
+/** True for the tab kind whose busy state comes from Neovim itself. */
+internal fun Launch.isEditor(): Boolean = this is Launch.Tool && tool == WorkspaceTool.NEOVIM
+
 data class SessionSpec(val projectId: String, val title: String, val folder: Path, val launch: Launch, val size: TermSize)
 
 /** The exit code viewers hear when [Session.close] ended a session before its process's own exit was seen. */

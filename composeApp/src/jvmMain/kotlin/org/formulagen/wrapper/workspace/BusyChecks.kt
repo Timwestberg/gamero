@@ -28,9 +28,6 @@ private const val TAG = "workspace-busy"
 /** The executable name of a running Neovim, by its real path. */
 internal const val NEOVIM_EXECUTABLE = "nvim"
 
-/** True for the tab kind whose busy state comes from Neovim itself. */
-internal fun Launch.isEditor(): Boolean = this is Launch.Tool && tool == WorkspaceTool.NEOVIM
-
 /** How long Neovim has to answer before its tab counts as busy. */
 internal val NEOVIM_ANSWER_TIMEOUT: Duration = 1.seconds
 
@@ -205,10 +202,3 @@ internal fun clip(text: String, max: Int): String = buildString {
 /** False for controls, format characters (bidi overrides and isolates, zero widths) and lone surrogates. */
 private fun isShown(codePoint: Int): Boolean = !Character.isISOControl(codePoint) &&
     Character.getType(codePoint).let { it != Character.FORMAT.toInt() && it != Character.SURROGATE.toInt() }
-
-/** `~/Library/Caches/<bundle id>/workspace`: Hovel's workspace files that need a path with no spaces. */
-internal fun workspaceCacheFolder(home: String = System.getProperty("user.home")): Path =
-    Path.of(home, "Library", "Caches", WORKSPACE_BUNDLE_ID, "workspace")
-
-/** The bundle id of the packaged app (`compose.desktop.nativeDistributions.macOS.bundleID`). */
-internal const val WORKSPACE_BUNDLE_ID = "org.formulagen.wrapper"

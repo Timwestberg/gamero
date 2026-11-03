@@ -184,6 +184,13 @@ internal fun readDirectoryShell(userName: String = System.getProperty("user.name
 /** An executable file at an absolute path. */
 internal fun isUsableShell(path: String): Boolean = File(path).isAbsolute && Path.of(path).let { it.isRegularFile() && it.isExecutable() }
 
+/** `~/Library/Caches/<bundle id>/workspace`: Hovel's workspace files that need a path with no spaces. */
+internal fun workspaceCacheFolder(home: String = System.getProperty("user.home")): Path =
+    Path.of(home, "Library", "Caches", WORKSPACE_BUNDLE_ID, "workspace")
+
+/** The bundle id of the packaged app (`compose.desktop.nativeDistributions.macOS.bundleID`). */
+internal const val WORKSPACE_BUNDLE_ID = "org.formulagen.wrapper"
+
 /**
  * Hovel's shell startup files, copied from resources `workspace/shell/` into
  * `~/Library/Caches/<bundle id>/workspace/shell`. Each shell gets its file's path as an argument or a

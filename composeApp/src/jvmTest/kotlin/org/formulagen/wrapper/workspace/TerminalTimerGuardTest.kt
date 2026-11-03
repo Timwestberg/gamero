@@ -50,7 +50,7 @@ class TerminalTimerGuardTest {
             uncaught.clear()
 
             val settings = ThrowingSettings()
-            val guarded = onAwtNow { GuardedTerminalPanel(settings, TerminalTextBuffer(80, 24, StyleState()), StyleState()).also { it.init(JScrollBar()) } }
+            val guarded = onAwtNow { HovelTerminalPanel(settings, TerminalTextBuffer(80, 24, StyleState()), StyleState()).also { it.init(JScrollBar()) } }
             assertNotNull(guarded.repaintTimer(), "JediTerm's timer was found")
             waitFor { settings.calls.get() >= 5 }
             onAwtNow { guarded.dispose() }
