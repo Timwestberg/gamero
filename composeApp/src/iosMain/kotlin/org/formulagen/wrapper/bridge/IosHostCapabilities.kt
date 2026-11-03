@@ -24,6 +24,7 @@ internal fun iosHovelBridgePacks(approvals: ApprovalCapability, devices: Approva
     PetMethods.pack(Capability.Unsupported),
     GameMethods.pack(Capability.Unsupported),
     ProjectMethods.pack(Capability.Unsupported),
+    ProjectWorkspaceMethods.pack(Capability.Unsupported),
     ConversationVoiceMethods.pack(Capability.Unsupported),
     ApprovalMethods.pack(Capability.Supported(approvals)),
     ApprovalDeviceMethods.pack(Capability.Supported(devices)),

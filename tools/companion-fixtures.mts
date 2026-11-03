@@ -158,7 +158,8 @@ for (const event of [
   { messageId: ids.message, type: 'message.cancelled' },
   { conversationId: ids.conversation, type: 'stop.requested' },
   { approvalId: ids.approval, type: 'approval.answered' },
-  { projectId: ids.project, type: 'project.changed' }
+  { projectId: ids.project, type: 'project.changed' },
+  { revision: 3, type: 'workspaceProfile.changed' }
 ]) {
   add(`hostEvent.${event.type}`, 'hostStreamEvent', c.hostStreamEvent, event);
 }
