@@ -5,7 +5,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import java.awt.Desktop
 import java.awt.EventQueue
 import java.nio.file.Files
 import java.nio.file.Path
@@ -52,6 +51,9 @@ internal class WorkspaceWindows(confirmer: Confirmer = SheetConfirmer, host: () 
 
     /** The app's exit has started: quit requests are ignored from now on. */
     @Volatile private var exiting = false
+
+    /** The cancels of quit requests waiting on the question: the person's Cancel runs them all. AWT thread. */
+    private val pendingCancels = mutableListOf<() -> Unit>()
 
     /** Open a window on [folder] with a Shell tab, or bring forward the one already open there. AWT thread. */
     fun open(folder: Path): WorkspaceWindowState {
@@ -100,12 +102,15 @@ internal class WorkspaceWindows(confirmer: Confirmer = SheetConfirmer, host: () 
     /**
      * Before the app quits (⌘Q, or the main window closing): when any tab of any window is busy, ask
      * once, listing the windows and tabs, on the first busy window; then [quit], the app's normal
-     * shutdown. With nothing busy, [quit] runs at once. A request while one is pending, or once the
-     * exit has started, is ignored. AWT thread.
+     * shutdown. With nothing busy, [quit] runs at once. [onCancel] runs if the person keeps the app,
+     * also for a request that arrives while the question is up. Once the exit has started, requests
+     * are ignored. AWT thread.
      */
-    fun confirmQuit(appName: String, quit: () -> Unit) {
-        if (quitting || exiting) return
-        val exit = { exitStarted(); quit() }
+    fun confirmQuit(appName: String, onCancel: () -> Unit = {}, quit: () -> Unit) {
+        if (exiting) return
+        pendingCancels += onCancel
+        if (quitting) return
+        val exit = { exitStarted(); pendingCancels.clear(); quit() }
         val open = windows.toList()
         if (open.isEmpty()) { exit(); return }
         quitting = true
@@ -118,7 +123,7 @@ internal class WorkspaceWindows(confirmer: Confirmer = SheetConfirmer, host: () 
                     val question = Confirmations.quit(appName, busy) ?: return@onAwt exit()
                     val owner = open[busy.indexOfFirst { it.tabs.isNotEmpty() }]
                     owner.bringForward()
-                    if (confirmer.confirm(owner.awtWindow, question)) exit()
+                    if (confirmer.confirm(owner.awtWindow, question)) exit() else kept()
                 } finally { quitting = false }
             }
         }
@@ -127,32 +132,17 @@ internal class WorkspaceWindows(confirmer: Confirmer = SheetConfirmer, host: () 
     /** The app's exit has started, by any path: later quit requests are ignored. Any thread. */
     fun exitStarted() { exiting = true }
 
+    /** The person kept the app: every quit request waiting on the question is cancelled. */
+    private fun kept() {
+        val cancels = pendingCancels.toList()
+        pendingCancels.clear()
+        cancels.forEach { it() }
+    }
+
     /** At app exit: end every session, waiting for them. Off the AWT thread. */
     override fun close() {
         workers.shutdown()
         if (lazyHost.isInitialized()) lazyHost.value.close()
-    }
-}
-
-/**
- * Route macOS's Quit (⌘Q, the Dock, logging out) through [onQuit] instead of the JDK's default,
- * which is `System.exit` and skips `main.kt`'s shutdown. The JDK's quit is cancelled at once and
- * [onQuit] decides: it asks when work would be lost, then runs the app's own exit. Installed only
- * when workspaces are enabled; a release keeps the JDK's default.
- */
-internal fun installQuitHandler(onQuit: () -> Unit) {
-    try {
-        if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.APP_QUIT_HANDLER)) return
-        Desktop.getDesktop().setQuitHandler { _, response ->
-            response.cancelQuit()
-            try { onQuit() } catch (error: Throwable) {
-                rethrowIfFatal(error)
-                log(LogLevel.Error, TAG, "The quit request failed", error)
-            }
-        }
-    } catch (error: Throwable) {
-        rethrowIfFatal(error)
-        log(LogLevel.Error, TAG, "Could not install the quit handler", error)
     }
 }
 

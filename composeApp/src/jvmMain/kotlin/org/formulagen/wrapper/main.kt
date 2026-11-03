@@ -36,10 +36,13 @@ import org.formulagen.wrapper.providers.projectWorkspaceEnabled
 import org.formulagen.wrapper.workspace.DevelopmentWorkspaceLaunch
 import org.formulagen.wrapper.workspace.WorkspaceWindows
 import org.formulagen.wrapper.workspace.WorkspaceWindowsHost
-import org.formulagen.wrapper.workspace.installQuitHandler
 import org.formulagen.wrapper.workspace.openWorkspaceFromPicker
+import org.formulagen.wrapper.workspace.rethrowIfFatal
 import org.formulagen.wrapper.workspace.spikeSessionHost
+import java.awt.Desktop
 import java.awt.EventQueue
+import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.logger.log
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicBoolean
 import java.awt.event.WindowAdapter
@@ -107,6 +110,27 @@ internal fun desktopWebUrl(args: Array<String>, environment: String?): String? {
     return uri.toASCIIString()
 }
 
+/**
+ * Route macOS's Quit (⌘Q, the Dock, a logout) through [onQuit], holding the system's request open
+ * until the app exits or [onQuit] calls its cancel (docs/desktop.md, "Quitting"). Development builds only.
+ */
+private fun installQuitHandler(onQuit: (cancel: () -> Unit) -> Unit) {
+    try {
+        if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.APP_QUIT_HANDLER)) return
+        Desktop.getDesktop().setQuitHandler { _, response ->
+            val cancel = { response.cancelQuit() }
+            try { onQuit(cancel) } catch (error: Throwable) {
+                rethrowIfFatal(error)
+                log(LogLevel.Error, "desktop-quit", "The quit request failed", error)
+                cancel()
+            }
+        }
+    } catch (error: Throwable) {
+        rethrowIfFatal(error)
+        log(LogLevel.Error, "desktop-quit", "Could not install the quit handler", error)
+    }
+}
+
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 fun main(args: Array<String>) {
     val exitAction = AtomicReference<(() -> Unit)?>(null)
@@ -118,14 +142,17 @@ fun main(args: Array<String>) {
     } else null
     resources.workspaces = workspaces
     val productName = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME
-    // Quitting, and closing the main window, which quits: with workspaces open, ask first when work
-    // would be lost. Either way the app's own exit runs, never System.exit.
-    val requestQuit: () -> Unit = {
-        val quit = { exitAction.get()?.invoke(); Unit }
-        workspaces?.confirmQuit(productName, quit) ?: quit()
+    // Ask first when work would be lost; cancel means kept.
+    val requestQuit: (onCancel: () -> Unit) -> Unit = { onCancel ->
+        val exit = exitAction.get()
+        when {
+            exit == null -> onCancel()
+            workspaces != null -> workspaces.confirmQuit(productName, onCancel, exit)
+            else -> exit()
+        }
     }
-    // A release keeps the JDK's quit: workspaces are its only reason for a handler.
-    if (workspaces != null) installQuitHandler { EventQueue.invokeLater(requestQuit) }
+    // A release keeps the JDK's quit.
+    if (workspaces != null) installQuitHandler(requestQuit)
     val editActions = BrowserEditActions(resources.browser::get)
     val lifecycle = BrowserLifecycle(
         dispose = { CefApp.getInstanceIfAny()?.dispose(); KCEF.dispose() },
@@ -141,7 +168,7 @@ fun main(args: Array<String>) {
                 override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler = failure
             }) {
                 Window(
-                    onCloseRequest = requestQuit,
+                    onCloseRequest = { requestQuit {} },
                     title = productName,
                 ) {
                     DisposableEffect(window) {
@@ -210,7 +237,7 @@ fun main(args: Array<String>) {
                 // Workspace windows render here, in the app's one Compose application.
                 if (workspaces != null) {
                     WorkspaceWindowsHost(workspaces)
-                    DevelopmentWorkspaceLaunch(workspaces, System.getenv(), exit = { EventQueue.invokeLater { exitAction.get()?.invoke() } }, requestQuit = requestQuit)
+                    DevelopmentWorkspaceLaunch(workspaces, System.getenv(), exit = { EventQueue.invokeLater { exitAction.get()?.invoke() } }, requestQuit = { requestQuit {} })
                 }
             }
         }

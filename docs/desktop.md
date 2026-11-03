@@ -102,9 +102,8 @@ Apple Silicon only ([release.md](release.md#desktop)).
   - lazygit or yazi is busy while it runs a program of its own, such as `git push`.
 
   With nothing busy they close, or quit, at once. Quitting asks once for every window, then
-  runs the app's normal shutdown. See [Confirmation sheets](#confirmation-sheets). In a development build the app handles macOS's Quit
-  itself (`Desktop.setQuitHandler`), so quitting during a logout or restart cancels that
-  logout once; quit Hovel first. A release build keeps the JDK's quit.
+  runs the app's normal shutdown. See [Confirmation sheets](#confirmation-sheets) and
+  [Quitting](#quitting).
 - `HOVEL_WORKSPACE_BIN=<folder>` is the folder kept first in each tab's `PATH`
   (default `~/Library/Application Support/Gamero/workspace/bin`, where the tool
   manager will put its wrappers). A tool tab runs that folder's wrapper when it has
@@ -127,6 +126,18 @@ The fish integration test runs only when `HOVEL_TEST_FISH` names a fish executab
 own `fish-<version>.app.zip` release, unzipped anywhere, has one at
 `fish-<version>.app/Contents/Resources/base/usr/local/bin/fish`, with nothing installed. The
 Neovim tests use `/opt/homebrew/bin/nvim` or `HOVEL_TEST_NVIM`, and skip without one.
+
+#### Quitting
+
+In a development build the app handles macOS's Quit itself (`Desktop.setQuitHandler`):
+⌘Q, the Dock's Quit, and the quit a logout, restart or Software Update sends. The handler
+keeps the system's `QuitResponse` open while the app decides. With nothing busy, or once the
+person chooses Quit, the app's own shutdown ends the process, and a pending logout or restart
+goes on. Cancel calls `cancelQuit()`, which cancels that logout or restart, as any Mac app
+that asks does. A quit that arrives while the question is up joins it; one that arrives once
+the exit has started is ignored, and the exit ends it. The JDK lets the response be answered
+later from any thread, and nothing waits on it at exit. A release build installs no handler
+and keeps the JDK's quit.
 
 #### Confirmation sheets
 

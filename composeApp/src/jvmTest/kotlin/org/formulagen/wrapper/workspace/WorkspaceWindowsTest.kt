@@ -279,6 +279,34 @@ class WorkspaceWindowsTest {
         assertEquals(1, quits, "the exit runs once")
     }
 
+    @Test fun theSystemsQuitIsCancelledOnlyWhenThePersonKeepsTheApp() {
+        val window = open()
+        running(window, 1)
+        host.sessions.single().busy = Busy.Running("make")
+        var quits = 0
+        var cancels = 0
+        // A second system quit (a logout after ⌘Q, say) arrives while the question is up.
+        duringQuestion = { workspaces.confirmQuit("Hovel", onCancel = { cancels += 10 }) { quits++ } }
+        EventQueue.invokeAndWait { workspaces.confirmQuit("Hovel", onCancel = { cancels++ }) { quits++ } }
+        eventually("cancelled") { cancels == 11 }
+        assertEquals(0, quits, "Cancel answers every waiting request")
+        answer = true
+        duringQuestion = {}
+        EventQueue.invokeAndWait { workspaces.confirmQuit("Hovel", onCancel = { cancels++ }) { quits++ } }
+        eventually("quit") { quits == 1 }
+        settle()
+        assertEquals(11, cancels, "Quit leaves the system's request to the exit")
+    }
+
+    @Test fun withNothingBusyTheSystemsQuitIsNotCancelled() {
+        open().also { running(it, 1) }
+        var quits = 0
+        var cancels = 0
+        EventQueue.invokeAndWait { workspaces.confirmQuit("Hovel", onCancel = { cancels++ }) { quits++ } }
+        eventually("quit at once") { quits == 1 }
+        assertEquals(0, cancels)
+    }
+
     @Test fun onceTheExitHasStartedQuitRequestsAreIgnored() {
         val window = open()
         running(window, 1)
