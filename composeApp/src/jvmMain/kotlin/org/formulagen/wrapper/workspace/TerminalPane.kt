@@ -16,15 +16,20 @@ import com.jediterm.terminal.ui.settings.SettingsProvider
 import java.awt.CardLayout
 import java.awt.Color
 import java.awt.Graphics
+import java.awt.event.ActionEvent
+import java.awt.event.ActionListener
 import java.awt.event.InputMethodEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import java.awt.event.MouseWheelEvent
+import java.lang.reflect.Field
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.JScrollBar
+import javax.swing.Timer
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.ui.fgBlue500
@@ -51,13 +56,20 @@ internal open class HovelTerminalSettings : DefaultSettingsProvider() {
 private fun terminalColor(argb: Int): TerminalColor = Color(argb).let { TerminalColor.rgb(it.red, it.green, it.blue) }
 
 /**
- * A [TerminalPanel] whose AWT-thread entry points catch and log. An exception escaping to the event
- * thread reaches the app's default handler, which ends Hovel.
+ * A [TerminalPanel] whose AWT-thread entry points catch and log: its event handlers, its paint, and
+ * the callbacks of JediTerm's own repaint timer (cursor blink, scrolling, repaint), which it
+ * re-registers wrapped ([guardRepaintTimer]). An exception escaping to the event thread reaches the
+ * app's default handler, which ends Hovel.
  */
-private class GuardedTerminalPanel(settings: SettingsProvider, buffer: TerminalTextBuffer, style: StyleState) :
+internal class GuardedTerminalPanel(settings: SettingsProvider, buffer: TerminalTextBuffer, style: StyleState) :
     TerminalPanel(settings, buffer, style) {
     /** Development probe only. One character cell, in points. */
     val cell: java.awt.Dimension get() = java.awt.Dimension(myCharSize)
+
+    override fun init(scrollBar: JScrollBar) {
+        super.init(scrollBar)
+        guardRepaintTimer()
+    }
 
     override fun paintComponent(g: Graphics) = guard("paint") { super.paintComponent(g) }
     override fun processKeyEvent(e: KeyEvent) = guard("key") {
@@ -70,11 +82,49 @@ private class GuardedTerminalPanel(settings: SettingsProvider, buffer: TerminalT
     override fun processMouseWheelEvent(e: MouseWheelEvent) = guard("mouse wheel") { super.processMouseWheelEvent(e) }
     override fun processInputMethodEvent(e: InputMethodEvent) = guard("input method") { super.processInputMethodEvent(e) }
 
+    /**
+     * JediTerm drives the cursor blink, scrolling and repaint from a Swing timer of its own
+     * (`TerminalPanel.myRepaintTimer`, created in [init]), whose callback catches only the repaint
+     * call. No override reaches it, so its listeners are re-registered here, each wrapped in [guard].
+     * The listener stays JediTerm's weak one, so the panel can still be collected. If a JediTerm
+     * update renames the field, this logs and leaves the timer as it is; [TerminalTimerGuardTest] fails.
+     */
+    private fun guardRepaintTimer() {
+        val timer = try { REPAINT_TIMER?.get(this) as? Timer } catch (error: Exception) { null }
+        if (timer == null) {
+            log(LogLevel.Warn, TAG, "JediTerm's repaint timer was not found; its callbacks are not guarded")
+            return
+        }
+        for (listener in timer.actionListeners) {
+            if (listener is GuardedTimerListener) continue
+            timer.removeActionListener(listener)
+            timer.addActionListener(GuardedTimerListener(listener))
+        }
+    }
+
+    /** Development probe and tests only: the timer [guardRepaintTimer] wrapped. */
+    internal fun repaintTimer(): Timer? = try { REPAINT_TIMER?.get(this) as? Timer } catch (_: Exception) { null }
+
+    private class GuardedTimerListener(private val target: ActionListener) : ActionListener {
+        override fun actionPerformed(event: ActionEvent) {
+            try { target.actionPerformed(event) } catch (error: Throwable) {
+                rethrowIfFatal(error)
+                log(LogLevel.Error, TAG, "The terminal's repaint timer failed", error)
+            }
+        }
+    }
+
     private inline fun guard(what: String, block: () -> Unit) {
         try { block() } catch (error: Throwable) {
             rethrowIfFatal(error)
             log(LogLevel.Error, TAG, "The terminal failed on $what", error)
         }
+    }
+
+    private companion object {
+        val REPAINT_TIMER: Field? = try {
+            TerminalPanel::class.java.getDeclaredField("myRepaintTimer").apply { isAccessible = true }
+        } catch (error: Exception) { null }
     }
 }
 
