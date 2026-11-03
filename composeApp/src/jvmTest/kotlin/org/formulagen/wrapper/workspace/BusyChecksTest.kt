@@ -36,7 +36,6 @@ class BusyChecksTest {
         assertEquals(Busy.EditorTerminal("Neovim"), parseNeovimState("Neovim", "hovel-state\nT"))
         val many = parseNeovimState("Neovim", "hovel-state\n" + (1..5).joinToString("\n") { "M f$it.kt" }) as Busy.Unsaved
         assertEquals(listOf("f1.kt", "f2.kt", "f3.kt", "2 more"), many.files)
-        assertEquals("Neovim has unsaved changes in f1.kt, f2.kt, f3.kt, 2 more", many.reason)
     }
 
     @Test fun anythingButAnAnswerIsNoAnswer() {
@@ -80,7 +79,6 @@ class BusyChecksTest {
         val nvim = neovim()
         val (session, _) = startNeovim(nvim, root.resolve("x.txt"), sockets = null)
         assertEquals(Busy.NoAnswer("Neovim"), awaitBusy(session) { it != null })
-        assertEquals("Neovim did not answer, so it may have unsaved work", session.busy()?.reason)
     }
 
     @Test fun beforeNeovimStartsNothingIsUnsaved() {
@@ -112,12 +110,6 @@ class BusyChecksTest {
         assertEquals("a program", commandLabel(null, emptyList()))
         assertEquals(60, commandLabel("/bin/echo", listOf("x".repeat(100))).length)
         assertEquals("echo ab", commandLabel("/bin/echo", listOf("a\u001b\u0007b")), "control characters are dropped")
-    }
-
-    @Test fun busyReasonsNameWhatRuns() {
-        assertEquals("“npm run dev” is running", Busy.Running("npm run dev").reason)
-        assertEquals("Neovim has unsaved changes", Busy.Unsaved("Neovim", emptyList()).reason)
-        assertEquals("Neovim has a terminal running", Busy.EditorTerminal("Neovim").reason)
     }
 
     private fun neovim(): String {

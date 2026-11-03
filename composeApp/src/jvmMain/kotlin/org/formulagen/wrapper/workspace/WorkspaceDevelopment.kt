@@ -180,7 +180,7 @@ internal class WorkspaceProbe(
 
     private fun answer(yes: Boolean) {
         workspaces.confirmer = Confirmer { _, question ->
-            record("  asked \"${question.title}\": ${question.message.replace("\n", " | ")} -> ${if (yes) question.proceed else "Cancel"}")
+            record("  asked \"${question.title}\": ${question.lines.joinToString(" | ")} -> ${question.buttons.first { it.second == yes }.first}")
             yes
         }
     }
@@ -285,7 +285,7 @@ internal class WorkspaceProbe(
         var image: BufferedImage? = null
         val tab = awtValue { window.selectedTab() }
         // Off the AWT thread: Neovim's answer can take a moment.
-        val busy = tab?.session?.busy()?.reason ?: "none"
+        val busy = tab?.session?.busy()?.let(Confirmations::reason) ?: "none"
         awt {
             val view = view()
             val tree = tab?.session?.processes()?.joinToString { "${it.pid()}:${it.info().command().orElse("?")}" }

@@ -12,6 +12,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.formulagen.wrapper.approvals.NativeDialog
 
 /**
  * Workspace windows: closing ends their tabs' processes whatever state their start is in; closing a
@@ -21,7 +22,7 @@ class WorkspaceWindowsTest {
     private val folder: Path = createTempDirectory("hovel-windows")
     private val other: Path = createTempDirectory("hovel-windows-other")
     private val host = FakeHost()
-    private val asked = CopyOnWriteArrayList<Confirmation>()
+    private val asked = CopyOnWriteArrayList<NativeDialog<Boolean>>()
     @Volatile private var answer = false
     private val workspaces = WorkspaceWindows(confirmer = { _, question -> asked.add(question); answer }) { host }
 
@@ -123,7 +124,10 @@ class WorkspaceWindowsTest {
         host.sessions.single().busy = Busy.Unsaved("Neovim", listOf("notes.txt"))
         EventQueue.invokeAndWait { window.requestCloseTab(window.tabs.single()) }
         eventually("asked") { asked.size == 1 }
-        assertEquals(Confirmation("Close this tab?", "Neovim has unsaved changes in notes.txt. Closing the tab ends it.", "Close Tab"), asked.single())
+        assertEquals(
+            NativeDialog("Close this tab?", listOf("Neovim has unsaved changes in notes.txt. Closing the tab ends it."), listOf("Close Tab" to true, "Cancel" to false), false),
+            asked.single(),
+        )
         assertEquals(1, onAwtNow { window.tabs.size }, "no keeps the tab")
         assertFalse(host.sessions.single().isClosed())
         answer = true
@@ -144,10 +148,14 @@ class WorkspaceWindowsTest {
         val question = asked.single()
         assertEquals("Close “${window.title}”?", question.title)
         assertEquals(
-            "Closing the window ends what is running in it:\n• Shell (tab 1): “npm run dev” is running\n" +
+            listOf(
+                "Closing the window ends what is running in it:",
+                "• Shell (tab 1): “npm run dev” is running",
                 "• Shell (tab 3): Neovim did not answer, so it may have unsaved work",
-            question.message,
+            ),
+            question.lines,
         )
+        assertEquals(listOf("Close Window" to true, "Cancel" to false), question.buttons)
         assertTrue(onAwtNow { window in workspaces.windows }, "no keeps the window")
         answer = true
         EventQueue.invokeAndWait { workspaces.requestClose(window) }
@@ -186,11 +194,15 @@ class WorkspaceWindowsTest {
         EventQueue.invokeAndWait { workspaces.confirmQuit("Hovel") { quits++ } }
         eventually("asked") { asked.size == 1 }
         assertEquals(
-            Confirmation(
+            NativeDialog(
                 "Quit Hovel?",
-                "Quitting ends what is running in your workspaces:\n\nIn “${first.title}”:\n• Shell (tab 1): “sleep 30” is running" +
-                    "\n\nIn “${second.title}”:\n• Shell (tab 1): Neovim has unsaved changes",
-                "Quit",
+                listOf(
+                    "Quitting ends what is running in your workspaces:",
+                    "", "In “${first.title}”:", "• Shell (tab 1): “sleep 30” is running",
+                    "", "In “${second.title}”:", "• Shell (tab 1): Neovim has unsaved changes",
+                ),
+                listOf("Quit" to true, "Cancel" to false),
+                false,
             ),
             asked.single(),
         )
@@ -290,17 +302,5 @@ class WorkspaceWindowsTest {
         assertEquals(second.id, onAwtNow { window.selected }, "the selection stays")
         assertFalse(host.sessions[1].isClosed())
         assertTrue(onAwtNow { window.deck.view(first.id) != null }, "the ended tab keeps its screen")
-    }
-
-    @Test fun confirmationsAreAskedOnlyWhenSomethingIsBusy() {
-        assertNull(Confirmations.closeTab(null))
-        assertNull(Confirmations.closeWindow("w", emptyList()))
-        assertNull(Confirmations.quit("Hovel", listOf(BusyWindow("w", emptyList()))))
-        val busy = BusyTab("Shell (tab 1)", Busy.Running("make"))
-        assertEquals("Close Window", Confirmations.closeWindow("w", listOf(busy))!!.proceed)
-        assertEquals("Quit Hovel?", Confirmations.quit("Hovel", listOf(BusyWindow("w", emptyList()), BusyWindow("v", listOf(busy))))!!.title)
-        val quit = Confirmations.quit("Hovel", listOf(BusyWindow("alpha", emptyList()), BusyWindow("beta", listOf(busy))))!!
-        assertFalse("alpha" in quit.message, "only busy windows are listed")
-        assertTrue("beta" in quit.message)
     }
 }

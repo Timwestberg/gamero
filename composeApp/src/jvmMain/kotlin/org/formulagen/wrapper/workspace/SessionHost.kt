@@ -41,33 +41,21 @@ interface SessionHost : AutoCloseable {
 }
 
 /**
- * What a session is doing that closing it would end, for the close and quit confirmations. Each
- * case names it in [reason]; a session with nothing to lose answers null instead.
+ * What a session is doing that closing it would end, as data for the close and quit confirmations,
+ * which word it ([Confirmations.reason]). A session with nothing to lose answers null instead.
  */
 sealed interface Busy {
-    /** One sentence for a confirmation dialog. */
-    val reason: String
-
     /** A program the player started: a Shell tab's foreground job, or a child of a tool. */
-    data class Running(val command: String) : Busy {
-        override val reason: String get() = "“$command” is running"
-    }
+    data class Running(val command: String) : Busy
 
     /** An editor with modified buffers. [files] names some of them: none when they are unnamed. */
-    data class Unsaved(val editor: String, val files: List<String>) : Busy {
-        override val reason: String get() =
-            if (files.isEmpty()) "$editor has unsaved changes" else "$editor has unsaved changes in ${files.joinToString(", ")}"
-    }
+    data class Unsaved(val editor: String, val files: List<String>) : Busy
 
     /** An editor whose own terminal is still running a job. */
-    data class EditorTerminal(val editor: String) : Busy {
-        override val reason: String get() = "$editor has a terminal running"
-    }
+    data class EditorTerminal(val editor: String) : Busy
 
     /** The session could not be asked in time, so it counts as busy: closing it might lose work. */
-    data class NoAnswer(val what: String) : Busy {
-        override val reason: String get() = "$what did not answer, so it may have unsaved work"
-    }
+    data class NoAnswer(val what: String) : Busy
 }
 
 interface Session {

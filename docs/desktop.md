@@ -99,7 +99,7 @@ Apple Silicon only ([release.md](release.md#desktop)).
   - lazygit or yazi is busy while it runs a program of its own, such as `git push`.
 
   With nothing busy they close, or quit, at once. Quitting asks once for every window, then
-  runs the app's normal shutdown. In a development build the app handles macOS's Quit
+  runs the app's normal shutdown. See [Confirmation sheets](#confirmation-sheets). In a development build the app handles macOS's Quit
   itself (`Desktop.setQuitHandler`), so quitting during a logout or restart cancels that
   logout once; quit Hovel first. A release build keeps the JDK's quit.
 - `HOVEL_WORKSPACE_BIN=<folder>` is the folder kept first in each tab's `PATH`
@@ -124,6 +124,22 @@ The fish integration test runs only when `HOVEL_TEST_FISH` names a fish executab
 own `fish-<version>.app.zip` release, unzipped anywhere, has one at
 `fish-<version>.app/Contents/Resources/base/usr/local/bin/fish`, with nothing installed. The
 Neovim tests use `/opt/homebrew/bin/nvim` or `HOVEL_TEST_NVIM`, and skip without one.
+
+#### Confirmation sheets
+
+`Confirmations` words every question from `Busy` data, as a `NativeDialog<Boolean>`;
+`SheetConfirmer` shows it. The sheet is owned by the workspace window, never by
+`NativeDialogs`, which always raises the main window. Cancel is the default button, so a
+stray Return keeps the work. macOS makes a sheet only of a document-modal dialog whose root
+pane says so before it is first shown, so the dialog is built by hand rather than by
+`JOptionPane.createDialog`, which makes an application-modal one; with no window to attach
+to, it is application-modal.
+
+Every line is its own `JLabel`, created empty, with `html.disable` set before its text. The
+sheet never hands Swing a `String` message: JBR 21's `BasicOptionPaneUI` draws any string
+that contains `<html>`…`</html>` as HTML, wherever it starts, and `html.disable` on the pane
+does not reach that label. A command line or file name could then make the sheet load a
+remote image.
 
 The probe's `run`, `typing` and `cpu` steps measure responsiveness: the time to finish a
 command with the terminal drawing its output, key-to-paint latency, and the app's CPU use and
