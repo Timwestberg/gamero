@@ -31,14 +31,9 @@ private const val EDITOR_FALLBACK_ROUNDS = 5
 private val MENU_ECHO_NANOS = TimeUnit.MILLISECONDS.toNanos(500)
 
 /**
- * The open workspace windows (project-workspace.ARCH.md, "Window and tabs"): one per folder, each
- * rendered by `main.kt` inside the app's one Compose application. The terminal spike opens them
- * only in development builds, on a folder, with one Shell tab; projects, the profile and the other
- * tab kinds come later. [host] is built on a worker when the first tab starts (it reads the
- * directory service and writes the shell files), so a launch that opens no workspace pays nothing.
- *
- * Closing a tab or a window, and quitting, ask first when something would be lost ([Busy]), through
- * [confirmer]: a sheet on the workspace window.
+ * The open workspace windows, one per folder, rendered by `main.kt` (project-workspace.ARCH.md,
+ * "Window and tabs"). [host] is built on a worker when the first tab starts, so a launch that opens
+ * no workspace pays nothing. Closing and quitting ask through [confirmer] when work would be lost.
  */
 internal class WorkspaceWindows(private val confirmer: Confirmer = SheetConfirmer, host: () -> SessionHost) : AutoCloseable {
     private val lazyHost = lazy(host)
@@ -101,11 +96,9 @@ internal class WorkspaceWindows(private val confirmer: Confirmer = SheetConfirme
     }
 
     /**
-     * Before the app quits (⌘Q, or the main window closing): when any tab of any window is busy, ask
-     * once, listing the windows and tabs, on the first busy window; then [quit], the app's normal
-     * shutdown. With nothing busy, [quit] runs at once. [onCancel] runs if the person keeps the app,
-     * also for a request that arrives while the question is up. Once the exit has started, requests
-     * are ignored. AWT thread.
+     * Before the app quits: ask once, on the first busy window, when any tab is busy; then [quit], the
+     * app's shutdown. [onCancel] runs if the person keeps the app, also for a request that arrives
+     * while the question is up; once the exit has started, requests are ignored (docs/desktop.md, "Quitting").
      */
     fun confirmQuit(appName: String, onCancel: () -> Unit = {}, quit: () -> Unit) {
         if (exiting) return
@@ -222,6 +215,7 @@ internal class WorkspaceWindowState(
 
     val canAddTab: Boolean get() = tabs.size < WorkspaceSettingsLimits.TABS
 
+    /** Add a [launch] tab, select it and start it; null when the window holds its most. */
     fun addTab(launch: Launch): WorkspaceTab? {
         if (!canAddTab) return null
         val tab = WorkspaceTab(launch, tabLabel(launch))
@@ -231,8 +225,10 @@ internal class WorkspaceWindowState(
         return tab
     }
 
+    /** Show [tab]. */
     fun select(tab: WorkspaceTab) { selected = tab.id }
 
+    /** The tab showing, if any. */
     fun selectedTab(): WorkspaceTab? = tabs.firstOrNull { it.id == selected }
 
     /** A window shortcut pressed in a terminal ([workspaceShortcut]). */
@@ -252,6 +248,7 @@ internal class WorkspaceWindowState(
         if (!echo) perform(action)
     }
 
+    /** Do what a window shortcut or menu item stands for. */
     fun perform(action: WorkspaceAction) {
         when (action) {
             WorkspaceAction.NewTab -> addTab(Launch.Shell)
@@ -273,6 +270,7 @@ internal class WorkspaceWindowState(
         select(tabs[Math.floorMod(index + step, tabs.size)])
     }
 
+    /** Every tab's terminal at [size] points. */
     private fun setTerminalFontSize(size: Int) {
         if (size == fontSize) return
         fontSize = size
@@ -291,12 +289,12 @@ internal class WorkspaceWindowState(
             try {
                 val session = host.value.start(SessionSpec(projectId, tab.label, folder, tab.launch, INITIAL_SIZE))
                 tab.session = session
-                // Attached before the terminal exists: output waits in the connector, not lost.
+                // Attach first: the connector holds output.
                 val connector = SessionTtyConnector(tab.label) { code -> onAwt { tab.state = TabState.Exited(code) } }
                 tab.connector = connector
                 connector.connect(session)
                 onAwt {
-                    // The tab, or its whole window, closed while the process started: nothing will show it.
+                    // Closed meanwhile: end it unshown.
                     if (closed || tab !in tabs) { workers.execute { session.close() }; return@onAwt }
                     val view = TerminalView(connector, INITIAL_SIZE, fontSize,
                         onShortcut = ::performFromKey,
@@ -401,6 +399,7 @@ internal class WorkspaceWindowState(
         CompletableFuture.completedFuture(Busy.NoAnswer(tab.label))
     }
 
+    /** A tab's kind as its label. */
     private fun tabLabel(launch: Launch): String = when (launch) {
         Launch.Shell -> "Shell"
         is Launch.Tool -> launch.tool.label

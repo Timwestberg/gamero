@@ -81,8 +81,7 @@ private class DesktopResources : AutoCloseable {
         browser.set(null)
         keyboardClient?.removeKeyboardHandler()
         keyboardClient = null
-        // Last first: the bridge stops taking requests before the services it calls go away, and
-        // workspace processes end with the app.
+        // Bridge first: it calls the services.
         closeInReverse(listOfNotNull<AutoCloseable>(workspaces, services, bridge))
     }
 }
@@ -146,7 +145,7 @@ fun main(args: Array<String>) {
     } else null
     resources.workspaces = workspaces
     val productName = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME
-    // Ask first when work would be lost; cancel means kept.
+    // Ask first when work would be lost.
     val requestQuit: (onCancel: () -> Unit) -> Unit = { onCancel ->
         val exit = exitAction.get()
         when {
@@ -238,7 +237,7 @@ fun main(args: Array<String>) {
                         }
                     }
                 }
-                // Workspace windows render here, in the app's one Compose application.
+                // Workspace windows, in this one application.
                 if (workspaces != null) {
                     WorkspaceWindowsHost(workspaces)
                     DevelopmentWorkspaceLaunch(workspaces, System.getenv(), probe, exit = { EventQueue.invokeLater { exitAction.get()?.invoke() } }, requestQuit = { requestQuit {} })

@@ -51,6 +51,7 @@ internal fun WorkspaceWindowsHost(workspaces: WorkspaceWindows) {
     }
 }
 
+/** One workspace window: its menus, tab bar, banner and terminals; [onClose] for its close button. */
 @Composable
 private fun WorkspaceWindow(state: WorkspaceWindowState, onClose: () -> Unit) {
     val windowState = rememberWindowState(width = 1100.dp, height = 720.dp)
@@ -66,10 +67,9 @@ private fun WorkspaceWindow(state: WorkspaceWindowState, onClose: () -> Unit) {
                 delay(BUSY_POLL_MS)
             }
         }
-        // The last tab closing closes the window, as in Terminal.
+        // No tabs left: close, as Terminal does.
         LaunchedEffect(state.tabs.size) { if (state.tabs.isEmpty()) onClose() }
-        // The terminal handles these keys itself when it has focus (workspaceShortcut); the menu bar
-        // gets them too, and performFromMenu drops that echo.
+        // The terminal's key echoes here too.
         MenuBar {
             Menu("Shell") {
                 Item("New Tab", shortcut = menuKey(WorkspaceAction.NewTab)?.shortcut, enabled = state.canAddTab, onClick = { state.performFromMenu(WorkspaceAction.NewTab) })
@@ -94,7 +94,7 @@ private fun WorkspaceWindow(state: WorkspaceWindowState, onClose: () -> Unit) {
                 }
                 Item("Show Last Tab", shortcut = menuKey(WorkspaceAction.SelectLastTab)?.shortcut, onClick = { state.performFromMenu(WorkspaceAction.SelectLastTab) })
             }
-            // The spike's rendering check: catalog tools started through the login shell.
+            // The spike's catalog tools.
             Menu("Develop") {
                 for (tool in DEV_TOOLS) Item("Open ${tool.label}", enabled = state.canAddTab, onClick = { state.addTab(Launch.Tool(tool)) })
             }
@@ -109,6 +109,7 @@ private fun WorkspaceWindow(state: WorkspaceWindowState, onClose: () -> Unit) {
 
 private val DEV_TOOLS = listOf(WorkspaceTool.NEOVIM, WorkspaceTool.LAZYGIT, WorkspaceTool.YAZI)
 
+/** The tabs, each with its busy dot and close button, then the new-tab menu. */
 @Composable
 private fun TabBar(state: WorkspaceWindowState) {
     Row(Modifier.fillMaxWidth().height(34.dp).background(fgInk900).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -127,6 +128,7 @@ private fun TabBar(state: WorkspaceWindowState) {
     }
 }
 
+/** "+": a Shell tab or one of the spike's tools. */
 @Composable
 private fun NewTabMenu(state: WorkspaceWindowState) {
     var open by remember { mutableStateOf(false) }

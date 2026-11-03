@@ -49,26 +49,23 @@ import org.formulagen.wrapper.util.loggingDaemonThreads
 private const val TAG = "workspace-terminal"
 
 /**
- * JediTerm's settings for workspace tabs: Hovel's colors, the scrollback guard, mouse reporting, ⌘C
- * and ⌘V, the terminal font at [fontSize] points, and, as in Terminal, Option typing characters.
- * The cursor's period stays JediTerm's: the panel draws every cursor shape steady ([steadyCursor]).
+ * JediTerm's settings for workspace tabs: Hovel's colors, the scrollback guard, mouse reporting, the
+ * terminal font at [fontSize] points, and Option typing characters. ⌘C and ⌘V are
+ * [DefaultSettingsProvider]'s on macOS; the cursor's period stays its own ([steadyCursor]).
  */
 internal open class HovelTerminalSettings(@Volatile var fontSize: Int = TerminalFont.DEFAULT_SIZE) : DefaultSettingsProvider() {
     override fun getBufferMaxLinesCount(): Int = WorkspaceGuards.SCROLLBACK_LINES
     override fun enableMouseReporting(): Boolean = true
     override fun getTerminalFont(): Font = Font(TerminalFont.family, Font.PLAIN, fontSize)
     override fun getTerminalFontSize(): Float = fontSize.toFloat()
-    // Option types characters (⌥e e is é), as in Terminal with "Use Option as Meta key" off. ⌥← and
-    // ⌥→ still move by word: JediTerm sends ESC b and ESC f for them on a Mac either way.
+    /** Option types characters (⌥e e is é), as in Terminal; ⌥← and ⌥→ still send ESC b and ESC f. */
     override fun altSendsEscape(): Boolean = false
     override fun getDefaultForeground(): TerminalColor = terminalColor(fgInk300.toArgb())
     override fun getDefaultBackground(): TerminalColor = terminalColor(fgInk950.toArgb())
-    // Deprecated in JediTerm, but JediTermWidget 3.76 still builds its default cell style from it
-    // (black on white unless overridden), so erased cells would paint white.
+    /** The two colors above: JediTermWidget 3.76 still builds erased cells' style from this, else white. */
     @Deprecated("JediTerm still reads it; keep it in step with the two colors above")
     override fun getDefaultStyle(): TextStyle = TextStyle(getDefaultForeground(), getDefaultBackground())
     override fun getSelectionColor(): TextStyle = TextStyle(TerminalColor.WHITE, terminalColor(fgBlue500.toArgb()))
-    // DefaultSettingsProvider binds Copy to ⌘C and Paste to ⌘V on macOS (getCopyActionPresentation).
 }
 
 /** The terminal font, its size and the zoom limits. */
@@ -83,8 +80,10 @@ internal object TerminalFont {
     /** The family terminals use on this Mac, looked up once. */
     val family: String by lazy { resolveFamily(availableFamilies()) }
 
+    /** [PREFERRED] when [available] has it, else [FALLBACK]. */
     internal fun resolveFamily(available: Set<String>): String = if (PREFERRED in available) PREFERRED else FALLBACK
 
+    /** The font families AWT can see by name, or none when it cannot say. */
     private fun availableFamilies(): Set<String> = try {
         GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames.toSet()
     } catch (error: Throwable) {
@@ -96,6 +95,7 @@ internal object TerminalFont {
     fun zoomed(size: Int, steps: Int): Int = (size + steps).coerceIn(MIN_SIZE, MAX_SIZE)
 }
 
+/** [argb] as a JediTerm color. */
 private fun terminalColor(argb: Int): TerminalColor = Color(argb).let { TerminalColor.rgb(it.red, it.green, it.blue) }
 
 /** [shape] without its blink: a steady cursor, as Terminal's default profile has, never repainted to blink. */
@@ -107,12 +107,8 @@ internal fun steadyCursor(shape: CursorShape): CursorShape = when (shape) {
 }
 
 /**
- * A [TerminalPanel] whose AWT-thread entry points catch and log: its event handlers, its paint, and
- * the callbacks of JediTerm's own repaint timer (cursor blink, scrolling, repaint), which it
- * re-registers wrapped ([guardRepaintTimer]). An exception escaping to the event thread reaches the
- * app's default handler, which ends Hovel.
- *
- * Key presses that are window shortcuts ([workspaceShortcut]) go to [onShortcut] instead of the terminal.
+ * JediTerm's panel, painting off screen, guarding its AWT-thread entry points and repaint timer, and
+ * sending window shortcuts to [onShortcut] (docs/desktop.md, "The terminal").
  */
 internal class HovelTerminalPanel(settings: SettingsProvider, buffer: TerminalTextBuffer, style: StyleState) :
     TerminalPanel(settings, buffer, style) {
@@ -152,14 +148,7 @@ internal class HovelTerminalPanel(settings: SettingsProvider, buffer: TerminalTe
     /** Development probe only: called after each paint with the screen text that paint drew. AWT thread. */
     @Volatile var paintObserver: ((String) -> Unit)? = null
 
-    /**
-     * JediTerm paints while holding its text buffer's lock, and a paint straight to the screen can
-     * wait on the Metal pipeline: the JDK presents each frame on the AppKit thread under the AWT
-     * lock, and waits up to a second for a drawable while the window is not on screen (the Mac is
-     * locked, say). The emulator, and through back-pressure the tab's own process, would wait with it.
-     * So JediTerm paints into an image in memory, which never waits on the screen, and the image
-     * goes to the screen after the lock is released.
-     */
+    /** JediTerm's paint into [frame], then [frame] to the screen, outside the buffer's lock (docs/desktop.md, "The terminal"). */
     override fun paintComponent(g: Graphics) = guard("paint") {
         val screen = g as? Graphics2D
         if (screen == null || width <= 0 || height <= 0) {
@@ -179,7 +168,7 @@ internal class HovelTerminalPanel(settings: SettingsProvider, buffer: TerminalTe
             screen.clipBounds?.let(offscreen::clip)
             val observer = paintObserver
             if (observer == null) super.paintComponent(offscreen) else {
-                // The text this paint draws, read under the same lock.
+                // Read the drawn text under the lock.
                 terminalTextBuffer.lock()
                 try {
                     drawn = terminalTextBuffer.getScreenLines()
@@ -193,6 +182,7 @@ internal class HovelTerminalPanel(settings: SettingsProvider, buffer: TerminalTe
         drawn?.let { text -> paintObserver?.invoke(text) }
     }
 
+    /** A window shortcut to [onShortcut]; any other key to JediTerm, except ⌘ typed events (JediTerm acts on the press). */
     override fun processKeyEvent(e: KeyEvent) = guard("key") {
         if (e.id == KeyEvent.KEY_PRESSED) {
             shortcutTyped = false
@@ -204,8 +194,7 @@ internal class HovelTerminalPanel(settings: SettingsProvider, buffer: TerminalTe
                 return@guard
             }
         }
-        // ⌘ is never terminal input on a Mac. JediTerm runs its ⌘ actions (copy, paste, clear, find)
-        // on the key press, but would type a ⌘-letter's character ("t" for an unbound ⌘T) on the typed event.
+        // ⌘ typed events are never input.
         if (e.id == KeyEvent.KEY_TYPED && (e.isMetaDown || shortcutTyped)) { shortcutTyped = false; e.consume() }
         else super.processKeyEvent(e)
     }
@@ -214,13 +203,7 @@ internal class HovelTerminalPanel(settings: SettingsProvider, buffer: TerminalTe
     override fun processMouseWheelEvent(e: MouseWheelEvent) = guard("mouse wheel") { super.processMouseWheelEvent(e) }
     override fun processInputMethodEvent(e: InputMethodEvent) = guard("input method") { super.processInputMethodEvent(e) }
 
-    /**
-     * JediTerm drives the cursor blink, scrolling and repaint from a Swing timer of its own
-     * (`TerminalPanel.myRepaintTimer`, created in [init]), whose callback catches only the repaint
-     * call. No override reaches it, so its listeners are re-registered here, each wrapped in [guard].
-     * The listener stays JediTerm's weak one, so the panel can still be collected. If a JediTerm
-     * update renames the field, this logs and leaves the timer as it is; [TerminalTimerGuardTest] fails.
-     */
+    /** Re-register JediTerm's repaint-timer listeners wrapped, so none can throw (docs/desktop.md, "The terminal"). */
     private fun guardRepaintTimer() {
         val timer = repaintTimer()
         if (timer == null) {
@@ -248,6 +231,7 @@ internal class HovelTerminalPanel(settings: SettingsProvider, buffer: TerminalTe
         }
     }
 
+    /** Run [block], logging what it throws: an AWT-thread escape ends the app. */
     private inline fun guard(what: String, block: () -> Unit) {
         try { block() } catch (error: Throwable) {
             rethrowIfFatal(error)
@@ -313,11 +297,9 @@ private class HovelTermWidget(size: TermSize, settings: SettingsProvider) : Jedi
 }
 
 /**
- * One tab's terminal: a JediTerm widget reading from [connector], which is already attached to the
- * tab's session (output waits in it until the widget starts). It lives as long as its tab, whether
- * or not the tab is showing, so switching tabs keeps each screen. AWT thread only, except
- * [screenText]. [onShortcut] gets the window shortcuts pressed in it, on the AWT thread; [onTitle]
- * gets the latest title the program set (OSC 0 or 2), on the AWT thread, once per hop to it.
+ * One tab's terminal, as long as its tab lives: a JediTerm widget reading from [connector], already
+ * attached to the session. AWT thread only, except [screenText]. [onShortcut] gets the window
+ * shortcuts pressed in it; [onTitle] the latest title the program set (OSC 0 or 2), both on the AWT thread.
  */
 internal class TerminalView(
     private val connector: SessionTtyConnector,
@@ -334,7 +316,7 @@ internal class TerminalView(
 
     init {
         guarded.onShortcut = onShortcut
-        // One hop to the AWT thread per burst.
+        // One AWT hop per burst.
         widget.terminal.addApplicationTitleListener { title ->
             if (pendingTitle.getAndSet(title) == null) onAwt { pendingTitle.getAndSet(null)?.let(onTitle) }
         }
@@ -368,6 +350,7 @@ internal class TerminalView(
         return java.awt.Point(column * cell.width + cell.width / 2, row * cell.height + cell.height / 2)
     }
 
+    /** Give this terminal the keyboard. */
     fun focus() {
         widget.requestFocusInWindow()
     }
@@ -396,6 +379,7 @@ internal class TerminalDeck {
     val panel = JPanel(cards).apply { background = Color(fgInk950.toArgb()) }
     private val views = LinkedHashMap<String, TerminalView>()
 
+    /** Hold [view] as tab [id]'s terminal, closing one it replaces. */
     fun add(id: String, view: TerminalView) {
         views[id]?.close()
         views[id] = view
@@ -403,6 +387,7 @@ internal class TerminalDeck {
         panel.revalidate()
     }
 
+    /** Close and drop tab [id]'s terminal. */
     fun remove(id: String) {
         val view = views.remove(id) ?: return
         if (showing == id) showing = null
@@ -428,10 +413,11 @@ internal class TerminalDeck {
         if (showing == id) return
         showing = id
         cards.show(panel, id)
-        // After the card swap is laid out, so the newly visible panel can take focus.
+        // Focus once the swap is laid out.
         onAwt { view.focus() }
     }
 
+    /** Close and drop every terminal. */
     fun closeAll() {
         views.values.forEach { it.close() }
         views.clear()
@@ -443,7 +429,7 @@ internal class TerminalDeck {
 /** The window's terminal area: [deck] in Compose, showing tab [selected]. */
 @Composable
 internal fun TerminalPane(deck: TerminalDeck, selected: String?, modifier: Modifier = Modifier) {
-    // The deck panel paints Hovel's terminal background itself (TerminalDeck.panel).
+    // The deck paints the background itself.
     SwingPanel(
         factory = { deck.panel },
         modifier = modifier,

@@ -23,15 +23,7 @@ internal sealed interface WorkspaceAction {
     data object ZoomReset : WorkspaceAction
 }
 
-/**
- * The window shortcut a key press in a terminal stands for, or null when it is the terminal's:
- * ⌘T, ⌘W, ⌘1 to ⌘9, ⌘⇧] and ⌘⇧[ (also ⌃Tab and ⌃⇧Tab, as in Terminal), ⌘+ (⌘= too), ⌘− and ⌘0.
- * Only key presses count; their typed events are the terminal's to drop.
- *
- * The menu items carry the same shortcuts. macOS also hands a ⌘ key to the menu bar after the
- * terminal has seen it, so [WorkspaceWindowState.performFromMenu] ignores a menu item that repeats
- * the action a key press has just performed.
- */
+/** The window shortcut a key press in a terminal stands for, or null for the terminal's own (docs/desktop.md, "Shortcuts"). */
 internal fun workspaceShortcut(event: KeyEvent): WorkspaceAction? {
     if (event.id != KeyEvent.KEY_PRESSED) return null
     val modifiers = event.modifiersEx and (META_DOWN_MASK or CTRL_DOWN_MASK or ALT_DOWN_MASK or SHIFT_DOWN_MASK)

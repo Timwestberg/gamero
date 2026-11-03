@@ -92,10 +92,8 @@ class ShellLaunch(
 
     /**
      * The argv and environment for [launch]. [pathFirst] are Hovel's `PATH` entries for the tab's
-     * project, in the spec's lookup order (the project's trusted tool bins, then `workspace/bin`); for
-     * the spike, one `bin` folder. [toolArguments] follow a tool's path as separate arguments, never
-     * inside the script: the session host's own (Neovim's `--listen <socket>`), never a page's. The
-     * working folder is the session's, set by the host.
+     * project, in lookup order (the spike's one `bin` folder). [toolArguments] follow a tool's path as
+     * separate arguments, never inside the script: the host's own (`--listen <socket>`), never a page's.
      */
     fun command(launch: Launch, pathFirst: List<String>, toolArguments: List<String> = emptyList()): ShellCommand {
         require(pathFirst.none { it.isEmpty() || ':' in it || !File(it).isAbsolute }) { "Hovel's PATH entries must be absolute and contain no ':'" }
@@ -106,6 +104,7 @@ class ShellLaunch(
         }
     }
 
+    /** A Shell tab's argv: the login shell, with Hovel's startup file where it takes one. */
     private fun shellArgv(): List<String> = when (kind) {
         ShellKind.ZSH -> listOf(shell, "-l")
         ShellKind.BASH -> listOf(shell, "--init-file", bashFile(), "-i")
@@ -118,7 +117,7 @@ class ShellLaunch(
         ShellKind.ZSH -> listOf(shell, "-l", "-i", "-c", TOOL_SCRIPT, TOOL_ARG0) + tool
         ShellKind.BASH -> listOf(shell, "--init-file", bashFile(), "-i", "-c", TOOL_SCRIPT, TOOL_ARG0) + tool
         ShellKind.FISH -> listOf(shell, "--login", "--interactive", "--init-command", FISH_INIT_COMMAND, "-c", FISH_TOOL_SCRIPT, "--") + tool
-        // The player's startup files do not run, so a tool without a wrapper is found only on the base PATH.
+        // No startup files: the base PATH only.
         ShellKind.OTHER -> listOf(PLAIN_SH, "-c", TOOL_SCRIPT, TOOL_ARG0) + tool
     }
 
@@ -132,6 +131,7 @@ class ShellLaunch(
         return pathFirst.map { Path.of(it, command) }.firstOrNull { it.isRegularFile() && it.isExecutable() }?.toString() ?: command
     }
 
+    /** Hovel's bash startup file. */
     private fun bashFile() = shellFiles.resolve(ShellFiles.BASH).toString()
 
     /** The whole environment of a tab. Nothing else from Hovel's process reaches it. */
@@ -141,7 +141,7 @@ class ShellLaunch(
         put("LOGNAME", parent["LOGNAME"]?.takeIf { it.isNotBlank() } ?: userName)
         put("SHELL", shell)
         parent["TMPDIR"]?.takeIf { File(it).isAbsolute }?.let { put("TMPDIR", it) }
-        // launchd's ssh-agent socket, which Terminal passes on too: git over SSH needs it.
+        // launchd's ssh-agent, as Terminal passes.
         parent["SSH_AUTH_SOCK"]?.takeIf { File(it).isAbsolute }?.let { put("SSH_AUTH_SOCK", it) }
         put("LANG", parent["LANG"]?.takeIf { it.isNotBlank() } ?: "en_US.UTF-8")
         put("PATH", (pathFirst + SYSTEM_PATH).distinct().joinToString(File.pathSeparator))

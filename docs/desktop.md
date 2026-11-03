@@ -81,34 +81,19 @@ Apple Silicon only ([release.md](release.md#desktop)).
   **+**, opens Neovim, lazygit or yazi in a tab, started through the login shell.
 - **Window**: ⌘1 to ⌘8 select a tab and ⌘9 the last one; **Show Next Tab** (⌘⇧], also
   ⌃Tab) and **Show Previous Tab** (⌘⇧[, also ⌃⇧Tab) wrap around. A tab's name follows the
-  title its program sets, and falls back to its kind (Shell, Neovim).
+  title its program sets, and falls back to its kind (Shell, Neovim). See
+  [Shortcuts](#shortcuts).
 - **View → Bigger** (⌘+ or ⌘=), **Smaller** (⌘−) and **Default Font Size** (⌘0) zoom
   every tab of that window, from 9 to 36 points. The font is SF Mono 13 pt when AWT can see
   it by name, else Menlo 13 pt. On macOS 26, neither JDK 21 nor the JBR 21 sees SF Mono, so
   it is Menlo; the probe log names the font in use.
 - **As in Terminal**, Option types characters (⌥e then e is é; ⌥← and ⌥→ still move by
-  word), and the cursor does not blink.
+  word), and the cursor does not blink. See [The terminal](#the-terminal).
 - **Nothing is lost without asking.** Closing a tab (⌘W or ×), closing the window, and
   quitting (⌘Q, or closing the main window) ask first, in a sheet on the workspace window,
-  when a tab is busy, and name what runs:
-  - a Shell tab is busy while a foreground job runs (`npm run dev`), and while a job it
-    suspended with ⌃Z waits (“vim notes.txt” is suspended); running background jobs and
-    prompt helpers such as powerlevel10k's `gitstatusd` are not;
-  - Neovim is busy while a buffer is modified or its `:terminal` runs a job. Each Neovim tab
-    listens on a socket in `~/Library/Caches/org.formulagen.wrapper/workspace/nvim/`; Hovel
-    asks it with a fixed `nvim --server … --remote-expr …`, using the running Neovim's own
-    executable, and counts no answer within a second as busy. A wrapper that starts Neovim
-    without `exec` is asked the same way; a Neovim tab with no Neovim in it is busy as a tool
-    tab would be;
-  - lazygit or yazi is busy while it runs a program of its own, such as `git push`.
-
-  The tab bar marks a busy tab with ●. It asks each tab every second, and a Neovim tab only
-  after input or output, or every fifth second, since each ask starts a Neovim client.
-  Closing and quitting always ask afresh.
-
-  With nothing busy they close, or quit, at once. Quitting asks once for every window, then
-  runs the app's normal shutdown. See [Confirmation sheets](#confirmation-sheets) and
-  [Quitting](#quitting).
+  when a tab is busy ([Busy checks](#busy-checks)), and name what runs. With nothing busy
+  they close, or quit, at once. Quitting asks once for every window, then runs the app's
+  normal shutdown. See [Confirmation sheets](#confirmation-sheets) and [Quitting](#quitting).
 - `HOVEL_WORKSPACE_BIN=<folder>` is the folder kept first in each tab's `PATH`
   (default `~/Library/Application Support/Gamero/workspace/bin`, where the tool
   manager will put its wrappers). A tool tab runs that folder's wrapper when it has
@@ -132,6 +117,69 @@ own `fish-<version>.app.zip` release, unzipped anywhere, has one at
 `fish-<version>.app/Contents/Resources/base/usr/local/bin/fish`, with nothing installed. The
 Neovim tests use `HOVEL_TEST_NVIM`, `/opt/homebrew/bin/nvim` or `/usr/local/bin/nvim`, and skip
 without one.
+
+#### Busy checks
+
+`Session.busy()` answers what closing a tab would end, as `Busy` data, or null. By tab kind:
+
+- **Shell**: busy while the terminal's foreground process group (`tcgetpgrp` on the
+  pseudo-terminal) is not the shell's own: a foreground job (`npm run dev`). Also busy while
+  any descendant is stopped (`proc_pidinfo`, `SSTOP`): a job suspended with ⌃Z
+  (“vim notes.txt” is suspended). Running background jobs and prompt helpers
+  (powerlevel10k's `gitstatusd`, zsh-async workers) are never stopped and never count. A
+  shell replaced by `exec` with a program that is not a shell is that program, by name
+  (`/bin/sh` re-executes another shell on a Mac); one whose command line cannot be read, such
+  as a setuid `exec sudo -s`, is "a program". When the terminal cannot be asked, any live
+  descendant counts.
+- **Neovim**: busy while a buffer is modified (as `:qa` would refuse) or its `:terminal` runs
+  a job. Each Neovim tab listens on a socket in
+  `~/Library/Caches/org.formulagen.wrapper/workspace/nvim/`, and Hovel asks with a fixed
+  `nvim --clean --headless --server … --remote-expr …`, using the running Neovim's own
+  executable (by real path) and an empty environment. The tab's process is asked when it is
+  Neovim; otherwise a Neovim descendant (a wrapper that does not `exec`); with no Neovim in
+  the tab, the tool rule applies. No answer within a second counts as busy. Neovim's LSP
+  servers and its `nvim --embed` server are descendants, so the tool rule cannot be used for
+  it.
+- **Other tools** (lazygit, yazi): busy while a live descendant runs something other than
+  the tool's own executable (by real path), such as `git push`.
+
+Any check that fails, or cannot be read, counts as busy. A check takes about 3 seconds at
+most, when Neovim does not answer. The tab bar marks a busy tab with ●: it asks each tab
+every second, and a Neovim tab only after input or output, or every fifth second, since
+each ask starts a Neovim client. Closing and quitting always ask afresh.
+
+#### Shortcuts
+
+A key press in a terminal that is a window shortcut goes to the window, not the terminal:
+⌘T, ⌘W, ⌘1 to ⌘9, ⌘⇧] and ⌘⇧[ (also ⌃Tab and ⌃⇧Tab, as in Terminal), ⌘+ (⌘= too), ⌘− and
+⌘0, and the `}`, `{` and `+` a ⌘ key types on other layouts. Only key presses count; their
+typed events are dropped. The menu items carry the same shortcuts (`menuKey`). macOS also
+hands a ⌘ key to the menu bar after the terminal has seen it, so a menu item that repeats
+the action a key press performed within 500 ms is taken as that echo and ignored.
+
+#### The terminal
+
+`HovelTerminalPanel` is JediTerm's panel with three changes:
+
+- **Off-screen painting.** JediTerm paints while holding its text buffer's lock, and a paint
+  straight to the screen can wait on the Metal pipeline: the JDK presents each frame on the
+  AppKit thread under the AWT lock, and waits up to a second for a drawable while the window
+  is not on screen (the Mac is locked, say). The emulator, and through back-pressure the
+  tab's own process, would wait with it. So JediTerm paints into an image in memory at the
+  screen's scale, which never waits on the screen, and the image goes to the screen after the
+  lock is released. A tab that is not showing drops its image.
+- **Guards.** Its AWT-thread entry points (event handlers, paint) catch and log: an exception
+  escaping to the event thread reaches the app's default handler, which ends Hovel.
+  JediTerm's own repaint timer (`TerminalPanel.myRepaintTimer`: cursor, scrolling, repaint)
+  catches only the repaint call, and no override reaches it, so its listeners are
+  re-registered wrapped. The listener stays JediTerm's weak one, so the panel can still be
+  collected. A failure on every tick is logged once in full, then as one count a minute. If a
+  JediTerm update renames the field, the guard logs and leaves the timer as it is, and
+  `TerminalTimerGuardTest` fails.
+- **Shortcuts and a steady cursor.** Window shortcuts go to the window ([Shortcuts](#shortcuts)).
+  The cursor's period stays JediTerm's 505 ms, and every shape is drawn steady
+  (`steadyCursor`): JediTerm reads `CSI 0 q` as a blinking block, and a period of 0 would
+  repaint a focused idle tab on every timer tick.
 
 #### Quitting
 
@@ -162,6 +210,8 @@ does not reach that label. A command line or file name could then make the sheet
 remote image. Names in a question, and the titles programs set for their tabs, are cleaned
 first (`clip`): no control or format characters (bidi overrides, zero widths) and no lone
 surrogates, cut without splitting a surrogate pair.
+
+#### Probe measurements
 
 The probe's `run`, `typing` and `cpu` steps measure responsiveness: the time to finish a
 command with the terminal drawing its output, key-to-paint latency, and the app's CPU use and

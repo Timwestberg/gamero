@@ -55,12 +55,11 @@ internal const val NEOVIM_STATE_EXPRESSION =
 
 /**
  * Ask the Neovim listening on [socket] what it holds, with [nvim] (the running editor's own
- * executable) as the client, fixed arguments and an empty environment. Null when nothing is
- * modified; [Busy.NoAnswer] when it does not answer within [timeout], or answers something else.
+ * executable) as the client: fixed arguments (`--clean`, so no config or plugins run), and an
+ * empty environment. Null when nothing is modified; [Busy.NoAnswer] for no answer within [timeout].
  */
 internal fun askNeovim(nvim: String, socket: Path, editor: String, timeout: Duration = NEOVIM_ANSWER_TIMEOUT): Busy? {
     if (!Files.exists(socket)) return Busy.NoAnswer(editor)
-    // --clean: the client reads no config and runs no plugins. It only sends the expression.
     val client = ProcessBuilder(nvim, "--clean", "--headless", "--server", socket.toString(), "--remote-expr", NEOVIM_STATE_EXPRESSION)
     client.environment().apply {
         clear()

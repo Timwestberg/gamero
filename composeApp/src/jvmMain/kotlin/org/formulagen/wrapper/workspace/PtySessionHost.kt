@@ -33,15 +33,10 @@ private const val HANGUP_GRACE_MS = 500L
 private const val DRAIN_GRACE_MS = 1_000L
 
 /**
- * [SessionHost] on pty4j. Each session is one process on its own pseudo-terminal (pty4j's spawn
- * helper makes it a session leader, so its process group is its pid), with one reader thread and one
- * exit watcher. [commands] builds each session's argv and environment from its spec (its [Launch],
- * and its project's `PATH` entries, [ShellLaunch.command]) and the arguments the host adds to a tool:
- * a Neovim tab's `--listen <socket>`, from [editorSockets], for its modified-buffer check. Without
- * [editorSockets] a running Neovim always counts as busy.
- *
- * Sessions belong to their project, not to a window: a viewer detaching leaves the process running,
- * and only [Session.close], [closeProject] or [close] end it.
+ * [SessionHost] on pty4j: each session is one process leading its own pseudo-terminal, with one
+ * reader and one exit watcher (project-workspace.ARCH.md, "Sessions and the terminal"). [commands]
+ * builds its argv and environment, given the tool arguments the host adds: a Neovim tab's
+ * `--listen <socket>` from [editorSockets], without which a running Neovim always counts as busy.
  */
 class PtySessionHost(
     private val editorSockets: EditorSockets? = null,
@@ -53,7 +48,7 @@ class PtySessionHost(
     private val closed = AtomicBoolean(false)
 
     init {
-        // Before pty4j's first use: JNA reads its settings once.
+        // Before pty4j's first use.
         usePackagedNatives()
     }
 
@@ -137,19 +132,7 @@ internal class PtySession(
         threads.newThread(::watch).apply { name = "$name-exit"; start() }
     }
 
-    /**
-     * By tab kind (project-workspace.ARCH.md, "Sessions and the terminal"):
-     * - a Shell tab is busy while its terminal's foreground process group is not the shell's own, so
-     *   background jobs and prompt helpers (powerlevel10k's `gitstatusd`, zsh-async workers) do not count,
-     *   and while a descendant is stopped (a job suspended with ⌃Z), or its state cannot be read;
-     * - Neovim is busy while a buffer is modified or its `:terminal` runs a job, as it answers on its
-     *   `--listen` socket; no answer in time counts as busy. It is asked whether it is the tab's
-     *   process or a descendant (a wrapper that does not `exec`), with its own executable as the
-     *   client. Its LSP servers and its own `nvim --embed` server are descendants, so the
-     *   descendant rule cannot be used for it; a tab with no Neovim in it gets the tool rule;
-     * - any other tool is busy while it has a live descendant that is not running the tool's own
-     *   executable (by real path), which would be a helper of the tool's.
-     */
+    /** By tab kind, as docs/desktop.md "Busy checks" describes; a check that fails counts as busy. */
     override fun busy(): Busy? {
         if (closing.get() || !process.isAlive) return null
         return try {
@@ -165,12 +148,7 @@ internal class PtySession(
         }
     }
 
-    /**
-     * The foreground job of a Shell tab, else a job it suspended; when the terminal cannot be asked,
-     * any live child. A shell replaced by `exec` with something that is not a shell is that program
-     * (by name: `/bin/sh` re-executes another shell on a Mac); one whose name cannot be read, such as
-     * `exec sudo -s`, is a program too.
-     */
+    /** A Shell tab's foreground job, else a job it suspended; any live child when the terminal cannot be asked. */
     private fun foregroundJob(): Busy? {
         val group = foregroundGroup() ?: return anyChild()
         if (group == process.pid()) {
@@ -178,7 +156,7 @@ internal class PtySession(
             val running = root.info().command().orElse(null)?.let { File(it).name } ?: return Busy.Running(describe(root))
             return if (running in SHELL_NAMES || running == File(executable).name) suspendedJob() else Busy.Running(describe(root))
         }
-        // The job's leader names it best. It may have exited while the rest of its group runs on.
+        // Name the job by its leader.
         val program = ProcessHandle.of(group).filter(ProcessHandle::isAlive).orElse(null) ?: firstChild { true } ?: return null
         return Busy.Running(describe(program))
     }
@@ -189,6 +167,7 @@ internal class PtySession(
         return foregroundProcessGroup(fd)
     }
 
+    /** Any live descendant, as a running program. */
     private fun anyChild(): Busy? = firstChild { true }?.let { Busy.Running(describe(it)) }
 
     /** A stopped descendant, or one whose state cannot be read; daemons and prompt helpers are never stopped. */
@@ -197,11 +176,13 @@ internal class PtySession(
         return if (isStopped(child) == true) Busy.Stopped(describe(child)) else Busy.Running(describe(child))
     }
 
+    /** A tool tab's descendant running something other than the tool's own executable. */
     private fun toolChild(): Busy? {
         val tool = commandOf(tree.toHandle())
         return firstChild { tool == null || commandOf(it) != tool }?.let { Busy.Running(describe(it)) }
     }
 
+    /** The first live descendant that [counts]. */
     private fun firstChild(counts: (ProcessHandle) -> Boolean): ProcessHandle? =
         tree.descendants().use { children -> children.filter { it.isAlive && counts(it) }.findFirst().orElse(null) }
 
@@ -216,6 +197,7 @@ internal class PtySession(
     /** True for a Neovim executable, by its real path's name. */
     private fun isNeovim(executable: String): Boolean = File(executable).name == NEOVIM_EXECUTABLE
 
+    /** [handle]'s short name for a confirmation ([commandLabel]). */
     private fun describe(handle: ProcessHandle): String = handle.info().let { info ->
         commandLabel(info.command().orElse(null), info.arguments().map { it.toList() }.orElse(emptyList()))
     }
@@ -223,6 +205,7 @@ internal class PtySession(
     /** The executable's real path: Neovim starts its server by its resolved path, not Homebrew's symlink. */
     private fun commandOf(handle: ProcessHandle): String? = handle.info().command().orElse(null)?.let(::realPath)
 
+    /** [command] with its links resolved, or as it is when it cannot be. */
     private fun realPath(command: String): String = try { File(command).toPath().toRealPath().toString() } catch (_: Exception) { command }
 
     private companion object {
@@ -231,10 +214,10 @@ internal class PtySession(
     }
 
     override fun attach(viewer: SessionViewer): Attachment {
-        // Under the lock, so the viewer hears the exit from [report] or from here, never both.
+        // Under the lock: one exit per viewer.
         val ended = synchronized(viewers) { viewers.add(viewer); reportedCode }
         if (reading.compareAndSet(false, true)) reader = threads.newThread(::read).apply { name = "$name-reader"; start() }
-        // A viewer that attaches late sees only new output. One that attaches after the exit hears it at once.
+        // Attached after the exit: tell it now.
         ended?.let { code -> notifyExit(viewer, code) }
         return PtyAttachment(viewer)
     }
@@ -267,6 +250,7 @@ internal class PtySession(
         }
     }
 
+    /** The live descendants now, or none when they cannot be read. */
     private fun descendants(): Set<ProcessHandle> = try {
         tree.descendants().use { children -> children.toList().toSet() }
     } catch (_: Exception) { emptySet() }
@@ -312,6 +296,7 @@ internal class PtySession(
         }
     }
 
+    /** Tell every viewer the exit once: the process's own code when it is known, else [code]. */
     private fun report(code: Int) {
         val (final, targets) = synchronized(viewers) {
             if (reportedCode != null) return
@@ -322,10 +307,12 @@ internal class PtySession(
         targets.forEach { notifyExit(it, final) }
     }
 
+    /** Tell one viewer the exit, logging what it throws. */
     private fun notifyExit(viewer: SessionViewer, code: Int) {
         try { viewer.exited(code) } catch (error: Exception) { log(LogLevel.Error, TAG, "A viewer of $name failed on exit", error) }
     }
 
+    /** Close the pseudo-terminal's streams, which ends the reader. */
     private fun closeStreams() {
         for (stream in listOf(process.inputStream, process.outputStream, process.errorStream)) {
             try { stream.close() } catch (_: IOException) {}
@@ -383,13 +370,9 @@ private class HandledProcess(private val pty: PtyProcess) : Process() {
 }
 
 /**
- * Point pty4j, and JNA under it, at natives shipped inside the app bundle and signed with it,
- * instead of letting each unpack its own copies to a temporary folder at run time, which the
- * hardened runtime refuses unless library validation is off. A packaged development build for Apple
- * Silicon has them in Compose's app resources (`-Dcompose.application.resources.dir`,
- * `Contents/app/resources/`): `pty4j/darwin/` and `jna/`. Gradle runs and release builds ship
- * neither, and keep each library's default.
- * [PtySessionHost]'s init calls it, before pty4j's first use: JNA reads its settings once.
+ * Point pty4j and JNA at the signed natives in a development package's app resources
+ * (`pty4j/darwin/`, `jna/`) instead of unpacking copies the hardened runtime refuses (docs/release.md).
+ * Without them, as in a Gradle run, each library keeps its default. Call before pty4j's first use.
  */
 internal fun usePackagedNatives(resources: String? = System.getProperty("compose.application.resources.dir")) {
     if (resources == null) return
@@ -400,7 +383,7 @@ internal fun usePackagedNatives(resources: String? = System.getProperty("compose
     val jna = File(resources, "jna")
     if (System.getProperty(JNA_BOOT_PATH) == null && File(jna, "libjnidispatch.jnilib").isFile) {
         System.setProperty(JNA_BOOT_PATH, jna.absolutePath)
-        // Fail loudly rather than fall back to unpacking an unsigned copy.
+        // Never unpack an unsigned copy.
         System.setProperty("jna.nounpack", "true")
     }
 }

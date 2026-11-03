@@ -68,20 +68,16 @@ interface Session {
     val title: String
 
     /**
-     * What closing the session would end, or null when it holds nothing to lose: an idle shell
-     * (background jobs and prompt helpers do not count), a catalog tool with no work of its own, an
-     * editor with every buffer saved, or a session that has ended. Bounded in time: about 3 seconds at
-     * most, when Neovim does not answer (its 1-second limit, then up to 2 seconds to stop the client
-     * or read its answer). Call it off the AWT thread.
+     * What closing the session would end, or null when it holds nothing to lose (docs/desktop.md,
+     * "Busy checks"), as after it ended. About 3 seconds at most, when Neovim does not answer (its
+     * 1-second limit, then up to 2 seconds to stop the client or read its answer). Off the AWT thread.
      */
     fun busy(): Busy?
 
     /**
-     * Adds [viewer]. It gets the output read from now on, never earlier output: the reader starts
-     * with the first attach, so the first viewer gets everything since the process started, and a
-     * later one only what is read after it attaches. A viewer attaching after the session ended hears
-     * [SessionViewer.exited] before this returns. Closing the [Attachment] detaches the viewer and
-     * leaves the session running.
+     * Adds [viewer], which gets the output read from now on: the reader starts with the first attach,
+     * so the first viewer gets everything since the process started. A viewer attaching after the end
+     * hears [SessionViewer.exited] before this returns. Closing the [Attachment] leaves the session running.
      */
     fun attach(viewer: SessionViewer): Attachment
 
@@ -103,11 +99,9 @@ interface Session {
  */
 interface SessionViewer {
     /**
-     * New output. Called on the session's one reader thread, for each attached viewer in turn, so it
-     * must not block, except to wait for room in the viewer's own bounded buffer: that wait is the
-     * session's only back-pressure. While one viewer waits, the others get nothing, and once the
-     * pseudo-terminal fills, the process waits too.
-     * [bytes] holds [length] new bytes and is reused after the call returns: copy what you keep.
+     * New output, on the session's one reader thread, to each viewer in turn: it must not block but to
+     * wait for room in its own bounded buffer, the only back-pressure (the others wait, and a full
+     * pseudo-terminal holds the process). [bytes] holds [length] new bytes and is reused: copy them.
      */
     fun output(bytes: ByteArray, length: Int)
 
@@ -124,6 +118,7 @@ interface SessionViewer {
 interface Attachment : AutoCloseable {
     /** Bytes to the process, as typed. */
     fun input(bytes: ByteArray)
+    /** The viewer's terminal is now [size]. */
     fun resize(size: TermSize)
     /** Detaches the viewer: no more output or exit. The session keeps running. */
     override fun close()

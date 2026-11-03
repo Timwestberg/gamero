@@ -19,12 +19,9 @@ private const val TAG = "workspace-terminal"
 private const val QUEUED_CHUNKS = 64
 
 /**
- * Adapts a [Session]'s pushed output to the pull-based [TtyConnector] JediTerm reads from.
- *
- * The session's reader thread hands over bytes ([output]); JediTerm's emulator thread pulls
- * characters ([read]). Decoding happens on the emulator thread with one stateful UTF-8 decoder, so
- * a character split across two reads stays whole and malformed bytes become U+FFFD. Keys and
- * resizes go to the session's [Attachment]. [onExit] runs once, on the thread that reports the exit.
+ * Adapts a [Session]'s pushed bytes ([output], on its reader) to the characters JediTerm pulls
+ * ([read], on its emulator), through one stateful UTF-8 decoder: a character split across reads stays
+ * whole, malformed bytes become U+FFFD. Keys and resizes go to the [Attachment]; [onExit] runs once.
  */
 internal class SessionTtyConnector(private val name: String, private val onExit: (Int) -> Unit = {}) : TtyConnector, SessionViewer {
     private val chunks = ArrayBlockingQueue<ByteArray>(QUEUED_CHUNKS)
@@ -78,7 +75,7 @@ internal class SessionTtyConnector(private val name: String, private val onExit:
                 decoded.get(buf, offset, count)
                 return count
             }
-            // A flushed decoder takes no more input: a chunk that arrives after the end is dropped.
+            // Flushed: drop chunks after the end.
             if (flushed) return -1
             val chunk = nextChunk()
             if (chunk != null) decode(chunk, endOfInput = false)
@@ -95,11 +92,12 @@ internal class SessionTtyConnector(private val name: String, private val onExit:
         }
     }
 
+    /** Decode [chunk] after any carried partial character into [decoded], carrying a new partial one. */
     private fun decode(chunk: ByteArray, endOfInput: Boolean) {
         val input = if (carried.hasRemaining()) {
             ByteBuffer.allocate(carried.remaining() + chunk.size).put(carried).put(chunk).flip()
         } else ByteBuffer.wrap(chunk)
-        // UTF-8 never decodes to more characters than bytes, plus one replacement for a cut-off end.
+        // Room: a char per byte, plus one.
         val output = CharBuffer.allocate(input.remaining() + 2)
         decoder.decode(input, output, endOfInput)
         if (endOfInput) decoder.flush(output)
