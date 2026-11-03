@@ -24,7 +24,9 @@ class WorkspaceWindowsTest {
     private val host = FakeHost()
     private val asked = CopyOnWriteArrayList<NativeDialog<Boolean>>()
     @Volatile private var answer = false
-    private val workspaces = WorkspaceWindows(confirmer = { _, question -> asked.add(question); answer }) { host }
+    /** Runs while a question is up, as the sheet's modal loop would deliver more requests. */
+    @Volatile private var duringQuestion: () -> Unit = {}
+    private val workspaces = WorkspaceWindows(confirmer = { _, question -> asked.add(question); duringQuestion(); answer }) { host }
 
     @AfterTest fun cleanUp() {
         host.release.countDown()
@@ -239,6 +241,65 @@ class WorkspaceWindowsTest {
         EventQueue.invokeAndWait { workspaces.confirmQuit("Hovel") { quits++ } }
         eventually("quit on yes") { quits == 1 }
         assertEquals(2, asked.size)
+    }
+
+    /** Let the workers and posted updates run, then return: nothing more should happen. */
+    private fun settle() {
+        Thread.sleep(300)
+        onAwtNow {}
+    }
+
+    @Test fun aSecondRequestWhileAQuestionIsUpIsIgnored() {
+        val window = open()
+        running(window, 1)
+        val tab = onAwtNow { window.tabs.single() }
+        host.sessions.single().busy = Busy.Running("make")
+        var quits = 0
+        duringQuestion = { workspaces.confirmQuit("Hovel") { quits++ } }
+        EventQueue.invokeAndWait { workspaces.confirmQuit("Hovel") { quits++ } }
+        eventually("asked to quit") { asked.size == 1 }
+        settle()
+        assertEquals(1, asked.size, "⌘Q during the quit question asks nothing more")
+        duringQuestion = { window.requestCloseTab(tab) }
+        EventQueue.invokeAndWait { window.requestCloseTab(tab) }
+        eventually("asked to close the tab") { asked.size == 2 }
+        settle()
+        assertEquals(2, asked.size, "⌘W during the tab's question asks nothing more")
+        duringQuestion = { workspaces.requestClose(window) }
+        EventQueue.invokeAndWait { workspaces.requestClose(window) }
+        eventually("asked to close the window") { asked.size == 3 }
+        settle()
+        assertEquals(3, asked.size, "the close button during the window's question asks nothing more")
+        assertEquals(0, quits)
+        answer = true
+        duringQuestion = { workspaces.confirmQuit("Hovel") { quits++ } }
+        EventQueue.invokeAndWait { workspaces.confirmQuit("Hovel") { quits++ } }
+        eventually("quit on yes") { quits == 1 }
+        settle()
+        assertEquals(1, quits, "the exit runs once")
+    }
+
+    @Test fun onceTheExitHasStartedQuitRequestsAreIgnored() {
+        val window = open()
+        running(window, 1)
+        host.sessions.single().busy = Busy.Running("make")
+        answer = true
+        var quits = 0
+        EventQueue.invokeAndWait { workspaces.confirmQuit("Hovel") { quits++ } }
+        eventually("quit on yes") { quits == 1 }
+        // As during the browser's shutdown: the workers are gone, every check would be no answer.
+        workspaces.close()
+        EventQueue.invokeAndWait { workspaces.confirmQuit("Hovel") { quits++ } }
+        settle()
+        assertEquals(1, asked.size, "no second question")
+        assertEquals(1, quits)
+        val other = WorkspaceWindows(confirmer = { _, question -> asked.add(question); true }) { host }
+        onAwtNow { other.open(folder) }.also { running(it, 1) }
+        other.exitStarted()
+        EventQueue.invokeAndWait { other.confirmQuit("Hovel") { quits++ } }
+        settle()
+        assertEquals(1, quits, "an exit started by another path, such as a failure, counts too")
+        other.close()
     }
 
     @Test fun tabShortcutsSelectByNumberAndWrapAround() {

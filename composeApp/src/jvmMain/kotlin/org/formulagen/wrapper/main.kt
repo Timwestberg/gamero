@@ -135,7 +135,7 @@ fun main(args: Array<String>) {
     )
     try {
         application(exitProcessOnExit = false) {
-            exitAction.set { resources.services?.closeGame(); exitApplication() }
+            exitAction.set { workspaces?.exitStarted(); resources.services?.closeGame(); exitApplication() }
             val url = remember { desktopWebUrl(args, desktopSetting(System.getenv("GAMERO_WEB_URL"), System.getProperty("gamero.webUrl"))) }
             CompositionLocalProvider(LocalWindowExceptionHandlerFactory provides object : WindowExceptionHandlerFactory {
                 override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler = failure

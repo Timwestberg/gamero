@@ -50,6 +50,9 @@ internal class WorkspaceWindows(confirmer: Confirmer = SheetConfirmer, host: () 
     /** A quit is waiting for its busy checks or its question. AWT thread. */
     private var quitting = false
 
+    /** The app's exit has started: quit requests are ignored from now on. */
+    @Volatile private var exiting = false
+
     /** Open a window on [folder] with a Shell tab, or bring forward the one already open there. AWT thread. */
     fun open(folder: Path): WorkspaceWindowState {
         val real = folder.toRealPath()
@@ -70,10 +73,11 @@ internal class WorkspaceWindows(confirmer: Confirmer = SheetConfirmer, host: () 
         window.closeRequested = true
         window.busyTabs().thenAccept { busy ->
             onAwt {
-                window.closeRequested = false
-                if (window !in windows) return@onAwt
-                val question = Confirmations.closeWindow(window.title, busy)
-                if (question == null || confirmer.confirm(window.awtWindow, question)) close(window)
+                try {
+                    if (window !in windows) return@onAwt
+                    val question = Confirmations.closeWindow(window.title, busy)
+                    if (question == null || confirmer.confirm(window.awtWindow, question)) close(window)
+                } finally { window.closeRequested = false }
             }
         }
     }
@@ -96,25 +100,32 @@ internal class WorkspaceWindows(confirmer: Confirmer = SheetConfirmer, host: () 
     /**
      * Before the app quits (⌘Q, or the main window closing): when any tab of any window is busy, ask
      * once, listing the windows and tabs, on the first busy window; then [quit], the app's normal
-     * shutdown. With nothing busy, [quit] runs at once. AWT thread.
+     * shutdown. With nothing busy, [quit] runs at once. A request while one is pending, or once the
+     * exit has started, is ignored. AWT thread.
      */
     fun confirmQuit(appName: String, quit: () -> Unit) {
-        if (quitting) return
+        if (quitting || exiting) return
+        val exit = { exitStarted(); quit() }
         val open = windows.toList()
-        if (open.isEmpty()) { quit(); return }
+        if (open.isEmpty()) { exit(); return }
         quitting = true
         val checks = open.map { window -> window.busyTabs().thenApply { BusyWindow(window.title, it) } }
         CompletableFuture.allOf(*checks.toTypedArray()).thenRun {
             onAwt {
-                quitting = false
-                val busy = checks.map { it.join() }
-                val question = Confirmations.quit(appName, busy) ?: return@onAwt quit()
-                val owner = open[busy.indexOfFirst { it.tabs.isNotEmpty() }]
-                owner.bringForward()
-                if (confirmer.confirm(owner.awtWindow, question)) quit()
+                try {
+                    if (exiting) return@onAwt
+                    val busy = checks.map { it.join() }
+                    val question = Confirmations.quit(appName, busy) ?: return@onAwt exit()
+                    val owner = open[busy.indexOfFirst { it.tabs.isNotEmpty() }]
+                    owner.bringForward()
+                    if (confirmer.confirm(owner.awtWindow, question)) exit()
+                } finally { quitting = false }
             }
         }
     }
+
+    /** The app's exit has started, by any path: later quit requests are ignored. Any thread. */
+    fun exitStarted() { exiting = true }
 
     /** At app exit: end every session, waiting for them. Off the AWT thread. */
     override fun close() {
@@ -319,10 +330,11 @@ internal class WorkspaceWindowState(
         tab.closeRequested = true
         checkBusy(tab).thenAccept { busy ->
             onAwt {
-                tab.closeRequested = false
-                if (tab !in tabs) return@onAwt
-                val question = Confirmations.closeTab(busy)
-                if (question == null || confirmer().confirm(awtWindow, question)) closeTab(tab)
+                try {
+                    if (tab !in tabs) return@onAwt
+                    val question = Confirmations.closeTab(busy)
+                    if (question == null || confirmer().confirm(awtWindow, question)) closeTab(tab)
+                } finally { tab.closeRequested = false }
             }
         }
     }
