@@ -50,6 +50,7 @@ import org.formulagen.wrapper.providers.ClaudeConnection
 import org.formulagen.wrapper.providers.ClaudeRuntime
 import org.formulagen.wrapper.providers.claudeWorkEnvironment
 import org.formulagen.wrapper.util.text
+import org.formulagen.wrapper.workspace.EditListener
 
 /**
  * Claude Code working in a project's working folder, with exactly the player's own setup: one
@@ -122,7 +123,7 @@ internal class ClaudeWorkRuntime(
         }
         // A release or close while it started: it ends now, and the chat has ended the turn already.
         if (closed || epoch.get() != started) { processes.remove(work.lease, process); process.close(); events.failed(ChatFailure.Temporary); return TurnHandle {} }
-        return process.turn(turn.text, events)
+        return process.turn(turn.text, events, work.edits)
     }
 
     /** End [lease]'s working process: its pending approvals are denied and its tree ended. Other leases keep theirs. */
@@ -207,8 +208,9 @@ internal class ClaudeWorkRuntime(
             }
         }
 
-        fun turn(input: String, events: TurnEvents): TurnHandle {
-            val turn = WorkTurn(events, ClaudeActivity(folder))
+        /** One turn of [input]; its finished edits go to [edits]. */
+        fun turn(input: String, events: TurnEvents, edits: EditListener): TurnHandle {
+            val turn = WorkTurn(events, ClaudeActivity(folder, edits))
             current = turn
             if (ended.get()) { turn.fail(ChatFailure.Temporary); return TurnHandle {} }
             try { send(userMessage(input)) } catch (_: IOException) { turn.fail(ChatFailure.Temporary); close() }

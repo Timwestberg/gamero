@@ -48,10 +48,19 @@ internal class WorkPaths(folder: Path, home: Path? = System.getProperty("user.ho
     /** [raw] (absolute, or relative to the folder) as the page sees it. */
     fun label(raw: String): String {
         val path = runCatching { Path.of(raw) }.getOrNull() ?: return scrub(raw)
-        val absolute = (if (path.isAbsolute) path else folders.first().resolve(path)).normalize()
-        for (base in folders) if (absolute.startsWith(base)) return base.relativize(absolute).toString().ifEmpty { "." }
-        return "…/" + (absolute.fileName?.toString() ?: absolute.toString())
+        val absolute = absolute(path)
+        return relative(absolute) ?: ("…/" + (absolute.fileName?.toString() ?: absolute.toString()))
     }
+
+    /** [path] (absolute, or relative to the folder) relative to the folder, the folder itself as `.`; null when it is outside. */
+    fun relative(path: Path): String? {
+        val absolute = absolute(path)
+        for (base in folders) if (absolute.startsWith(base)) return base.relativize(absolute).toString().ifEmpty { "." }
+        return null
+    }
+
+    /** [path] made absolute against the folder as given, and normalized. */
+    fun absolute(path: Path): Path = (if (path.isAbsolute) path else folders.first().resolve(path)).normalize()
 
     /** Free text with the folder as `.` and the home folder as `~`, longest first, and only where a whole path ends. */
     fun scrub(text: String): String {

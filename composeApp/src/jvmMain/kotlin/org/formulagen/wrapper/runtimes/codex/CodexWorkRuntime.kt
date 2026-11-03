@@ -39,6 +39,8 @@ import org.formulagen.wrapper.providers.CodexRuntime
 import org.formulagen.wrapper.providers.StdioCodexAppServer
 import org.formulagen.wrapper.providers.codexAccountStatus
 import org.formulagen.wrapper.util.text
+import org.formulagen.wrapper.workspace.EditListener
+import org.formulagen.wrapper.workspace.reportEdit
 
 /**
  * Codex working in a companion's project folder with the player's own Codex (default home, their
@@ -141,7 +143,7 @@ internal class CodexWorkRuntime(
                 if (id != saved) events.opened(id)
                 id
             }
-            val turn = Turn(threadId, events, CodexActivity(paths))
+            val turn = Turn(threadId, events, CodexActivity(paths, checkNotNull(request.work).edits))
             current = turn
             if (!open) { later { turn.fail(ChatFailure.Temporary) }; return TurnHandle {} }
             events.activity(turn.activity.activity())
@@ -313,9 +315,10 @@ internal class CodexWorkRuntime(
 /**
  * A working Codex turn's activity from `item/completed` notifications (Codex's schema; verify live):
  * `commandExecution` (its command, exit and output), `fileChange` (its paths and diff size),
- * `mcpToolCall` (`server · tool`) and `webSearch` (the query).
+ * `mcpToolCall` (`server · tool`) and `webSearch` (the query). A `completed` file change reports each
+ * file it names to [edits]: every `changes[].path`, and a moved file's new path (`kind.move_path`).
  */
-internal class CodexActivity(private val paths: WorkPaths) {
+internal class CodexActivity(private val paths: WorkPaths, private val edits: EditListener = EditListener.NONE) {
     private val log = ActivityLog(paths)
 
     fun activity(): Activity = log.activity()
@@ -343,6 +346,11 @@ internal class CodexActivity(private val paths: WorkPaths) {
                 val diff = changes.flatMap { it.text("diff").orEmpty().lines() }
                 log.add(ActivityKind.EDIT, changes.mapNotNull { it.text("path") }.joinToString(", ") { paths.label(it) }, outcome(),
                     "+${diff.count { it.startsWith("+") && !it.startsWith("+++") }} -${diff.count { it.startsWith("-") && !it.startsWith("---") }}")
+                // Codex 0.166: `inProgress`, `completed`, `failed` or `declined`. Only a change Codex applied is an edit.
+                if (status == "completed") changes.forEach { change ->
+                    edits.reportEdit(change.text("path"))
+                    (change["kind"] as? JsonObject)?.text("move_path")?.let(edits::reportEdit)
+                }
             }
             "mcpToolCall" -> log.add(ActivityKind.CONNECTOR, "${item.text("server")} · ${item.text("tool")}",
                 outcome(failed = item["error"].let { it != null && it != JsonNull }),

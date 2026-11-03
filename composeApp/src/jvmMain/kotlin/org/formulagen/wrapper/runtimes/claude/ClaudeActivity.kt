@@ -8,6 +8,8 @@ import org.formulagen.wrapper.conversation.ActivityStatus
 import org.formulagen.wrapper.runtimes.ActivityLog
 import org.formulagen.wrapper.runtimes.WorkPaths
 import org.formulagen.wrapper.util.text
+import org.formulagen.wrapper.workspace.EditListener
+import org.formulagen.wrapper.workspace.reportEdit
 
 /**
  * A working Claude turn's activity, from its `stream-json` lines (abilities spike, 2026-10-28):
@@ -16,13 +18,21 @@ import org.formulagen.wrapper.util.text
  * it, and `result.permission_denials` adds any denial no result reported. A subagent's own tool
  * uses (`parent_tool_use_id` set) are its business, not steps. A tool still running when the turn
  * ends is no step: only finished work is shown. Feed every line to [receive].
+ *
+ * Every edit that finished ([ActivityStatus.DONE]) goes to [edits], a subagent's too: Claude Code
+ * (2.1.304) streams a subagent's `tool_use` and `tool_result` lines with `parent_tool_use_id` set,
+ * its `tool_result_meta` holding only the permission decision. A subagent's subagents are not streamed.
  */
-internal class ClaudeActivity(folder: Path) {
+internal class ClaudeActivity(folder: Path, private val edits: EditListener = EditListener.NONE) {
     private val paths = WorkPaths(folder)
     private val log = ActivityLog(paths)
     /** Tool uses seen but not finished, by id. */
     private val open = LinkedHashMap<String, Pair<String, JsonObject>>()
     private val finished = mutableSetOf<String>()
+    /** Subagents' edits not yet finished: the file each names, by tool use id. Past [SUBAGENT_EDIT_MEMORY] the oldest is forgotten. */
+    private val subagentEdits = object : LinkedHashMap<String, String?>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String?>) = size > SUBAGENT_EDIT_MEMORY
+    }
 
     /**
      * Claude Code denied a tool because it needed the player's approval, without asking Hovel
@@ -46,7 +56,7 @@ internal class ClaudeActivity(folder: Path) {
             if ("needs approval" in why || "haven't granted" in why) deniedWithoutAsking = true
             return false
         }
-        if (message["parent_tool_use_id"].let { it != null && it != JsonNull }) return false
+        if (message["parent_tool_use_id"].let { it != null && it != JsonNull }) { subagent(type, message); return false }
         return when (type) {
             "assistant" -> { content(message).filter { it.text("type") == "tool_use" }.forEach { use ->
                 val id = use.text("id") ?: return@forEach
@@ -68,15 +78,38 @@ internal class ClaudeActivity(folder: Path) {
         val id = result.text("tool_use_id") ?: return false
         if (!finished.add(id)) return false
         val (name, input) = open.remove(id) ?: return false
+        val status = status(message, id, result)
+        val detail = if (status == ActivityStatus.DONE) outcome(name, message["tool_use_result"], result) else text(result["content"])
+        step(name, input, status, detail)
+        if (status == ActivityStatus.DONE && name in EDIT_TOOLS) edits.reportEdit(editedFile(input))
+        return true
+    }
+
+    /** A subagent's line: no step, but an edit it finished is reported like the turn's own. */
+    private fun subagent(type: String?, message: JsonObject) {
+        when (type) {
+            "assistant" -> content(message).filter { it.text("type") == "tool_use" && it.text("name") in EDIT_TOOLS }.forEach { use ->
+                use.text("id")?.let { subagentEdits[it] = editedFile(use["input"] as? JsonObject) }
+            }
+            "user" -> content(message).filter { it.text("type") == "tool_result" }.forEach { result ->
+                val id = result.text("tool_use_id")?.takeIf(subagentEdits::containsKey) ?: return@forEach
+                val file = subagentEdits.remove(id)
+                if (status(message, id, result) == ActivityStatus.DONE) edits.reportEdit(file)
+            }
+        }
+    }
+
+    /** How tool use [id] ended, from its [result] and the line's `tool_result_meta`. */
+    private fun status(message: JsonObject, id: String, result: JsonObject): ActivityStatus {
         val meta = (message["tool_result_meta"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.firstOrNull { it.text("id") == id }
         val decision = (meta?.get("permission_decision") as? JsonObject)?.text("decision")
         val denied = decision == "reject" || meta?.text("non_execution_kind") in setOf("user-rejected", "permission-rule")
         val failed = (result["is_error"] as? JsonPrimitive)?.booleanOrNull == true
-        val status = when { denied -> ActivityStatus.DENIED; failed -> ActivityStatus.FAILED; else -> ActivityStatus.DONE }
-        val detail = if (status == ActivityStatus.DONE) outcome(name, message["tool_use_result"], result) else text(result["content"])
-        step(name, input, status, detail)
-        return true
+        return when { denied -> ActivityStatus.DENIED; failed -> ActivityStatus.FAILED; else -> ActivityStatus.DONE }
     }
+
+    /** The file an edit tool names: `file_path`, or a notebook's `notebook_path`. */
+    private fun editedFile(input: JsonObject?): String? = input?.text("file_path") ?: input?.text("notebook_path")
 
     private fun step(name: String, input: JsonObject, status: ActivityStatus, detail: String?) =
         log.add(kindOf(name), label(name, input), status, detail)
@@ -124,11 +157,16 @@ internal class ClaudeActivity(folder: Path) {
     }?.takeIf { it.isNotBlank() }
 
     companion object {
+        /** The tools that change a file the tool use names. */
+        private val EDIT_TOOLS = setOf("Edit", "Write", "MultiEdit", "NotebookEdit")
+        /** How many subagent edits still running one turn remembers. */
+        private const val SUBAGENT_EDIT_MEMORY = 256
+
         /** Reading, searching, editing, commands, connectors, the web, or anything else. */
         fun kindOf(name: String): ActivityKind = when {
             name in setOf("Read", "NotebookRead") -> ActivityKind.READ
             name in setOf("Glob", "Grep", "LS") -> ActivityKind.SEARCH
-            name in setOf("Edit", "Write", "MultiEdit", "NotebookEdit") -> ActivityKind.EDIT
+            name in EDIT_TOOLS -> ActivityKind.EDIT
             name in setOf("Bash", "BashOutput", "KillBash", "KillShell") -> ActivityKind.COMMAND
             name.startsWith("mcp__") -> ActivityKind.CONNECTOR
             name in setOf("WebFetch", "WebSearch") -> ActivityKind.WEB

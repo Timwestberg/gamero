@@ -20,6 +20,7 @@ import org.formulagen.wrapper.conversation.voice.*
 import org.formulagen.wrapper.util.*
 import org.formulagen.wrapper.conversation.Activity
 import org.formulagen.wrapper.conversation.MemberMode
+import org.formulagen.wrapper.workspace.EditListener
 
 /** The person stopped the message (or Hovel is quitting), or a stage dialog's Stop ended the run. */
 internal class StoppedException : RuntimeException("Stopped")
@@ -75,12 +76,13 @@ internal class ProviderTurns(
 
     /**
      * A working specialist's turn in [threadId], on that thread's lease: the project's folders as its runtime may
-     * be given them, its permission requests relayed through [scope], and only its own processes ended after it.
+     * be given them, its permission requests relayed through [scope], its finished edits reported to [edits], and
+     * only its own processes ended after it.
      */
     fun work(call: TurnCall, threadId: String, role: BrainRoleSnapshot, persona: Persona, input: String, conversation: NativeConversation?,
-        scope: ApprovalScope, stream: ReplyStream, opened: (NativeConversation) -> Unit): Pair<String, Activity?> {
+        scope: ApprovalScope, stream: ReplyStream, opened: (NativeConversation) -> Unit, edits: EditListener = EditListener.NONE): Pair<String, Activity?> {
         val worker = ready(call, work[role.binding.runtimeId], role, threadId, coordinator = false)
-        val folders = WorkScope(call.folders.forRuntime(worker.contextFolders), threadId, call.companion, role.binding.member())
+        val folders = WorkScope(call.folders.forRuntime(worker.contextFolders), threadId, call.companion, role.binding.member(), edits)
         val request = TurnRequest(call.accountId, call.companionId, persona, role.binding.modelId, conversation, input, folders,
             role.binding.effort)
         val relay = approvals.register(threadId, scope)

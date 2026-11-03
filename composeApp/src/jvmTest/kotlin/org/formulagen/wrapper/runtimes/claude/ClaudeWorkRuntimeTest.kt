@@ -24,6 +24,7 @@ import org.formulagen.wrapper.providers.ClaudeConnection
 import org.formulagen.wrapper.providers.ClaudeRuntime
 import org.formulagen.wrapper.providers.claudeWorkEnvironment
 import kotlin.test.*
+import org.formulagen.wrapper.workspace.EditListener
 import org.formulagen.wrapper.runtimes.claude.FakeClaudeWork.Companion.ask
 import org.formulagen.wrapper.runtimes.claude.FakeClaudeWork.Companion.cancel
 import org.formulagen.wrapper.runtimes.claude.FakeClaudeWork.Companion.emit
@@ -77,9 +78,10 @@ class ClaudeWorkRuntimeTest {
         ClaudeConnection(null), broker, environment = { claudeWorkEnvironment(parent, "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", fake.executable) },
         lineLimit = lineLimit)
 
-    private fun request(conversation: NativeConversation? = null, text: String = "Read notes.txt, then append a line.", model: String = "sonnet") =
+    private fun request(conversation: NativeConversation? = null, text: String = "Read notes.txt, then append a line.", model: String = "sonnet",
+        edits: EditListener = EditListener.NONE) =
         TurnRequest("50000000-0000-4000-8000-000000000005", "20000000-0000-4000-8000-000000000002", persona, model, conversation, text = text,
-            work = WorkScope(folder, "lease-1", "Ember", TeamMember(RuntimeId.CLAUDE_CODE, model)))
+            work = WorkScope(folder, "lease-1", "Ember", TeamMember(RuntimeId.CLAUDE_CODE, model), edits))
 
     /** The recorded turns of [name] as fake turns: each permission request is asked, everything else emitted, split at each result. */
     private fun recordedTurns(name: String): List<List<JsonObject>> {
@@ -102,14 +104,20 @@ class ClaudeWorkRuntimeTest {
     @Test fun everyApprovalIsAnsweredAsRecordedAndOneProcessServesTheConversation() {
         fake.turns(*recordedTurns("turn-edit-and-denials.ndjson").toTypedArray())
         val broker = Broker(ALLOW_ONCE, DENY, DENY, ALLOW_FOR_CONVERSATION)
+        val firstEdits = CopyOnWriteArrayList<Path?>()
+        val secondEdits = CopyOnWriteArrayList<Path?>()
         runtime(broker).use { claude ->
             val first = Events()
-            claude.startTurn(request(), first)
+            claude.startTurn(request(edits = { firstEdits += it }), first)
             assertEquals("completed", first.outcome())
             val session = first.seen.first().removePrefix("opened ")
             val second = Events()
-            claude.startTurn(request(NativeConversation(session, persona.hash, playerLogin = true), "Append three lines."), second)
+            claude.startTurn(request(NativeConversation(session, persona.hash, playerLogin = true), "Append three lines.", edits = { secondEdits += it }), second)
             assertEquals("completed", second.outcome())
+            // Each turn's finished edits reach its own record; the denied edit never does.
+            val notes = folder.resolve("notes.txt")
+            assertEquals(listOf(notes), firstEdits)
+            assertEquals(listOf(notes, notes), secondEdits)
 
             // Hovel's lines, in order: initialize first, each message, and each answer exactly as Claude Code accepted it.
             val lines = fake.stdin()
