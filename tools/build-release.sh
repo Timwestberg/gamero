@@ -216,7 +216,7 @@ collect_desktop() {
 # Android and desktop in one Gradle run: one configuration, one daemon warm-up, and
 # the shared Kotlin compilation done once.
 build_gradle() {
-  local tasks=() flags=() names=()
+  local tasks=() flags=(--profile) names=()
   if want android; then
     flags+=(-Pgamero.mobileTargets=true)
     tasks+=(:composeApp:bundleRelease :composeApp:assembleRelease)
@@ -233,9 +233,9 @@ build_gradle() {
   # --profile writes a per-task HTML report; its rows go into the timings CSV below.
   rm -rf "$root/build/reports/profile"
   if want desktop; then
-    GAMERO_BROWSER_JAVA_HOME="$GAMERO_BROWSER_JAVA_HOME" gradle --profile "${flags[@]}" "${tasks[@]}"
+    GAMERO_BROWSER_JAVA_HOME="$GAMERO_BROWSER_JAVA_HOME" gradle "${flags[@]}" "${tasks[@]}" || fail "$label: Gradle failed"
   else
-    gradle --profile "${flags[@]}" "${tasks[@]}"
+    gradle "${flags[@]}" "${tasks[@]}" || fail "$label: Gradle failed"
   fi
   ! want android || collect_android
   ! want desktop || collect_desktop

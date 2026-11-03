@@ -13,6 +13,9 @@ import javax.swing.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.combine
 import org.formulagen.wrapper.progression.*
+import org.formulagen.wrapper.ui.fgBlue300
+import org.formulagen.wrapper.ui.fgInk950
+import org.formulagen.wrapper.ui.hovelTypography
 
 /**
  * One embedded game in a native window: the game's surface, and for a presentation game ([GodotGame.presentation])
@@ -87,7 +90,7 @@ internal class EmbeddedGameWindow(
             layers.add(back)
             layers.setLayer(back, JLayeredPane.DRAG_LAYER)
             back.setContent {
-                MaterialTheme(colorScheme = darkColorScheme(primary = CompanionGlass.amber, onPrimary = CompanionGlass.ink)) {
+                MaterialTheme(colorScheme = darkColorScheme(primary = fgBlue300, onPrimary = fgInk950), typography = hovelTypography()) {
                     Button(onClick = ::close) { Text("Back to games") }
                 }
             }

@@ -16,11 +16,14 @@ import kotlin.test.assertTrue
 /** The desktop transport: one `cefQuery` per request, and a persistent query for `watchContext`. */
 class JcefTransportContractTest : TransportContractTest() {
     override fun open(bridge: HostBridge): FakeWebView = object : FakeWebView {
-        val transport = JcefHostBridge(bridge)
         var document = Document()
         var nextQuery = 0L
         override val wire = mutableListOf<String>()
         override val events get() = document.events
+        val transport = JcefHostBridge(bridge, postEvent = { _, json ->
+            wire += json
+            document.events += json
+        })
 
         inner class Document {
             val events = mutableListOf<String>()
@@ -35,8 +38,9 @@ class JcefTransportContractTest : TransportContractTest() {
             val replies = mutableListOf<String>()
             val callback = object : CefQueryCallback {
                 override fun success(response: String) {
+                    check(replies.isEmpty()) { "A native JCEF callback cannot deliver a second success" }
                     wire += response
-                    if (replies.isEmpty()) replies += response else page.events += response
+                    replies += response
                     if (!persistent) page.open -= queryId
                 }
 
@@ -71,13 +75,13 @@ class JcefHostBridgeTest {
     private val watch = """{"version":2,"method":"watchContext","args":{}}"""
     private fun call(contextId: String) = """{"version":2,"contextId":"$contextId","method":"host.info","args":{}}"""
 
-    private fun TestScope.transport(lifecycle: Capability<Lifecycle> = Capability.Unsupported, onEnd: () -> Unit = {}) = JcefHostBridge(
+    private fun TestScope.transport(lifecycle: Capability<Lifecycle> = Capability.Unsupported, onEnd: () -> Unit = {}, postEvent: (String, String) -> Unit = { _, _ -> }) = JcefHostBridge(
         HostBridge(
             product = "Hovel",
             trustedUrl = trusted,
             capabilities = HostCapabilities(HostPlatform.DESKTOP, "1.0.0", Capability.Unsupported, Capability.Unsupported, lifecycle),
             context = backgroundScope.coroutineContext,
-        ), onEnd,
+        ), postEvent = postEvent, onContextEnded = onEnd,
     )
 
     private fun TestScope.settle() {
@@ -170,13 +174,20 @@ class JcefHostBridgeTest {
     fun anOlderWatchGetsNoEventsOnceANewerWatchReplacesItsContext() = runTest {
         // Query 2 replaces query 1's context and is cancelled before its reply. An event in between reaches neither watch.
         var pause: () -> Unit = {}
-        val transport = transport(Capability.Supported(Lifecycle { onPause, _ -> pause = onPause; AutoCloseable { } }))
+        val events = mutableListOf<Pair<String, String>>()
+        val transport = transport(Capability.Supported(Lifecycle { onPause, _ -> pause = onPause; AutoCloseable { } }), postEvent = { context, json -> events += context to json })
         val first = ask(transport, watch, persistent = true, queryId = 1)
+        pause()
+        settle()
+        val contextId = Json.parseToJsonElement(first.successes.single()).jsonObject.getValue("contextId").jsonPrimitive.content
+        assertEquals(contextId, events.single().first)
+        events.clear()
         transport.onQuery(watch, true, true, trusted, 2, Answers())
         assertTrue(transport.onQueryCanceled(2))
         pause()
         settle()
         assertEquals(1, first.successes.size, "the older watch got an event for a context it never held")
+        assertTrue(events.isEmpty(), "a cancelled replacement delivered an event to the old document")
     }
 
     @Test
