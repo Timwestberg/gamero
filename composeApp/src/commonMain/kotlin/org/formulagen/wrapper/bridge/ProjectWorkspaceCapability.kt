@@ -1,5 +1,6 @@
 package org.formulagen.wrapper.bridge
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
@@ -19,20 +20,19 @@ interface ProjectWorkspaceCapability {
 @Serializable
 data class ProjectWorkspaceViewChangesArgs(val projectId: String, val threadId: String)
 
+/** The Mac's answer to an open or a changes view. */
+@Serializable
+data class ProjectWorkspaceResult(val status: ProjectWorkspaceStatus)
+
 /**
- * The Mac's answer: [OPENED] when the window is showing, [MISSING_FOLDER] when the working folder is gone on this Mac,
- * and [UNAVAILABLE] when this is not the project's Mac, the project is talk-only, or the feature is off.
+ * [OPENED] when the window is showing, [MISSING_FOLDER] when the working folder is gone on this Mac, and [UNAVAILABLE]
+ * when this is not the project's Mac, the project is talk-only, or the feature is off.
  */
 @Serializable
-data class ProjectWorkspaceResult(val status: String) {
-    init { require(status in STATUSES) { "Unknown workspace status" } }
-
-    companion object {
-        const val OPENED = "opened"
-        const val MISSING_FOLDER = "missing-folder"
-        const val UNAVAILABLE = "unavailable"
-        val STATUSES = setOf(OPENED, MISSING_FOLDER, UNAVAILABLE)
-    }
+enum class ProjectWorkspaceStatus {
+    @SerialName("opened") OPENED,
+    @SerialName("missing-folder") MISSING_FOLDER,
+    @SerialName("unavailable") UNAVAILABLE,
 }
 
 /** Mirrors event-contracts/host-bridge/project-workspace.ts. */

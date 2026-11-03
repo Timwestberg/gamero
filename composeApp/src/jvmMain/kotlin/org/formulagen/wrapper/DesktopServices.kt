@@ -232,9 +232,10 @@ internal class DesktopServices private constructor(
  * The product packs a desktop host registers. Every desktop product has providers, pet and games; Hovel adds its
  * companion and the companion projects capabilities: `project` (a project's folders on this Mac), `projectWorkspace`
  * (a project's workspace window, unsupported until it is built), the `host.contract` handshake, `conversationVoice`
- * (voice in conversations, on a Mac with them) and phone `approvals`, which desktop never supports. A missing implementation registers as `Unsupported`, so its methods answer `unsupported` instead of
- * `unknown-method`. [pageCheck] runs before every `companion.*`, `project.*` and `providers.*` call, the methods whose
- * answers changed in contract 3 ([DesktopHostContract.requireCurrentPage]).
+ * (voice in conversations, on a Mac with them) and phone `approvals`, which desktop never supports. A missing
+ * implementation registers as `Unsupported`, so its methods answer `unsupported` instead of `unknown-method`.
+ * [pageCheck] runs before every `companion.*`, `project.*` and `providers.*` call, the methods whose answers changed
+ * in contract 3 ([DesktopHostContract.requireCurrentPage]).
  */
 internal fun desktopProductPacks(
     product: String,

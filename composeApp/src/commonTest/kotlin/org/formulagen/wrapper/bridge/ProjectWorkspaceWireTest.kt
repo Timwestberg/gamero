@@ -8,7 +8,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
-import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -57,7 +56,7 @@ class ProjectWorkspaceWireTest {
     }
 
     @Test fun resultsRoundTripTheEnvelopeFixtures() {
-        val statuses = mutableSetOf<String>()
+        val statuses = mutableSetOf<ProjectWorkspaceStatus>()
         for (name in HostBridgeFixtures.ENVELOPES.keys.filter { it.startsWith("success-project-workspace-") }) {
             val fixture = envelope(name)
             assertTrue(fixture.getValue("method").jsonPrimitive.content.startsWith("projectWorkspace."), name)
@@ -66,12 +65,13 @@ class ProjectWorkspaceWireTest {
             assertEquals(result, bridgeJson.encodeToJsonElement(ProjectWorkspaceResult.serializer(), decoded), name)
             statuses += decoded.status
         }
-        assertEquals(ProjectWorkspaceResult.STATUSES, statuses, "a fixture for every status")
+        assertEquals(ProjectWorkspaceStatus.entries.toSet(), statuses, "a fixture for every status")
     }
 
     @Test fun aResultIsOneOfTheThreeStatuses() {
-        assertFails { ProjectWorkspaceResult("busy") }
+        val missing = ProjectWorkspaceResult(ProjectWorkspaceStatus.MISSING_FOLDER)
+        assertEquals("""{"status":"missing-folder"}""", bridgeJson.encodeToString(ProjectWorkspaceResult.serializer(), missing))
+        assertFails { bridgeJson.decodeFromString(ProjectWorkspaceResult.serializer(), """{"status":"busy"}""") }
         assertFails { bridgeJson.decodeFromString(ProjectWorkspaceResult.serializer(), """{"status":"opened","path":"/Users/p"}""") }
-        assertFalse("busy" in ProjectWorkspaceResult.STATUSES)
     }
 }

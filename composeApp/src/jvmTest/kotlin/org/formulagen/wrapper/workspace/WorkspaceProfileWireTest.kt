@@ -73,8 +73,13 @@ class WorkspaceProfileWireTest {
         assertFalse("browser" in tabs)
 
         val limit = profile("profile-unknown-limit.json")
-        assertEquals(mapOf("scrollbackLines" to 10_000, "threadFiles" to 500), limit.limits)
-        assertFalse("scrollbackLines" in settings)
+        assertEquals(mapOf("notALimit" to 10_000, "threadFiles" to 500), limit.limits)
+        assertFalse("notALimit" in settings)
+
+        // a choice value this Mac does not know stays the string it came as, so the wire types never refuse it
+        val choice = value("profile-unknown-choice.json")
+        assertEquals(WireToolChoice("system", "mine"), profile("profile-unknown-choice.json").tools.getValue("neovim"))
+        assertEquals(choice, roundTrip(WireWorkspaceProfile.serializer(), choice))
 
         // a value outside this Mac's range, and a repeated tab, are kept as they are; resolving them is separate
         assertEquals(mapOf("projectThreads" to 200, "threadFiles" to 49), profile("profile-limit-out-of-range.json").limits)
