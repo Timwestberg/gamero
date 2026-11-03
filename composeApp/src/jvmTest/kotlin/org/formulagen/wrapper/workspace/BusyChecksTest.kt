@@ -75,6 +75,27 @@ class BusyChecksTest {
         assertFalse(Files.exists(socket), "the socket is removed when the session ends")
     }
 
+    @Test fun aWrapperThatDoesNotExecStillLetsNeovimAnswer() {
+        val nvim = neovim()
+        val file = root.resolve("wrapped.txt").also { Files.writeString(it, "saved\n") }
+        // A wrapper on PATH that runs Neovim as its child: the tab's process stays the shell.
+        val wrapper = script("nvim-wrapper", "#!/bin/sh\nNVIM_APPNAME=nvim '$nvim' --clean -n \"\$@\"\n")
+        val (session, keys) = startNeovim(nvim, file, EditorSockets(sockets), launcher = listOf(wrapper))
+        awaitSocket()
+        assertNull(awaitBusy(session) { it == null }, "every buffer saved")
+        keys.input("ohello\u001b".toByteArray())
+        assertEquals(Busy.Unsaved("Neovim", listOf("wrapped.txt")), awaitBusy(session) { it != null })
+    }
+
+    @Test fun anEditorTabWithNoNeovimInItUsesTheToolRule() {
+        assumeTrue(System.getProperty("os.name").contains("Mac"))
+        val wrapper = script("not-nvim", "#!/bin/sh\n/bin/sleep 30\n")
+        val host = PtySessionHost(EditorSockets(sockets)) { _, toolArguments -> ShellCommand(listOf(wrapper) + toolArguments, mapOf("PATH" to "/usr/bin:/bin")) }.also(hosts::add)
+        val session = host.start(SessionSpec("p", "Neovim", root, Launch.Tool(WorkspaceTool.NEOVIM), TermSize(80, 24)))
+        session.attach(CollectingViewer())
+        assertEquals(Busy.Running("sleep 30"), awaitBusy(session) { it != null })
+    }
+
     @Test fun aNeovimWithNoSocketAlwaysAsks() {
         val nvim = neovim()
         val (session, _) = startNeovim(nvim, root.resolve("x.txt"), sockets = null)
@@ -131,15 +152,22 @@ class BusyChecksTest {
         return nvim!!.toRealPath().toString()
     }
 
-    private fun startNeovim(nvim: String, file: Path, sockets: EditorSockets?): Pair<Session, Attachment> {
+    /** Neovim on [file], started directly or through [launcher], which gets the file and the host's arguments. */
+    private fun startNeovim(nvim: String, file: Path, sockets: EditorSockets?, launcher: List<String>? = null): Pair<Session, Attachment> {
         val environment = mapOf("PATH" to "/usr/bin:/bin", "TERM" to "xterm-256color", "LANG" to "en_US.UTF-8", "HOME" to root.toString())
-        val host = PtySessionHost(sockets) { _, toolArguments -> ShellCommand(listOf(nvim, "--clean", "-n", file.toString()) + toolArguments, environment) }
-            .also(hosts::add)
+        val argv = launcher?.plus(file.toString()) ?: listOf(nvim, "--clean", "-n", file.toString())
+        val host = PtySessionHost(sockets) { _, toolArguments -> ShellCommand(argv + toolArguments, environment) }.also(hosts::add)
         val session = host.start(SessionSpec("p", "Neovim", root, Launch.Tool(WorkspaceTool.NEOVIM), TermSize(100, 30)))
         val keys = session.attach(CollectingViewer())
         session.attach(TerminalReplies(keys))
         return session to keys
     }
+
+    /** An executable script in the test's folder. */
+    private fun script(name: String, text: String): String = root.resolve(name).also {
+        Files.writeString(it, text)
+        it.toFile().setExecutable(true)
+    }.toString()
 
     private fun awaitSocket(): Path {
         val deadline = System.currentTimeMillis() + 10_000

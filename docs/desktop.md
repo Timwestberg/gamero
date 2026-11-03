@@ -95,8 +95,10 @@ Apple Silicon only ([release.md](release.md#desktop)).
     prompt helpers such as powerlevel10k's `gitstatusd` are not;
   - Neovim is busy while a buffer is modified or its `:terminal` runs a job. Each Neovim tab
     listens on a socket in `~/Library/Caches/org.formulagen.wrapper/workspace/nvim/`; Hovel
-    asks it with a fixed `nvim --server … --remote-expr …` and counts no answer within a
-    second as busy;
+    asks it with a fixed `nvim --server … --remote-expr …`, using the running Neovim's own
+    executable, and counts no answer within a second as busy. A wrapper that starts Neovim
+    without `exec` is asked the same way; a Neovim tab with no Neovim in it is busy as a tool
+    tab would be;
   - lazygit or yazi is busy while it runs a program of its own, such as `git push`.
 
   With nothing busy they close, or quit, at once. Quitting asks once for every window, then

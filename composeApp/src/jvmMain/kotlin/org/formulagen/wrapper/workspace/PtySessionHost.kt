@@ -143,8 +143,10 @@ internal class PtySession(
      *   background jobs and prompt helpers (powerlevel10k's `gitstatusd`, zsh-async workers) do not count,
      *   and while a descendant is stopped (a job suspended with ⌃Z), or its state cannot be read;
      * - Neovim is busy while a buffer is modified or its `:terminal` runs a job, as it answers on its
-     *   `--listen` socket; no answer in time counts as busy. Its LSP servers and its own
-     *   `nvim --embed` server are descendants, so the descendant rule cannot be used for it;
+     *   `--listen` socket; no answer in time counts as busy. It is asked whether it is the tab's
+     *   process or a descendant (a wrapper that does not `exec`), with its own executable as the
+     *   client. Its LSP servers and its own `nvim --embed` server are descendants, so the
+     *   descendant rule cannot be used for it; a tab with no Neovim in it gets the tool rule;
      * - any other tool is busy while it has a live descendant that is not running the tool's own
      *   executable (by real path), which would be a helper of the tool's.
      */
@@ -203,16 +205,16 @@ internal class PtySession(
     private fun firstChild(counts: (ProcessHandle) -> Boolean): ProcessHandle? =
         tree.descendants().use { children -> children.filter { it.isAlive && counts(it) }.findFirst().orElse(null) }
 
-    /**
-     * Neovim's answer. Until the tab's process is Neovim itself (the login shell is still starting
-     * it), nothing can be unsaved yet.
-     */
+    /** Neovim's own answer, from the tab's process or a Neovim it started; with no Neovim, the tool rule. */
     private fun editorState(editor: String): Busy? {
-        val executable = commandOf(tree.toHandle()) ?: return Busy.NoAnswer(editor)
-        if (File(executable).name != NEOVIM_EXECUTABLE) return null
+        val root = commandOf(tree.toHandle()) ?: return Busy.NoAnswer(editor)
+        val neovim = root.takeIf(::isNeovim) ?: firstChild { commandOf(it)?.let(::isNeovim) == true }?.let(::commandOf) ?: return toolChild()
         val socket = editorSocket ?: return Busy.NoAnswer(editor)
-        return askNeovim(executable, socket, editor)
+        return askNeovim(neovim, socket, editor)
     }
+
+    /** True for a Neovim executable, by its real path's name. */
+    private fun isNeovim(executable: String): Boolean = File(executable).name == NEOVIM_EXECUTABLE
 
     private fun describe(handle: ProcessHandle): String = handle.info().let { info ->
         commandLabel(info.command().orElse(null), info.arguments().map { it.toList() }.orElse(emptyList()))
