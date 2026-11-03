@@ -20,15 +20,29 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import org.formulagen.wrapper.ui.fgBlue300
+import org.formulagen.wrapper.ui.fgGreen400
+import org.formulagen.wrapper.ui.fgInk300
+import org.formulagen.wrapper.ui.fgInk900
+import org.formulagen.wrapper.ui.fgInk950
+import org.formulagen.wrapper.ui.fgRed400
+import org.formulagen.wrapper.ui.fgWhite
+import org.formulagen.wrapper.ui.hovelTypography
+import org.formulagen.wrapper.ui.inkPanel
+import org.formulagen.wrapper.ui.titleTracking
 
 /** Dedicated progression screen: hosts provide state, commands and game-specific artwork. */
 @Composable
@@ -99,9 +113,9 @@ fun CompanionPresentation(
     }
     /** Bind native and forwarded controller focus to the same semantic control. */
     fun control(id: String): Modifier = Modifier.focusRequester(focus.getValue(id)).onFocusChanged { if (it.isFocused) focused = id }
-    MaterialTheme(colorScheme = darkColorScheme(primary = CompanionGlass.amber, onPrimary = CompanionGlass.ink,
-    surface = CompanionGlass.ink, onSurface = CompanionGlass.text, onSurfaceVariant = CompanionGlass.muted)) {
-        CompositionLocalProvider(LocalContentColor provides CompanionGlass.text) {
+    MaterialTheme(colorScheme = darkColorScheme(primary = fgBlue300, onPrimary = fgInk950,
+    surface = fgInk900, onSurface = fgWhite, onSurfaceVariant = fgInk300), typography = hovelTypography()) {
+        CompositionLocalProvider(LocalContentColor provides fgWhite) {
             PresentationSceneHost(scene) {
                 BoxWithConstraints(Modifier.fillMaxSize().testTag("companion-presentation")) {
                     val narrow = maxWidth < 720.dp
@@ -109,34 +123,35 @@ fun CompanionPresentation(
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                         Column(Modifier.widthIn(max = 1040.dp).fillMaxWidth().padding(24.dp)) {
                             FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("${scene.name}  /  COMPANIONS", fontSize = 10.sp, letterSpacing = 2.sp, color = CompanionGlass.muted)
+                                Text("${scene.name}  /  COMPANIONS", fontSize = 10.sp, letterSpacing = 2.sp, color = fgInk300)
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Checkbox(reduced, { reduced = it }, modifier = Modifier.size(40.dp).semantics { contentDescription = "Reduce motion and transparency" })
-                                    Text("Reduced effects", fontSize = 11.sp, color = CompanionGlass.muted)
+                                    Text("Reduced effects", fontSize = 11.sp, color = fgInk300)
                                 }
                             }
                             Spacer(Modifier.height(24.dp))
                             Row(Modifier.align(Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                CompanionPortrait(snapshot.companion.name, glassColor(snapshot.companion.color), acknowledge || snapshot.view == "saved")
+                                CompanionPortrait(snapshot.companion.name, glassColor(snapshot.companion.color), acknowledge || snapshot.view == "saved",
+                                    eyes = glassColor(snapshot.companion.color, fgInk300))
                                 Column {
                                     Text(snapshot.companion.name, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
                                     Text(if (snapshot.view == "growth" && snapshot.offer != null) "LEVEL ${snapshot.offer.level - 1} → ${snapshot.offer.level}" else "LEVEL ${snapshot.companion.level}",
-                                    fontSize = 11.sp, letterSpacing = 1.5.sp, color = CompanionGlass.amber)
+                                    fontSize = 11.sp, letterSpacing = 1.5.sp, color = fgGreen400)
                                 }
                             }
                             Spacer(Modifier.height(20.dp))
                             if (snapshot.view == "saved") {
-                                Text("A little stronger.", Modifier.align(Alignment.CenterHorizontally), fontFamily = FontFamily.Serif, fontSize = 34.sp)
+                                Text("A little stronger.", Modifier.align(Alignment.CenterHorizontally), fontWeight = FontWeight.ExtraBold, letterSpacing = titleTracking, fontSize = 34.sp)
                                 snapshot.appliedOption?.let { option ->
-                                    Text("${option.name}: ${option.before} → ${option.after}", Modifier.align(Alignment.CenterHorizontally).padding(24.dp), color = CompanionGlass.amber, fontSize = 28.sp)
+                                    Text("${option.name}: ${option.before} → ${option.after}", Modifier.align(Alignment.CenterHorizontally).padding(24.dp), color = fgGreen400, fontSize = 28.sp)
                                 }
-                                Text("Upgrade saved", Modifier.align(Alignment.CenterHorizontally).semantics { liveRegion = LiveRegionMode.Polite }, color = CompanionGlass.mint)
+                                Text("Upgrade saved", Modifier.align(Alignment.CenterHorizontally).semantics { liveRegion = LiveRegionMode.Polite }, color = fgBlue300)
                                 TextButton({ onAction("continue") }, control("continue").align(Alignment.CenterHorizontally), enabled = !busy) { Text("Continue") }
                             } else if (snapshot.view == "growth") {
                                 Text(if (snapshot.offer != null) "A little stronger, together." else "Room to grow.",
-                                Modifier.align(Alignment.CenterHorizontally), fontFamily = FontFamily.Serif, fontSize = if (narrow) 28.sp else 34.sp)
+                                Modifier.align(Alignment.CenterHorizontally), fontWeight = FontWeight.ExtraBold, letterSpacing = titleTracking, fontSize = if (narrow) 28.sp else 34.sp)
                                 Text(if (snapshot.offer != null) "Preview a boost. Choose how ${snapshot.companion.name} grows." else "All earned upgrades are allocated. You can rebuild freely.",
-                                Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp), color = CompanionGlass.muted, fontSize = 14.sp)
+                                Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp), color = fgInk300, fontSize = 14.sp)
                                 Spacer(Modifier.height(28.dp))
                                 snapshot.offer?.let { offer ->
                                     if (narrow) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -148,11 +163,11 @@ fun CompanionPresentation(
                                     }
                                 }
                                 Spacer(Modifier.height(20.dp))
-                                Text("Companion growth · kept after this adventure", Modifier.align(Alignment.CenterHorizontally), color = CompanionGlass.muted, fontSize = 12.sp)
-                                if (snapshot.pending > 1) Text("${snapshot.pending} upgrades available · one choice at a time", Modifier.align(Alignment.CenterHorizontally).padding(top = 6.dp), color = CompanionGlass.muted, fontSize = 12.sp)
+                                Text("Companion growth · kept after this adventure", Modifier.align(Alignment.CenterHorizontally), color = fgInk300, fontSize = 12.sp)
+                                if (snapshot.pending > 1) Text("${snapshot.pending} upgrades available · one choice at a time", Modifier.align(Alignment.CenterHorizontally).padding(top = 6.dp), color = fgInk300, fontSize = 12.sp)
                                 Spacer(Modifier.height(20.dp))
                                 if (selected != null) {
-                                    Text("${selected.name}: ${selected.before} → ${selected.after}", Modifier.align(Alignment.CenterHorizontally).semantics { liveRegion = LiveRegionMode.Polite }, color = CompanionGlass.amber)
+                                    Text("${selected.name}: ${selected.before} → ${selected.after}", Modifier.align(Alignment.CenterHorizontally).semantics { liveRegion = LiveRegionMode.Polite }, color = fgGreen400)
                                     Spacer(Modifier.height(12.dp))
                                     Button({ onAction("choose") }, control("confirm").align(Alignment.CenterHorizontally).heightIn(min = 48.dp).testTag("confirm-upgrade"), enabled = !busy) {
                                         Text(if (busy && state.pending.action == "choose") "Saving…" else "Choose ${selected.name}", fontWeight = FontWeight.SemiBold)
@@ -165,21 +180,21 @@ fun CompanionPresentation(
                                     if (snapshot.canRespec) TextButton({ onAction("respec") }, control("respec"), enabled = !busy) { Text("Free respec") }
                                 }
                             } else snapshot.review?.let { review ->
-                                Text(if (review.outcome == "success") "Expedition complete" else "Expedition ended", Modifier.align(Alignment.CenterHorizontally), fontFamily = FontFamily.Serif, fontSize = if (narrow) 28.sp else 34.sp)
-                                Text(review.highlight, Modifier.align(Alignment.CenterHorizontally).padding(top = 12.dp, bottom = 24.dp), color = CompanionGlass.muted, fontSize = 15.sp)
+                                Text(if (review.outcome == "success") "Expedition complete" else "Expedition ended", Modifier.align(Alignment.CenterHorizontally), fontWeight = FontWeight.ExtraBold, letterSpacing = titleTracking, fontSize = if (narrow) 28.sp else 34.sp)
+                                Text(review.highlight, Modifier.align(Alignment.CenterHorizontally).padding(top = 12.dp, bottom = 24.dp), color = fgInk300, fontSize = 15.sp)
                                 ReviewProgress(snapshot, review)
                                 Spacer(Modifier.height(20.dp))
                                 if (narrow) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    EquipmentGroup("Brought gear retained", review.retained, CompanionGlass.mint, Modifier.fillMaxWidth())
-                                    EquipmentGroup("Discoveries secured", review.banked, CompanionGlass.amber, Modifier.fillMaxWidth())
-                                    if (review.lost.isNotEmpty()) EquipmentGroup("Discoveries left behind", review.lost, CompanionGlass.muted, Modifier.fillMaxWidth())
+                                    EquipmentGroup("Brought gear retained", review.retained, fgBlue300, Modifier.fillMaxWidth())
+                                    EquipmentGroup("Discoveries secured", review.banked, fgGreen400, Modifier.fillMaxWidth())
+                                    if (review.lost.isNotEmpty()) EquipmentGroup("Discoveries left behind", review.lost, fgInk300, Modifier.fillMaxWidth())
                                 } else Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    EquipmentGroup("Brought gear retained", review.retained, CompanionGlass.mint, Modifier.weight(1f).fillMaxHeight())
-                                    EquipmentGroup("Discoveries secured", review.banked, CompanionGlass.amber, Modifier.weight(1f).fillMaxHeight())
-                                    if (review.lost.isNotEmpty()) EquipmentGroup("Discoveries left behind", review.lost, CompanionGlass.muted, Modifier.weight(1f).fillMaxHeight())
+                                    EquipmentGroup("Brought gear retained", review.retained, fgBlue300, Modifier.weight(1f).fillMaxHeight())
+                                    EquipmentGroup("Discoveries secured", review.banked, fgGreen400, Modifier.weight(1f).fillMaxHeight())
+                                    if (review.lost.isNotEmpty()) EquipmentGroup("Discoveries left behind", review.lost, fgInk300, Modifier.weight(1f).fillMaxHeight())
                                 }
-                                if (review.broughtLost.isNotEmpty()) EquipmentGroup("Brought gear lost under this mode", review.broughtLost, CompanionGlass.danger, Modifier.fillMaxWidth().padding(top = 12.dp))
-                                if (review.temporaryExpired) Text("Temporary adventure boosts have expired.", Modifier.padding(top = 16.dp), color = CompanionGlass.muted, fontSize = 12.sp)
+                                if (review.broughtLost.isNotEmpty()) EquipmentGroup("Brought gear lost under this mode", review.broughtLost, fgRed400, Modifier.fillMaxWidth().padding(top = 12.dp))
+                                if (review.temporaryExpired) Text("Temporary adventure boosts have expired.", Modifier.padding(top = 16.dp), color = fgInk300, fontSize = 12.sp)
                                 Spacer(Modifier.height(24.dp))
                                 FlowRow(Modifier.align(Alignment.CenterHorizontally), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                     if (snapshot.pending > 0) Button({ onAction("upgrades") }, control("upgrades"), enabled = !busy) { Text("Choose upgrades (${snapshot.pending})") }
@@ -188,10 +203,11 @@ fun CompanionPresentation(
                                 }
                             }
                             if (state.error != null) {
-                                Text(state.error, Modifier.fillMaxWidth().padding(top = 16.dp).semantics { liveRegion = LiveRegionMode.Assertive }, color = CompanionGlass.danger)
+                                Text(state.error, Modifier.fillMaxWidth().padding(top = 16.dp).inkPanel().padding(horizontal = 18.dp, vertical = 12.dp)
+                                    .semantics { liveRegion = LiveRegionMode.Assertive }, color = fgRed400)
                                 if (state.pending != null) TextButton(onRetry, control("retry").align(Alignment.CenterHorizontally)) { Text("Retry") }
                             }
-                            if (acknowledge && snapshot.view != "saved") Text("Upgrade saved", Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp).semantics { liveRegion = LiveRegionMode.Polite }, color = CompanionGlass.mint, fontSize = 12.sp)
+                            if (acknowledge && snapshot.view != "saved") Text("Upgrade saved", Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp).semantics { liveRegion = LiveRegionMode.Polite }, color = fgBlue300, fontSize = 12.sp)
                         }
                     }
                 }
@@ -220,12 +236,30 @@ internal fun UpgradeCard(option: UpgradeOption, selected: Boolean, enabled: Bool
         Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(option.name.uppercase(), fontSize = 12.sp, letterSpacing = 1.5.sp, color = color)
-                Text(if (selected) "✓ Selected" else "Preview", fontSize = 11.sp, color = if (selected) color else CompanionGlass.muted)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (selected) CheckMark(color)
+                    Text(if (selected) "Selected" else "Preview", fontSize = 11.sp, color = if (selected) color else fgInk300)
+                }
             }
-            Text(option.increase, fontSize = 42.sp, fontWeight = FontWeight.Light, color = CompanionGlass.text)
+            // Hovel Sans starts at 400, the web's lightest weight.
+            Text(option.increase, fontSize = 42.sp, fontWeight = FontWeight.Normal, color = fgWhite)
             Text("${option.before} → ${option.after}", fontSize = 18.sp, fontWeight = FontWeight.Medium, color = color)
-            Text(option.description, fontSize = 14.sp, lineHeight = 21.sp, color = CompanionGlass.muted)
+            Text(option.description, fontSize = 14.sp, lineHeight = 21.sp, color = fgInk300)
         }
+    }
+}
+
+/** A drawn check, since Hovel Sans (like Lato) has no ✓ glyph. Sized in sp so it scales with the label. */
+@Composable
+private fun CheckMark(color: Color) {
+    val side = with(LocalDensity.current) { 9.sp.toDp() }
+    Canvas(Modifier.size(side)) {
+        val check = Path().apply {
+            moveTo(size.width * .1f, size.height * .55f)
+            lineTo(size.width * .4f, size.height * .85f)
+            lineTo(size.width * .9f, size.height * .2f)
+        }
+        drawPath(check, color, style = Stroke(size.minDimension * .18f, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
 
@@ -235,8 +269,8 @@ private fun ReviewProgress(snapshot: PresentationSnapshot, review: ExpeditionRev
     FlowRow(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Color.White.copy(alpha = .04f)).padding(20.dp), horizontalArrangement = Arrangement.spacedBy(40.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         for ((value, label) in listOf("+${review.xp} XP" to "Kept from this adventure", "Level ${snapshot.companion.level}" to "${snapshot.companion.xp} total companion XP", snapshot.pending.toString() to "Upgrades available")) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(value, fontSize = 26.sp, color = CompanionGlass.amber)
-                Text(label, fontSize = 12.sp, color = CompanionGlass.muted)
+                Text(value, fontSize = 26.sp, color = fgGreen400)
+                Text(label, fontSize = 12.sp, color = fgInk300)
             }
         }
     }
@@ -245,9 +279,10 @@ private fun ReviewProgress(snapshot: PresentationSnapshot, review: ExpeditionRev
 /** Named receipt groups remain readable on both success and failure. */
 @Composable
 private fun EquipmentGroup(title: String, items: List<String>, accent: Color, modifier: Modifier) {
-    Column(modifier.clip(RoundedCornerShape(16.dp)).border(1.dp, CompanionGlass.rim, RoundedCornerShape(16.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    // On an ink panel, not straight on the game's art, so every accent (red included) stays readable.
+    Column(modifier.inkPanel().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = accent)
-        if (items.isEmpty()) Text("None this adventure", fontSize = 14.sp, color = CompanionGlass.muted)
+        if (items.isEmpty()) Text("None this adventure", fontSize = 14.sp, color = fgInk300)
         items.forEach { Text(it.lowercase().replaceFirstChar { char -> char.uppercase() }, fontSize = 16.sp) }
     }
 }

@@ -13,7 +13,7 @@ Use `games/ember-tower/scripts/play-companions-glass.sh` in the game checkout to
 
 - `PresentationTypes.kt`: versioned wire types and validation.
 - `PresentationController.kt`: preview, confirm, retry and refresh state.
-- `CompanionGlass.kt`: shared palette and small companion portrait.
+- `CompanionGlass.kt`: game accent parsing (`glassColor`) and the small companion portrait. Interface colors, panels and Hovel Sans live in `ui/GlassTokens.kt`.
 - `CompanionPresentation.kt`: responsive screens and semantic controls.
 - `DesktopGames.kt`: the games this Mac launches (`GodotGame`, `DESKTOP_GAMES` under `HOVEL_GAMES_ROOT`) and the one place a launch's environment is built.
 - `DesktopGameHost.kt`: the game process and, for the companions game, its loopback session.

@@ -11,6 +11,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import org.formulagen.wrapper.ui.fgInk300
+import org.formulagen.wrapper.ui.fgInk900
 
 /** Interactive material study with no game process or progression save. */
 fun main() = application {
@@ -28,9 +30,9 @@ fun main() = application {
             }
         }
         MaterialTheme(colorScheme = darkColorScheme()) {
-            Column(Modifier.fillMaxSize().background(CompanionGlass.ink)) {
+            Column(Modifier.fillMaxSize().background(fgInk900)) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(result, Modifier.padding(vertical = 18.dp), color = CompanionGlass.muted)
+                    Text(result, Modifier.padding(vertical = 18.dp), color = fgInk300)
                     TextButton({ alternate = !alternate }) { Text("Change scene") }
                 }
                 Box(Modifier.weight(1f)) {
