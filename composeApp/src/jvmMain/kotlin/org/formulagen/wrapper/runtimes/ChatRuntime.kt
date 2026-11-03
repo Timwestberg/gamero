@@ -14,7 +14,6 @@ import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.conversation.TeamMember
 import org.formulagen.wrapper.providers.copy
-import org.formulagen.wrapper.workspace.EditListener
 
 /**
  * A runtime's own conversation with one role: Codex's thread id, Claude Code's session id or a Grok binding's handle.
@@ -86,6 +85,19 @@ internal data class WorkScope(val folders: ProjectFolders, val lease: String, va
     /** The working folder: where the member works and the only folder it may change. */
     val folder: Path get() = checkNotNull(folders.working)
 }
+
+/** Receives each file a working reply edits, as its runtime reports it. Null: no file named. */
+internal fun interface EditListener {
+    fun edited(path: Path?)
+
+    companion object {
+        /** Keeps nothing: a working turn without an edit record. */
+        val NONE = EditListener {}
+    }
+}
+
+/** Report the file a runtime named as text. Blank text, or text that is no path, is an edit without a file. */
+internal fun EditListener.reportEdit(raw: String?) = edited(raw?.takeIf { it.isNotBlank() }?.let { runCatching { Path.of(it) }.getOrNull() })
 
 /**
  * A project's folders on this Mac: the one [working] folder agents may edit (none for a talk-only

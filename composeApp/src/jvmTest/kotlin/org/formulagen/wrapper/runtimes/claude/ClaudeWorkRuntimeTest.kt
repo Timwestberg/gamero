@@ -24,7 +24,7 @@ import org.formulagen.wrapper.providers.ClaudeConnection
 import org.formulagen.wrapper.providers.ClaudeRuntime
 import org.formulagen.wrapper.providers.claudeWorkEnvironment
 import kotlin.test.*
-import org.formulagen.wrapper.workspace.EditListener
+import org.formulagen.wrapper.runtimes.EditListener
 import org.formulagen.wrapper.runtimes.claude.FakeClaudeWork.Companion.ask
 import org.formulagen.wrapper.runtimes.claude.FakeClaudeWork.Companion.cancel
 import org.formulagen.wrapper.runtimes.claude.FakeClaudeWork.Companion.emit

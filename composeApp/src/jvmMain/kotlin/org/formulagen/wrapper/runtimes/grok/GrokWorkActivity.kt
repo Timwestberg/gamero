@@ -4,12 +4,12 @@ import java.nio.file.Path
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.runtimes.ActivityLog
+import org.formulagen.wrapper.runtimes.EditListener
 import org.formulagen.wrapper.runtimes.WorkPaths
+import org.formulagen.wrapper.runtimes.reportEdit
 import org.formulagen.wrapper.conversation.Activity
 import org.formulagen.wrapper.conversation.ActivityKind
 import org.formulagen.wrapper.conversation.ActivityStatus
-import org.formulagen.wrapper.workspace.EditListener
-import org.formulagen.wrapper.workspace.reportEdit
 
 /**
  * Bounded work-turn folding; only current-session text and completed tool steps reach the page. A completed `edit`

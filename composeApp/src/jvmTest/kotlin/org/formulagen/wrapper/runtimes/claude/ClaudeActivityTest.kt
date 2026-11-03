@@ -5,7 +5,7 @@ import kotlin.test.*
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.conversation.ActivityKind
 import org.formulagen.wrapper.conversation.ActivityStatus
-import org.formulagen.wrapper.workspace.EditListener
+import org.formulagen.wrapper.runtimes.EditListener
 
 /** What a working Claude turn reports to its thread's edit record, from `stream-json` lines shaped as Claude Code 2.1.304 writes them. */
 class ClaudeActivityTest {

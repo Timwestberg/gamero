@@ -1,5 +1,6 @@
 package org.formulagen.wrapper.runtimes
 
+import java.nio.file.Files
 import java.nio.file.Path
 import org.formulagen.wrapper.util.shortened
 import org.formulagen.wrapper.conversation.Activity
@@ -41,26 +42,41 @@ internal class ActivityLog(private val paths: WorkPaths) {
  * and in free text (commands, outputs) the folder becomes `.` and the player's home folder `~`.
  */
 internal class WorkPaths(folder: Path, home: Path? = System.getProperty("user.home")?.let(Path::of)) {
+    /** The folder as the file system resolves it; null when it does not. */
+    private val real = runCatching { folder.toRealPath() }.getOrNull()
     /** The folder as given and as the file system resolves it (`/tmp` is `/private/tmp` on a Mac). */
-    private val folders = listOfNotNull(folder.toAbsolutePath().normalize(), runCatching { folder.toRealPath() }.getOrNull()).distinct()
+    private val folders = listOfNotNull(folder.toAbsolutePath().normalize(), real).distinct()
     private val homes = listOfNotNull(home?.toAbsolutePath()?.normalize(), home?.let { runCatching { it.toRealPath() }.getOrNull() }).distinct()
 
     /** [raw] (absolute, or relative to the folder) as the page sees it. */
     fun label(raw: String): String {
         val path = runCatching { Path.of(raw) }.getOrNull() ?: return scrub(raw)
-        val absolute = absolute(path)
-        return relative(absolute) ?: ("…/" + (absolute.fileName?.toString() ?: absolute.toString()))
+        val absolute = given(path).normalize()
+        return asGiven(absolute) ?: ("…/" + (absolute.fileName?.toString() ?: absolute.toString()))
     }
 
-    /** [path] (absolute, or relative to the folder) relative to the folder, the folder itself as `.`; null when it is outside. */
-    fun relative(path: Path): String? {
-        val absolute = absolute(path)
+    /**
+     * [path] (absolute, or relative to the folder) relative to the folder, the folder itself as `.`, or null when it is
+     * outside: the one rule for a path being inside the folder. What is on disk decides. The path's real path, or for a
+     * deleted file its nearest existing parent's with the rest added, must be under the folder's real path. Links are
+     * resolved before `..`, so `link/../a` is beside the link's target. Only when nothing on disk resolves does the
+     * path as given decide, as for [label].
+     */
+    fun inside(path: Path): String? {
+        val given = given(path)
+        val resolved = onDisk(given) ?: return asGiven(given.normalize())
+        val base = real ?: return null
+        return if (resolved.startsWith(base)) base.relativize(resolved).toString().ifEmpty { "." } else null
+    }
+
+    /** [path] made absolute against the folder as given. */
+    private fun given(path: Path): Path = if (path.isAbsolute) path else folders.first().resolve(path)
+
+    /** Normalized [absolute] relative to the folder as given or as it resolves, the folder itself as `.`; null outside both. */
+    private fun asGiven(absolute: Path): String? {
         for (base in folders) if (absolute.startsWith(base)) return base.relativize(absolute).toString().ifEmpty { "." }
         return null
     }
-
-    /** [path] made absolute against the folder as given, and normalized. */
-    fun absolute(path: Path): Path = (if (path.isAbsolute) path else folders.first().resolve(path)).normalize()
 
     /** Free text with the folder as `.` and the home folder as `~`, longest first, and only where a whole path ends. */
     fun scrub(text: String): String {
@@ -71,6 +87,23 @@ internal class WorkPaths(folder: Path, home: Path? = System.getProperty("user.ho
     }
 
     private fun whole(base: Path) = wholePath(base.toString())
+
+    /**
+     * Absolute [path] as the file system resolves it, each link before the `..` after it: its real path, or its nearest
+     * existing parent's with the rest of [path] added. That rest exists nowhere, so its `..` apply by name, and what they
+     * lead back to is resolved again. Null when no part of [path] resolves.
+     */
+    private fun onDisk(path: Path): Path? {
+        for (existing in generateSequence(path) { it.parent }) {
+            if (!Files.exists(existing)) continue
+            val resolved = runCatching { existing.toRealPath() }.getOrNull() ?: continue
+            if (existing.nameCount == path.nameCount) return resolved
+            val rest = path.subpath(existing.nameCount, path.nameCount)
+            val joined = resolved.resolve(rest).normalize()
+            return if (rest.normalize() == rest) joined else onDisk(joined)
+        }
+        return null
+    }
 }
 
 /**

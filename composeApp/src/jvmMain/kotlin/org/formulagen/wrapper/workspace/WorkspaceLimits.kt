@@ -13,18 +13,26 @@ internal data class LimitSetting(val default: Int, val min: Int, val max: Int) {
     fun resolve(value: Int?): Int = value?.takeIf { it in min..max } ?: default
 }
 
-/** The synced limits. A fixture test fails when these differ from `WORKSPACE_LIMITS`. */
+/**
+ * The synced limits, mirroring `WORKSPACE_LIMITS`. No test pins them to it yet: that fixture test lands once the
+ * contracts PR's `HostBridgeFixtures.LIMITS` is on main.
+ */
 internal object WorkspaceSettingsLimits {
     const val TABS = 8
     val THREAD_FILES = LimitSetting(default = 500, min = 50, max = 2_000)
     val PROJECT_THREADS = LimitSetting(default = 200, min = 20, max = 1_000)
 }
 
-/** The history limits in force for one account, resolved from its profile. */
-internal data class WorkspaceLimits(val threadFiles: Int, val projectThreads: Int) {
+/** The history limits in force for one account, resolved from its profile. Only [of] makes them, so each is in range. */
+@ConsistentCopyVisibility
+internal data class WorkspaceLimits private constructor(val threadFiles: Int, val projectThreads: Int) {
     companion object {
+        /** The limits in force for an account's raw settings, each through [LimitSetting.resolve]: missing or out of range is the default. */
+        fun of(threadFiles: Int?, projectThreads: Int?) = WorkspaceLimits(
+            WorkspaceSettingsLimits.THREAD_FILES.resolve(threadFiles), WorkspaceSettingsLimits.PROJECT_THREADS.resolve(projectThreads))
+
         /** The limits of an account with no history settings, which is every account until profile sync exists. */
-        val DEFAULTS = WorkspaceLimits(WorkspaceSettingsLimits.THREAD_FILES.default, WorkspaceSettingsLimits.PROJECT_THREADS.default)
+        val DEFAULTS = of(threadFiles = null, projectThreads = null)
     }
 }
 

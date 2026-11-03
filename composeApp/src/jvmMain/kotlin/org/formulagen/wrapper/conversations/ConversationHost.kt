@@ -79,14 +79,14 @@ internal class ConversationHost(
         val owned = mutableListOf<AutoCloseable>(store)
         try {
             // Closed after the runtimes, so their last edits are written.
-            val edits = ThreadEditStore(providerRoot, registration.ownerId).also { owned += it }
+            val editStore = ThreadEditStore(providerRoot, registration.ownerId).also { owned += it }
             val approvals = RemoteApprovals(dialogs, api, registration.id)
             // The account's live bindings: the runtimes prune only what no conversation can resume.
             val retained = { store.bindingHandles() }
             val talkRuntimes = talk(retained).also { owned += it }
             val workRuntimes = work(approvals, retained).also { owned += it }
             val turns = ProviderTurns(talkRuntimes, workRuntimes, providers, approvals)
-            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), api, edits)
+            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), api, editStore)
             val publisher = ProjectFolderPublisher(folders, api, registration.ownerId, registration.id, engine::readableBy)
             val directory = HostDirectory(providers, registration.id, offered,
                 working.intersect(workRuntimes.map { it.id }.toSet()), connection.features)

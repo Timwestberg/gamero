@@ -23,6 +23,7 @@ import org.formulagen.wrapper.conversation.TeamMember
 import org.formulagen.wrapper.runtimes.ActivityLog
 import org.formulagen.wrapper.runtimes.ChatFailure
 import org.formulagen.wrapper.runtimes.ContextFolderSupport
+import org.formulagen.wrapper.runtimes.EditListener
 import org.formulagen.wrapper.runtimes.Readiness
 import org.formulagen.wrapper.runtimes.ReplyText
 import org.formulagen.wrapper.runtimes.TurnEvents
@@ -32,6 +33,7 @@ import org.formulagen.wrapper.runtimes.WorkPaths
 import org.formulagen.wrapper.runtimes.WorkRuntime
 import org.formulagen.wrapper.runtimes.claude.WORK_LINE_LIMIT
 import org.formulagen.wrapper.runtimes.codexFailure
+import org.formulagen.wrapper.runtimes.reportEdit
 import org.formulagen.wrapper.util.loggingDaemonThreads
 import org.formulagen.wrapper.providers.CodexAppServer
 import org.formulagen.wrapper.providers.CodexRequestRejected
@@ -39,8 +41,6 @@ import org.formulagen.wrapper.providers.CodexRuntime
 import org.formulagen.wrapper.providers.StdioCodexAppServer
 import org.formulagen.wrapper.providers.codexAccountStatus
 import org.formulagen.wrapper.util.text
-import org.formulagen.wrapper.workspace.EditListener
-import org.formulagen.wrapper.workspace.reportEdit
 
 /**
  * Codex working in a companion's project folder with the player's own Codex (default home, their
@@ -96,7 +96,7 @@ internal class CodexWorkRuntime(
         }
         // A release or close while it started: it ends now, and the chat has ended the turn already.
         if (closed || epoch.get() != started) { connections.remove(work.lease, connection); connection.close(); events.failed(ChatFailure.Temporary); return TurnHandle {} }
-        return connection.turn(turn, work.member, model, events)
+        return connection.turn(turn, work.member, work.edits, model, events)
     }
 
     /** End [lease]'s app-server: its pending approvals are cancelled. Other leases keep theirs. */
@@ -124,7 +124,7 @@ internal class CodexWorkRuntime(
         private val items = ConcurrentHashMap<String, JsonObject>()
         @Volatile private var member: TeamMember? = null
 
-        fun turn(request: TurnRequest, member: TeamMember, model: String?, events: TurnEvents): TurnHandle {
+        fun turn(request: TurnRequest, member: TeamMember, edits: EditListener, model: String?, events: TurnEvents): TurnHandle {
             this.member = member
             val account = runCatching { codexAccountStatus(rpc.call("account/read", buildJsonObject { put("refreshToken", false) })["account"]) }.getOrNull()
             if (account?.state != ProviderState.CONNECTED) { events.failed(ChatFailure.SignedOut); return TurnHandle {} }
@@ -143,7 +143,7 @@ internal class CodexWorkRuntime(
                 if (id != saved) events.opened(id)
                 id
             }
-            val turn = Turn(threadId, events, CodexActivity(paths, checkNotNull(request.work).edits))
+            val turn = Turn(threadId, events, CodexActivity(paths, edits))
             current = turn
             if (!open) { later { turn.fail(ChatFailure.Temporary) }; return TurnHandle {} }
             events.activity(turn.activity.activity())

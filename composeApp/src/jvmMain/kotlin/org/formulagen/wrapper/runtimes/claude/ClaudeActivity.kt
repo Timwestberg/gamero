@@ -6,10 +6,10 @@ import org.formulagen.wrapper.conversation.Activity
 import org.formulagen.wrapper.conversation.ActivityKind
 import org.formulagen.wrapper.conversation.ActivityStatus
 import org.formulagen.wrapper.runtimes.ActivityLog
+import org.formulagen.wrapper.runtimes.EditListener
 import org.formulagen.wrapper.runtimes.WorkPaths
+import org.formulagen.wrapper.runtimes.reportEdit
 import org.formulagen.wrapper.util.text
-import org.formulagen.wrapper.workspace.EditListener
-import org.formulagen.wrapper.workspace.reportEdit
 
 /**
  * A working Claude turn's activity, from its `stream-json` lines (abilities spike, 2026-10-28):

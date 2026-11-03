@@ -7,7 +7,7 @@ import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.conversation.Activity
 import org.formulagen.wrapper.conversation.ActivityLimits
 import org.formulagen.wrapper.conversation.ActivityStatus
-import org.formulagen.wrapper.workspace.EditListener
+import org.formulagen.wrapper.runtimes.EditListener
 
 class GrokWorkActivityTest {
     @Test fun aLongWorkTurnCanRunAnyNumberOfToolsWithBoundedMemoryAndActivity() {

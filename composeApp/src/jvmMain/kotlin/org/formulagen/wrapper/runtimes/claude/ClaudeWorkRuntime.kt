@@ -27,6 +27,7 @@ import org.formulagen.wrapper.runtimes.ClaudeEvent
 import org.formulagen.wrapper.runtimes.ClaudeFailures
 import org.formulagen.wrapper.runtimes.ClaudeStream
 import org.formulagen.wrapper.runtimes.ContextFolderSupport
+import org.formulagen.wrapper.runtimes.EditListener
 import org.formulagen.wrapper.runtimes.Persona
 import org.formulagen.wrapper.runtimes.Readiness
 import org.formulagen.wrapper.runtimes.TurnEvents
@@ -50,7 +51,6 @@ import org.formulagen.wrapper.providers.ClaudeConnection
 import org.formulagen.wrapper.providers.ClaudeRuntime
 import org.formulagen.wrapper.providers.claudeWorkEnvironment
 import org.formulagen.wrapper.util.text
-import org.formulagen.wrapper.workspace.EditListener
 
 /**
  * Claude Code working in a project's working folder, with exactly the player's own setup: one

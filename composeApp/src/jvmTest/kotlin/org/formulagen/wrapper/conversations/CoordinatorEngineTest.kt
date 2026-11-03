@@ -43,8 +43,8 @@ class CoordinatorEngineTest {
         val turns = ProviderTurns(listOf(chat), listOf(worker), ConnectedProviders(), approvals)
         val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), server)
 
-        /** An engine on this fixture's account that keeps thread edit records in [edits]. */
-        fun engine(edits: ThreadEditStore) = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), server, edits)
+        /** An engine on this fixture's account that keeps thread edit records in [editStore]. */
+        fun engine(editStore: ThreadEditStore) = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), server, editStore)
 
         init {
             if (workingFolder) { picked = working; folders.choose(account, talk.projectId, FolderRole.WORKING) }
@@ -413,8 +413,8 @@ Mobile first from here.""" }
 
     @Test fun aThreadWhoseAgentEditsFilesAcrossTwoRepliesListsEveryOne() {
         val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
-        val edits = ThreadEditStore(fixture.root, fixture.account)
-        val engine = fixture.engine(edits)
+        val editStore = ThreadEditStore(fixture.root, fixture.account)
+        val engine = fixture.engine(editStore)
         fixture.delegateThenAnswer()
         fixture.worker.reply = { turn ->
             turn.work!!.edits.run { edited(fixture.working.resolve("src/sign-in.ts")); edited(Path.of("src/app.ts")) }
@@ -429,7 +429,7 @@ Mobile first from here.""" }
         }
         assertEquals(MessageState.ANSWERED, fixture.send("Use the blue button", threadId, engine = engine))
         assertEquals(listOf(threadId, threadId), fixture.worker.requests.map { it.work!!.lease }, "two replies in one thread")
-        edits.close()
+        editStore.close()
         val record = assertNotNull(ThreadEditStore(fixture.root, fixture.account).use { it.read(fixture.talk.projectId, threadId) })
         assertEquals(listOf("src/sign-in.ts", "src/app.ts", "styles/button.css"), record.files, "every file of both replies, once, inside the folder")
         assertEquals(emptySet(), record.gaps, "the thread's first reply opened its record")
@@ -442,11 +442,32 @@ Mobile first from here.""" }
         // The first reply runs before this Mac keeps edit records.
         assertEquals(MessageState.ANSWERED, fixture.send("Add sign-in"))
         val threadId = fixture.server.threads().last().id
-        val edits = ThreadEditStore(fixture.root, fixture.account)
+        val editStore = ThreadEditStore(fixture.root, fixture.account)
         fixture.decide = { """{"kind":"forward","threadId":"$threadId","note":"Match the design docs"}""" }
         fixture.worker.reply = { turn -> turn.work!!.edits.edited(Path.of("src/app.ts")); "Changed the button to blue." }
-        assertEquals(MessageState.ANSWERED, fixture.send("Use the blue button", threadId, engine = fixture.engine(edits)))
-        edits.close()
+        assertEquals(MessageState.ANSWERED, fixture.send("Use the blue button", threadId, engine = fixture.engine(editStore)))
+        editStore.close()
+        val record = assertNotNull(ThreadEditStore(fixture.root, fixture.account).use { it.read(fixture.talk.projectId, threadId) })
+        assertEquals(listOf("src/app.ts"), record.files)
+        assertEquals(setOf(EditGap.EARLIER_REPLIES), record.gaps)
+    }
+
+    @Test fun aThreadWhoseLostProviderConversationWasDroppedStillCountsItsEarlierReplies() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        fixture.delegateThenAnswer()
+        // The first reply runs before this Mac keeps edit records; then the provider loses the thread's conversation.
+        assertEquals(MessageState.ANSWERED, fixture.send("Add sign-in"))
+        val threadId = fixture.server.threads().last().id
+        fixture.decide = { """{"kind":"forward","threadId":"$threadId","note":"Match the design docs"}""" }
+        fixture.worker.failure = ChatFailure.ConversationLost
+        assertEquals(MessageState.FAILED, fixture.send("Use the blue button", threadId))
+        assertFalse(threadId in fixture.record().threadContexts, "the lost conversation is dropped")
+        assertEquals(1, fixture.record().threads.getValue(threadId).outputs.size, "the first reply's output stays")
+        val editStore = ThreadEditStore(fixture.root, fixture.account)
+        fixture.worker.reply = { turn -> turn.work!!.edits.edited(Path.of("src/app.ts")); "Changed the button to blue." }
+        assertEquals(MessageState.ANSWERED, fixture.send("Use the blue button", threadId, engine = fixture.engine(editStore)))
+        assertNull(fixture.worker.requests.last().conversation, "the reply starts a new provider conversation")
+        editStore.close()
         val record = assertNotNull(ThreadEditStore(fixture.root, fixture.account).use { it.read(fixture.talk.projectId, threadId) })
         assertEquals(listOf("src/app.ts"), record.files)
         assertEquals(setOf(EditGap.EARLIER_REPLIES), record.gaps)
