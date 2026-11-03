@@ -117,8 +117,12 @@ internal class WorkspaceWindows(private val confirmer: Confirmer = SheetConfirme
                     val question = Confirmations.quit(appName, busy) ?: return@onAwt exit()
                     val owner = open[busy.indexOfFirst { it.tabs.isNotEmpty() }]
                     owner.bringForward()
-                    if (confirmer.confirm(owner.awtWindow, question)) exit() else kept()
-                } finally { quitting = false }
+                    if (confirmer.confirm(owner.awtWindow, question)) exit()
+                } finally {
+                    quitting = false
+                    // Kept, or the question failed.
+                    if (!exiting) kept()
+                }
             }
         }
     }
@@ -126,7 +130,7 @@ internal class WorkspaceWindows(private val confirmer: Confirmer = SheetConfirme
     /** The app's exit has started, by any path: later quit requests are ignored. Any thread. */
     fun exitStarted() { exiting = true }
 
-    /** The person kept the app: every quit request waiting on the question is cancelled. */
+    /** The app stays: every quit request waiting on the question is cancelled. */
     private fun kept() {
         val cancels = pendingCancels.toList()
         pendingCancels.clear()

@@ -284,6 +284,21 @@ class WorkspaceWindowsTest {
         assertEquals(11, cancels, "Quit leaves the system's request to the exit")
     }
 
+    @Test fun aQuestionThatFailsCancelsTheSystemsQuit() {
+        val failing = WorkspaceWindows(confirmer = { _, _ -> error("sheet boom") }) { host }
+        try {
+            onAwtNow { failing.open(folder) }.also { running(it, 1) }
+            host.sessions.last().busy = Busy.Running("make")
+            var quits = 0
+            var cancels = 0
+            EventQueue.invokeAndWait { failing.confirmQuit("Hovel", onCancel = { cancels++ }) { quits++ } }
+            eventually("cancelled") { cancels == 1 }
+            assertEquals(0, quits, "a failed question keeps the app, and answers the system")
+        } finally {
+            failing.close()
+        }
+    }
+
     @Test fun withNothingBusyTheSystemsQuitIsNotCancelled() {
         open().also { running(it, 1) }
         var quits = 0
