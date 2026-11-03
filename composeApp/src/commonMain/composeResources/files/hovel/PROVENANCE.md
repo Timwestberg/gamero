@@ -10,9 +10,9 @@ recorded there; the SHA-256 values below match that repository's manifests.
 | `drawable/hovel_room_shell.png` | `environment/starter_v1/hovel_room_shell.png` | `6a5c41bc75033b8efb530826b008195dcbe262527bc428e4da3ffed7c4329963` |
 | `drawable/hovel_furniture_sheet.png` | `environment/starter_v1/hovel_furniture_sheet.png` | `a778c7e0cbb564a36a9321e4161e074ca3e71cf488e153f9a78b09be73fbbde2` |
 
-`font/pixelify_sans.ttf` is Pixelify Sans from `google/fonts` (`ofl/pixelifysans`), the
-display face the Hovel web host loads. It is licensed under the SIL Open Font
-License 1.1; see `files/hovel/pixelify_sans_OFL.txt`.
+`font/pixelify_sans.ttf` is Pixelify Sans from `google/fonts` (`ofl/pixelifysans`).
+No interface text uses it; it stays as a candidate face for the Hovel logo. It is
+licensed under the SIL Open Font License 1.1; see `files/hovel/pixelify_sans_OFL.txt`.
 
 `drawable/hovel_robot.png` is a transparent Godot Compatibility render of the shared
 Ember robot in game-platform commit `e9929a07da1d6e7a1d09758ed740155d91dc4c35`,
