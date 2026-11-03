@@ -1,6 +1,7 @@
 package org.formulagen.wrapper.workspace
 
 import com.sun.jna.Library
+import com.sun.jna.Memory
 import com.sun.jna.Native
 import java.io.File
 import java.io.IOException
@@ -17,8 +18,9 @@ import org.formulagen.wrapper.storage.privateFolder
 import org.formulagen.wrapper.util.shortened
 
 /*
- * The pieces [PtySession.busy] asks with: a terminal's foreground process group, Neovim's own answer
- * on its `--listen` socket, and a short name for a running program. See [Session.busy] for the rules.
+ * The pieces [PtySession.busy] asks with: a terminal's foreground process group, whether a process is
+ * stopped, Neovim's own answer on its `--listen` socket, and a short name for a running program. See
+ * [Session.busy] for the rules.
  */
 
 private const val TAG = "workspace-busy"
@@ -124,21 +126,62 @@ class EditorSockets(private val folder: Path) {
     }
 }
 
-private interface Termios : Library {
+/** The two libSystem calls a Shell tab's busy check makes. */
+private interface LibSystem : Library {
+    /** The foreground process group of the terminal open on [fd]. */
     fun tcgetpgrp(fd: Int): Int
+
+    /** libproc's process information: [flavor] [PROC_PIDTBSDINFO] fills a `proc_bsdinfo`. */
+    fun proc_pidinfo(pid: Int, flavor: Int, arg: Long, buffer: Memory, size: Int): Int
 }
 
-/** libc through JNA, which pty4j already loads. Null when it cannot be loaded: callers fall back. */
-private val termios: Termios? by lazy {
-    try { Native.load("c", Termios::class.java) } catch (error: Throwable) {
+/** `PROC_PIDTBSDINFO` (`sys/proc_info.h`). */
+private const val PROC_PIDTBSDINFO = 3
+
+/** `sizeof(struct proc_bsdinfo)` in the macOS SDK. */
+private const val PROC_BSDINFO_BYTES = 136
+
+/** `offsetof(struct proc_bsdinfo, pbi_status)`. */
+private const val PBI_STATUS_OFFSET = 4L
+
+/** `SSTOP` (`sys/proc.h`): stopped by a signal, such as ⌃Z's SIGTSTP. */
+private const val SSTOP = 4
+
+/** libSystem through JNA, which pty4j already loads. Null when it cannot be loaded: callers fall back to busy. */
+private val libSystem: LibSystem? by lazy {
+    try { Native.load("c", LibSystem::class.java) } catch (error: Throwable) {
         rethrowIfFatal(error)
-        log(LogLevel.Warn, TAG, "Could not load tcgetpgrp; Shell tabs count any child as busy", error)
+        log(LogLevel.Warn, TAG, "Could not load libSystem; Shell tabs count any child as busy", error)
         null
     }
 }
 
 /** `tcgetpgrp` on a pseudo-terminal's master [fd]: its foreground process group, or null on failure. */
-internal fun foregroundProcessGroup(fd: Int): Long? = termios?.tcgetpgrp(fd)?.takeIf { it > 0 }?.toLong()
+internal fun foregroundProcessGroup(fd: Int): Long? = try {
+    libSystem?.tcgetpgrp(fd)?.takeIf { it > 0 }?.toLong()
+} catch (error: Throwable) {
+    rethrowIfFatal(error)
+    null
+}
+
+/** Whether [process] is stopped; null when its state cannot be read, which callers count as busy. */
+internal fun isStopped(process: ProcessHandle): Boolean? {
+    val calls = libSystem ?: return null
+    return try {
+        Memory(PROC_BSDINFO_BYTES.toLong()).use { info ->
+            val read = calls.proc_pidinfo(process.pid().toInt(), PROC_PIDTBSDINFO, 0, info, PROC_BSDINFO_BYTES)
+            when {
+                read == PROC_BSDINFO_BYTES -> info.getInt(PBI_STATUS_OFFSET) == SSTOP
+                // Gone in the meantime: nothing to lose.
+                !process.isAlive -> false
+                else -> null
+            }
+        }
+    } catch (error: Throwable) {
+        rethrowIfFatal(error)
+        null
+    }
+}
 
 /** Interpreters whose first argument is the script that names the program. */
 private val INTERPRETERS = Regex("node|bun|deno|ruby|perl|php|python[0-9.]*|sh|bash|zsh|dash|fish")

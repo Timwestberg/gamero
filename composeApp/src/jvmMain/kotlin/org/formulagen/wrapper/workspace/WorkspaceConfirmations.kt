@@ -45,6 +45,7 @@ internal object Confirmations {
     /** One sentence naming what closing would end. */
     fun reason(busy: Busy): String = when (busy) {
         is Busy.Running -> "“${busy.command}” is running"
+        is Busy.Stopped -> "“${busy.command}” is suspended"
         is Busy.Unsaved ->
             if (busy.files.isEmpty()) "${busy.editor} has unsaved changes" else "${busy.editor} has unsaved changes in ${busy.files.joinToString(", ")}"
         is Busy.EditorTerminal -> "${busy.editor} has a terminal running"

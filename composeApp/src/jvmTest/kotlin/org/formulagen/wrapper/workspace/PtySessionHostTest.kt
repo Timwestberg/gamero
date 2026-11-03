@@ -172,10 +172,35 @@ class PtySessionHostTest {
         assertNull(awaitBusy(shell) { it == null }, "back at the prompt")
     }
 
+    @Test fun aSuspendedJobKeepsAShellTabBusy() {
+        val (shell, keys) = interactiveShell()
+        keys.input("sleep 30\r".toByteArray())
+        assertEquals(Busy.Running("sleep 30"), awaitBusy(shell) { it != null })
+        keys.input(byteArrayOf(0x1a))
+        assertEquals(Busy.Stopped("sleep 30"), awaitBusy(shell) { it is Busy.Stopped }, "⌃Z: the shell has the terminal back, the job waits")
+        keys.input("fg\r".toByteArray())
+        assertEquals(Busy.Running("sleep 30"), awaitBusy(shell) { it is Busy.Running })
+        keys.input(byteArrayOf(0x03))
+        assertNull(awaitBusy(shell) { it == null }, "back at the prompt with no job")
+        // The reported case: an editor suspends itself on ⌃Z, from raw mode.
+        keys.input("vi -n -u NONE -i NONE notes.txt\r".toByteArray())
+        assertEquals(Busy.Running("vi -n -u NONE -i NONE notes.txt"), awaitBusy(shell) { it != null })
+        keys.input("ihello\u001b".toByteArray())
+        keys.input(byteArrayOf(0x1a))
+        assertEquals(Busy.Stopped("vi -n -u NONE -i NONE notes.txt"), awaitBusy(shell) { it is Busy.Stopped })
+    }
+
     @Test fun aShellReplacedByExecIsTheProgramThatReplacedIt() {
         val (shell, keys) = interactiveShell()
         keys.input("exec sleep 32\r".toByteArray())
         assertEquals(Busy.Running("sleep 32"), awaitBusy(shell) { it != null })
+    }
+
+    @Test fun aShellReplacedByAProgramItCannotReadIsBusy() {
+        // Like `exec sudo -s`: a setuid program's command line cannot be read. login waits at its prompt.
+        val (shell, keys) = interactiveShell()
+        keys.input("exec /usr/bin/login\r".toByteArray())
+        assertEquals(Busy.Running("a program"), awaitBusy(shell) { it != null })
     }
 
     @Test fun promptHelpersDoNotMakeAShellTabBusy() {

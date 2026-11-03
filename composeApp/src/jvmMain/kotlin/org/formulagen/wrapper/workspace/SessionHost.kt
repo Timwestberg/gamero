@@ -48,6 +48,9 @@ sealed interface Busy {
     /** A program the player started: a Shell tab's foreground job, or a child of a tool. */
     data class Running(val command: String) : Busy
 
+    /** A job the player suspended in a Shell tab (⌃Z): closing the tab ends it. */
+    data class Stopped(val command: String) : Busy
+
     /** An editor with modified buffers. [files] names some of them: none when they are unnamed. */
     data class Unsaved(val editor: String, val files: List<String>) : Busy
 

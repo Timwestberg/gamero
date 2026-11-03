@@ -90,7 +90,8 @@ Apple Silicon only ([release.md](release.md#desktop)).
 - **Nothing is lost without asking.** Closing a tab (⌘W or ×), closing the window, and
   quitting (⌘Q, or closing the main window) ask first, in a sheet on the workspace window,
   when a tab is busy, and name what runs:
-  - a Shell tab is busy while a foreground job runs (`npm run dev`); background jobs and
+  - a Shell tab is busy while a foreground job runs (`npm run dev`), and while a job it
+    suspended with ⌃Z waits (“vim notes.txt” is suspended); running background jobs and
     prompt helpers such as powerlevel10k's `gitstatusd` are not;
   - Neovim is busy while a buffer is modified or its `:terminal` runs a job. Each Neovim tab
     listens on a socket in `~/Library/Caches/org.formulagen.wrapper/workspace/nvim/`; Hovel

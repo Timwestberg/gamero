@@ -140,7 +140,8 @@ internal class PtySession(
     /**
      * By tab kind (project-workspace.ARCH.md, "Sessions and the terminal"):
      * - a Shell tab is busy while its terminal's foreground process group is not the shell's own, so
-     *   background jobs and prompt helpers (powerlevel10k's `gitstatusd`, zsh-async workers) do not count;
+     *   background jobs and prompt helpers (powerlevel10k's `gitstatusd`, zsh-async workers) do not count,
+     *   and while a descendant is stopped (a job suspended with ⌃Z), or its state cannot be read;
      * - Neovim is busy while a buffer is modified or its `:terminal` runs a job, as it answers on its
      *   `--listen` socket; no answer in time counts as busy. Its LSP servers and its own
      *   `nvim --embed` server are descendants, so the descendant rule cannot be used for it;
@@ -155,23 +156,25 @@ internal class PtySession(
                 is Launch.Tool -> if (launch.isEditor()) editorState(launch.tool.label) else toolChild()
                 is Launch.Diff -> toolChild()
             }
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
+            rethrowIfFatal(error)
             log(LogLevel.Warn, TAG, "Could not tell whether $name is busy", error)
             Busy.NoAnswer(spec.title)
         }
     }
 
     /**
-     * The foreground job of a Shell tab; when the terminal cannot be asked, any live child, as before.
-     * A shell replaced by `exec` with something that is not a shell is that program. (`/bin/sh`
-     * itself re-executes another shell on a Mac, so the check is by name, not by path.)
+     * The foreground job of a Shell tab, else a job it suspended; when the terminal cannot be asked,
+     * any live child. A shell replaced by `exec` with something that is not a shell is that program
+     * (by name: `/bin/sh` re-executes another shell on a Mac); one whose name cannot be read, such as
+     * `exec sudo -s`, is a program too.
      */
     private fun foregroundJob(): Busy? {
         val group = foregroundGroup() ?: return anyChild()
         if (group == process.pid()) {
             val root = tree.toHandle()
-            val running = root.info().command().orElse(null)?.let { File(it).name } ?: return null
-            return if (running in SHELL_NAMES || running == File(executable).name) null else Busy.Running(describe(root))
+            val running = root.info().command().orElse(null)?.let { File(it).name } ?: return Busy.Running(describe(root))
+            return if (running in SHELL_NAMES || running == File(executable).name) suspendedJob() else Busy.Running(describe(root))
         }
         // The job's leader names it best. It may have exited while the rest of its group runs on.
         val program = ProcessHandle.of(group).filter(ProcessHandle::isAlive).orElse(null) ?: firstChild { true } ?: return null
@@ -185,6 +188,12 @@ internal class PtySession(
     }
 
     private fun anyChild(): Busy? = firstChild { true }?.let { Busy.Running(describe(it)) }
+
+    /** A stopped descendant, or one whose state cannot be read; daemons and prompt helpers are never stopped. */
+    private fun suspendedJob(): Busy? {
+        val child = firstChild { isStopped(it) != false } ?: return null
+        return if (isStopped(child) == true) Busy.Stopped(describe(child)) else Busy.Running(describe(child))
+    }
 
     private fun toolChild(): Busy? {
         val tool = commandOf(tree.toHandle())
