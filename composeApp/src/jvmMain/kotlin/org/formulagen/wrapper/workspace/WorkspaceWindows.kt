@@ -17,9 +17,6 @@ import org.formulagen.wrapper.util.loggingDaemonThreads
 
 private const val TAG = "workspace-windows"
 
-/** Tabs per window. Moves to `WorkspaceSettingsLimits.TABS` when `WorkspaceLimits.kt` lands. */
-private const val MAX_TABS = 8
-
 /** The size a tab's process starts at. JediTerm resizes it to the pane as soon as it lays out. */
 private val INITIAL_SIZE = TermSize(columns = 100, rows = 30)
 
@@ -108,7 +105,7 @@ internal class WorkspaceWindowState(
 
     fun bringForward() { frontRequests++ }
 
-    val canAddTab: Boolean get() = tabs.size < MAX_TABS
+    val canAddTab: Boolean get() = tabs.size < WorkspaceSettingsLimits.TABS
 
     fun addTab(launch: Launch): WorkspaceTab? {
         if (!canAddTab) return null

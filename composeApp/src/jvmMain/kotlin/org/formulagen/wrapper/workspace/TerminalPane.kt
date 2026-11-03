@@ -34,12 +34,9 @@ import org.formulagen.wrapper.util.loggingDaemonThreads
 
 private const val TAG = "workspace-terminal"
 
-/** Scrollback per terminal tab. Moves to `WorkspaceGuards.SCROLLBACK_LINES` when `WorkspaceLimits.kt` lands. */
-private const val SCROLLBACK_LINES = 10_000
-
 /** JediTerm's settings for workspace tabs: Hovel's colors, the scrollback guard, mouse reporting, ⌘C and ⌘V. */
 internal open class HovelTerminalSettings : DefaultSettingsProvider() {
-    override fun getBufferMaxLinesCount(): Int = SCROLLBACK_LINES
+    override fun getBufferMaxLinesCount(): Int = WorkspaceGuards.SCROLLBACK_LINES
     override fun enableMouseReporting(): Boolean = true
     override fun getDefaultForeground(): TerminalColor = terminalColor(fgInk300.toArgb())
     override fun getDefaultBackground(): TerminalColor = terminalColor(fgInk950.toArgb())
