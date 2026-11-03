@@ -1,5 +1,8 @@
 package org.formulagen.wrapper.ui
 
+import androidx.compose.material3.Typography
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -7,7 +10,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.LinearGradientShader
 import androidx.compose.ui.graphics.Shader
 import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import org.jetbrains.compose.resources.Font
+import westbergwrapper.composeapp.generated.resources.Res
+import westbergwrapper.composeapp.generated.resources.hovel_sans_black
+import westbergwrapper.composeapp.generated.resources.hovel_sans_bold
+import westbergwrapper.composeapp.generated.resources.hovel_sans_bold_italic
+import westbergwrapper.composeapp.generated.resources.hovel_sans_heavy
+import westbergwrapper.composeapp.generated.resources.hovel_sans_italic
+import westbergwrapper.composeapp.generated.resources.hovel_sans_medium
+import westbergwrapper.composeapp.generated.resources.hovel_sans_regular
+import westbergwrapper.composeapp.generated.resources.hovel_sans_semibold
 
 // Hovel's Liquid Glass tokens, named after the web host's custom properties in
 // game-platform/apps/game-bridge-host/src/components/liquid-glass/glass.css.
@@ -43,3 +61,40 @@ internal val brandGradient: Brush = object : ShaderBrush() {
         return LinearGradientShader(center - Offset(reach, reach), center + Offset(reach, reach), listOf(fgGreen500, fgBlue500))
     }
 }
+
+/**
+ * `font-sans`: Hovel Sans, a self-hosted Latin subset of Lato 2.015, so interface text
+ * renders the same on every OS. The web serves the same subset; see files/hovel/PROVENANCE.md.
+ */
+internal val hovelSans: FontFamily
+    @Composable get() = FontFamily(
+        Font(Res.font.hovel_sans_regular, FontWeight.Normal),
+        Font(Res.font.hovel_sans_italic, FontWeight.Normal, FontStyle.Italic),
+        Font(Res.font.hovel_sans_medium, FontWeight.Medium),
+        Font(Res.font.hovel_sans_semibold, FontWeight.SemiBold),
+        Font(Res.font.hovel_sans_bold, FontWeight.Bold),
+        Font(Res.font.hovel_sans_bold_italic, FontWeight.Bold, FontStyle.Italic),
+        Font(Res.font.hovel_sans_heavy, FontWeight.ExtraBold),
+        Font(Res.font.hovel_sans_black, FontWeight.Black),
+    )
+
+/** Material's type scale with every style set in Hovel Sans. */
+@Composable
+internal fun hovelTypography(): Typography {
+    val family = hovelSans
+    return remember(family) {
+        fun TextStyle.inHovelSans() = copy(fontFamily = family)
+        with(Typography()) {
+            copy(
+                displayLarge = displayLarge.inHovelSans(), displayMedium = displayMedium.inHovelSans(), displaySmall = displaySmall.inHovelSans(),
+                headlineLarge = headlineLarge.inHovelSans(), headlineMedium = headlineMedium.inHovelSans(), headlineSmall = headlineSmall.inHovelSans(),
+                titleLarge = titleLarge.inHovelSans(), titleMedium = titleMedium.inHovelSans(), titleSmall = titleSmall.inHovelSans(),
+                bodyLarge = bodyLarge.inHovelSans(), bodyMedium = bodyMedium.inHovelSans(), bodySmall = bodySmall.inHovelSans(),
+                labelLarge = labelLarge.inHovelSans(), labelMedium = labelMedium.inHovelSans(), labelSmall = labelSmall.inHovelSans(),
+            )
+        }
+    }
+}
+
+/** Tracking for titles, as on the web's `.auth-card__title`: −0.03em at the 800 weight. */
+internal val titleTracking = (-0.03).em

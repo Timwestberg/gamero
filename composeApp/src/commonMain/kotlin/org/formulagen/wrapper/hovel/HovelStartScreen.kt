@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -51,6 +52,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -68,7 +70,9 @@ import org.formulagen.wrapper.ui.fgInk950
 import org.formulagen.wrapper.ui.fgRed400
 import org.formulagen.wrapper.ui.fgWhite
 import org.formulagen.wrapper.ui.glassEdge
+import org.formulagen.wrapper.ui.hovelSans
 import org.formulagen.wrapper.ui.radiusPanel
+import org.formulagen.wrapper.ui.titleTracking
 import org.jetbrains.compose.resources.imageResource
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import westbergwrapper.composeapp.generated.resources.Res
@@ -286,34 +290,38 @@ private fun KeeperPanel(
     enabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier) {
-        Text("Hovel", color = fgWhite, fontSize = 56.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.graphicsLayer { alpha = titleReveal() })
-        Spacer(Modifier.height(4.dp))
-        Text("Make yourself at home.", color = fgInk300, fontSize = 17.sp)
-        Spacer(Modifier.height(if (compact) 24.dp else 28.dp))
-        val buttonModifier = if (compact) Modifier.fillMaxWidth() else Modifier
-        when (state) {
-            is HovelStartState.Ready -> {
-                PanelButton("Open the door", onContinue, enabled, buttonModifier)
-                Spacer(Modifier.height(10.dp))
-                Text(state.url, color = fgInk300.copy(alpha = 0.8f), fontSize = 12.sp)
+    // Every line of start screen text, the button labels included, is set in Hovel Sans.
+    ProvideTextStyle(TextStyle(fontFamily = hovelSans)) {
+        Column(modifier) {
+            Text("Hovel", color = fgWhite, fontSize = 56.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = titleTracking,
+                modifier = Modifier.graphicsLayer { alpha = titleReveal() })
+            Spacer(Modifier.height(4.dp))
+            Text("Make yourself at home.", color = fgInk300, fontSize = 17.sp)
+            Spacer(Modifier.height(if (compact) 24.dp else 28.dp))
+            val buttonModifier = if (compact) Modifier.fillMaxWidth() else Modifier
+            when (state) {
+                is HovelStartState.Ready -> {
+                    PanelButton("Open the door", onContinue, enabled, buttonModifier)
+                    Spacer(Modifier.height(10.dp))
+                    Text(state.url, color = fgInk300.copy(alpha = 0.8f), fontSize = 12.sp)
+                }
+                HovelStartState.Preparing -> {
+                    Text("Lighting the lamps…", color = fgWhite, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(10.dp))
+                    PixelProgress()
+                }
+                is HovelStartState.Failed -> {
+                    Text("The door is stuck", color = fgRed400, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    Text(state.reason, color = fgInk300, fontSize = 13.sp)
+                    Spacer(Modifier.height(14.dp))
+                    if (state.canRetry) PanelButton("Try again", onContinue, enabled, buttonModifier)
+                    else Text("Close Hovel and open it again to retry.", color = fgWhite, fontSize = 14.sp)
+                }
             }
-            HovelStartState.Preparing -> {
-                Text("Lighting the lamps…", color = fgWhite, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(10.dp))
-                PixelProgress()
+            if (footnote != null) {
+                Spacer(Modifier.height(24.dp))
+                Text(footnote, color = fgInk300.copy(alpha = 0.7f), fontSize = 11.sp, lineHeight = 15.sp)
             }
-            is HovelStartState.Failed -> {
-                Text("The door is stuck", color = fgRed400, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                Text(state.reason, color = fgInk300, fontSize = 13.sp)
-                Spacer(Modifier.height(14.dp))
-                if (state.canRetry) PanelButton("Try again", onContinue, enabled, buttonModifier)
-                else Text("Close Hovel and open it again to retry.", color = fgWhite, fontSize = 14.sp)
-            }
-        }
-        if (footnote != null) {
-            Spacer(Modifier.height(24.dp))
-            Text(footnote, color = fgInk300.copy(alpha = 0.7f), fontSize = 11.sp, lineHeight = 15.sp)
         }
     }
 }

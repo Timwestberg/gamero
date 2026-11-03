@@ -20,9 +20,13 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -37,6 +41,8 @@ import org.formulagen.wrapper.ui.fgInk950
 import org.formulagen.wrapper.ui.fgRed400
 import org.formulagen.wrapper.ui.fgWhite
 import org.formulagen.wrapper.ui.glassEdge
+import org.formulagen.wrapper.ui.hovelTypography
+import org.formulagen.wrapper.ui.titleTracking
 
 /** Dedicated progression screen: hosts provide state, commands and game-specific artwork. */
 @Composable
@@ -108,7 +114,7 @@ fun CompanionPresentation(
     /** Bind native and forwarded controller focus to the same semantic control. */
     fun control(id: String): Modifier = Modifier.focusRequester(focus.getValue(id)).onFocusChanged { if (it.isFocused) focused = id }
     MaterialTheme(colorScheme = darkColorScheme(primary = fgBlue300, onPrimary = fgInk950,
-    surface = fgInk900, onSurface = fgWhite, onSurfaceVariant = fgInk300)) {
+    surface = fgInk900, onSurface = fgWhite, onSurfaceVariant = fgInk300), typography = hovelTypography()) {
         CompositionLocalProvider(LocalContentColor provides fgWhite) {
             PresentationSceneHost(scene) {
                 BoxWithConstraints(Modifier.fillMaxSize().testTag("companion-presentation")) {
@@ -135,7 +141,7 @@ fun CompanionPresentation(
                             }
                             Spacer(Modifier.height(20.dp))
                             if (snapshot.view == "saved") {
-                                Text("A little stronger.", Modifier.align(Alignment.CenterHorizontally), fontFamily = FontFamily.Serif, fontSize = 34.sp)
+                                Text("A little stronger.", Modifier.align(Alignment.CenterHorizontally), fontWeight = FontWeight.ExtraBold, letterSpacing = titleTracking, fontSize = 34.sp)
                                 snapshot.appliedOption?.let { option ->
                                     Text("${option.name}: ${option.before} → ${option.after}", Modifier.align(Alignment.CenterHorizontally).padding(24.dp), color = fgGreen400, fontSize = 28.sp)
                                 }
@@ -143,7 +149,7 @@ fun CompanionPresentation(
                                 TextButton({ onAction("continue") }, control("continue").align(Alignment.CenterHorizontally), enabled = !busy) { Text("Continue") }
                             } else if (snapshot.view == "growth") {
                                 Text(if (snapshot.offer != null) "A little stronger, together." else "Room to grow.",
-                                Modifier.align(Alignment.CenterHorizontally), fontFamily = FontFamily.Serif, fontSize = if (narrow) 28.sp else 34.sp)
+                                Modifier.align(Alignment.CenterHorizontally), fontWeight = FontWeight.ExtraBold, letterSpacing = titleTracking, fontSize = if (narrow) 28.sp else 34.sp)
                                 Text(if (snapshot.offer != null) "Preview a boost. Choose how ${snapshot.companion.name} grows." else "All earned upgrades are allocated. You can rebuild freely.",
                                 Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp), color = fgInk300, fontSize = 14.sp)
                                 Spacer(Modifier.height(28.dp))
@@ -174,7 +180,7 @@ fun CompanionPresentation(
                                     if (snapshot.canRespec) TextButton({ onAction("respec") }, control("respec"), enabled = !busy) { Text("Free respec") }
                                 }
                             } else snapshot.review?.let { review ->
-                                Text(if (review.outcome == "success") "Expedition complete" else "Expedition ended", Modifier.align(Alignment.CenterHorizontally), fontFamily = FontFamily.Serif, fontSize = if (narrow) 28.sp else 34.sp)
+                                Text(if (review.outcome == "success") "Expedition complete" else "Expedition ended", Modifier.align(Alignment.CenterHorizontally), fontWeight = FontWeight.ExtraBold, letterSpacing = titleTracking, fontSize = if (narrow) 28.sp else 34.sp)
                                 Text(review.highlight, Modifier.align(Alignment.CenterHorizontally).padding(top = 12.dp, bottom = 24.dp), color = fgInk300, fontSize = 15.sp)
                                 ReviewProgress(snapshot, review)
                                 Spacer(Modifier.height(20.dp))
@@ -229,12 +235,30 @@ internal fun UpgradeCard(option: UpgradeOption, selected: Boolean, enabled: Bool
         Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(option.name.uppercase(), fontSize = 12.sp, letterSpacing = 1.5.sp, color = color)
-                Text(if (selected) "✓ Selected" else "Preview", fontSize = 11.sp, color = if (selected) color else fgInk300)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (selected) CheckMark(color)
+                    Text(if (selected) "Selected" else "Preview", fontSize = 11.sp, color = if (selected) color else fgInk300)
+                }
             }
-            Text(option.increase, fontSize = 42.sp, fontWeight = FontWeight.Light, color = fgWhite)
+            // Hovel Sans starts at 400, the web's lightest weight.
+            Text(option.increase, fontSize = 42.sp, fontWeight = FontWeight.Normal, color = fgWhite)
             Text("${option.before} → ${option.after}", fontSize = 18.sp, fontWeight = FontWeight.Medium, color = color)
             Text(option.description, fontSize = 14.sp, lineHeight = 21.sp, color = fgInk300)
         }
+    }
+}
+
+/** A drawn check, since Hovel Sans (like Lato) has no ✓ glyph. Sized in sp so it scales with the label. */
+@Composable
+private fun CheckMark(color: Color) {
+    val side = with(LocalDensity.current) { 9.sp.toDp() }
+    Canvas(Modifier.size(side)) {
+        val check = Path().apply {
+            moveTo(size.width * .1f, size.height * .55f)
+            lineTo(size.width * .4f, size.height * .85f)
+            lineTo(size.width * .9f, size.height * .2f)
+        }
+        drawPath(check, color, style = Stroke(size.minDimension * .18f, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
 
