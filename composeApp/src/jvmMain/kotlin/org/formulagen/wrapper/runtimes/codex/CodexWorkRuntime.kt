@@ -23,6 +23,7 @@ import org.formulagen.wrapper.conversation.TeamMember
 import org.formulagen.wrapper.runtimes.ActivityLog
 import org.formulagen.wrapper.runtimes.ChatFailure
 import org.formulagen.wrapper.runtimes.ContextFolderSupport
+import org.formulagen.wrapper.runtimes.EditListener
 import org.formulagen.wrapper.runtimes.Readiness
 import org.formulagen.wrapper.runtimes.ReplyText
 import org.formulagen.wrapper.runtimes.TurnEvents
@@ -32,6 +33,7 @@ import org.formulagen.wrapper.runtimes.WorkPaths
 import org.formulagen.wrapper.runtimes.WorkRuntime
 import org.formulagen.wrapper.runtimes.claude.WORK_LINE_LIMIT
 import org.formulagen.wrapper.runtimes.codexFailure
+import org.formulagen.wrapper.runtimes.reportEdit
 import org.formulagen.wrapper.util.loggingDaemonThreads
 import org.formulagen.wrapper.providers.CodexAppServer
 import org.formulagen.wrapper.providers.CodexRequestRejected
@@ -94,7 +96,7 @@ internal class CodexWorkRuntime(
         }
         // A release or close while it started: it ends now, and the chat has ended the turn already.
         if (closed || epoch.get() != started) { connections.remove(work.lease, connection); connection.close(); events.failed(ChatFailure.Temporary); return TurnHandle {} }
-        return connection.turn(turn, work.member, model, events)
+        return connection.turn(turn, work.member, work.edits, model, events)
     }
 
     /** End [lease]'s app-server: its pending approvals are cancelled. Other leases keep theirs. */
@@ -122,7 +124,7 @@ internal class CodexWorkRuntime(
         private val items = ConcurrentHashMap<String, JsonObject>()
         @Volatile private var member: TeamMember? = null
 
-        fun turn(request: TurnRequest, member: TeamMember, model: String?, events: TurnEvents): TurnHandle {
+        fun turn(request: TurnRequest, member: TeamMember, edits: EditListener, model: String?, events: TurnEvents): TurnHandle {
             this.member = member
             val account = runCatching { codexAccountStatus(rpc.call("account/read", buildJsonObject { put("refreshToken", false) })["account"]) }.getOrNull()
             if (account?.state != ProviderState.CONNECTED) { events.failed(ChatFailure.SignedOut); return TurnHandle {} }
@@ -141,7 +143,7 @@ internal class CodexWorkRuntime(
                 if (id != saved) events.opened(id)
                 id
             }
-            val turn = Turn(threadId, events, CodexActivity(paths))
+            val turn = Turn(threadId, events, CodexActivity(paths, edits))
             current = turn
             if (!open) { later { turn.fail(ChatFailure.Temporary) }; return TurnHandle {} }
             events.activity(turn.activity.activity())
@@ -313,9 +315,10 @@ internal class CodexWorkRuntime(
 /**
  * A working Codex turn's activity from `item/completed` notifications (Codex's schema; verify live):
  * `commandExecution` (its command, exit and output), `fileChange` (its paths and diff size),
- * `mcpToolCall` (`server · tool`) and `webSearch` (the query).
+ * `mcpToolCall` (`server · tool`) and `webSearch` (the query). A `completed` file change reports each
+ * file it names to [edits]: every `changes[].path`, and a moved file's new path (`kind.move_path`).
  */
-internal class CodexActivity(private val paths: WorkPaths) {
+internal class CodexActivity(private val paths: WorkPaths, private val edits: EditListener = EditListener.NONE) {
     private val log = ActivityLog(paths)
 
     fun activity(): Activity = log.activity()
@@ -343,6 +346,11 @@ internal class CodexActivity(private val paths: WorkPaths) {
                 val diff = changes.flatMap { it.text("diff").orEmpty().lines() }
                 log.add(ActivityKind.EDIT, changes.mapNotNull { it.text("path") }.joinToString(", ") { paths.label(it) }, outcome(),
                     "+${diff.count { it.startsWith("+") && !it.startsWith("+++") }} -${diff.count { it.startsWith("-") && !it.startsWith("---") }}")
+                // Codex 0.166: `inProgress`, `completed`, `failed` or `declined`. Only a change Codex applied is an edit.
+                if (status == "completed") changes.forEach { change ->
+                    edits.reportEdit(change.text("path"))
+                    (change["kind"] as? JsonObject)?.text("move_path")?.let(edits::reportEdit)
+                }
             }
             "mcpToolCall" -> log.add(ActivityKind.CONNECTOR, "${item.text("server")} · ${item.text("tool")}",
                 outcome(failed = item["error"].let { it != null && it != JsonNull }),
