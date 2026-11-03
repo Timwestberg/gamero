@@ -16,7 +16,7 @@ class SessionTtyConnectorTest {
         val sizes = CopyOnWriteArrayList<TermSize>()
         var detached = false
         override val title = "Shell"
-        override fun busy() = false
+        override fun busy(): Busy? = null
         override fun close() {}
         override fun attach(viewer: SessionViewer): Attachment = object : Attachment {
             override fun input(bytes: ByteArray) { input.add(bytes.decodeToString()) }

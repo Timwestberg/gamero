@@ -144,19 +144,29 @@ class ShellLaunchTest {
     @Test fun aToolRunsThroughTheLoginShellWithItsPathAsAnArgumentNeverInTheScript() {
         val nvim = bin.resolve("nvim").also { it.writeText("#!/bin/sh\n"); Files.setPosixFilePermissions(it, PosixFilePermissions.fromString("rwx------")) }
         val tool = Launch.Tool(WorkspaceTool.NEOVIM)
-        assertEquals(listOf("/bin/zsh", "-l", "-i", "-c", "exec \"\$1\"", "hovel-tool", nvim.toString()), launch("/bin/zsh").command(tool).argv)
+        assertEquals(listOf("/bin/zsh", "-l", "-i", "-c", "exec \"\$@\"", "hovel-tool", nvim.toString()), launch("/bin/zsh").command(tool).argv)
         assertEquals(
-            listOf("/bin/bash", "--init-file", files.resolve("hovel.bash").toString(), "-i", "-c", "exec \"\$1\"", "hovel-tool", nvim.toString()),
+            listOf("/bin/bash", "--init-file", files.resolve("hovel.bash").toString(), "-i", "-c", "exec \"\$@\"", "hovel-tool", nvim.toString()),
             launch("/bin/bash").command(tool).argv,
         )
         assertEquals(
-            listOf("/usr/local/bin/fish", "--login", "--interactive", "--init-command", "source \"\$HOVEL_FISH_INIT\"", "-c", "exec \$argv[1]", "--", nvim.toString()),
+            listOf("/usr/local/bin/fish", "--login", "--interactive", "--init-command", "source \"\$HOVEL_FISH_INIT\"", "-c", "exec \$argv", "--", nvim.toString()),
             launch("/usr/local/bin/fish").command(tool).argv,
         )
         // Another shell's -c syntax is unknown, so the same script runs in /bin/sh, with the tab's environment.
         val other = launch("/bin/tcsh").command(tool)
-        assertEquals(listOf("/bin/sh", "-c", "exec \"\$1\"", "hovel-tool", nvim.toString()), other.argv)
+        assertEquals(listOf("/bin/sh", "-c", "exec \"\$@\"", "hovel-tool", nvim.toString()), other.argv)
         assertEquals(launch("/bin/tcsh").command(Launch.Shell).environment, other.environment)
+    }
+
+    @Test fun theHostsToolArgumentsFollowTheToolAsSeparateArguments() {
+        val socket = "/Users/p/Library/Caches/org.formulagen.wrapper/workspace/nvim/ab12.sock"
+        val argv = launch("/bin/zsh").command(Launch.Tool(WorkspaceTool.NEOVIM), pathFirst, listOf("--listen", socket)).argv
+        assertEquals(listOf("nvim", "--listen", socket), argv.takeLast(3))
+        assertEquals("exec \"\$@\"", argv[argv.indexOf("-c") + 1], "the script stays fixed")
+        assertEquals(listOf("--", "nvim", "--listen", socket), launch("/usr/local/bin/fish").command(Launch.Tool(WorkspaceTool.NEOVIM), pathFirst, listOf("--listen", socket)).argv.takeLast(4))
+        // A Shell tab takes none.
+        assertEquals(launch("/bin/zsh").command(Launch.Shell).argv, launch("/bin/zsh").command(Launch.Shell, pathFirst, listOf("--listen", socket)).argv)
     }
 
     @Test fun aToolWithoutAWrapperIsFoundOnThePlayersPath() {

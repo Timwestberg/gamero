@@ -32,7 +32,7 @@ private const val TAG = "workspace-development"
 
 /**
  * The terminal spike's session host: the player's login shell, Hovel's startup files in the Caches
- * folder, and one `bin` folder kept first in every project's `PATH`. That folder is
+ * folder, Neovim's sockets beside them, and one `bin` folder kept first in every project's `PATH`. That folder is
  * `HOVEL_WORKSPACE_BIN` when set (development), else `<support>/workspace/bin`, where the tool
  * manager will write its wrappers. `HOVEL_WORKSPACE_SHELL` (development) tries another shell in
  * place of the login shell.
@@ -42,7 +42,7 @@ internal fun spikeSessionHost(environment: Map<String, String>, support: Path): 
     val files = ShellFiles.install(ShellFiles.defaultFolder())
     val bin = environment["HOVEL_WORKSPACE_BIN"]?.takeIf { Path.of(it).isAbsolute } ?: support.resolve("workspace/bin").toString()
     val launch = ShellLaunch(shell, environment, files)
-    val host = PtySessionHost { spec -> launch.command(spec.launch, listOf(bin)) }
+    val host = PtySessionHost(EditorSockets(EditorSockets.defaultFolder())) { spec, toolArguments -> launch.command(spec.launch, listOf(bin), toolArguments) }
     log(LogLevel.Info, TAG, "Workspace shell ${ShellKind.of(shell)}; natives ${System.getProperty(PTY4J_NATIVE_FOLDER) ?: "unpacked by pty4j"} and ${System.getProperty(JNA_BOOT_PATH) ?: "unpacked by JNA"}")
     return host
 }
@@ -65,9 +65,12 @@ internal fun openWorkspaceFromPicker(workspaces: WorkspaceWindows, owner: Frame)
     }
 }
 
-/** Opens HOVEL_WORKSPACE_FOLDER at launch and runs HOVEL_WORKSPACE_PROBE against it. [exit] ends the app. */
+/**
+ * Opens HOVEL_WORKSPACE_FOLDER at launch and runs HOVEL_WORKSPACE_PROBE against it. [exit] ends the
+ * app at once; [requestQuit] is ⌘Q's path, which asks first when work would be lost.
+ */
 @Composable
-internal fun DevelopmentWorkspaceLaunch(workspaces: WorkspaceWindows, environment: Map<String, String>, exit: () -> Unit) {
+internal fun DevelopmentWorkspaceLaunch(workspaces: WorkspaceWindows, environment: Map<String, String>, exit: () -> Unit, requestQuit: () -> Unit) {
     LaunchedEffect(Unit) {
         val folder = environment["HOVEL_WORKSPACE_FOLDER"]?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
         val window = try { workspaces.open(Path.of(folder)) } catch (error: Throwable) {
@@ -75,7 +78,9 @@ internal fun DevelopmentWorkspaceLaunch(workspaces: WorkspaceWindows, environmen
             log(LogLevel.Error, TAG, "Could not open HOVEL_WORKSPACE_FOLDER", error)
             return@LaunchedEffect
         }
-        environment["HOVEL_WORKSPACE_PROBE"]?.takeIf { it.isNotBlank() }?.let { WorkspaceProbe(window, Path.of(it), exit).start() }
+        environment["HOVEL_WORKSPACE_PROBE"]?.takeIf { it.isNotBlank() }?.let {
+            WorkspaceProbe(workspaces, window, Path.of(it), exit, requestQuit).start()
+        }
     }
 }
 
@@ -87,16 +92,25 @@ internal fun DevelopmentWorkspaceLaunch(workspaces: WorkspaceWindows, environmen
  * - `key <mods>+<char>`: a key press, release and typed event on the selected terminal, through
  *   JediTerm's own key handling. Mods: `meta`, `ctrl`, `alt`, `shift`, joined with `+`.
  * - `wait <ms>`; `await <ms> <text>`: wait until the selected screen shows the text.
- * - `snap <name>`: the selected tab's state, busy flag and screen as `<name>.txt`, and its terminal
+ * - `snap <name>`: the selected tab's state, busy state and screen as `<name>.txt`, and its terminal
  *   painted as `<name>.png`, beside the steps file.
  * - `tab <shell|tool id>`: open a tab (`shell`, or a catalog id such as `neovim`, `lazygit` or
- *   `yazi`) and select it. `select <index>`. `close`.
+ *   `yazi`) and select it. `select <index>`. `close`: close the selected tab at once.
+ * - `answer <yes|no>`: from now on, answer the close and quit questions so, logging each one.
+ * - `request-close`: ⌘W's path for the selected tab; `request-close-window`: the close button's;
+ *   `request-quit`: ⌘Q's.
  * - `size <width>x<height>`: resize the window, in points.
  * - `quit`: end the app.
  *
  * Each step and its result go to `probe.log` beside the steps file.
  */
-internal class WorkspaceProbe(private val window: WorkspaceWindowState, private val steps: Path, private val exit: () -> Unit) {
+internal class WorkspaceProbe(
+    private val workspaces: WorkspaceWindows,
+    private val window: WorkspaceWindowState,
+    private val steps: Path,
+    private val exit: () -> Unit,
+    private val requestQuit: () -> Unit,
+) {
     private val out: Path = steps.toAbsolutePath().parent
     private val logFile: Path = out.resolve("probe.log")
 
@@ -131,12 +145,23 @@ internal class WorkspaceProbe(private val window: WorkspaceWindowState, private 
             "tab" -> awt { window.addTab(launchNamed(argument)) }
             "select" -> awt { window.select(window.tabs[argument.toInt()]) }
             "close" -> awt { window.selectedTab()?.let(window::closeTab) }
+            "answer" -> answer(argument == "yes")
+            "request-close" -> awt { window.selectedTab()?.let(window::requestCloseTab) }
+            "request-close-window" -> awt { workspaces.requestClose(window) }
+            "request-quit" -> awt { requestQuit() }
             "size" -> awt {
                 val (width, height) = argument.split('x').map(String::toInt)
                 requireNotNull(window.awtWindow) { "The window is not showing" }.setSize(width, height)
             }
             "quit" -> exit()
             else -> error("Unknown step: $command")
+        }
+    }
+
+    private fun answer(yes: Boolean) {
+        workspaces.confirmer = Confirmer { _, question ->
+            record("  asked \"${question.title}\": ${question.message.replace("\n", " | ")} -> ${if (yes) question.proceed else "Cancel"}")
+            yes
         }
     }
 
@@ -152,11 +177,13 @@ internal class WorkspaceProbe(private val window: WorkspaceWindowState, private 
     private fun snap(name: String) {
         var text = ""
         var image: BufferedImage? = null
+        val tab = awtValue { window.selectedTab() }
+        // Off the AWT thread: Neovim's answer can take a moment.
+        val busy = tab?.session?.busy()?.reason ?: "none"
         awt {
-            val tab = window.selectedTab()
             val view = view()
             val tree = tab?.session?.processes()?.joinToString { "${it.pid()}:${it.info().command().orElse("?")}" }
-            text = "tab=${tab?.title} state=${tab?.state} busy=${tab?.session?.busy()} focused=${view.panel.isFocusOwner} tree=[$tree]\n" + view.screenText()
+            text = "tab=${tab?.title} state=${tab?.state} busy=$busy focused=${view.panel.isFocusOwner} tree=[$tree]\n" + view.screenText()
             val panel = view.panel
             image = BufferedImage(panel.width.coerceAtLeast(1), panel.height.coerceAtLeast(1), BufferedImage.TYPE_INT_RGB).also { target ->
                 val graphics = target.createGraphics()
@@ -216,6 +243,12 @@ internal class WorkspaceProbe(private val window: WorkspaceWindowState, private 
         var failure: Throwable? = null
         EventQueue.invokeAndWait { try { block() } catch (error: Throwable) { failure = error } }
         failure?.let { throw it }
+    }
+
+    private fun <T> awtValue(block: () -> T): T {
+        var value: Result<T>? = null
+        EventQueue.invokeAndWait { value = runCatching(block) }
+        return value!!.getOrThrow()
     }
 
     private fun record(line: String) {

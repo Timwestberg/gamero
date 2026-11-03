@@ -56,30 +56,17 @@ class ShellIntegrationTest {
         }
     }
 
-    private fun start(shell: String, launch: Launch = Launch.Shell): Tab {
+    private fun start(shell: String, launch: Launch = Launch.Shell, sockets: EditorSockets? = null): Tab {
         assumeTrue("Shell tests run on macOS", System.getProperty("os.name").contains("Mac"))
         assumeTrue("$shell is installed", Files.isExecutable(Path.of(shell)))
         val parent = mapOf("HOME" to home.toString(), "USER" to "player", "LOGNAME" to "player", "TMPDIR" to root.toString())
         val shellLaunch = ShellLaunch(shell, parent, files)
-        val host = PtySessionHost { spec -> shellLaunch.command(spec.launch, listOf(first.toString(), second.toString())) }.also(hosts::add)
+        val host = PtySessionHost(sockets) { spec, toolArguments -> shellLaunch.command(spec.launch, listOf(first.toString(), second.toString()), toolArguments) }.also(hosts::add)
         val session = host.start(SessionSpec("p", "Shell", folder, launch, TermSize(200, 50)))
         val viewer = CollectingViewer()
         val keys = session.attach(viewer)
         session.attach(TerminalReplies(keys))
         return Tab(session, viewer, keys)
-    }
-
-    /**
-     * Answers the queries a terminal answers, as JediTerm does in the app: primary device attributes
-     * and the cursor position. fish 4 waits for them at startup and drops what is typed meanwhile.
-     */
-    private class TerminalReplies(private val keys: Attachment) : SessionViewer {
-        override fun output(bytes: ByteArray, length: Int) {
-            val text = String(bytes, 0, length, Charsets.ISO_8859_1)
-            repeat(Regex("\u001b\\[0?c").findAll(text).count()) { keys.input("\u001b[?62;22c".toByteArray()) }
-            repeat(Regex("\u001b\\[6n").findAll(text).count()) { keys.input("\u001b[1;1R".toByteArray()) }
-        }
-        override fun exited(code: Int) {}
     }
 
     @Test fun zshKeepsHovelsEntriesFirstAndThePlayersOwnSetup() {
@@ -114,16 +101,20 @@ class ShellIntegrationTest {
         tab.viewer.await("Z=[$xdg] H=[$xdg/.zsh_history] P=[$xdg] L=[1] M=[yes] R=[unset]")
     }
 
-    @Test fun aToolTabRunsTheWrapperWithTheSameOrder() {
+    @Test fun aToolTabRunsTheWrapperWithTheSameOrderAndTheHostsArguments() {
         val fake = first.resolve("nvim")
-        fake.writeText("#!/bin/sh\nprintf '%s=[%s] ARG0=[%s]\\n' TOOL \"\$PATH\" \"\$0\"\n")
+        fake.writeText("#!/bin/sh\nprintf '%s=[%s] ARG0=[%s] ARGS=[%s|%s|%s]\\n' TOOL \"\$PATH\" \"\$0\" \"\$#\" \"\$1\" \"\$2\"\n")
         Files.setPosixFilePermissions(fake, PosixFilePermissions.fromString("rwx------"))
+        // A short folder: a socket path must fit in 103 bytes.
+        val sockets = Files.createTempDirectory("hv").also { it.toFile().deleteOnExit() }
         for (shell in listOf("/bin/zsh", "/bin/bash") + listOfNotNull(System.getenv("HOVEL_TEST_FISH"))) {
-            val tab = start(shell, Launch.Tool(WorkspaceTool.NEOVIM))
-            val match = tab.viewer.await(Regex("TOOL=\\[([^\\]]*)\\] ARG0=\\[([^\\]]*)\\]"))
+            val tab = start(shell, Launch.Tool(WorkspaceTool.NEOVIM), EditorSockets(sockets))
+            val match = tab.viewer.await(Regex("TOOL=\\[([^\\]]*)\\] ARG0=\\[([^\\]]*)\\] ARGS=\\[([^\\]]*)\\]"))
             assertTrue(match.groupValues[1].startsWith(hovelFirst), "$shell: ${match.groupValues[1]}")
             assertEquals(fake.toString(), match.groupValues[2], shell)
+            assertTrue(match.groupValues[3].matches(Regex("2\\|--listen\\|${Regex.escape(sockets.toString())}/[0-9a-f]{12}\\.sock")), "$shell: ${match.groupValues[3]}")
         }
+        sockets.toFile().deleteRecursively()
     }
 
     @Test fun bashEmulatesALoginShellAndKeepsHovelsEntriesFirst() {

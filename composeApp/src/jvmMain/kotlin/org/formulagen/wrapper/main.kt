@@ -36,6 +36,7 @@ import org.formulagen.wrapper.providers.projectWorkspaceEnabled
 import org.formulagen.wrapper.workspace.DevelopmentWorkspaceLaunch
 import org.formulagen.wrapper.workspace.WorkspaceWindows
 import org.formulagen.wrapper.workspace.WorkspaceWindowsHost
+import org.formulagen.wrapper.workspace.installQuitHandler
 import org.formulagen.wrapper.workspace.openWorkspaceFromPicker
 import org.formulagen.wrapper.workspace.spikeSessionHost
 import java.awt.EventQueue
@@ -116,6 +117,15 @@ fun main(args: Array<String>) {
         WorkspaceWindows { spikeSessionHost(System.getenv(), desktopSupportFolder().toPath()) }
     } else null
     resources.workspaces = workspaces
+    val productName = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME
+    // Quitting, and closing the main window, which quits: with workspaces open, ask first when work
+    // would be lost. Either way the app's own exit runs, never System.exit.
+    val requestQuit: () -> Unit = {
+        val quit = { exitAction.get()?.invoke(); Unit }
+        workspaces?.confirmQuit(productName, quit) ?: quit()
+    }
+    // A release keeps the JDK's quit: workspaces are its only reason for a handler.
+    if (workspaces != null) installQuitHandler { EventQueue.invokeLater(requestQuit) }
     val editActions = BrowserEditActions(resources.browser::get)
     val lifecycle = BrowserLifecycle(
         dispose = { CefApp.getInstanceIfAny()?.dispose(); KCEF.dispose() },
@@ -131,8 +141,8 @@ fun main(args: Array<String>) {
                 override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler = failure
             }) {
                 Window(
-                    onCloseRequest = { resources.services?.closeGame(); exitApplication() },
-                    title = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME,
+                    onCloseRequest = requestQuit,
+                    title = productName,
                 ) {
                     DisposableEffect(window) {
                         // Read AWT state on its event thread, never from the CEF callback thread.
@@ -200,7 +210,7 @@ fun main(args: Array<String>) {
                 // Workspace windows render here, in the app's one Compose application.
                 if (workspaces != null) {
                     WorkspaceWindowsHost(workspaces)
-                    DevelopmentWorkspaceLaunch(workspaces, System.getenv(), exit = { EventQueue.invokeLater { exitAction.get()?.invoke() } })
+                    DevelopmentWorkspaceLaunch(workspaces, System.getenv(), exit = { EventQueue.invokeLater { exitAction.get()?.invoke() } }, requestQuit = requestQuit)
                 }
             }
         }

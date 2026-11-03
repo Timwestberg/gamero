@@ -43,13 +43,16 @@ enum class ShellKind {
     }
 }
 
-/** The fixed script a [Launch.Tool] runs in an sh-family shell: exec its first argument, which is the tool. */
-internal const val TOOL_SCRIPT = "exec \"\$1\""
+/**
+ * The fixed script a [Launch.Tool] runs in an sh-family shell: exec its arguments, which are the
+ * tool and the arguments Hovel adds to it (Neovim's `--listen <socket>`).
+ */
+internal const val TOOL_SCRIPT = "exec \"\$@\""
 
 /** The same for fish, whose arguments after `-c` arrive in `$argv`. */
-internal const val FISH_TOOL_SCRIPT = "exec \$argv[1]"
+internal const val FISH_TOOL_SCRIPT = "exec \$argv"
 
-/** `$0` for [TOOL_SCRIPT], so the tool path is `$1` and never part of the script. */
+/** `$0` for [TOOL_SCRIPT], so the tool path is `$1` and nothing of it is part of the script. */
 internal const val TOOL_ARG0 = "hovel-tool"
 
 /** Runs [TOOL_SCRIPT] for a shell Hovel does not integrate with. Not a login shell: the tab's own environment as is. */
@@ -90,13 +93,15 @@ class ShellLaunch(
     /**
      * The argv and environment for [launch]. [pathFirst] are Hovel's `PATH` entries for the tab's
      * project, in the spec's lookup order (the project's trusted tool bins, then `workspace/bin`); for
-     * the spike, one `bin` folder. The working folder is the session's, set by the host.
+     * the spike, one `bin` folder. [toolArguments] follow a tool's path as separate arguments, never
+     * inside the script: the session host's own (Neovim's `--listen <socket>`), never a page's. The
+     * working folder is the session's, set by the host.
      */
-    fun command(launch: Launch, pathFirst: List<String>): ShellCommand {
+    fun command(launch: Launch, pathFirst: List<String>, toolArguments: List<String> = emptyList()): ShellCommand {
         require(pathFirst.none { it.isEmpty() || ':' in it || !File(it).isAbsolute }) { "Hovel's PATH entries must be absolute and contain no ':'" }
         return when (launch) {
             Launch.Shell -> ShellCommand(shellArgv(), environment(pathFirst))
-            is Launch.Tool -> ShellCommand(toolArgv(toolPath(launch.tool, pathFirst)), environment(pathFirst))
+            is Launch.Tool -> ShellCommand(toolArgv(listOf(toolPath(launch.tool, pathFirst)) + toolArguments), environment(pathFirst))
             is Launch.Diff -> throw UnsupportedOperationException("Diff tabs arrive with the thread changes view")
         }
     }
@@ -108,12 +113,13 @@ class ShellLaunch(
         ShellKind.OTHER -> listOf(shell, "-l")
     }
 
-    private fun toolArgv(tool: String): List<String> = when (kind) {
-        ShellKind.ZSH -> listOf(shell, "-l", "-i", "-c", TOOL_SCRIPT, TOOL_ARG0, tool)
-        ShellKind.BASH -> listOf(shell, "--init-file", bashFile(), "-i", "-c", TOOL_SCRIPT, TOOL_ARG0, tool)
-        ShellKind.FISH -> listOf(shell, "--login", "--interactive", "--init-command", FISH_INIT_COMMAND, "-c", FISH_TOOL_SCRIPT, "--", tool)
+    /** [tool] is the tool's path and then its arguments. */
+    private fun toolArgv(tool: List<String>): List<String> = when (kind) {
+        ShellKind.ZSH -> listOf(shell, "-l", "-i", "-c", TOOL_SCRIPT, TOOL_ARG0) + tool
+        ShellKind.BASH -> listOf(shell, "--init-file", bashFile(), "-i", "-c", TOOL_SCRIPT, TOOL_ARG0) + tool
+        ShellKind.FISH -> listOf(shell, "--login", "--interactive", "--init-command", FISH_INIT_COMMAND, "-c", FISH_TOOL_SCRIPT, "--") + tool
         // The player's startup files do not run, so a tool without a wrapper is found only on the base PATH.
-        ShellKind.OTHER -> listOf(PLAIN_SH, "-c", TOOL_SCRIPT, TOOL_ARG0, tool)
+        ShellKind.OTHER -> listOf(PLAIN_SH, "-c", TOOL_SCRIPT, TOOL_ARG0) + tool
     }
 
     /**
@@ -199,12 +205,8 @@ object ShellFiles {
         FISH to FISH,
     )
 
-    /** The bundle id of the packaged app (`compose.desktop.nativeDistributions.macOS.bundleID`). */
-    private const val BUNDLE_ID = "org.formulagen.wrapper"
-
     /** `~/Library/Caches/<bundle id>/workspace/shell`. */
-    fun defaultFolder(home: String = System.getProperty("user.home")): Path =
-        Path.of(home, "Library", "Caches", BUNDLE_ID, "workspace", "shell")
+    fun defaultFolder(home: String = System.getProperty("user.home")): Path = workspaceCacheFolder(home).resolve("shell")
 
     /**
      * Write each file into [folder] unless it already holds the same bytes. A changed file is

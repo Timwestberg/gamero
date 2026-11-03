@@ -126,6 +126,9 @@ kotlin {
             // pseudo-terminal; JediTerm (dual LGPLv3/Apache-2.0, used under Apache-2.0; JetBrains'
             // repository, see settings.gradle.kts) draws it in Swing.
             implementation("org.jetbrains.pty4j:pty4j:0.14.0")
+            // pty4j's own JNA (runtime scope in its POM), named here to call tcgetpgrp for a Shell
+            // tab's busy check. Keep it at the version pty4j brings.
+            implementation("net.java.dev.jna:jna:5.19.1")
             implementation("org.jetbrains.jediterm:jediterm-core:3.76")
             implementation("org.jetbrains.jediterm:jediterm-ui:3.76")
         }

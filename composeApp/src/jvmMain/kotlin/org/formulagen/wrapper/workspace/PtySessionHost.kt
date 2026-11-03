@@ -7,6 +7,7 @@ import com.pty4j.unix.UnixPtyProcess
 import java.io.File
 import java.io.IOException
 import java.io.OutputStream
+import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -34,13 +35,18 @@ private const val DRAIN_GRACE_MS = 1_000L
 /**
  * [SessionHost] on pty4j. Each session is one process on its own pseudo-terminal (pty4j's spawn
  * helper makes it a session leader, so its process group is its pid), with one reader thread and one
- * exit watcher. [commands] builds each session's argv and environment from its spec: its [Launch],
- * and its project's `PATH` entries ([ShellLaunch.command]).
+ * exit watcher. [commands] builds each session's argv and environment from its spec (its [Launch],
+ * and its project's `PATH` entries, [ShellLaunch.command]) and the arguments the host adds to a tool:
+ * a Neovim tab's `--listen <socket>`, from [editorSockets], for its modified-buffer check. Without
+ * [editorSockets] a running Neovim always counts as busy.
  *
  * Sessions belong to their project, not to a window: a viewer detaching leaves the process running,
  * and only [Session.close], [closeProject] or [close] end it.
  */
-class PtySessionHost(private val commands: (SessionSpec) -> ShellCommand) : SessionHost {
+class PtySessionHost(
+    private val editorSockets: EditorSockets? = null,
+    private val commands: (SessionSpec, List<String>) -> ShellCommand,
+) : SessionHost {
     private val sessions = ConcurrentHashMap<String, MutableSet<PtySession>>()
     private val threads = loggingDaemonThreads("hovel-workspace-session")
     private val counter = AtomicInteger()
@@ -53,15 +59,21 @@ class PtySessionHost(private val commands: (SessionSpec) -> ShellCommand) : Sess
 
     override fun start(spec: SessionSpec): Session {
         check(!closed.get()) { "The session host is closed" }
-        val command = commands(spec)
-        val process = PtyProcessBuilder(command.argv.toTypedArray())
-            .setEnvironment(command.environment)
-            .setDirectory(spec.folder.toString())
-            .setInitialColumns(spec.size.columns)
-            .setInitialRows(spec.size.rows)
-            .setConsole(false)
-            .start()
-        val session = PtySession(spec, process, "hovel-workspace-pty-${counter.incrementAndGet()}") { ended ->
+        val socket = if (spec.launch.isEditor()) editorSockets?.next() else null
+        val command = commands(spec, socket?.let { listOf("--listen", it.toString()) }.orEmpty())
+        val process = try {
+            PtyProcessBuilder(command.argv.toTypedArray())
+                .setEnvironment(command.environment)
+                .setDirectory(spec.folder.toString())
+                .setInitialColumns(spec.size.columns)
+                .setInitialRows(spec.size.rows)
+                .setConsole(false)
+                .start()
+        } catch (error: Throwable) {
+            socket?.let(EditorSockets::release)
+            throw error
+        }
+        val session = PtySession(spec, process, "hovel-workspace-pty-${counter.incrementAndGet()}", command.argv.first(), socket) { ended ->
             sessions[spec.projectId]?.remove(ended)
         }
         sessions.computeIfAbsent(spec.projectId) { ConcurrentHashMap.newKeySet() }.add(session)
@@ -89,11 +101,16 @@ class PtySessionHost(private val commands: (SessionSpec) -> ShellCommand) : Sess
     }
 }
 
-/** One tab's process on a pseudo-terminal, and the viewers attached to it. */
+/**
+ * One tab's process on a pseudo-terminal, and the viewers attached to it. [executable] is the
+ * program it started (a Shell tab's shell); [editorSocket] is where a Neovim tab listens.
+ */
 internal class PtySession(
     private val spec: SessionSpec,
     private val process: PtyProcess,
     private val name: String,
+    private val executable: String,
+    private val editorSocket: Path?,
     private val onEnded: (PtySession) -> Unit,
 ) : Session {
     override val title: String get() = spec.title
@@ -121,23 +138,85 @@ internal class PtySession(
     }
 
     /**
-     * A live descendant makes the session busy. In a tool tab, a descendant running the tool's own
-     * executable is part of the tool: Neovim's interface process always runs its server as a child
-     * `nvim --embed`, and only what that server starts (a `:terminal` shell) counts.
+     * By tab kind (project-workspace.ARCH.md, "Sessions and the terminal"):
+     * - a Shell tab is busy while its terminal's foreground process group is not the shell's own, so
+     *   background jobs and prompt helpers (powerlevel10k's `gitstatusd`, zsh-async workers) do not count;
+     * - Neovim is busy while a buffer is modified or its `:terminal` runs a job, as it answers on its
+     *   `--listen` socket; no answer in time counts as busy. Its LSP servers and its own
+     *   `nvim --embed` server are descendants, so the descendant rule cannot be used for it;
+     * - any other tool is busy while it has a live descendant that is not running the tool's own
+     *   executable (by real path), which would be a helper of the tool's.
      */
-    override fun busy(): Boolean = try {
-        if (!process.isAlive) false else {
-            val tool = if (spec.launch is Launch.Tool) commandOf(tree.toHandle()) else null
-            tree.descendants().use { children -> children.anyMatch { it.isAlive && (tool == null || commandOf(it) != tool) } }
+    override fun busy(): Busy? {
+        if (closing.get() || !process.isAlive) return null
+        return try {
+            when (val launch = spec.launch) {
+                Launch.Shell -> foregroundJob()
+                is Launch.Tool -> if (launch.isEditor()) editorState(launch.tool.label) else toolChild()
+                is Launch.Diff -> toolChild()
+            }
+        } catch (error: Exception) {
+            log(LogLevel.Warn, TAG, "Could not tell whether $name is busy", error)
+            Busy.NoAnswer(spec.title)
         }
-    } catch (error: Exception) {
-        log(LogLevel.Warn, TAG, "Could not read the children of $name", error)
-        false
+    }
+
+    /**
+     * The foreground job of a Shell tab; when the terminal cannot be asked, any live child, as before.
+     * A shell replaced by `exec` with something that is not a shell is that program. (`/bin/sh`
+     * itself re-executes another shell on a Mac, so the check is by name, not by path.)
+     */
+    private fun foregroundJob(): Busy? {
+        val group = foregroundGroup() ?: return anyChild()
+        if (group == process.pid()) {
+            val root = tree.toHandle()
+            val running = root.info().command().orElse(null)?.let { File(it).name } ?: return null
+            return if (running in SHELL_NAMES || running == File(executable).name) null else Busy.Running(describe(root))
+        }
+        // The job's leader names it best. It may have exited while the rest of its group runs on.
+        val program = ProcessHandle.of(group).filter(ProcessHandle::isAlive).orElse(null) ?: firstChild { true } ?: return null
+        return Busy.Running(describe(program))
+    }
+
+    /** The foreground process group of the session's terminal, or null when it cannot be read. */
+    private fun foregroundGroup(): Long? {
+        val fd = (process as? UnixPtyProcess)?.pty?.masterFD?.takeIf { it >= 0 } ?: return null
+        return foregroundProcessGroup(fd)
+    }
+
+    private fun anyChild(): Busy? = firstChild { true }?.let { Busy.Running(describe(it)) }
+
+    private fun toolChild(): Busy? {
+        val tool = commandOf(tree.toHandle())
+        return firstChild { tool == null || commandOf(it) != tool }?.let { Busy.Running(describe(it)) }
+    }
+
+    private fun firstChild(counts: (ProcessHandle) -> Boolean): ProcessHandle? =
+        tree.descendants().use { children -> children.filter { it.isAlive && counts(it) }.findFirst().orElse(null) }
+
+    /**
+     * Neovim's answer. Until the tab's process is Neovim itself (the login shell is still starting
+     * it), nothing can be unsaved yet.
+     */
+    private fun editorState(editor: String): Busy? {
+        val executable = commandOf(tree.toHandle()) ?: return Busy.NoAnswer(editor)
+        if (File(executable).name != NEOVIM_EXECUTABLE) return null
+        val socket = editorSocket ?: return Busy.NoAnswer(editor)
+        return askNeovim(executable, socket, editor)
+    }
+
+    private fun describe(handle: ProcessHandle): String = handle.info().let { info ->
+        commandLabel(info.command().orElse(null), info.arguments().map { it.toList() }.orElse(emptyList()))
     }
 
     /** The executable's real path: Neovim starts its server by its resolved path, not Homebrew's symlink. */
-    private fun commandOf(handle: ProcessHandle): String? = handle.info().command().orElse(null)?.let { command ->
-        try { File(command).toPath().toRealPath().toString() } catch (_: Exception) { command }
+    private fun commandOf(handle: ProcessHandle): String? = handle.info().command().orElse(null)?.let(::realPath)
+
+    private fun realPath(command: String): String = try { File(command).toPath().toRealPath().toString() } catch (_: Exception) { command }
+
+    private companion object {
+        /** A Shell tab's process still counts as its shell under any of these names (`exec bash`, say). */
+        val SHELL_NAMES = setOf("zsh", "bash", "fish", "sh", "dash", "ksh", "mksh", "tcsh", "csh", "nu", "elvish", "xonsh")
     }
 
     override fun attach(viewer: SessionViewer): Attachment {
@@ -172,6 +251,7 @@ internal class PtySession(
         } finally {
             closeStreams()
             report(exitCode ?: CLOSED_EXIT_CODE)
+            editorSocket?.let(EditorSockets::release)
             onEnded(this)
         }
     }
@@ -211,6 +291,7 @@ internal class PtySession(
             report(code)
             if (!closing.get()) {
                 closeStreams()
+                editorSocket?.let(EditorSockets::release)
                 onEnded(this)
             }
         } catch (_: InterruptedException) {

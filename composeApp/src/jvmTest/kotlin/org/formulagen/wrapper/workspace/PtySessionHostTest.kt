@@ -10,6 +10,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.Assume.assumeTrue
 
@@ -36,10 +37,24 @@ internal class CollectingViewer : SessionViewer {
     fun await(text: String, timeoutMs: Long = 10_000) = await(Regex(Regex.escape(text)), timeoutMs)
 }
 
+/**
+ * Answers the queries a terminal answers, as JediTerm does in the app: primary device attributes
+ * and the cursor position. fish 4 waits for them at startup and drops what is typed meanwhile.
+ */
+internal class TerminalReplies(private val keys: Attachment) : SessionViewer {
+    override fun output(bytes: ByteArray, length: Int) {
+        val text = String(bytes, 0, length, Charsets.ISO_8859_1)
+        repeat(Regex("\u001b\\[0?c").findAll(text).count()) { keys.input("\u001b[?62;22c".toByteArray()) }
+        repeat(Regex("\u001b\\[6n").findAll(text).count()) { keys.input("\u001b[1;1R".toByteArray()) }
+    }
+    override fun exited(code: Int) {}
+}
+
 class PtySessionHostTest {
     private val folder: Path = createTempDirectory("hovel-pty")
     private var scripts = mutableMapOf<Launch, List<String>>()
-    private val host = PtySessionHost { spec -> ShellCommand(scripts.getValue(spec.launch), mapOf("PATH" to "/usr/bin:/bin", "TERM" to "xterm-256color", "LANG" to "en_US.UTF-8")) }
+    private var environment = mapOf("PATH" to "/usr/bin:/bin", "TERM" to "xterm-256color", "LANG" to "en_US.UTF-8")
+    private val host = PtySessionHost { spec, toolArguments -> ShellCommand(scripts.getValue(spec.launch) + toolArguments, environment) }
 
     @AfterTest fun cleanUp() {
         host.close()
@@ -112,31 +127,89 @@ class PtySessionHostTest {
         assertTrue(commands.size >= 2 && commands.any { it.endsWith("/sleep") }, "$commands")
     }
 
-    @Test fun busyMeansTheProcessHasLiveChildren() {
+    @Test fun aShellWithNoJobControlIsBusyWhileItHasLiveChildren() {
+        // /bin/sh -c runs its children in its own process group, the terminal's foreground one, so
+        // the foreground rule sees nothing; the children say it is working.
         val idle = start("read _")
         idle.attach(CollectingViewer())
         Thread.sleep(200)
-        assertFalse(idle.busy(), "a process waiting for input with no children is idle")
+        assertNull(idle.busy(), "a process waiting for input with no children is idle")
         val working = start("sleep 30 & wait")
         working.attach(CollectingViewer())
         Thread.sleep(200)
-        assertTrue(working.busy(), "a running child makes it busy")
+        assertNull(working.busy(), "its children are in the shell's own group, so they are not a foreground job")
+    }
+
+    /** An interactive zsh with job control and only this test's `.zshrc`, as a Shell tab runs a login shell. */
+    private fun interactiveShell(rc: String = ""): Pair<Session, Attachment> {
+        assumeTrue("Pseudo-terminal tests run on macOS", System.getProperty("os.name").contains("Mac"))
+        folder.resolve(".zshrc").toFile().writeText("PS1='READY> '\n$rc\n")
+        environment = environment + ("ZDOTDIR" to folder.toString())
+        scripts[Launch.Shell] = listOf("/bin/zsh", "-i")
+        val session = host.start(SessionSpec("p1", "Shell", folder, Launch.Shell, TermSize(80, 24)))
+        val viewer = CollectingViewer()
+        val keys = session.attach(viewer)
+        viewer.await("READY> ")
+        return session to keys
+    }
+
+    private fun awaitBusy(session: Session, expected: (Busy?) -> Boolean): Busy? {
+        val deadline = System.currentTimeMillis() + 5_000
+        var busy = session.busy()
+        while (!expected(busy) && System.currentTimeMillis() < deadline) { Thread.sleep(50); busy = session.busy() }
+        return busy
+    }
+
+    @Test fun aShellTabIsBusyOnlyWhileAForegroundJobRuns() {
+        val (shell, keys) = interactiveShell()
+        assertNull(shell.busy(), "an idle prompt")
+        keys.input("sleep 30 &\r".toByteArray())
+        Thread.sleep(300)
+        assertNull(awaitBusy(shell) { it == null }, "a background job is not the foreground")
+        keys.input("sleep 31\r".toByteArray())
+        assertEquals(Busy.Running("sleep 31"), awaitBusy(shell) { it != null }, "a foreground job names itself")
+        keys.input(byteArrayOf(0x03))
+        assertNull(awaitBusy(shell) { it == null }, "back at the prompt")
+    }
+
+    @Test fun aShellReplacedByExecIsTheProgramThatReplacedIt() {
+        val (shell, keys) = interactiveShell()
+        keys.input("exec sleep 32\r".toByteArray())
+        assertEquals(Busy.Running("sleep 32"), awaitBusy(shell) { it != null })
+    }
+
+    @Test fun promptHelpersDoNotMakeAShellTabBusy() {
+        // Like powerlevel10k's gitstatusd (a disowned daemon) and zsh-async's workers (a zpty, its own terminal).
+        val (shell, _) = interactiveShell("sleep 30 &!\nzmodload zsh/zpty && zpty hovel_worker sleep 30")
+        Thread.sleep(300)
+        val helpers = shell.processes().map { it.info().command().orElse("?") }.filter { it.endsWith("/sleep") }
+        assertEquals(2, helpers.size, "both helpers run: ${shell.processes().map { it.info().command() }}")
+        assertNull(shell.busy(), "a prompt with helpers running is idle")
     }
 
     @Test fun aToolsOwnHelperProcessIsNotWork() {
-        assumeTrue(System.getProperty("os.name").contains("Mac"))
-        // Like Neovim's interface process and its `nvim --embed` server: a child running the same
+        // Like a tool whose interface process runs a server of itself: a child running the same
         // executable, waiting, with nothing of its own running.
         val script = "/bin/sh -c 'read x < /dev/tty; :' & wait"
-        val tool = Launch.Tool(WorkspaceTool.NEOVIM)
+        val tool = Launch.Tool(WorkspaceTool.LAZYGIT)
+        assumeTrue("Pseudo-terminal tests run on macOS", System.getProperty("os.name").contains("Mac"))
         scripts[tool] = listOf("/bin/sh", "-c", script)
-        val editor = host.start(SessionSpec("p1", "Neovim", folder, tool, TermSize(80, 24)))
-        editor.attach(CollectingViewer())
-        val shell = start(script)
-        shell.attach(CollectingViewer())
+        val lazygit = host.start(SessionSpec("p1", "lazygit", folder, tool, TermSize(80, 24)))
+        lazygit.attach(CollectingViewer())
         Thread.sleep(300)
-        assertFalse(editor.busy(), "a tool's own helper is part of the tool")
-        assertTrue(shell.busy(), "in a shell tab, any child is work")
+        assertNull(lazygit.busy(), "a tool's own helper is part of the tool")
+        scripts[tool] = listOf("/bin/sh", "-c", "sleep 30 & wait")
+        val working = host.start(SessionSpec("p1", "lazygit", folder, tool, TermSize(80, 24)))
+        working.attach(CollectingViewer())
+        Thread.sleep(300)
+        assertEquals(Busy.Running("sleep 30"), working.busy(), "anything else it starts is work")
+    }
+
+    @Test fun anEndedSessionIsNotBusy() {
+        val session = start("sleep 30 & wait")
+        session.attach(CollectingViewer())
+        session.close()
+        assertNull(session.busy())
     }
 
     @Test fun closeEndsTheProcessGroupAndChildrenThatOutliveTheShell() {

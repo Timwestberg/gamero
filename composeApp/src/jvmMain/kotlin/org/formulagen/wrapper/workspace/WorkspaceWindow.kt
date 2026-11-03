@@ -49,7 +49,7 @@ private const val BUSY_POLL_MS = 1_000L
 @Composable
 internal fun WorkspaceWindowsHost(workspaces: WorkspaceWindows) {
     for (window in workspaces.windows) key(window.projectId) {
-        WorkspaceWindow(window, onClose = { workspaces.close(window) })
+        WorkspaceWindow(window, onClose = { workspaces.requestClose(window) })
     }
 }
 
@@ -73,7 +73,7 @@ private fun WorkspaceWindow(state: WorkspaceWindowState, onClose: () -> Unit) {
         MenuBar {
             Menu("Shell") {
                 Item("New Tab", shortcut = KeyShortcut(Key.T, meta = true), enabled = state.canAddTab, onClick = { state.addTab(Launch.Shell) })
-                Item("Close Tab", shortcut = KeyShortcut(Key.W, meta = true), onClick = { state.selectedTab()?.let(state::closeTab) })
+                Item("Close Tab", shortcut = KeyShortcut(Key.W, meta = true), onClick = { state.selectedTab()?.let(state::requestCloseTab) })
             }
             // The spike's rendering check: catalog tools started through the login shell.
             Menu("Develop") {
@@ -99,9 +99,9 @@ private fun TabBar(state: WorkspaceWindowState) {
                 Modifier.padding(end = 4.dp).background(if (selected) fgInk700 else fgInk900).clickable { state.select(tab) }.padding(horizontal = 10.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(tab.title + if (tab.busy) "  ●" else "", color = if (selected) fgWhite else fgInk300, fontSize = 13.sp)
+                Text(tab.title + if (tab.busy != null) "  ●" else "", color = if (selected) fgWhite else fgInk300, fontSize = 13.sp, maxLines = 1)
                 Spacer(Modifier.width(8.dp))
-                Text("×", color = fgInk300, fontSize = 13.sp, modifier = Modifier.clickable { state.closeTab(tab) })
+                Text("×", color = fgInk300, fontSize = 13.sp, modifier = Modifier.clickable { state.requestCloseTab(tab) })
             }
         }
         NewTabMenu(state)
@@ -134,7 +134,7 @@ private fun TabBanner(state: WorkspaceWindowState, tab: WorkspaceTab) {
         Text(message, color = if (tab.state is TabState.Failed) fgRed400 else fgInk300, fontSize = 13.sp, modifier = Modifier.weight(1f))
         if (action != null) {
             TextButton(onClick = { state.restart(tab) }) { Text(action, color = fgWhite) }
-            TextButton(onClick = { state.closeTab(tab) }) { Text("Close", color = fgWhite) }
+            TextButton(onClick = { state.requestCloseTab(tab) }) { Text("Close", color = fgWhite) }
         }
     }
 }
