@@ -13,10 +13,7 @@ internal data class LimitSetting(val default: Int, val min: Int, val max: Int) {
     fun resolve(value: Int?): Int = value?.takeIf { it in min..max } ?: default
 }
 
-/**
- * The synced limits, mirroring `WORKSPACE_LIMITS`. No test pins them to it yet: that fixture test lands once the
- * contracts PR's `HostBridgeFixtures.LIMITS` is on main.
- */
+/** The synced limits, mirroring `WORKSPACE_LIMITS`. `WorkspaceLimitsTest` fails when they differ from its fixture. */
 internal object WorkspaceSettingsLimits {
     const val TABS = 8
     val THREAD_FILES = LimitSetting(default = 500, min = 50, max = 2_000)
