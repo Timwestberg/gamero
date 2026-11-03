@@ -124,13 +124,15 @@ without one.
 
 - **Shell**: busy while the terminal's foreground process group (`tcgetpgrp` on the
   pseudo-terminal) is not the shell's own: a foreground job (`npm run dev`). Also busy while
-  any descendant is stopped (`proc_pidinfo`, `SSTOP`): a job suspended with ⌃Z
-  (“vim notes.txt” is suspended). Running background jobs and prompt helpers
-  (powerlevel10k's `gitstatusd`, zsh-async workers) are never stopped and never count. A
-  shell replaced by `exec` with a program that is not a shell is that program, by name
-  (`/bin/sh` re-executes another shell on a Mac); one whose command line cannot be read, such
-  as a setuid `exec sudo -s`, is "a program". When the terminal cannot be asked, any live
-  descendant counts.
+  any descendant is stopped (`proc_pidinfo` with `PROC_PIDT_SHORTBSDINFO`, `pbsi_status` is
+  `SSTOP`): a job suspended with ⌃Z (“vim notes.txt” is suspended). That flavor also reads
+  another user's process, such as a backgrounded `sudo`. A descendant that is gone or a
+  zombie (`ESRCH`, though the JDK still calls a zombie alive) is not stopped. Running
+  background jobs and prompt helpers (powerlevel10k's `gitstatusd`, zsh-async workers) are
+  never stopped and never count. A shell replaced by `exec` with a program that is not a
+  shell is that program, by name (`/bin/sh` re-executes another shell on a Mac); one whose
+  command line cannot be read, such as a setuid `exec sudo -s`, is "a program". When the
+  terminal cannot be asked, any live descendant counts.
 - **Neovim**: busy while a buffer is modified (as `:qa` would refuse) or its `:terminal` runs
   a job. Each Neovim tab listens on a socket in
   `~/Library/Caches/org.formulagen.wrapper/workspace/nvim/`, and Hovel asks with a fixed

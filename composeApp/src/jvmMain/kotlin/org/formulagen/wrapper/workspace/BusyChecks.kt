@@ -127,21 +127,24 @@ private interface LibSystem : Library {
     /** The foreground process group of the terminal open on [fd]. */
     fun tcgetpgrp(fd: Int): Int
 
-    /** libproc's process information: [flavor] [PROC_PIDTBSDINFO] fills a `proc_bsdinfo`. */
+    /** libproc's process information: [flavor] [PROC_PIDT_SHORTBSDINFO] fills a `proc_bsdshortinfo`. */
     fun proc_pidinfo(pid: Int, flavor: Int, arg: Long, buffer: Memory, size: Int): Int
 }
 
-/** `PROC_PIDTBSDINFO` (`sys/proc_info.h`). */
-private const val PROC_PIDTBSDINFO = 3
+/** `PROC_PIDT_SHORTBSDINFO` (`sys/proc_info.h`): unlike `PROC_PIDTBSDINFO`, it reads another user's process. */
+private const val PROC_PIDT_SHORTBSDINFO = 13
 
-/** `sizeof(struct proc_bsdinfo)` in the macOS SDK. */
-private const val PROC_BSDINFO_BYTES = 136
+/** `sizeof(struct proc_bsdshortinfo)` in the macOS SDK. */
+private const val PROC_BSDSHORTINFO_BYTES = 64
 
-/** `offsetof(struct proc_bsdinfo, pbi_status)`. */
-private const val PBI_STATUS_OFFSET = 4L
+/** `offsetof(struct proc_bsdshortinfo, pbsi_status)`. */
+private const val PBSI_STATUS_OFFSET = 12L
 
 /** `SSTOP` (`sys/proc.h`): stopped by a signal, such as ⌃Z's SIGTSTP. */
 private const val SSTOP = 4
+
+/** `ESRCH` (`sys/errno.h`): what libproc gives for a process that is gone or a zombie. */
+private const val ESRCH = 3
 
 /** libSystem through JNA, which pty4j already loads. Null when it cannot be loaded: callers fall back to busy. */
 private val libSystem: LibSystem? by lazy {
@@ -160,16 +163,16 @@ internal fun foregroundProcessGroup(fd: Int): Long? = try {
     null
 }
 
-/** Whether [process] is stopped; null when its state cannot be read, which callers count as busy. */
+/** Whether [process] is stopped: false once gone or a zombie; null when unreadable, which counts as busy. */
 internal fun isStopped(process: ProcessHandle): Boolean? {
     val calls = libSystem ?: return null
     return try {
-        Memory(PROC_BSDINFO_BYTES.toLong()).use { info ->
-            val read = calls.proc_pidinfo(process.pid().toInt(), PROC_PIDTBSDINFO, 0, info, PROC_BSDINFO_BYTES)
+        Memory(PROC_BSDSHORTINFO_BYTES.toLong()).use { info ->
+            val read = calls.proc_pidinfo(process.pid().toInt(), PROC_PIDT_SHORTBSDINFO, 0, info, PROC_BSDSHORTINFO_BYTES)
             when {
-                read == PROC_BSDINFO_BYTES -> info.getInt(PBI_STATUS_OFFSET) == SSTOP
-                // Gone in the meantime: nothing to lose.
-                !process.isAlive -> false
+                read == PROC_BSDSHORTINFO_BYTES -> info.getInt(PBSI_STATUS_OFFSET) == SSTOP
+                // Gone or a zombie: nothing to lose.
+                Native.getLastError() == ESRCH -> false
                 else -> null
             }
         }

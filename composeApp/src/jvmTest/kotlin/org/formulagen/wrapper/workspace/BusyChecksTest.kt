@@ -14,9 +14,10 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
+import org.formulagen.wrapper.conversations.eventually
 import org.junit.Assume.assumeTrue
 
-/** Neovim's answers, parsed and from a real Neovim; and the names a confirmation shows. */
+/** Neovim's answers, parsed and from a real Neovim; a process's stopped state; and the names a confirmation shows. */
 class BusyChecksTest {
     // Short: a Unix socket's whole path must fit in 103 bytes.
     private val root: Path = shortTempFolder()
@@ -128,6 +129,25 @@ class BusyChecksTest {
         assertEquals("/Users/p/Library/Caches/org.formulagen.wrapper/workspace/nvim", EditorSockets.defaultFolder("/Users/p").toString())
     }
 
+    @Test fun aProcessIsStoppedOnlyBySignalAndAnotherUsersOrAZombieIsNot() {
+        assumeTrue(System.getProperty("os.name").contains("Mac"))
+        assertEquals(false, isStopped(ProcessHandle.of(1).orElseThrow()), "launchd is root's, and still read")
+        // The exec'd sleep never reaps its child.
+        val parent = ProcessBuilder("/bin/sh", "-c", "sleep 0 & exec sleep 30").start()
+        try {
+            eventually("the child is a zombie") { parent.toHandle().children().toList().any { processState(it).startsWith("Z") } }
+            val zombie = parent.toHandle().children().toList().single()
+            assertTrue(zombie.isAlive, "the JDK still counts a zombie as alive")
+            assertEquals(false, isStopped(zombie), "a zombie")
+            assertEquals(false, isStopped(parent.toHandle()), "running")
+            ProcessBuilder("/bin/kill", "-STOP", "${parent.pid()}").start().waitFor()
+            eventually("the process stops") { isStopped(parent.toHandle()) == true }
+        } finally {
+            parent.destroyForcibly().waitFor()
+        }
+        assertEquals(false, isStopped(parent.toHandle()), "gone")
+    }
+
     @Test fun aRunningProgramIsNamedByItsScriptNotItsInterpreter() {
         assertEquals("npm run dev", commandLabel("/opt/homebrew/Cellar/node/22/bin/node", listOf("/opt/homebrew/bin/npm", "run", "dev")))
         assertEquals("manage.py runserver", commandLabel("/usr/bin/python3.12", listOf("/srv/app/manage.py", "runserver")))
@@ -166,6 +186,12 @@ class BusyChecksTest {
         val keys = session.attach(CollectingViewer())
         session.attach(TerminalReplies(keys))
         return session to keys
+    }
+
+    /** [process]'s state as `ps` shows it: `Z` for a zombie. */
+    private fun processState(process: ProcessHandle): String {
+        val ps = ProcessBuilder("/bin/ps", "-o", "stat=", "-p", "${process.pid()}").redirectErrorStream(true).start()
+        return ps.inputStream.bufferedReader().readText().trim().also { ps.waitFor() }
     }
 
     /** An executable script in the test's folder. */
