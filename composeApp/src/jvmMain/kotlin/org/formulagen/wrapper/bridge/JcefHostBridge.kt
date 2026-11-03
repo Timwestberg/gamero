@@ -11,7 +11,7 @@ import org.cef.callback.CefQueryCallback
 internal enum class JcefQueryKind {
     /** Anything that is not version 2, such as the companion protocol's old version 1: refused. */
     NOT_V2,
-    /** A persistent `watchContext`: the reply opens the context, and later successes carry events. */
+    /** A persistent `watchContext`: its reply opens the context and cancellation ends it. */
     V2_WATCH,
     V2_CALL,
     /** A v2 message on the wrong query kind: `watchContext` must be persistent, and nothing else may be. */
@@ -33,7 +33,7 @@ internal fun classifyJcefQuery(request: String, persistent: Boolean): JcefQueryK
 
 /**
  * The JCEF half of the host bridge. Each request is one `cefQuery`; the
- * persistent `watchContext` query stays open and carries the events. JCEF
+ * persistent `watchContext` query stays open to track document lifetime. JCEF
  * cancels a frame's queries when it navigates, so the end of a watch query
  * ends the context that watch opened.
  *
@@ -45,9 +45,14 @@ internal fun classifyJcefQuery(request: String, persistent: Boolean): JcefQueryK
  * [NativeBridge][org.formulagen.wrapper.companion.NativeBridge] checks the
  * browser and frame, then calls this from the CEF UI thread.
  */
-class JcefHostBridge(private val bridge: HostBridge, private val onContextEnded: () -> Unit = {}) : AutoCloseable {
-    constructor(product: String, trustedUrl: String, capabilities: HostCapabilities, products: List<CapabilityPack>, onContextEnded: () -> Unit = {}) :
-        this(HostBridge(product, trustedUrl, capabilities, products, Dispatchers.IO), onContextEnded)
+class JcefHostBridge(
+    private val bridge: HostBridge,
+    private val postEvent: (contextId: String, json: String) -> Unit,
+    private val onContextEnded: () -> Unit = {},
+) : AutoCloseable {
+    constructor(product: String, trustedUrl: String, capabilities: HostCapabilities, products: List<CapabilityPack>,
+        postEvent: (String, String) -> Unit, onContextEnded: () -> Unit = {}) :
+        this(HostBridge(product, trustedUrl, capabilities, products, Dispatchers.IO), postEvent, onContextEnded)
 
     /** Guards [watchQuery] and [pendingWatches]: the router's thread and the CEF UI thread both change them. */
     private val lock = Any()
@@ -71,13 +76,19 @@ class JcefHostBridge(private val bridge: HostBridge, private val onContextEnded:
         if (kind == JcefQueryKind.NOT_V2) return callback.failure(400, "Invalid native protocol")
         if (kind == JcefQueryKind.V2_MISUSE) return callback.success(bridgeFailureEnvelope(BridgeErrorCode.INVALID))
         if (kind == JcefQueryKind.V2_WATCH) synchronized(lock) { pendingWatches += queryId }
+        var openedContext: String? = null
         bridge.receive(request, PageFrame(mainFrame, frameUrl), object : BridgeChannel {
             override fun reply(json: String) {
                 synchronized(lock) { pendingWatches -= queryId }
                 callback.success(json)
             }
 
-            override fun event(json: String) = callback.success(json)
+            override fun event(json: String) {
+                // JCEF's native Success clears its callback reference after the reply.
+                synchronized(lock) {
+                    openedContext?.takeIf { it == watchContext && watchQuery == queryId }?.let { postEvent(it, json) }
+                }
+            }
 
             override fun opened(contextId: String): Boolean = synchronized(lock) {
                 // Replacing a document context also releases its product sessions.
@@ -90,6 +101,7 @@ class JcefHostBridge(private val bridge: HostBridge, private val onContextEnded:
                 if (!pendingWatches.remove(queryId)) return false
                 watchQuery = queryId
                 watchContext = contextId
+                openedContext = contextId
                 true
             }
         })

@@ -4,6 +4,8 @@ import dev.datlag.kcef.KCEFBrowser
 import org.formulagen.wrapper.bridge.CapabilityPack
 import org.formulagen.wrapper.bridge.HostCapabilities
 import org.formulagen.wrapper.bridge.JcefHostBridge
+import org.formulagen.wrapper.bridge.TrustedOrigin
+import kotlinx.serialization.json.JsonPrimitive
 import org.cef.browser.*
 import org.cef.callback.CefQueryCallback
 import org.cef.handler.*
@@ -23,7 +25,8 @@ class NativeBridge(
     onContextEnded: () -> Unit,
 ) : AutoCloseable {
     private val gate = Any()
-    private val hostBridge = JcefHostBridge(product, trustedUrl, capabilities, products, onContextEnded)
+    private val origin = TrustedOrigin(trustedUrl)
+    private val hostBridge = JcefHostBridge(product, trustedUrl, capabilities, products, ::postEvent, onContextEnded)
     private val closed = AtomicBoolean(false)
     private val handler = object : CefMessageRouterHandlerAdapter() {
         override fun onQuery(source: CefBrowser, frame: CefFrame, queryId: Long, request: String, persistent: Boolean, callback: CefQueryCallback): Boolean = synchronized(gate) {
@@ -42,6 +45,13 @@ class NativeBridge(
     init {
         browser.client.addMessageRouter(router)
     }
+    /** Deliver only to the trusted main frame; its context guard rejects navigation races. */
+    private fun postEvent(contextId: String, json: String) {
+        val frame = browser.mainFrame
+        if (!closed.get() && frame.isValid && origin.matches(frame.url)) {
+            frame.executeJavaScript(desktopEventScript(contextId, json), frame.url, 0)
+        }
+    }
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         hostBridge.close()
@@ -49,3 +59,7 @@ class NativeBridge(
         router.dispose()
     }
 }
+
+/** JSON string literals keep event content as data, including quotes and line breaks. */
+internal fun desktopEventScript(contextId: String, json: String): String =
+    "window.gameroDesktopEvent?.(${JsonPrimitive(contextId)},${JsonPrimitive(json)});"

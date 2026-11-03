@@ -45,7 +45,7 @@ class PageContractTest {
             products = desktopProductPacks(HOVEL_PRODUCT, FakeCompanion(), FakeProviderCapability(), FakePetCapability(),
                 FakeGameCapability(), FakeProjects(), contract, FakeConversationVoiceCapability(), pageCheck = contract::requireCurrentPage),
             context = backgroundScope.coroutineContext,
-        ))
+        ), postEvent = { _, _ -> })
         var queryId = 0L
         return { request, persistent ->
             val answers = Answers()
