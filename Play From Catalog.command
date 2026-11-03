@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 source "$ROOT/scripts/dev-env.sh"
-PLATFORM="$(cd "$HOVEL_GAME_PROJECT/../.." && pwd)"
+PLATFORM="$(cd "$HOVEL_GAMES_ROOT/.." && pwd)"
 export HOVEL_PET_PROJECT="${HOVEL_PET_PROJECT:-$PLATFORM/ember-desktop-pet}"
 export HOVEL_PET_GODOT="${HOVEL_PET_GODOT:-/Applications/Godot.app/Contents/MacOS/Godot}"
 export GAMERO_CATALOG_PORT="${GAMERO_CATALOG_PORT:-8133}"

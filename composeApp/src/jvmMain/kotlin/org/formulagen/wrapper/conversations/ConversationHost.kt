@@ -9,12 +9,13 @@ import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.bridge.ProviderCapability
 import org.formulagen.wrapper.bridge.RuntimeId
-import org.formulagen.wrapper.chat.ChatRuntime
-import org.formulagen.wrapper.chat.WorkRuntime
-import org.formulagen.wrapper.chat.loggingDaemonThreads
+import org.formulagen.wrapper.runtimes.ChatRuntime
+import org.formulagen.wrapper.runtimes.WorkRuntime
+import org.formulagen.wrapper.util.loggingDaemonThreads
 import org.formulagen.wrapper.closeInReverse
 import org.formulagen.wrapper.hovel.HostConnection
 import org.formulagen.wrapper.hovel.HovelStatusException
+import org.formulagen.wrapper.workspace.ThreadEditStore
 
 /**
  * What this Mac's voice needs from the running account: where heard turns go ([connected], null once the
@@ -27,8 +28,9 @@ internal interface ConversationVoiceLink : ReplyListeners {
 /**
  * Builds this Mac's conversation side for a registered account ([start]) and owns what outlives it:
  * the project folders and the `project.*` capability ([projects]), which needs the account the runner
- * serves. The runner gets runtime instances of its own ([talk], [work]), so team chat ending a page's
- * work never ends a conversation's, and every work approval goes through [RemoteApprovals]. [voice], when
+ * serves. The runner gets runtime instances of its own ([talk], [work]), which end with it; they keep the provider
+ * sessions its conversations can resume ([ConversationStore.bindingHandles]), and every work approval goes through
+ * [RemoteApprovals]. [voice], when
  * this Mac has conversation voice, is linked to each runner it starts.
  */
 internal class ConversationHost(
@@ -39,8 +41,8 @@ internal class ConversationHost(
     /** The runtimes this build offers, and those of them that may work here. */
     private val offered: Set<RuntimeId>,
     private val working: Set<RuntimeId>,
-    private val talk: () -> List<ChatRuntime>,
-    private val work: (ApprovalBroker) -> List<WorkRuntime>,
+    private val talk: (retained: () -> Set<String>?) -> List<ChatRuntime>,
+    private val work: (approvals: ApprovalBroker, retained: () -> Set<String>?) -> List<WorkRuntime>,
     private val voice: ConversationVoiceLink? = null,
 ) : AutoCloseable {
     @Volatile private var running: Running? = null
@@ -49,6 +51,7 @@ internal class ConversationHost(
     /** The account the runner serves, how its folders reach the account, and whether a project is this Mac's. */
     private class Running(
         val accountId: String,
+        val store: ConversationStore,
         val publisher: ProjectFolderPublisher,
         val readableBy: () -> List<RuntimeId>,
         val owns: (projectId: String) -> Boolean?,
@@ -62,6 +65,10 @@ internal class ConversationHost(
             }
         },
         owns = { accountId, projectId -> running?.takeIf { it.accountId == accountId }?.owns?.invoke(projectId) },
+        output = { accountId, args ->
+            val current = checkNotNull(running?.takeIf { it.accountId == accountId }) { "The connected account changed; retry" }
+            openProviderOutput(current.store.read(args.conversationId), args)
+        },
     )
 
     /** Start the runner for [connection]'s account. Closing the answer stops it and its runtimes. */
@@ -71,19 +78,24 @@ internal class ConversationHost(
         val store = ConversationStore(providerRoot, registration.ownerId).open()
         val owned = mutableListOf<AutoCloseable>(store)
         try {
+            // Closed after the runtimes, so their last edits are written.
+            val editStore = ThreadEditStore(providerRoot, registration.ownerId).also { owned += it }
             val approvals = RemoteApprovals(dialogs, api, registration.id)
-            val talkRuntimes = talk().also { owned += it }
-            val workRuntimes = work(approvals).also { owned += it }
+            // The account's live bindings: the runtimes prune only what no conversation can resume.
+            val retained = { store.bindingHandles() }
+            val talkRuntimes = talk(retained).also { owned += it }
+            val workRuntimes = work(approvals, retained).also { owned += it }
             val turns = ProviderTurns(talkRuntimes, workRuntimes, providers, approvals)
-            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(dialogs), api)
+            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), api, editStore)
             val publisher = ProjectFolderPublisher(folders, api, registration.ownerId, registration.id, engine::readableBy)
-            val directory = HostDirectory(providers, registration.ownerId, registration.id, offered,
-                working.intersect(workRuntimes.map { it.id }.toSet()), connection.features, connection.providerState)
+            val directory = HostDirectory(providers, registration.id, offered,
+                working.intersect(workRuntimes.map { it.id }.toSet()), connection.features)
+            val images = ProjectImageRelay(api, folders, registration.ownerId, registration.id).also { owned += it }
             val runner = ConversationRunner(api, store, engine, approvals, folders, publisher, directory::heartbeat, connection.heartbeat,
-                connection.status, replies = voice ?: ReplyListeners.NONE)
+                connection.status, replies = voice ?: ReplyListeners.NONE, imageRequested = images::request)
             owned += runner
             val onThisMac = ProjectsOnThisMac(api, folders, registration.ownerId, registration.id, publishing)
-            running = Running(registration.ownerId, publisher, engine::readableBy, onThisMac::answer)
+            running = Running(registration.ownerId, store, publisher, engine::readableBy, onThisMac::isOnThisMac)
             runner.start()
             voice?.connected(heardTurns(api, runner))
             return AutoCloseable {
@@ -107,25 +119,26 @@ internal class ConversationHost(
          * (so its folders can be chosen again), or another computer's. Null when the account cannot be reached.
          */
         internal fun projectOnThisMac(api: ConversationApi, folders: ProjectFolderStore, accountId: String, hostId: String,
-            projectId: String): Boolean? = try {
-            val mark = folders.foreignMark(accountId, projectId)
-            val project = api.project(projectId)
-            // A foreign mark made while the account answered is the newer word, and this answer never clears it.
-            if (project.computerId == hostId) folders.claimedUnlessMarked(accountId, project, mark)
-            else { folders.foreign(accountId, projectId); false }
-        } catch (refusal: HovelStatusException) {
-            if (!refusal.final) null else { folders.foreign(accountId, projectId); false }
-        } catch (_: Exception) {
-            null
+            projectId: String): Boolean? {
+            // An answer to a newer request, recorded while this one was on its way, is the newer word either way.
+            val request = folders.requestSequence(accountId, projectId)
+            return try {
+                val project = api.project(projectId)
+                folders.answered(accountId, projectId, project.takeIf { it.computerId == hostId }, request)
+            } catch (refusal: HovelStatusException) {
+                if (!refusal.final) null else folders.answered(accountId, projectId, null, request)
+            } catch (_: Exception) {
+                null
+            }
         }
 
-        /** Where the runner's Grok runtimes keep their bindings: apart from team chat's, so neither prunes the other's. */
+        /** Where the runner's Grok runtimes keep their bindings. */
         fun grokRoot(providerRoot: Path): Path = providerRoot.resolve("conversation-runtimes")
     }
 }
 
 /**
- * Whether each project runs on this Mac ([answer]), as the account says. A project the account confirmed, and not marked
+ * Whether each project runs on this Mac ([isOnThisMac]), as the account says. A project the account confirmed, and not marked
  * foreign since, answers at once and is checked again in the background, one check per project at a time, so a slow
  * server never hides it. Anything else waits for the account.
  */
@@ -139,7 +152,7 @@ internal class ProjectsOnThisMac(
     private val confirmed = ConcurrentHashMap.newKeySet<String>()
     private val checking = ConcurrentHashMap.newKeySet<String>()
 
-    fun answer(projectId: String): Boolean? {
+    fun isOnThisMac(projectId: String): Boolean? {
         if (projectId !in confirmed || folders.isForeign(accountId, projectId)) return check(projectId)
         if (checking.add(projectId)) {
             runCatching { background.execute { try { check(projectId) } finally { checking -= projectId } } }

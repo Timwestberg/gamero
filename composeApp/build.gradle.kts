@@ -279,3 +279,11 @@ fun registerDesktopAppInput(id: String, dir: String, archive: String, mainClass:
 registerDesktopAppInput("embeddedCompanion", "embedded", "hovel-embedded.jar",
     "org.formulagen.wrapper.progression.embedded.EmbeddedCompanionMainKt")
 registerDesktopAppInput("catalogLauncher", "catalog", "gamero-catalog.jar", "org.formulagen.wrapper.MainKt")
+
+// Explicit live QA must never replay cached test results.
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    if (providers.environmentVariable("HOVEL_CONSENT_SMOKE").isPresent) {
+        outputs.upToDateWhen { false }
+        outputs.doNotCacheIf("Local consent acceptance uses live services") { true }
+    }
+}

@@ -16,6 +16,51 @@ class CoordinatorReplyTest {
         assertEquals(CoordinatorDecision.Answer("Hi"), parseCoordinatorReply("{\"kind\":\"answer\",\"text\":\"Hi\"}", all))
     }
 
+    @Test fun reactionsAreMetadataAndDirectRepliesRemainCompatible() {
+        val raw = """{"kind":"answer","reaction":"🎉"}""" + "\nHappy to help."
+        assertEquals(CoordinatorDecision.Answer("Happy to help.", "🎉"), parseCoordinatorReply(raw, all))
+        assertEquals(CoordinatorDecision.Answer("Happy to help.", "🎉"), parseDirectCoordinatorReply(raw))
+        assertEquals(CoordinatorDecision.Answer("Plain answer"), parseDirectCoordinatorReply("Plain answer"))
+        assertFails { parseDirectCoordinatorReply("""{"kind":"answer","reaction":"invalid"}""" + "\nHi") }
+        val sent = mutableListOf<String>()
+        val stream = ReplyStream(headed = true, optionalHeader = true) { sent += it }
+        stream.partial(raw)
+        assertEquals(listOf("Happy to help."), sent)
+        val plain = ReplyStream(headed = true, optionalHeader = true) { sent += it }
+        plain.partial("Plain answer")
+        assertEquals(listOf("Happy to help.", "Plain answer"), sent)
+    }
+
+    @Test fun understandingStreamsBeforeTheAnswerWithoutLeakingMetadata() {
+        val sent = mutableListOf<String>()
+        val cards = mutableListOf<SharedUnderstanding>()
+        val header = """{"kind":"answer","understanding":{"goal":"Readable UI","keep":"Drafts","assumption":"Main view"}}"""
+        val stream = ReplyStream(headed = true, onUnderstanding = { cards += it }) { sent += it }
+        stream.partial(header)
+        assertTrue(cards.isEmpty())
+        stream.partial(header + "\n")
+        assertEquals("Readable UI", cards.single().goal)
+        assertTrue(sent.isEmpty())
+        stream.partial(header + "\nStarting now.")
+        assertEquals(listOf("Starting now."), sent)
+        assertEquals(1, cards.size)
+        assertEquals(CoordinatorDecision.Answer("Starting now."), parseCoordinatorReply(header + "\nStarting now.", all))
+        assertFails { understandingHeader(header.replace("Readable UI", "x".repeat(241))) }
+    }
+
+    @Test fun communicationHeadersKeepMetadataOutOfTheReply() {
+        val progress = """{"kind":"answer","communication":{"kind":"progress","purpose":"Checking keyboard clearance"}}"""
+        val updates = mutableListOf<ConversationCommunication.Progress>()
+        val sent = mutableListOf<String>()
+        val stream = ReplyStream(headed = true, onProgress = { updates += it }) { sent += it }
+        stream.partial(progress + "\nWorking on it.")
+        assertEquals("Checking keyboard clearance", updates.single().purpose)
+        assertEquals(listOf("Working on it."), sent)
+        assertEquals(CoordinatorDecision.Answer("Working on it."), parseCoordinatorReply(progress + "\nWorking on it.", all))
+        val invalid = """{"kind":"answer","communication":{"kind":"correction","status":"applied","change":"Main only","earlierWork":"None"}}"""
+        assertFails { parseCoordinatorReply(invalid + "\nDone", all) }
+    }
+
     @Test fun anAnswerNeedsItsTextWithinTheMessageLimit() {
         assertFails { parseCoordinatorReply("{\"kind\":\"answer\"}", all) }
         assertFails { parseCoordinatorReply("{\"kind\":\"answer\"}\n   \n", all) }

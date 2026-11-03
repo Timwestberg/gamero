@@ -12,8 +12,7 @@ internal class GrokProvider(
     override val id = RuntimeId.GROK_BUILD
 
     /** Refresh from the runtime on every check, including after a provider-owned login or logout. */
-    override fun status(profile: String, action: ProviderAction): ProviderStatus {
-        require(SharedRules.isProfileId(profile))
+    override fun status(action: ProviderAction): ProviderStatus {
         val access = connection.check(fresh = true)
         if (access.executable == null) return ProviderStatus(id, ProviderState.UNAVAILABLE, message = id.copy.notInstalled, detail = ProviderDetail.NOT_INSTALLED)
         if (access.account != null) return ProviderStatus(id, ProviderState.CONNECTED,
@@ -30,16 +29,10 @@ internal class GrokProvider(
     }
 
     /** Expose only the catalog paired with a verified subscription response. */
-    override fun models(profile: String): List<ProviderModel> {
-        require(SharedRules.isProfileId(profile))
-        return connection.check().account?.models.orEmpty()
-    }
+    override fun models(): List<ProviderModel> = connection.check().account?.models.orEmpty()
 
     /** The verified Grok interface supplies no subscription quota; missing windows mean unknown. */
-    override fun usage(profile: String): ProviderUsage {
-        require(SharedRules.isProfileId(profile))
-        return ProviderUsage(id, System.currentTimeMillis())
-    }
+    override fun usage(): ProviderUsage = ProviderUsage(id, System.currentTimeMillis())
 
     override fun close() = Unit
 }

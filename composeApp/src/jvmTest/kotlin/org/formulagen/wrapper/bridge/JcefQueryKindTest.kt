@@ -18,7 +18,7 @@ class JcefQueryKindTest {
         assertEquals(JcefQueryKind.V2_MISUSE, classifyJcefQuery(call2, persistent = true))
     }
 
-    @Test fun everythingElseKeepsTheVersionOnePath() {
+    @Test fun everythingElseIsNotVersionTwo() {
         for (request in listOf(
             """{"version":1,"method":"watchContext","args":{}}""",
             """{"version":"2","method":"watchContext","args":{}}""",
@@ -26,6 +26,6 @@ class JcefQueryKindTest {
             "not json",
             "[2]",
             """{"version":2,"args":{"pad":"${"a".repeat(70_000)}"}}""",
-        )) assertEquals(JcefQueryKind.V1, classifyJcefQuery(request, persistent = true), request.take(40))
+        )) assertEquals(JcefQueryKind.NOT_V2, classifyJcefQuery(request, persistent = true), request.take(40))
     }
 }

@@ -15,13 +15,20 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.*
-import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
+import org.formulagen.wrapper.runtimes.*
+import org.formulagen.wrapper.conversation.voice.*
+import org.formulagen.wrapper.util.*
 import org.formulagen.wrapper.voice.DuplexChoice
 import org.formulagen.wrapper.voice.FillerSettings
 import org.formulagen.wrapper.voice.HearingDuplex
 import org.formulagen.wrapper.voice.HearingResult
-import org.formulagen.wrapper.workspace.FolderPicker
+import org.formulagen.wrapper.conversation.ChatVoice
+import org.formulagen.wrapper.conversation.DictationAction
+import org.formulagen.wrapper.conversation.DictationState
+import org.formulagen.wrapper.conversation.HearingAction
+import org.formulagen.wrapper.conversation.HearingState
+import org.formulagen.wrapper.conversation.MemberMode
+import org.formulagen.wrapper.conversation.VoiceState
 
 /** The Mac's microphone as the tests drive it: a session hears what [hear] says, and a hold answers [held] on release. */
 internal class FakeEar : Hearing {
@@ -89,6 +96,8 @@ internal class FakeSpeaker : ChatSpeech {
     val ends = AtomicInteger()
     val warms = AtomicInteger()
     @Volatile var firstPieceAt = 0L
+    /** The thread the last session warmed the voice on: where a Talk arm ran. */
+    @Volatile var warmedOn: Thread? = null
     @Volatile private var voice = ChatVoice()
     @Volatile private var listener: (() -> Unit)? = null
 
@@ -104,7 +113,7 @@ internal class FakeSpeaker : ChatSpeech {
         return true
     }
     override fun endStream() { ends.incrementAndGet(); events += "end" }
-    override fun warm() { warms.incrementAndGet() }
+    override fun warm() { warms.incrementAndGet(); warmedOn = Thread.currentThread() }
     override fun kokoroActive() = true
     override fun voiceChoices() = listOf(VoiceChoice("adam70-michael30", "Sam"), VoiceChoice("heart60-adam40", "Harper"))
     override fun currentVoiceId() = "adam70-michael30"
@@ -133,7 +142,7 @@ class VoiceConversationTest {
     private var mac = Mac(root)
 
     /** This Mac's conversation voice; a restart makes a new one. */
-    private fun voice() = DesktopConversationVoice(speaker, microphone, settings, row, HOVEL_PRODUCT, claimWaitMs = CLAIM_WAIT_MS,
+    private fun voice() = DesktopConversationVoice(speaker, microphone, settings, row, claimWaitMs = CLAIM_WAIT_MS,
         sleep = {}, timer = timer)
 
     /** Wait until every timer due within [ms] has run: a task queued after them runs last. */
@@ -149,8 +158,8 @@ class VoiceConversationTest {
         private val folders = ProjectFolderStore(root, FolderPicker { _, _ -> null })
         private val approvals = RemoteApprovals(NativeDialogs(Screen()), server, server.hostId)
         private val turns = ProviderTurns(listOf(coordinator), emptyList(), ConnectedProviders(), approvals)
-        private val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(NativeDialogs(Screen())), server)
-        private val beat = HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), listOf("memory-context"), "ready")
+        private val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), server)
+        private val beat = HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), listOf("memory-extraction"), "ready")
         val runner = ConversationRunner(server, store, engine, approvals, folders,
             ProjectFolderPublisher(folders, server, account, server.hostId) { emptyList() }, { beat },
             heartbeatEvery = 50.milliseconds, firstBackoff = 10.milliseconds, maxBackoff = 40.milliseconds, replies = voice)
@@ -190,6 +199,9 @@ class VoiceConversationTest {
 
     private fun heardId() = server.sent.last().second.id
 
+    /** How the last heard turn settled; null before one was sent, so a wait can begin before the send lands. */
+    private fun heardSettled(): MessageState? = server.sent.lastOrNull()?.second?.id?.let(server::settled)
+
     /** The run delegates to a held talk specialist, then answers once it is released; [release] lets it finish. */
     private fun delegatingRun(): () -> Unit {
         val roles = brain("Reviewer" to MemberMode.TALK)
@@ -224,6 +236,7 @@ class VoiceConversationTest {
         assertEquals(HearingState.LISTENING, started.hearing.state)
         assertTrue(ear.listening)
         ear.hear("  what   time is it ")
+        eventually("posted") { server.sent.isNotEmpty() }
         val (conversationId, sent) = server.sent.single()
         assertEquals(talk.id, conversationId)
         assertEquals(MessageSend(sent.id, emptyList(), "what time is it", null), sent, "the owner's message, in the main conversation")
@@ -274,12 +287,12 @@ class VoiceConversationTest {
         val stops = speaker.stops.get()
         assertTrue(voice.escape(), "the window's Escape belongs to the voice conversation")
         assertTrue(speaker.stops.get() > stops, "the speaker flushes first")
-        eventually("Talk's own turn, not delegated, stops as Stop stops it") { server.settled(heardId()) == MessageState.STOPPED }
+        eventually("Talk's own turn, not delegated, stops as Stop stops it") { heardSettled() == MessageState.STOPPED }
         eventually("Talk listens again") { phase() == TalkPhase.LISTENING && ear.listening }
         assertTrue(checkNotNull(voice.served).talk.on)
         reply = { "Sure." }
         ear.hear("never mind, what time is it")
-        eventually { server.sent.size == 2 && server.settled(heardId()) == MessageState.ANSWERED }
+        eventually { server.sent.size == 2 && heardSettled() == MessageState.ANSWERED }
     }
 
     @Test fun bargeInOnceTheRunDelegatedOnlySilencesItAndTheRunContinues() {
@@ -293,7 +306,7 @@ class VoiceConversationTest {
         assertTrue(speaker.stops.get() > stops, "the speaker flushes")
         assertEquals(TALK_AGENTS_WORKING, status().hearing.notice, "and says why nothing stopped")
         release()
-        eventually("the agents' work goes on to its answer") { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually("the agents' work goes on to its answer") { heardSettled() == MessageState.ANSWERED }
         eventually("a later reply in the run is spoken") { speaker.pieces.contains("The review is done.") }
         eventually("the note goes with the run") { status().hearing.notice != TALK_AGENTS_WORKING }
         assertTrue(checkNotNull(voice.served).talk.on)
@@ -307,7 +320,7 @@ class VoiceConversationTest {
         assertEquals(HearingState.OFF, hearing(HearingAction.OFF).hearing.state)
         assertFalse(ear.listening)
         release()
-        eventually("the run continues to its answer") { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually("the run continues to its answer") { heardSettled() == MessageState.ANSWERED }
         assertFalse(speaker.pieces.contains("The review is done."), "nothing more is said once Talk ended: ${speaker.pieces}")
     }
 
@@ -322,7 +335,7 @@ class VoiceConversationTest {
         assertEquals(HearingState.UNAVAILABLE, status().hearing.state)
         assertEquals("The microphone did not open.", status().hearing.notice)
         coordinator.held.single().completed("Monday is busy. Tuesday is free.", id())
-        eventually("the reply finishes") { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually("the reply finishes") { heardSettled() == MessageState.ANSWERED }
         assertEquals(listOf("Monday is busy."), speaker.pieces, "the rest is not said")
         assertFalse(voice.escape(), "with Talk off, Escape goes on")
     }
@@ -336,7 +349,7 @@ class VoiceConversationTest {
         assertTrue(asked.await(5, TimeUnit.SECONDS))
         assertTrue(voice.escape())
         landing.countDown()
-        eventually { server.settled(heardId()) == MessageState.STOPPED }
+        eventually { heardSettled() == MessageState.STOPPED }
         assertTrue(coordinator.requests.isEmpty(), "no provider turn ran")
     }
 
@@ -429,7 +442,7 @@ class VoiceConversationTest {
         assertTrue(speaker.stops.get() > stops, "the speaker stops")
         assertEquals(HearingState.THINKING, quiet.hearing.state, "Talk stays on")
         coordinator.held.single().completed("Roses are red. Violets are blue.", id())
-        eventually("the reply is not stopped") { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually("the reply is not stopped") { heardSettled() == MessageState.ANSWERED }
         assertEquals(listOf("Roses are red."), speaker.pieces)
         eventually { phase() == TalkPhase.LISTENING && ear.listening }
         assertTrue(checkNotNull(voice.served).talk.on)
@@ -555,7 +568,7 @@ class VoiceConversationTest {
         hearing(HearingAction.HANDS_FREE)
         ear.hear("review my draft")
         release()
-        eventually("answered") { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually("answered") { heardSettled() == MessageState.ANSWERED }
         eventually { speaker.pieces.contains("The review is done.") }
         assertFalse(speaker.pieces.any { "Reviewed" in it }, "threads are text only: ${speaker.pieces}")
         assertTrue(server.appended().any { it.threadId != null && it.text == "Reviewed." }, "the specialist's reply is in its thread")
@@ -574,14 +587,14 @@ class VoiceConversationTest {
         server.sendFailures = 2
         ear.hear("what time is it now")
         eventually("sent on its third try") { server.sent.size == 1 }
-        eventually { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually { heardSettled() == MessageState.ANSWERED }
     }
 
     @Test fun aResendAfterALostAnswerKeepsOneMessage() {
         server.lostSendAnswers = 1
         hearing(HearingAction.HANDS_FREE)
         ear.hear("what time is it")
-        eventually { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually { heardSettled() == MessageState.ANSWERED }
         assertEquals(1, server.sent.size, "the retry named the same id, and the server kept one message")
         assertEquals(1, coordinator.requests.size, "it ran once")
     }
@@ -626,9 +639,9 @@ class VoiceConversationTest {
         assertEquals(DictationState.LISTENING, status().dictation?.state)
     }
 
-    @Test fun oneMicrophoneServesTeamChatOrAConversationAtATime() {
+    @Test fun oneMicrophoneServesOneCaptureAtATime() {
         val chat = microphone.user()
-        assertTrue(chat.startSession(1_000, {}, {}, {}))
+        assertTrue(chat.startSession(1_000, {}, {}, {}), "another capture, such as a conversation the voice just left")
         val refused = hearing(HearingAction.HANDS_FREE)
         assertEquals(MICROPHONE_IN_USE, refused.hearing.notice)
         assertEquals(HearingState.OFF, refused.hearing.state)
@@ -636,7 +649,7 @@ class VoiceConversationTest {
         assertEquals(ConversationDictation(DictationState.UNAVAILABLE, notice = MICROPHONE_IN_USE), status().dictation)
         chat.endSession()
         assertEquals(HearingState.LISTENING, hearing(HearingAction.HANDS_FREE).hearing.state)
-        assertFalse(chat.startSession(1_000, {}, {}, {}), "now team chat waits")
+        assertFalse(chat.startSession(1_000, {}, {}, {}), "now the other one waits")
     }
 
     @Test fun aCaptureThatCannotStartSaysBusyInsteadOfListening() {
@@ -666,10 +679,23 @@ class VoiceConversationTest {
         assertTrue(shown.showTalk, "its icon can end a session the page started")
         assertEquals(TalkPhase.LISTENING, shown.phase)
         voice.converseClick()
+        voice.awaitRowClicks()
         assertEquals(HearingState.OFF, status().hearing.state)
         assertFalse(row.state.value.showTalk, "with Talk off, the page owns starting it")
         voice.converseClick()
+        voice.awaitRowClicks()
+        timersDue(100)
         assertEquals(HearingState.OFF, status().hearing.state, "the icon never starts a session the page owns")
+    }
+
+    @Test fun theRowIconArmsTalkOffTheWindowsThread() {
+        // Served by a spoken reply, so no page owns Talk and the row's icon may start it.
+        val claim = talk.claim(id(), talk.message("Hi"), document, speak = true)
+        checkNotNull(voice.forClaim(claim) {}).ended()
+        assertTrue(row.state.value.showTalk)
+        voice.converseClick()
+        eventually { checkNotNull(voice.served).talk.on && ear.listening }
+        assertNotEquals(Thread.currentThread(), speaker.warmedOn, "the arm, which can load the full-duplex graph, runs on the row's thread")
     }
 
     @Test fun theFillerChoiceHoldsAcrossConversationsAndThePageGoingAway() {
@@ -697,7 +723,7 @@ class VoiceConversationTest {
         assertNull(status().conversationId)
         assertNull(server.settled(heardId()), "the conversation's message keeps running")
         coordinator.held.single().completed("Done.", id())
-        eventually { server.settled(heardId()) == MessageState.ANSWERED }
+        eventually { heardSettled() == MessageState.ANSWERED }
         assertTrue(speaker.pieces.isEmpty(), "nobody is served, so nothing is read aloud")
     }
 

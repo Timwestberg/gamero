@@ -75,15 +75,14 @@ class ProviderUsageTest {
         assertFalse("turn/start" in StdioCodexAppServer.ACCOUNT_METHODS)
     }
 
-    @Test fun unofferedOrMissingRuntimesReturnNoLimitsAndRejectPaths() = runBlocking<Unit> {
+    @Test fun unofferedOrMissingRuntimesReturnNoLimits() = runBlocking<Unit> {
         val root = Files.createTempDirectory("hovel-usage-test")
         try {
             DesktopProviders(listOf(CodexProvider(root, null))).use { providers ->
                 for (id in RuntimeId.entries) {
-                    val result = providers.usage(ProviderScope("local", id))
+                    val result = providers.usage(ProviderScope(id))
                     assertEquals(id, result.runtimeId); assertNull(result.session); assertNull(result.weekly)
                 }
-                assertFails { providers.usage(ProviderScope("../bad", RuntimeId.CODEX)) }
             }
         } finally { root.toFile().deleteRecursively() }
     }

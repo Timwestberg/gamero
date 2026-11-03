@@ -98,9 +98,10 @@ internal class RemoteApprovals(
      * The engine's own questions (start of work, a stage, the resume review), raced the same way.
      * [options] pairs each contract option with the dialog's value. Null when nobody answered.
      */
-    fun <T> ask(scope: ApprovalScope, kind: ApprovalKind, dialog: NativeDialog<T>, options: List<Pair<ApprovalOption, T>>, cancel: CancelSignal): T? {
+    fun <T> ask(scope: ApprovalScope, kind: ApprovalKind, dialog: NativeDialog<T>, options: List<Pair<ApprovalOption, T>>, cancel: CancelSignal,
+        onOpened: (String) -> Unit = {}, onSettled: (ApprovalReceipt) -> Unit = {}): T? {
         val optionOf = { value: T -> options.first { it.second == value }.first }
-        return race(scope, kind, dialog, presentDialog(dialog, scope.folders, scope.companionName), options, optionOf, cancel) {}
+        return race(scope, kind, dialog, presentDialog(dialog, scope.folders, scope.companionName), options, optionOf, cancel, {}, onOpened, onSettled)
     }
 
     /** The host stream says another surface answered [approvalId]: read its answer, and close the Mac's dialog. Late ones change nothing. */
@@ -150,9 +151,12 @@ internal class RemoteApprovals(
         optionOf: (T) -> ApprovalOption,
         cancel: CancelSignal,
         shown: () -> Unit,
+        onOpened: (String) -> Unit = {},
+        onSettled: (ApprovalReceipt) -> Unit = {},
     ): T? {
         val id = UUID.randomUUID().toString()
         val pending = OpenApproval(kind)
+        onOpened(id)
         open[id] = pending
         val approval = AgentApproval(null, hostId, scope.conversationId, expiry(), id, kind, options.map { it.first }.distinct(), presentation,
             OPENED_REVISION, ApprovalState.OPEN, scope.threadId)
@@ -163,17 +167,17 @@ internal class RemoteApprovals(
                 is DialogOutcome.Chosen -> {
                     val mine = optionOf(outcome.value)
                     val won = if (!relayed) mine else settleHere(scope, id, mine)
-                    receipt(ApprovalReceipt(id, kind, won, if (won == mine) ApprovalSurface.MAC else ApprovalSurface.PHONE))
+                    receipt(onSettled, ApprovalReceipt(id, kind, won, if (won == mine) ApprovalSurface.MAC else ApprovalSurface.PHONE))
                     if (won == mine) outcome.value else options.first { it.first == won }.second
                 }
                 DialogOutcome.AnsweredElsewhere -> {
                     val option = checkNotNull(pending.remote.get())
-                    receipt(ApprovalReceipt(id, kind, option, ApprovalSurface.PHONE))
+                    receipt(onSettled, ApprovalReceipt(id, kind, option, ApprovalSurface.PHONE))
                     options.firstOrNull { it.first == option }?.second ?: dialog.dismiss
                 }
                 DialogOutcome.Unanswered -> {
                     val winner = if (relayed) withdrawHere(scope, id) else null
-                    receipt(ApprovalReceipt(id, kind, winner, winner?.let { ApprovalSurface.PHONE }))
+                    receipt(onSettled, ApprovalReceipt(id, kind, winner, winner?.let { ApprovalSurface.PHONE }))
                     winner?.let { option -> options.firstOrNull { it.first == option }?.second }
                 }
             }
@@ -218,7 +222,11 @@ internal class RemoteApprovals(
         }
     }
 
-    private fun receipt(receipt: ApprovalReceipt) = synchronized(receipts) { receipts[receipt.id] = receipt }
+    /** Save observational evidence before returning the applied dialog answer. */
+    private fun receipt(onSettled: (ApprovalReceipt) -> Unit, receipt: ApprovalReceipt) {
+        onSettled(receipt)
+        synchronized(receipts) { receipts[receipt.id] = receipt }
+    }
 
     /**
      * When the server lets the approval go: past the Mac dialog's own timeout, with room for the dialogs

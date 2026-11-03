@@ -8,7 +8,8 @@ import kotlinx.serialization.json.JsonClassDiscriminator
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
-import org.formulagen.wrapper.bridge.ActivityStep
+import org.formulagen.wrapper.conversation.ActivityStep
+import org.formulagen.wrapper.bridge.BrainQuestion
 import org.formulagen.wrapper.bridge.BrainAttemptOutcome
 import org.formulagen.wrapper.bridge.BrainAttemptState
 import org.formulagen.wrapper.bridge.BrainDocument
@@ -94,6 +95,10 @@ internal data class ConversationMessage(
     val state: MessageState? = null,
     val text: String,
     val threadId: String?,
+    val question: BrainQuestion? = null,
+    val understanding: SharedUnderstanding? = null,
+    val communication: ConversationCommunication? = null,
+    val direction: MessageDirection? = null,
 )
 
 /** `artifactInput`: a text a sent message attaches. A heard voice turn attaches none. */
@@ -105,7 +110,13 @@ internal data class ArtifactInput(val id: String, val mediaType: String, val tex
  * conversation. Its `id` is the client's; a retry with the same id must be deep-equal.
  */
 @Serializable
-internal data class MessageSend(val id: String, val inputs: List<ArtifactInput>, val text: String, val threadId: String?)
+internal data class MessageSend(val id: String, val inputs: List<ArtifactInput>, val text: String, val threadId: String?, val direction: MessageDirection? = null)
+
+@Serializable
+internal data class MessageDirection(val targetMessageId: String)
+
+@Serializable
+internal data class PendingDirection(val pending: Boolean)
 
 /** `messageAppend`: a reply or note the Mac appends; never a user message. */
 @Serializable
@@ -115,8 +126,13 @@ internal data class MessageAppend(
     val note: CoordinatorNote? = null,
     val text: String,
     val threadId: String?,
+    val question: BrainQuestion? = null,
+    val understanding: SharedUnderstanding? = null,
+    val communication: ConversationCommunication? = null,
 ) {
     init {
+        require(understanding == null || (author == MessageAuthor.COORDINATOR && threadId == null && note == null && question == null))
+        require(question == null || (author == MessageAuthor.COORDINATOR && threadId == null && note == null))
         require(author != MessageAuthor.USER) { "The Mac never writes the person's messages" }
         require(author != MessageAuthor.SPECIALIST || threadId != null) { "A specialist writes only in its thread" }
         require(note == null || (author == MessageAuthor.COORDINATOR && threadId != null)) { "Only the coordinator notes, in a thread" }
@@ -203,6 +219,8 @@ internal data class ClaimResult(
     val project: CompanionProject,
     val recalledMemory: String? = null,
     val thread: ConversationThread?,
+    val specialistAdvice: SpecialistAdvice? = null,
+    val workflowEvidence: Boolean? = null,
 )
 
 /** `claimResponse`. */
@@ -246,6 +264,10 @@ internal sealed interface ApprovalOutcome {
 @Serializable
 @JsonClassDiscriminator("kind")
 internal sealed interface MessageCheckpoint {
+    /** React to the user message this claim is answering, never an arbitrary message. */
+    @Serializable @SerialName("message.reacted")
+    data class MessageReacted(val emoji: String) : MessageCheckpoint
+
     @Serializable @SerialName("thread.upserted")
     data class ThreadUpserted(val thread: ConversationThread) : MessageCheckpoint
 
@@ -258,6 +280,9 @@ internal sealed interface MessageCheckpoint {
 
     @Serializable @SerialName("run.changed")
     data class RunChanged(val run: ConversationRun) : MessageCheckpoint
+
+    @Serializable @SerialName("workflow.evidence")
+    data class WorkflowEvidenceStored(val evidence: WorkflowEvidence) : MessageCheckpoint
 
     @Serializable @SerialName("approval.opened")
     data class ApprovalOpened(val approval: AgentApproval) : MessageCheckpoint
@@ -289,6 +314,9 @@ internal data class MessageProgress(val claimId: String, val claimedMessageId: S
 @Serializable
 @JsonClassDiscriminator("type")
 internal sealed interface HostStreamEvent {
+    @Serializable @SerialName("artifact.image.requested")
+    data class ImageRequested(val requestId: String) : HostStreamEvent
+
     @Serializable @SerialName("work.available")
     data class WorkAvailable(val conversationId: String) : HostStreamEvent
 
@@ -303,6 +331,10 @@ internal sealed interface HostStreamEvent {
 
     @Serializable @SerialName("project.changed")
     data class ProjectChanged(val projectId: String) : HostStreamEvent
+
+    /** The account's workspace profile is saved at [revision]; a Mac holding an older one reads it again. */
+    @Serializable @SerialName("workspaceProfile.changed")
+    data class WorkspaceProfileChanged(val revision: Long) : HostStreamEvent
 }
 
 /** `PROVIDER_READINESS`. */
@@ -320,7 +352,17 @@ internal data class ProviderRuntime(val canWork: Boolean, val models: List<Provi
 
 /** `providerDirectory`: what this computer publishes about its runtimes. */
 @Serializable
-internal data class ProviderDirectory(val observedAt: String, val runtimes: List<ProviderRuntime>)
+internal data class ProviderDirectory(val observedAt: String, val runtimes: List<ProviderRuntime>) {
+    /**
+     * The heartbeat's `providerState` for this directory: `ready` when a runtime is ready, else `auth-required` when one
+     * is signed out, else `unavailable`.
+     */
+    fun providerState(): String = when {
+        runtimes.any { it.readiness == ProviderReadiness.READY } -> "ready"
+        runtimes.any { it.readiness == ProviderReadiness.SIGNED_OUT } -> "auth-required"
+        else -> "unavailable"
+    }
+}
 
 /** `runtimeAllowance`: a runtime's usage as an `allowanceSnapshot`, built by [allowanceSnapshot]. */
 @Serializable
@@ -335,7 +377,7 @@ internal data class HostHeartbeat(
     val allowances: List<RuntimeAllowance>,
     val directory: ProviderDirectory,
     val features: List<String>,
-    /** `ready`, `auth-required` or `unavailable`: the task lane's Codex, and `unavailable` without a task lane. */
+    /** `ready`, `auth-required` or `unavailable`, from [directory] ([ProviderDirectory.providerState]). */
     val providerState: String,
 )
 
@@ -346,3 +388,31 @@ internal data class ProjectFoldersSave(val expectedRevision: Long, val folders: 
 /** `artifactTextPage`: one page of an artifact's text, from the requested cursor; [nextCursor] is null at the end. */
 @Serializable
 internal data class ArtifactTextPage(val nextCursor: Int?, val text: String)
+
+/** Expiring metadata for an authenticated project-image request. */
+@Serializable
+internal data class ImageRelayWork(val projectId: String, val path: String, val expiresAt: String)
+/** Optional, short-lived evidence for the coordinator, never a dispatch command. */
+@Serializable
+internal data class SpecialistAdvice(val roleId: String, val requestId: String, val messageId: String,
+    val configurationRevision: Long, val confidence: Double, val model: String, val expiresAt: Long)
+
+
+/** Host-attested binding; the server independently reconciles the approval answer and input text. */
+@Serializable
+internal data class WorkflowEvidence(
+    val version: Int = 1,
+    val runId: String,
+    val runRevision: Long,
+    val configurationRevision: Long,
+    val attemptId: String,
+    val stepId: String?,
+    val threadId: String,
+    val approvalId: String?,
+    val state: String,
+    val option: ApprovalOption?,
+    val inputs: List<WorkflowEvidenceInput>,
+)
+
+@Serializable
+internal data class WorkflowEvidenceInput(val artifactId: String, val digest: String, val current: Boolean)

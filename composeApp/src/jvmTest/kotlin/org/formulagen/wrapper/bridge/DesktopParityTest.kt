@@ -15,9 +15,12 @@ import kotlin.test.Test
 class DesktopParityTest {
     /**
      * Phase C of the host bridge plan ships the platform methods on desktop. Project folders, the contract
-     * handshake and conversation voice are the conversation runner's.
+     * handshake and conversation voice are the conversation runner's. Project workspaces register as unsupported
+     * until `DesktopProjectWorkspace` lands.
      */
-    private val pending = setOf("lifecycle.pause", "lifecycle.resume")
+    private val pending = setOf(
+        "lifecycle.pause", "lifecycle.resume", "projectWorkspace.open", "projectWorkspace.viewChanges",
+    )
 
     private class FakeProjects : ProjectCapability {
         override suspend fun chooseFolder(args: ProjectChooseFolderArgs) = ProjectFoldersStatus(emptyList())
@@ -37,9 +40,8 @@ class DesktopParityTest {
         val router = BridgeRouter(
             product = HOVEL_PRODUCT,
             capabilities = desktopHostCapabilities(),
-            products = desktopProductPacks(HOVEL_PRODUCT, HovelCompanionCapability(companion), FakeChatCapability(),
-                FakeProviderCapability(), FakePetCapability(), FakeGameCapability(), FakeWorkspaceCapability(), FakeBrainCapability(),
-                FakeProjects(), DesktopHostContract(), FakeConversationVoiceCapability()),
+            products = desktopProductPacks(HOVEL_PRODUCT, HovelCompanionCapability(companion), FakeProviderCapability(),
+                FakePetCapability(), FakeGameCapability(), FakeProjects(), DesktopHostContract(), FakeConversationVoiceCapability()),
             scope = scope,
             transport = {},
         )

@@ -10,8 +10,16 @@ import org.formulagen.wrapper.approvals.CancelSignal
 import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.bridge.*
-import org.formulagen.wrapper.chat.*
-import org.formulagen.wrapper.workspace.FolderPicker
+import org.formulagen.wrapper.runtimes.*
+import org.formulagen.wrapper.conversation.voice.*
+import org.formulagen.wrapper.util.*
+import org.formulagen.wrapper.conversation.Activity
+import org.formulagen.wrapper.conversation.ActivityKind
+import org.formulagen.wrapper.conversation.ActivityStatus
+import org.formulagen.wrapper.conversation.ActivityStep
+import org.formulagen.wrapper.conversation.MemberMode
+import org.formulagen.wrapper.workspace.EditGap
+import org.formulagen.wrapper.workspace.ThreadEditStore
 
 class CoordinatorEngineTest {
     /** One engine on a fake server, with a coordinator and specialists the test scripts. */
@@ -33,7 +41,10 @@ class CoordinatorEngineTest {
         val dialogs = NativeDialogs(screen)
         val approvals = RemoteApprovals(dialogs, server, server.hostId)
         val turns = ProviderTurns(listOf(chat), listOf(worker), ConnectedProviders(), approvals)
-        val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(dialogs), server)
+        val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), server)
+
+        /** An engine on this fixture's account that keeps thread edit records in [editStore]. */
+        fun engine(editStore: ThreadEditStore) = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), server, editStore)
 
         init {
             if (workingFolder) { picked = working; folders.choose(account, talk.projectId, FolderRole.WORKING) }
@@ -44,12 +55,14 @@ class CoordinatorEngineTest {
 
         /** Queue [text] (in [threadId]), claim it and run it here. */
         fun send(text: String, threadId: String? = null, messageId: String = id(), cancel: CancelSignal = CancelSignal(),
-            history: List<ConversationMessage> = emptyList(), memory: String? = null, closing: () -> Boolean = { false }): MessageState {
-            return run(claim(text, threadId, messageId, history, memory), cancel, closing)
+            history: List<ConversationMessage> = emptyList(), memory: String? = null, closing: () -> Boolean = { false },
+            engine: CoordinatorEngine = this.engine): MessageState {
+            return run(claim(text, threadId, messageId, history, memory), cancel, closing, engine)
         }
 
         /** Run [claim] here, as the runner does once it is claimed. */
-        fun run(claim: ClaimResult, cancel: CancelSignal = CancelSignal(), closing: () -> Boolean = { false }): MessageState =
+        fun run(claim: ClaimResult, cancel: CancelSignal = CancelSignal(), closing: () -> Boolean = { false },
+            engine: CoordinatorEngine = this.engine): MessageState =
             ClaimOutput(server, claim.claimId, claim.message.id, attempts = 1, onStopRequested = cancel::cancel)
                 .use { engine.run(claim, it, cancel, closing) }
 
@@ -85,6 +98,132 @@ class CoordinatorEngineTest {
                 else -> "{\"kind\":\"answer\"}\nAll done: sign-in works."
             }
         }
+    }
+
+    @Test fun aQuestionKeepsItsChoicesInStorageAndTheCheckpoint() {
+        val fixture = Fixture(brain("Reviewer" to MemberMode.TALK))
+        fixture.decide = { """{"kind":"ask","question":"How much detail?","choices":["Focused","Detailed"]}""" }
+        assertEquals(MessageState.ANSWERED, fixture.send("Review the UX"))
+        val question = fixture.server.appended().single { it.question != null }
+        assertEquals(listOf("Focused", "Detailed"), question.question?.choices)
+        assertEquals(question.question, fixture.record().brain.messages.last().question)
+        assertEquals(BrainRunState.AWAITING_INPUT, fixture.record().brain.run?.summary?.state)
+        fixture.decide = { "{\"kind\":\"answer\"}\nI will keep it focused." }
+        assertEquals(MessageState.ANSWERED, fixture.send("Focused"))
+        assertEquals(BrainRunState.COMPLETED, fixture.record().brain.run?.summary?.state)
+    }
+
+    @Test fun coordinatorReactionsWorkForDirectAndRoutedAnswers() {
+        for (document in listOf(brain(), brain("Reviewer" to MemberMode.TALK))) {
+            val fixture = Fixture(document)
+            val response = """{"kind":"answer","reaction":"🎉"}""" + "\nGlad it worked!"
+            fixture.decide = { response }
+            fixture.chat.reply = { response }
+            assertEquals(MessageState.ANSWERED, fixture.send("It works!"))
+            assertEquals(listOf(MessageCheckpoint.MessageReacted("🎉")),
+                fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.MessageReacted>())
+            assertEquals("Glad it worked!", fixture.server.appended().last().text)
+            assertFalse(fixture.server.deltas.any { "reaction" in it.text })
+        }
+    }
+
+    @Test fun understandingIsPublishedOnceAndBeforeTheNormalReply() {
+        for (document in listOf(brain(), brain("Reviewer" to MemberMode.TALK))) {
+            val fixture = Fixture(document)
+            val response = """{"kind":"answer","understanding":{"goal":"Readable UI","keep":"Drafts","assumption":"Main view"}}""" + "\nStarting now."
+            fixture.decide = { response }
+            fixture.chat.reply = { response }
+            assertEquals(MessageState.ANSWERED, fixture.send("Improve the mobile layout"))
+            val messages = fixture.server.appended()
+            assertEquals(1, messages.count { it.understanding != null })
+            assertEquals("Readable UI", messages.first().understanding?.goal)
+            assertEquals("Starting now.", messages.last().text)
+        }
+    }
+
+    @Test fun understandingReachesTheConversationBeforeSpecialistDispatch() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        fixture.delegateThenAnswer()
+        val decide = fixture.decide
+        fixture.decide = { turn -> decide(turn)?.let { reply ->
+            if (reply.contains("\"kind\":\"delegate\"")) reply.replaceFirst("{", """{"understanding":{"goal":"Add sign-in","keep":"Existing routes","assumption":"Use the current form"},""") else reply
+        } }
+        fixture.worker.reply = {
+            assertEquals("Add sign-in", fixture.server.appended().first().understanding?.goal)
+            "Implemented sign-in."
+        }
+        assertEquals(MessageState.ANSWERED, fixture.send("Add sign-in"))
+        assertEquals(1, fixture.server.appended().count { it.understanding != null })
+    }
+
+    @Test fun correctionReportsBindToTheClaimAndHandoffsKeepUnrunChecksExplicit() {
+        val fixture = Fixture(brain())
+        fixture.chat.reply = { """{"kind":"answer","understanding":{"goal":"Readable UI","keep":"Drafts","assumption":"Main only"},"communication":{"kind":"correction","status":"applied","change":"Main only","earlierWork":"No edits need reverting"}}
+I will focus on the main view.""" }
+        val messageId = id()
+        assertEquals(MessageState.ANSWERED, fixture.send("Update shared understanding (message old)\nChange Assumption to: Main only", messageId = messageId))
+        val report = fixture.server.appended().single { it.communication != null }
+        assertEquals(messageId, (report.communication as ConversationCommunication.Correction).correctionMessageId)
+        assertEquals("Main only", report.understanding?.assumption)
+        fixture.chat.reply = { """{"kind":"answer","communication":{"kind":"handoff","changed":"Layout","checks":[{"label":"Phone","result":"not-run","evidence":"Needs a physical device"}],"attention":"Check readability"}}
+Ready for review.""" }
+        assertEquals(MessageState.ANSWERED, fixture.send("Finish up"))
+        val handoff = fixture.server.appended().mapNotNull { it.communication as? ConversationCommunication.Handoff }.single()
+        assertEquals("not-run", handoff.checks.single().result)
+    }
+
+    @Test fun missingDirectionReportRepairsBeforeDispatchAndNeverClaimsItApplied() {
+        val fixture = Fixture(brain("Reviewer" to MemberMode.TALK))
+        fixture.delegateThenAnswer()
+        val delegate = fixture.decide
+        var attempts = 0
+        fixture.decide = { turn ->
+            if (++attempts == 1) delegate(turn) else """{"kind":"answer","communication":{"kind":"direction","status":"applied","change":"Mobile only","earlierWork":"Keep prior review"}}
+Mobile only from here."""
+        }
+        val claim = fixture.claim("Mobile only")
+        assertEquals(MessageState.ANSWERED, fixture.run(claim.copy(message = claim.message.copy(direction = MessageDirection(id())))))
+        assertEquals(2, fixture.coordinatorTurns().size)
+        assertTrue(fixture.record().threads.isEmpty(), "unacknowledged delegation must not run")
+        assertEquals(1, fixture.server.appended().count { it.communication is ConversationCommunication.Direction })
+        val direct = Fixture(brain())
+        direct.chat.reply = { "Okay, mobile only." }
+        val plain = direct.claim("Mobile only")
+        assertEquals(MessageState.FAILED, direct.run(plain.copy(message = plain.message.copy(direction = MessageDirection(id())))))
+        assertFalse(direct.server.appended().any { it.communication is ConversationCommunication.Direction })
+    }
+
+    @Test fun aDirectionArrivingDuringASpecialistKeepsItsResultAndYieldsBeforeAnotherDecision() {
+        val fixture = Fixture(brain("Reviewer" to MemberMode.TALK))
+        fixture.delegateThenAnswer()
+        fixture.chat.reply = { turn ->
+            if (Fixture.isCoordinator(turn)) fixture.decide(turn) else {
+                fixture.server.directionPending = { true }
+                "Mobile review complete. Keep the composer changes."
+            }
+        }
+        assertEquals(MessageState.ANSWERED, fixture.send("Review mobile layout"))
+        assertEquals(1, fixture.coordinatorTurns().size)
+        assertTrue(fixture.server.appended().any { it.text.contains("Mobile review complete") })
+        assertTrue(fixture.record().threads.values.any { it.state == BrainAttemptState.COMPLETED })
+    }
+
+    @Test fun aDirectionYieldsBeforeTheNextSpecialistAndBindsItsAcknowledgement() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        fixture.delegateThenAnswer()
+        fixture.server.directionPending = { fixture.coordinatorTurns().isNotEmpty() }
+        assertEquals(MessageState.ANSWERED, fixture.send("Improve the layout"))
+        assertTrue(fixture.worker.requests.isEmpty(), "no specialist starts after a direction is waiting")
+        assertEquals(BrainRunState.CANCELLED, fixture.record().brain.run?.summary?.state)
+        assertTrue(fixture.server.appended().any { it.text.contains("Reading your new direction") })
+        val direct = Fixture(brain())
+        direct.chat.reply = { """{"kind":"answer","communication":{"kind":"direction","status":"applied","change":"Mobile first","earlierWork":"Keep the composer edits"}}
+Mobile first from here.""" }
+        val claim = direct.claim("Mobile first")
+        assertEquals(MessageState.ANSWERED, direct.run(claim.copy(message = claim.message.copy(direction = MessageDirection(id())))))
+        val report = direct.server.appended().mapNotNull { it.communication as? ConversationCommunication.Direction }.single()
+        assertEquals(claim.message.id, report.directionMessageId)
+        assertEquals("Mobile first", report.change)
     }
 
     @Test fun aBrainWithoutSpecialistsStreamsAPlainAnswer() {
@@ -128,6 +267,23 @@ class CoordinatorEngineTest {
         val stored = fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.ArtifactStored>().single()
         assertEquals("Implemented sign-in.", stored.text)
         assertEquals(listOf(stored.artifact), finished.outputs)
+        val origin = fixture.record().outputOrigins.getValue(stored.artifact.id)
+        assertEquals(fixture.talk.projectId, origin.projectId)
+        assertEquals(fixture.record().threadContexts.getValue(threadId).id, origin.sessionId)
+        val open = ProjectOpenOutputArgs(fixture.talk.projectId, fixture.talk.id, stored.artifact.id)
+        var launches = 0
+        val launcher: (OutputOrigin) -> Boolean = { saved -> assertEquals(origin, saved); launches++; true }
+        assertEquals("opened", openProviderOutput(fixture.record(), open, launcher).status)
+        assertEquals(1, launches)
+        assertEquals("unavailable", openProviderOutput(fixture.record(), open.copy(projectId = id()), launcher).status)
+        assertEquals("unavailable", openProviderOutput(fixture.record().copy(outputOrigins = emptyMap()), open, launcher).status)
+        val active = fixture.record().let { it.copy(threads = it.threads + (threadId to it.threads.getValue(threadId).copy(state = BrainAttemptState.RUNNING))) }
+        assertEquals("busy", openProviderOutput(active, open, launcher).status)
+        assertEquals(1, launches, "foreign, legacy and active outputs never launch")
+        assertEquals("unavailable", openProviderOutput(fixture.record(), open) { false }.status)
+        val rotated = fixture.record().copy(threadContexts = emptyMap())
+        assertEquals("opened", openProviderOutput(rotated, open, launcher).status)
+
         val specialist = appended.single { it.author == MessageAuthor.SPECIALIST }
         assertEquals(MessageAppend(MessageAuthor.SPECIALIST, specialist.id, null, "Implemented sign-in.", threadId), specialist)
         val streamed = fixture.server.deltas.filter { it.messageId == specialist.id }
@@ -149,6 +305,34 @@ class CoordinatorEngineTest {
         assertEquals(ApprovalKind.START_OF_WORK, opened.kind)
         assertEquals(threadId, opened.threadId)
         assertEquals(listOf(opened.id to ApprovalOption.CONTINUE), fixture.server.answers, "answered through approval.closed")
+    }
+
+    @Test fun stageConsentIsPersistedWithTheActualDialogAndSurvivesStoreReload() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.TALK, workflow = true, askBeforeStarting = true))
+        val step = fixture.document.configuration.workflow!!.steps.first()
+        fixture.decide = { turn ->
+            when {
+                "enter-workflow" in fixture.allowed(turn) -> """{"kind":"enter-workflow","entryStepId":"${step.id}","inputIds":[],"skipped":[],"reason":"Start"}"""
+                "start-step" in fixture.allowed(turn) -> """{"kind":"start-step","stepId":"${step.id}","inputIds":[]}"""
+                "step-result" in fixture.allowed(turn) -> {
+                    val attempt = fixture.request(turn).getValue("attempts").jsonArray.last().jsonObject.getValue("id").jsonPrimitive.content
+                    """{"kind":"step-result","attemptId":"$attempt","outcome":"ready","explanation":"Done"}"""
+                }
+                else -> "{\"kind\":\"answer\"}\nDone."
+            }
+        }
+        assertEquals(MessageState.ANSWERED, fixture.run(fixture.claim("Run workflow").copy(workflowEvidence = true)))
+        val opened = fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.ApprovalOpened>().single { it.approval.kind == ApprovalKind.STAGE }.approval
+        val restored = ConversationStore(fixture.root, fixture.account).read(fixture.talk.id).brain.run!!
+        val consent = restored.stageConsents.values.single()
+        val evidence = fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.WorkflowEvidenceStored>()
+        assertEquals(listOf("PENDING", "ANSWERED"), evidence.map { it.evidence.state })
+        assertTrue(evidence.all { it.evidence.approvalId == opened.id })
+        assertEquals(ApprovalOption.CONTINUE, evidence.last().evidence.option)
+        assertEquals(opened.id, consent.approvalId)
+        assertEquals(ApprovalOption.CONTINUE, consent.option)
+        assertEquals(restored.attempts.single().id, consent.attemptId)
+        assertEquals(BrainRunState.COMPLETED, restored.summary.state)
     }
 
     @Test fun anInvalidReplyIsRepairedOnceThenWaitsForThePerson() {
@@ -225,6 +409,68 @@ class CoordinatorEngineTest {
         assertEquals(BrainAttemptState.COMPLETED, thread.state)
         assertTrue(thread.revision > before)
         assertEquals(2, thread.outputs.size)
+    }
+
+    @Test fun aThreadWhoseAgentEditsFilesAcrossTwoRepliesListsEveryOne() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        val editStore = ThreadEditStore(fixture.root, fixture.account)
+        val engine = fixture.engine(editStore)
+        fixture.delegateThenAnswer()
+        fixture.worker.reply = { turn ->
+            turn.work!!.edits.run { edited(fixture.working.resolve("src/sign-in.ts")); edited(Path.of("src/app.ts")) }
+            "Implemented sign-in."
+        }
+        assertEquals(MessageState.ANSWERED, fixture.send("Add sign-in", engine = engine))
+        val threadId = fixture.server.threads().last().id
+        fixture.decide = { """{"kind":"forward","threadId":"$threadId","note":"Match the design docs"}""" }
+        fixture.worker.reply = { turn ->
+            turn.work!!.edits.run { edited(Path.of("src/app.ts")); edited(fixture.working.resolve("styles/button.css")); edited(Path.of("/etc/hosts")) }
+            "Changed the button to blue."
+        }
+        assertEquals(MessageState.ANSWERED, fixture.send("Use the blue button", threadId, engine = engine))
+        assertEquals(listOf(threadId, threadId), fixture.worker.requests.map { it.work!!.lease }, "two replies in one thread")
+        editStore.close()
+        val record = assertNotNull(ThreadEditStore(fixture.root, fixture.account).use { it.read(fixture.talk.projectId, threadId) })
+        assertEquals(listOf("src/sign-in.ts", "src/app.ts", "styles/button.css"), record.files, "every file of both replies, once, inside the folder")
+        assertEquals(emptySet(), record.gaps, "the thread's first reply opened its record")
+        assertEquals("Implementer · add sign-in", record.title)
+    }
+
+    @Test fun aThreadThatRepliedBeforeItsRecordExistedSaysItMayBeIncomplete() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        fixture.delegateThenAnswer()
+        // The first reply runs before this Mac keeps edit records.
+        assertEquals(MessageState.ANSWERED, fixture.send("Add sign-in"))
+        val threadId = fixture.server.threads().last().id
+        val editStore = ThreadEditStore(fixture.root, fixture.account)
+        fixture.decide = { """{"kind":"forward","threadId":"$threadId","note":"Match the design docs"}""" }
+        fixture.worker.reply = { turn -> turn.work!!.edits.edited(Path.of("src/app.ts")); "Changed the button to blue." }
+        assertEquals(MessageState.ANSWERED, fixture.send("Use the blue button", threadId, engine = fixture.engine(editStore)))
+        editStore.close()
+        val record = assertNotNull(ThreadEditStore(fixture.root, fixture.account).use { it.read(fixture.talk.projectId, threadId) })
+        assertEquals(listOf("src/app.ts"), record.files)
+        assertEquals(setOf(EditGap.EARLIER_REPLIES), record.gaps)
+    }
+
+    @Test fun aThreadWhoseLostProviderConversationWasDroppedStillCountsItsEarlierReplies() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        fixture.delegateThenAnswer()
+        // The first reply runs before this Mac keeps edit records; then the provider loses the thread's conversation.
+        assertEquals(MessageState.ANSWERED, fixture.send("Add sign-in"))
+        val threadId = fixture.server.threads().last().id
+        fixture.decide = { """{"kind":"forward","threadId":"$threadId","note":"Match the design docs"}""" }
+        fixture.worker.failure = ChatFailure.ConversationLost
+        assertEquals(MessageState.FAILED, fixture.send("Use the blue button", threadId))
+        assertFalse(threadId in fixture.record().threadContexts, "the lost conversation is dropped")
+        assertEquals(1, fixture.record().threads.getValue(threadId).outputs.size, "the first reply's output stays")
+        val editStore = ThreadEditStore(fixture.root, fixture.account)
+        fixture.worker.reply = { turn -> turn.work!!.edits.edited(Path.of("src/app.ts")); "Changed the button to blue." }
+        assertEquals(MessageState.ANSWERED, fixture.send("Use the blue button", threadId, engine = fixture.engine(editStore)))
+        assertNull(fixture.worker.requests.last().conversation, "the reply starts a new provider conversation")
+        editStore.close()
+        val record = assertNotNull(ThreadEditStore(fixture.root, fixture.account).use { it.read(fixture.talk.projectId, threadId) })
+        assertEquals(listOf("src/app.ts"), record.files)
+        assertEquals(setOf(EditGap.EARLIER_REPLIES), record.gaps)
     }
 
     @Test fun aThreadReplyAnsweredStaysInTheThread() {
@@ -498,6 +744,71 @@ class CoordinatorEngineTest {
         assertEquals(MessageState.STOPPED, fixture.send("Add sign-in", messageId = messageId))
         assertEquals(BrainRunState.CANCELLED, fixture.record().brain.run?.summary?.state, "cancelled, not left for review")
         assertEquals(emptyList(), fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.ArtifactStored>(), "nothing new is stored")
+    }
+
+    @Test fun aCoordinatorWithNoProviderSaysToAssignOneInsteadOfToRetry() {
+        // A new companion's brain: the coordinator has no binding yet, with or without specialists.
+        for (document in listOf(brain(), brain("Implementer" to MemberMode.WORK))) {
+            val configuration = document.configuration
+            val fixture = Fixture(document.copy(configuration = configuration.copy(coordinator = configuration.coordinator.copy(binding = null))))
+            assertEquals(MessageState.FAILED, fixture.send("Hi"))
+            assertEquals("Assign a provider to the coordinator in Configure brain.",
+                fixture.server.appended().last { it.author == MessageAuthor.SYSTEM }.text)
+            assertEquals(emptyList(), fixture.chat.requests, "no provider turn starts")
+        }
+    }
+
+    @Test fun aCoordinatorOnARuntimeThisMacDoesNotRunSaysToChooseAnother() {
+        // This Mac runs Codex only; the coordinator is bound to Claude Code.
+        for (document in listOf(brain(), brain("Implementer" to MemberMode.WORK))) {
+            val configuration = document.configuration
+            val claude = configuration.coordinator.copy(binding = BrainBinding(RuntimeId.CLAUDE_CODE, SharedRules.RUNTIME_DEFAULT_MODEL))
+            val fixture = Fixture(document.copy(configuration = configuration.copy(coordinator = claude)))
+            assertEquals(MessageState.FAILED, fixture.send("Hi"))
+            assertEquals("Claude doesn't run on this Mac. Choose another provider for the coordinator in Configure brain.",
+                fixture.server.appended().last { it.author == MessageAuthor.SYSTEM }.text)
+            assertEquals(emptyList(), fixture.chat.requests, "no provider turn starts")
+        }
+    }
+
+    @Test fun aThreadReplyDelegatedToASpecialistWithNoProviderSaysToAssignOne() {
+        val document = brain("Implementer" to MemberMode.WORK, "Reviewer" to MemberMode.TALK)
+        val configuration = document.configuration
+        val fixture = Fixture(document.copy(configuration = configuration.copy(
+            specialists = configuration.specialists.map { if (it.name == "Reviewer") it.copy(binding = null) else it })))
+        fixture.delegateThenAnswer()
+        fixture.send("Add sign-in")
+        val threadId = fixture.server.threads().last().id
+        val reviewer = fixture.document.configuration.specialists[1]
+        fixture.decide = { delegate(reviewer, "review the sign-in page") }
+        assertEquals(MessageState.FAILED, fixture.send("Can someone review it?", threadId))
+        assertEquals("Assign a provider to Reviewer in Configure brain.", fixture.server.appended().last { it.author == MessageAuthor.SYSTEM }.text)
+        assertEquals(listOf(threadId), fixture.server.threads().map { it.id }.distinct(), "no thread opens for it")
+    }
+
+    @Test fun specialistAdviceIsVisibleButTheCoordinatorCanIgnoreIt() {
+        val base = brain("Reviewer" to MemberMode.TALK)
+        val fixture = Fixture(base.copy(configuration = base.configuration.copy(specialistAdvice = true)))
+        val claim = fixture.claim("Review this code")
+        val hint = SpecialistAdvice(fixture.implementer.id, id(), claim.message.id, claim.brain.revision, 0.95, "jev-1.14.0", System.currentTimeMillis() + 20_000)
+        assertEquals(MessageState.ANSWERED, fixture.run(claim.copy(specialistAdvice = hint)))
+        assertTrue(fixture.coordinatorTurns().single().text.contains("specialistRecommendation"))
+        assertTrue(fixture.server.appended().any { it.author == MessageAuthor.SYSTEM && it.text.contains("Jev recommends") })
+        assertTrue(fixture.server.appended().any { it.text.contains("differs from the recommendation") })
+        assertTrue(fixture.server.threads().isEmpty(), "advice must not dispatch a specialist")
+        assertNull(validSpecialistAdvice(claim.copy(specialistAdvice = hint.copy(messageId = id()))))
+        assertNull(validSpecialistAdvice(claim.copy(specialistAdvice = hint.copy(configurationRevision = claim.brain.revision + 1))))
+        assertNull(validSpecialistAdvice(claim.copy(specialistAdvice = hint.copy(expiresAt = 1))))
+        assertNull(validSpecialistAdvice(claim.copy(specialistAdvice = hint.copy(roleId = id()))))
+        assertNull(validSpecialistAdvice(claim.copy(specialistAdvice = hint, brain = base)))
+    }
+
+    @Test fun anUnexpectedErrorStillSaysToTryAgain() {
+        val fixture = Fixture(brain())
+        fixture.chat.reply = { error("a bug in this build") }
+        assertEquals(MessageState.FAILED, fixture.send("Hi"))
+        assertEquals("Hovel could not finish this message on this Mac. Try sending it again.",
+            fixture.server.appended().last { it.author == MessageAuthor.SYSTEM }.text)
     }
 
     @Test fun aSignedOutRuntimeFailsWithItsProvidersReason() {

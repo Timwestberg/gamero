@@ -113,10 +113,8 @@ internal fun <A> BridgeMethod<A, *>.decodeArgs(args: JsonObject): A? {
 
 /**
  * Whether [value] sends `null` for an optional key. A property with a default is zod's `.optional()`:
- * absent, never `null`. Only a property without one, such as a handover's `from` (`.nullable()`),
- * takes `null`. Top-level keys only, since no other argument nests an optional key. `brain.*`
- * arguments, which do (an Auto effort in a saved configuration), are also read through
- * `BrainWireSerializer`, whose round trip refuses any form but the contract's.
+ * absent, never `null`. Only a property without one (`.nullable()`) takes `null`. Top-level keys only,
+ * since no argument nests an optional key.
  */
 @OptIn(ExperimentalSerializationApi::class)
 private fun SerialDescriptor.nullForOptional(value: JsonObject): Boolean =

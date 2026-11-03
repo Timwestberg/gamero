@@ -4,10 +4,11 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.formulagen.wrapper.bridge.BrainAttemptState
 import org.formulagen.wrapper.bridge.CompanionLimits
-import org.formulagen.wrapper.chat.loggingDaemonThreads
+import org.formulagen.wrapper.util.loggingDaemonThreads
 import org.formulagen.wrapper.hovel.HovelRejectedException
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
+import org.formulagen.wrapper.util.takeWhole
 
 /**
  * What one claimed message sends, every call naming its claim. A [checkpoint] is durable: it is
@@ -37,6 +38,9 @@ internal class ClaimOutput(
     private val pending = LinkedHashMap<Pair<String, String?>, StringBuilder>()
     private val sequence = HashMap<String, Int>()
     private var flushing = false
+
+    /** Check a safe boundary and honor a Stop even when its stream event was lost. */
+    fun direction(conversationId: String): Boolean = stopAware { api.direction(messageId, ClaimRequest(claimId, conversationId)) }
 
     /** Store [checkpoint], retrying until it is stored. Throws when the claim is refused or the server stays unreachable. */
     fun checkpoint(checkpoint: MessageCheckpoint) {
@@ -139,10 +143,9 @@ internal class ClaimOutput(
             val result = mutableListOf<String>()
             var start = 0
             while (start < text.length) {
-                var end = minOf(text.length, start + CompanionLimits.DELTA)
-                if (end < text.length && text[end - 1].isHighSurrogate()) end -= 1
-                result += text.substring(start, end)
-                start = end
+                val piece = text.substring(start).takeWhole(CompanionLimits.DELTA)
+                result += piece
+                start += piece.length
             }
             return result
         }

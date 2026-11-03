@@ -11,6 +11,7 @@ import org.formulagen.wrapper.hovel.HovelHttpTransport
 import org.formulagen.wrapper.hovel.HovelRejectedException
 import org.formulagen.wrapper.hovel.HovelStatusException
 import org.formulagen.wrapper.hovel.NativeRoute
+import org.formulagen.wrapper.conversation.MemberMode
 
 /** The Mac's companion payloads in the contract's exact form, and the routes they travel on. */
 class ConversationWireTest {
@@ -114,7 +115,9 @@ class ConversationWireTest {
         assertTrue(NativeRoute.allows("PUT", NativeRoute.PROJECT_FOLDERS.path(message)))
         assertTrue(NativeRoute.allows("GET", NativeRoute.PROJECT.path(message)))
         assertTrue(NativeRoute.allows("GET", NativeRoute.ARTIFACT_TEXT.path(message, cursor = 0)))
-        assertTrue(NativeRoute.allows("POST", NativeRoute.TASK_CLAIM.path()), "the task lane stays until step E")
+        assertTrue(NativeRoute.allows("POST", NativeRoute.MEMORY_CLAIM.path()))
+        assertFalse(NativeRoute.allows("POST", "claim"), "Hovel tasks are gone")
+        assertFalse(NativeRoute.allows("POST", "progress"))
         assertFalse(NativeRoute.allows("GET", NativeRoute.PROJECT_FOLDERS.path(message)))
         assertFalse(NativeRoute.allows("POST", "approvals/$message/answer"), "the Mac answers through approval.closed")
         assertFalse(NativeRoute.allows("POST", "messages/$message/../../claim"))
@@ -173,7 +176,7 @@ class ConversationWireTest {
             val artifact = id()
             assertEquals(ArtifactTextPage(null, "Sign-in added."), api.artifactText(artifact, 0))
             assertNull(api.saveFolders(talk.projectId, ProjectFoldersSave(3, emptyList())), "an answer without the project is fine")
-            api.heartbeat(HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), listOf("memory-context"), "ready"))
+            api.heartbeat(HostHeartbeat(emptyList(), ProviderDirectory(AT, emptyList()), listOf("memory-extraction"), "ready"))
             val events = mutableListOf<HostStreamEvent>()
             api.openStream().use { HostEvents.read(it.lines(), events::add) }
             assertEquals(listOf<HostStreamEvent>(HostStreamEvent.WorkAvailable(talk.id)), events)
@@ -220,11 +223,27 @@ class ConversationWireTest {
         val contract = DesktopHostContract()
         assertEquals(HovelContract.CURRENT, contract.contract(7))
         assertEquals(7, contract.pageContract)
+        contract.requireCurrentPage()
         contract.invalidate()
         assertNull(contract.pageContract)
         val limits = Json.parseToJsonElement(HostBridgeFixtures.LIMITS).jsonObject
         assertEquals(limits.getValue("HOVEL_CONTRACT").jsonPrimitive.int, HovelContract.CURRENT)
         assertEquals(limits.getValue("HOVEL_CONTRACT_HEADER").jsonPrimitive.content, HovelContract.HEADER)
+        val features = limits.getValue("HOVEL_CONTRACT_FEATURES").jsonObject.mapValues { it.value.jsonPrimitive.int }
+        assertEquals(features, HovelContract.FEATURES)
+        assertEquals(features.getValue("companionsOnly"), HovelContract.COMPANIONS_ONLY)
+    }
+
+    @Test fun aPageFromBeforeContractThreeIsAskedToUpdate() = kotlinx.coroutines.runBlocking<Unit> {
+        val contract = DesktopHostContract()
+        for (page in 1 until HovelContract.COMPANIONS_ONLY) {
+            val refusal = assertFailsWith<BridgeUpdateRequiredException> { contract.contract(page) }
+            assertEquals(BridgeUpdateRequiredException.MESSAGE, refusal.message)
+            assertEquals(page, contract.pageContract, "kept, so the context's other calls are refused too")
+            assertFailsWith<BridgeUpdateRequiredException> { contract.requireCurrentPage() }
+        }
+        assertEquals(HovelContract.CURRENT, contract.contract(HovelContract.COMPANIONS_ONLY))
+        contract.requireCurrentPage()
     }
 
     @Test fun companionLimitsMirrorTheContract() {

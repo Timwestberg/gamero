@@ -8,6 +8,8 @@ import org.formulagen.wrapper.conversations.ApprovalDevice
 import org.formulagen.wrapper.conversations.ApprovalDeviceList
 import org.formulagen.wrapper.conversations.ApprovalDevicePairing
 import org.formulagen.wrapper.conversations.ApprovalDeviceState
+import org.formulagen.wrapper.conversations.DevicePairLookup
+import org.formulagen.wrapper.conversations.PairingRefusalCodes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -29,6 +31,8 @@ class PhonePairingTest {
         val paired = mutableListOf<String>()
         var wrong = 0
         var offline = false
+        /** When the code the phone shows runs out; a confirmation after it, of the right code, is refused uncounted. */
+        var ranOut = false
 
         override fun exchange(method: String, route: String, body: JsonObject?): JsonObject {
             calls += Triple(method, route, body)
@@ -37,14 +41,18 @@ class PhonePairingTest {
             return when {
                 method == "GET" && route == "devices" -> data(ApprovalDeviceList.serializer(), ApprovalDeviceList(paired.map(::device)))
                 method == "POST" && (route == "devices/pair" || route == "devices/lookup") -> {
-                    if (wrong >= 5) throw HovelStatusException(429, "too-many-attempts")
+                    if (wrong >= 5) throw HovelStatusException(429, PairingRefusalCodes.TOO_MANY_ATTEMPTS)
                     val code = body!!.getValue("code").jsonPrimitive.content
-                    if (code != showing) {
+                    val named = body["deviceId"]?.jsonPrimitive?.content
+                    if (route == "devices/pair" && named == null) throw HovelStatusException(400)
+                    if (code == showing && named == phone && ranOut) throw HovelRejectedException(PairingRefusalCodes.EXPIRED)
+                    if (code != showing || (named != null && named != phone)) {
                         wrong++
                         throw HovelStatusException(404)
                     }
                     if (route == "devices/lookup") {
-                        return data(ApprovalDevice.serializer(), device(phone).copy(pairedWith = emptyList(), state = ApprovalDeviceState.PENDING))
+                        val pending = device(phone).copy(pairedWith = emptyList(), state = ApprovalDeviceState.PENDING)
+                        return data(DevicePairLookup.serializer(), DevicePairLookup("2026-10-29T12:10:00.000Z", pending))
                     }
                     showing = null
                     paired += phone
@@ -68,42 +76,65 @@ class PhonePairingTest {
     }
 
     private val now = java.time.Instant.parse("2026-10-29T12:00:00Z")
+    /** The phone the window asked about, as its lookup named it. */
+    private val candidate = PhonePairing.Candidate(phone, "iPhone", "ios", 4, now.plusSeconds(600))
 
     @Test fun theMacAsksAboutThePhoneACodeNamesBeforeItPairs() {
         val native = FakeNative()
         val pairing = PhonePairing({ native }) { now }
         val found = pairing.lookup("042 917") as PhonePairing.Outcome.Found
-        assertEquals(PhonePairing.Candidate(phone, "iPhoneAllow", "ios", 4), found.phone)
+        assertEquals(PhonePairing.Candidate(phone, "iPhoneAllow", "ios", 4, java.time.Instant.parse("2026-10-29T12:10:00Z")), found.phone)
         assertEquals("Pair iPhoneAllow (iPhone, registered 4 min ago)?", pairingMessage(found))
         // looking up pairs nothing
         assertTrue(native.paired.isEmpty())
         assertEquals("042917", native.showing)
         assertEquals(listOf("devices/lookup"), native.calls.map { it.second })
-        assertEquals("Pair Pixel (Android, registered just now)?", PhonePairing.Candidate(phone, "Pixel", "android", 0).question)
+        assertEquals("Pair Pixel (Android, registered just now)?", PhonePairing.Candidate(phone, "Pixel", "android", 0, now).question)
     }
 
     @Test fun theTypedCodePairsThePhoneOnThisMacsOwnRoute() {
         val native = FakeNative()
         val pairing = PhonePairing({ native }) { now }
         assertEquals(PhonePairing.Outcome.Done(emptyList()), pairing.phones())
-        val done = pairing.pair(" 042-917 ") as PhonePairing.Outcome.Done
+        val done = pairing.pair(" 042-917 ", candidate) as PhonePairing.Outcome.Done
         // the name is cleaned to one line for the window
         val shown = PhonePairing.PairedPhone(phone, "iPhoneAllow")
         assertEquals(shown, done.paired)
         assertEquals(listOf(shown), done.phones)
         val sent = native.calls.single { it.second == "devices/pair" }
         assertEquals("POST", sent.first)
-        assertEquals(JsonObject(mapOf("code" to kotlinx.serialization.json.JsonPrimitive("042917"))), sent.third)
+        assertEquals(JsonObject(mapOf("code" to kotlinx.serialization.json.JsonPrimitive("042917"),
+            "deviceId" to kotlinx.serialization.json.JsonPrimitive(phone))), sent.third)
         assertEquals("Paired with iPhoneAllow. It can now answer this Mac's approvals.", pairingMessage(done))
         // a code pairs once
-        assertEquals(PhonePairing.Outcome.WrongCode, pairing.pair("042917"))
+        assertEquals(PhonePairing.Outcome.WrongCode, pairing.pair("042917", candidate))
+    }
+
+    @Test fun theConfirmationNamesThePhoneItAskedAboutAndALateOneIsNotAGuess() {
+        val native = FakeNative()
+        val pairing = PhonePairing({ native }) { now }
+        // the right code never pairs another phone
+        val other = candidate.copy(id = "79a0000b-0000-4000-8000-000000000002")
+        assertEquals(PhonePairing.Outcome.WrongCode, pairing.pair("042917", other))
+        assertEquals(1, native.wrong)
+        // the asked-about phone's code ran out before the person confirmed: said so, not counted
+        native.ranOut = true
+        val late = pairing.pair("042917", candidate)
+        assertEquals(PhonePairing.Outcome.Expired, late)
+        assertEquals(1, native.wrong)
+        assertEquals("That code ran out. Show a new code on the phone, then type it again.", pairingMessage(late))
+        native.ranOut = false
+        pairing.pair("042917", candidate)
+        val sent = native.calls.last { it.second == "devices/pair" }.third
+        assertEquals(phone, sent?.getValue("deviceId")?.jsonPrimitive?.content)
+        assertEquals(listOf(phone), native.paired)
     }
 
     @Test fun aMalformedCodeIsNeverSent() {
         val native = FakeNative()
         val pairing = PhonePairing({ native })
         for (typed in listOf("", "04291", "0429177", "04291a", "０４２９１７")) {
-            assertEquals(PhonePairing.Outcome.Malformed, pairing.pair(typed), typed)
+            assertEquals(PhonePairing.Outcome.Malformed, pairing.pair(typed, candidate), typed)
         }
         assertTrue(native.calls.isEmpty())
         assertEquals("042917", PhonePairing.codeOf("042 917"))
@@ -113,8 +144,8 @@ class PhonePairingTest {
     @Test fun wrongCodesCountAndThenThisMacWaits() {
         val native = FakeNative()
         val pairing = PhonePairing({ native })
-        repeat(5) { assertEquals(PhonePairing.Outcome.WrongCode, pairing.pair("111111")) }
-        assertEquals(PhonePairing.Outcome.TooManyAttempts, pairing.pair("042917"))
+        repeat(5) { assertEquals(PhonePairing.Outcome.WrongCode, pairing.pair("111111", candidate)) }
+        assertEquals(PhonePairing.Outcome.TooManyAttempts, pairing.pair("042917", candidate))
         assertTrue(native.paired.isEmpty())
         assertEquals("Too many wrong codes on your Macs. Wait a few minutes, then show a new code on the phone.",
             pairingMessage(PhonePairing.Outcome.TooManyAttempts))
@@ -123,7 +154,7 @@ class PhonePairingTest {
     @Test fun unpairingLetsOnePhoneGo() {
         val native = FakeNative()
         val pairing = PhonePairing({ native })
-        pairing.pair("042917")
+        pairing.pair("042917", candidate)
         assertEquals(PhonePairing.Outcome.Done(emptyList()), pairing.unpair(phone))
         assertEquals("devices/$phone/unpair", native.calls.single { it.second.endsWith("/unpair") }.second)
         // one already gone is let go alike
@@ -131,9 +162,9 @@ class PhonePairingTest {
     }
 
     @Test fun aMacNotConnectedOrOfflineSaysSo() {
-        assertEquals(PhonePairing.Outcome.NotConnected, PhonePairing({ null }).pair("042917"))
+        assertEquals(PhonePairing.Outcome.NotConnected, PhonePairing({ null }).pair("042917", candidate))
         val native = FakeNative().apply { offline = true }
-        assertEquals(PhonePairing.Outcome.Failed, PhonePairing({ native }).pair("042917"))
+        assertEquals(PhonePairing.Outcome.Failed, PhonePairing({ native }).pair("042917", candidate))
         val revoked = NativeExchange { _, _, _ -> throw HovelStatusException(401) }
         assertEquals(PhonePairing.Outcome.NotConnected, PhonePairing({ revoked }).phones())
     }

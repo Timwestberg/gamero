@@ -14,6 +14,10 @@ launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
 
 ## Happy paths
 
+The Mac app's manual path is in [docs/hovel-native-validation.md](docs/hovel-native-validation.md).
+Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
+`GAMERO_PRODUCT=hovel`; without it Connect computer stays disabled.
+
 ### 1. Smoke test passes
 
 - **Preconditions:** Hovel is served. No simulator is required in advance.

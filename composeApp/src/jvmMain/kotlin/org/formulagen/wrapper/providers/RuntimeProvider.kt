@@ -9,7 +9,6 @@ import org.formulagen.wrapper.bridge.ProviderState
 import org.formulagen.wrapper.bridge.ProviderStatus
 import org.formulagen.wrapper.bridge.ProviderUsage
 import org.formulagen.wrapper.bridge.RuntimeId
-import org.formulagen.wrapper.bridge.SharedRules
 
 /**
  * One runtime behind `providers.*`. Calls block (they may run a process), and [DesktopProviders]
@@ -18,15 +17,15 @@ import org.formulagen.wrapper.bridge.SharedRules
 internal interface RuntimeProvider : AutoCloseable {
     val id: RuntimeId
     /** The connection's display status after [action]. */
-    fun status(profile: String, action: ProviderAction): ProviderStatus
-    /** The models a team member on this runtime may use. */
-    fun models(profile: String): List<ProviderModel>
+    fun status(action: ProviderAction): ProviderStatus
+    /** The models a role on this runtime may use. */
+    fun models(): List<ProviderModel>
     /** Read subscription limits without a prompt, tool execution or a paid turn. */
-    fun usage(profile: String): ProviderUsage
+    fun usage(): ProviderUsage
 }
 
 /**
- * Codex: the player's own Codex sign-in, which every profile on this Mac shares, read through one
+ * Codex: the player's own Codex sign-in on this Mac, read through one
  * account process. Hovel never signs in or out ([CodexConnection]). The model list comes from that
  * same process and answers again for a minute.
  */
@@ -40,8 +39,7 @@ internal class CodexProvider(
     private var connection: ProviderConnection? = null
     private var models: Pair<Long, List<ProviderModel>>? = null
 
-    override fun status(profile: String, action: ProviderAction): ProviderStatus {
-        require(SharedRules.isProfileId(profile)) { "Invalid profile" }
+    override fun status(action: ProviderAction): ProviderStatus {
         if (executable == null) return codex(ProviderState.UNAVAILABLE, ProviderDetail.NOT_INSTALLED, id.copy.notInstalled)
         return try {
             connection(executable).perform(action)
@@ -52,8 +50,7 @@ internal class CodexProvider(
         }
     }
 
-    override fun models(profile: String): List<ProviderModel> {
-        require(SharedRules.isProfileId(profile)) { "Invalid profile" }
+    override fun models(): List<ProviderModel> {
         val executable = executable ?: return emptyList()
         val now = clock.millis()
         models?.takeIf { now - it.first in 0 until MODELS_TTL_MILLIS }?.let { return it.second }
@@ -65,8 +62,7 @@ internal class CodexProvider(
     private fun connection(executable: Path): ProviderConnection =
         connection ?: createConnection(CodexRuntime(executable, root)).also { connection = it }
 
-    override fun usage(profile: String): ProviderUsage {
-        require(SharedRules.isProfileId(profile)) { "Invalid profile" }
+    override fun usage(): ProviderUsage {
         val executable = executable ?: return ProviderUsage(id, clock.millis())
         return try { connection(executable).usage() }
         catch (error: Exception) { drop(); throw error }
@@ -85,13 +81,13 @@ internal class ClaudeProvider(private val connection: ClaudeConnection) : Runtim
     override val id = RuntimeId.CLAUDE_CODE
 
     /** Sign-in and sign-out happen in Claude Code, so the other actions answer the status with where to do them. */
-    override fun status(profile: String, action: ProviderAction): ProviderStatus =
+    override fun status(action: ProviderAction): ProviderStatus =
         connection.status().let { if (action == ProviderAction.STATUS) it else it.copy(message = "Sign in and out in Claude Code.") }
 
     /** The installed Claude Code's catalog, including models added after Hovel was built. */
-    override fun models(profile: String): List<ProviderModel> = connection.models()
+    override fun models(): List<ProviderModel> = connection.models()
 
-    override fun usage(profile: String): ProviderUsage = connection.usage()
+    override fun usage(): ProviderUsage = connection.usage()
 
     override fun close() = Unit
 }

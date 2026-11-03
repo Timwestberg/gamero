@@ -3,7 +3,10 @@ package org.formulagen.wrapper.phone
 import org.formulagen.wrapper.conversations.ApprovalDevice
 import org.formulagen.wrapper.conversations.ApprovalDeviceList
 import org.formulagen.wrapper.conversations.ApprovalDeviceState
+import org.formulagen.wrapper.conversations.DevicePairConfirm
+import org.formulagen.wrapper.conversations.DevicePairLookup
 import org.formulagen.wrapper.conversations.DevicePairRequest
+import org.formulagen.wrapper.conversations.PairingRefusalCodes
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -56,6 +59,8 @@ class DeviceWireTest {
             "approvalDeviceList" to ApprovalDeviceList.serializer(),
             "devicePairingCode" to DevicePairingCode.serializer(),
             "devicePairRequest" to DevicePairRequest.serializer(),
+            "devicePairLookup" to DevicePairLookup.serializer(),
+            "devicePairConfirm" to DevicePairConfirm.serializer(),
         )
         val payloads = DeviceContractFixtures.PAYLOADS.keys.filter { it.startsWith("device.") }
         assertTrue(payloads.size >= 14)
@@ -146,6 +151,8 @@ class DeviceWireTest {
         assertEquals(companion.getValue("pairingMs").jsonPrimitive.long, PAIRING_LIMIT.inWholeMilliseconds)
         assertEquals(limits.getValue("PAIRING_CODE_PATTERN").jsonPrimitive.content, "^${DevicePairRequest.PAIRING_CODE.pattern}$")
         assertEquals(limits.getValue("PAIRING_CODE_DIGITS").jsonPrimitive.int, DevicePairRequest.PAIRING_CODE_DIGITS)
+        val refusals = limits.getValue("PAIRING_REFUSAL_CODES").jsonObject.mapValues { it.value.jsonPrimitive.content }
+        assertEquals(mapOf("expired" to PairingRefusalCodes.EXPIRED, "tooManyAttempts" to PairingRefusalCodes.TOO_MANY_ATTEMPTS), refusals)
     }
 
     @Test fun aCredentialReadsOnlyInTheFormTheServerChecks() {

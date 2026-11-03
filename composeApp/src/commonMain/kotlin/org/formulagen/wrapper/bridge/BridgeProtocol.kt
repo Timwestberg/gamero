@@ -56,13 +56,8 @@ class BridgeBusyException : IllegalStateException("Another call to this capabili
  */
 class BridgeUpdateRequiredException : IllegalStateException(MESSAGE) {
     companion object {
-        const val MESSAGE = "Update Hovel and reload this page to open this conversation. Your saved conversation has been kept."
+        const val MESSAGE = "Update Hovel and reload this page."
     }
-}
-
-/** A page reads only [runtimes] it decodes ([understood]); for any other it is told to update, never sent what it cannot parse. */
-fun requireDecodable(understood: Set<RuntimeId>, runtimes: Collection<RuntimeId>) {
-    if (!understood.containsAll(runtimes)) throw BridgeUpdateRequiredException()
 }
 
 /** Thrown by a capability when the person said no. The router answers `declined`. */

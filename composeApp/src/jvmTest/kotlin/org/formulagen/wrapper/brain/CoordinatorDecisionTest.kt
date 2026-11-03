@@ -5,6 +5,15 @@ import org.formulagen.wrapper.bridge.*
 import kotlin.test.*
 
 class CoordinatorDecisionTest {
+    @Test fun questionsAcceptExplicitChoicesAndRejectInvalidOnes() {
+        assertEquals(CoordinatorDecision.Ask("Which?", listOf("Focused", "Detailed")), parseDecision("""{"kind":"ask","question":"Which?","choices":["Focused","Detailed"]}""", setOf(DecisionKind.ASK)))
+        assertEquals(CoordinatorDecision.Ask("Which?"), parseDecision("""{"kind":"ask","question":"Which?"}""", setOf(DecisionKind.ASK)))
+        for (choices in listOf(listOf(" "), listOf("A", "A"), List(5) { "$it" }, listOf("x".repeat(241)))) {
+            val text = buildJsonObject { put("kind", "ask"); put("question", "Which?"); put("choices", JsonArray(choices.map(::JsonPrimitive))) }
+            assertFails { parseDecision(text.toString(), setOf(DecisionKind.ASK)) }
+        }
+    }
+
     @Test fun coordinatorSkipReasonsMustBeTextBeforeDispatch() {
         val decision = """{"kind":"enter-workflow","entryStepId":"${brainId()}","inputIds":[],"skipped":[{"stepId":"${brainId()}","reason":false}],"reason":"Begin with the supplied plan"}"""
         assertFails { parseDecision(decision, setOf(DecisionKind.ENTER_WORKFLOW)) }

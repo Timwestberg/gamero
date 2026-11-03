@@ -1,4 +1,6 @@
 package org.formulagen.wrapper.bridge
+import org.formulagen.wrapper.conversation.DictationState
+import org.formulagen.wrapper.conversation.HearingState
 
 /** Protocol fixtures exercise dispatch without starting a provider, pet or game process. */
 class FakeProviderCapability : ProviderCapability {
@@ -7,12 +9,8 @@ class FakeProviderCapability : ProviderCapability {
     override suspend fun startLogin(scope: ProviderScope) = ProviderLogin(scope.runtimeId, true)
 
     override suspend fun perform(action: ProviderAction, scope: ProviderScope) =
-        ProviderStatus(scope.runtimeId, if (action == ProviderAction.CONNECT) ProviderState.SIGNING_IN else ProviderState.DISCONNECTED)
-    override suspend fun list(profile: String) = ProviderList(SharedRules.LEGACY_RUNTIMES.toList(), listOf(RuntimeId.CLAUDE_CODE))
-    override suspend fun listForClient(args: ProviderListForClientArgs): ProviderList {
-        val understood = SharedRules.clientRuntimes(args.supportedRuntimes).toList()
-        return ProviderList(understood, understood.filter { it == RuntimeId.CLAUDE_CODE })
-    }
+        ProviderStatus(scope.runtimeId, if (action == ProviderAction.CONNECT) ProviderState.CONNECTED else ProviderState.DISCONNECTED)
+    override suspend fun list() = ProviderList(listOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE), listOf(RuntimeId.CLAUDE_CODE))
     override suspend fun models(scope: ProviderScope) = ProviderModels(listOf(ProviderModel("Sonnet", true, "sonnet")), scope.runtimeId)
 }
 
@@ -26,17 +24,16 @@ class FakePetCapability : PetCapability {
 class FakeGameCapability : GameCapability {
     /** The listener the router subscribed, or null when none is; call it to simulate the player returning. */
     var closed: ((GameId) -> Unit)? = null
-    override suspend fun launch(gameId: GameId) = GameLaunchResult(gameId)
+    /** Each launch's game and companion, in order. */
+    val launches = mutableListOf<Pair<GameId, PetCompanion?>>()
+    override suspend fun launch(gameId: GameId, companion: PetCompanion?): GameLaunchResult {
+        launches += gameId to companion
+        return GameLaunchResult(gameId)
+    }
     override fun observe(onClosed: (GameId) -> Unit): AutoCloseable {
         closed = onClosed
         return AutoCloseable { closed = null }
     }
-}
-
-class FakeWorkspaceCapability : WorkspaceCapability {
-    override suspend fun choose(scope: WorkspaceScope) = WorkspaceStatus(WorkspaceFolder(true, "hovel-notes"))
-    override suspend fun clear(scope: WorkspaceScope) = WorkspaceStatus(null)
-    override suspend fun status(scope: WorkspaceScope) = WorkspaceStatus(WorkspaceFolder(true, "hovel-notes"))
 }
 
 class FakeProjectCapability : ProjectCapability {
@@ -44,6 +41,18 @@ class FakeProjectCapability : ProjectCapability {
     override suspend fun chooseFolder(args: ProjectChooseFolderArgs) = ProjectFoldersStatus(listOf(working))
     override suspend fun forgetFolder(args: ProjectForgetFolderArgs) = ProjectFoldersStatus(emptyList())
     override suspend fun folderStatus(scope: ProjectScope) = ProjectFoldersStatus(listOf(working))
+}
+
+class FakeProjectWorkspaceCapability : ProjectWorkspaceCapability {
+    val opened = mutableListOf<String>()
+    override suspend fun open(scope: ProjectScope): ProjectWorkspaceResult {
+        opened += scope.projectId
+        return ProjectWorkspaceResult(ProjectWorkspaceStatus.OPENED)
+    }
+    override suspend fun viewChanges(args: ProjectWorkspaceViewChangesArgs): ProjectWorkspaceResult {
+        opened += "${args.projectId}/${args.threadId}"
+        return ProjectWorkspaceResult(ProjectWorkspaceStatus.OPENED)
+    }
 }
 
 class FakeConversationVoiceCapability : ConversationVoiceCapability {

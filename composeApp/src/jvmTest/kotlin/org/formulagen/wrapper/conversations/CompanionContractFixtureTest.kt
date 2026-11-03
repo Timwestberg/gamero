@@ -5,9 +5,10 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.ProviderUsage
 import org.formulagen.wrapper.bridge.ProviderUsageWindow
+import org.formulagen.wrapper.bridge.HovelContract
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.hovel.NativeRoute
-import org.formulagen.wrapper.hovel.hovelHostFeatures
+import org.formulagen.wrapper.hovel.MemoryJobLane
 
 /**
  * Parity with server-platform: every payload in [CompanionContractFixtures] was built from the
@@ -45,7 +46,7 @@ class CompanionContractFixtureTest {
             assertEquals(numbers(value), numbers(roundTrip(serializer, value)), name)
             checked += name
         }
-        assertEquals(fixtures.keys - "usage" - "routes.native", checked.toSet(), "every payload has a Mac type")
+        assertEquals(fixtures.keys - "usage" - "routes.native" - "contractRuntimes", checked.toSet(), "every payload has a Mac type")
     }
 
     @Test fun everyConversationRouteIsOneTheServerServes() {
@@ -53,9 +54,8 @@ class CompanionContractFixtureTest {
         val served = fixtures.getValue("routes.native").getValue("value").jsonObject.mapValues { (_, route) ->
             spelled(route.jsonObject.getValue("method").jsonPrimitive.content, route.jsonObject.getValue("path").jsonPrimitive.content)
         }
-        // Tasks and memory jobs are hovel-service's own native routes, outside the companion table.
-        val outside = setOf(NativeRoute.TASK_CLAIM, NativeRoute.TASK_PROGRESS, NativeRoute.MEMORY_CLAIM, NativeRoute.MEMORY_PROGRESS,
-            NativeRoute.MEMORY_CONSOLIDATE)
+        // Memory jobs are hovel-service's own native routes, outside the companion table.
+        val outside = setOf(NativeRoute.MEMORY_CLAIM, NativeRoute.MEMORY_PROGRESS, NativeRoute.MEMORY_CONSOLIDATE)
         val mac = (NativeRoute.entries - outside).map { spelled(it.method, it.template) }.toSet()
         assertEquals(served.values.toSet(), mac)
         assertFalse(served.values.any { it.endsWith("/answer") }, "an answer travels only as approval.closed")
@@ -76,10 +76,11 @@ class CompanionContractFixtureTest {
         val answered = fromWire(AgentApproval.serializer(), fixtures.getValue("approval.answeredByPhone").getValue("value"))
         assertEquals(ApprovalSurface.PHONE, answered.answer?.by)
         val events = fixtures.filterKeys { it.startsWith("hostEvent.") }.values.map { HostEvents.decode(it.getValue("value").toString()) }
-        assertEquals(5, events.filterNotNull().size)
+        assertEquals(6, events.filterNotNull().size)
+        assertTrue(HostStreamEvent.WorkspaceProfileChanged(3) in events, "a profile change names only its revision")
         val heartbeat = fromWire(HostHeartbeat.serializer(), fixtures.getValue("heartbeat").getValue("value"))
         assertEquals("ready", heartbeat.providerState)
-        assertEquals(hovelHostFeatures(tasks = true, memory = true), heartbeat.features)
+        assertEquals(MemoryJobLane.FEATURES, heartbeat.features)
         val heard = fromWire(MessageSend.serializer(), fixtures.getValue("messageSend.heard").getValue("value"))
         assertEquals(MessageSend(heard.id, emptyList(), "What time is it?", null), heard,
             "a heard turn attaches nothing, in the main conversation")
@@ -89,6 +90,11 @@ class CompanionContractFixtureTest {
         val last = fromWire(ArtifactTextPage.serializer(), fixtures.getValue("artifactText.last").getValue("value"))
         assertEquals(first.text.length, first.nextCursor)
         assertNull(last.nextCursor)
+    }
+
+    @Test fun aRuntimeArrivesInTheSameContractOnBothSides() {
+        val server = fixtures.getValue("contractRuntimes").getValue("value").jsonObject.mapValues { it.value.jsonPrimitive.int }
+        assertEquals(server, HovelContract.RUNTIMES.mapKeys { it.key.wireName })
     }
 
     @Test fun usageIsTheAllowanceSnapshotTheServerAccepts() {

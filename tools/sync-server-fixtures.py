@@ -12,8 +12,6 @@ contract fixture changes:
 - bridge/HostBridgeFixtures.kt from event-contracts/src/host-bridge/fixtures (the
   router and envelope fixtures, the parity table, the shared limits and the text
   rules' cases), for the host-bridge tests.
-- hovel/HovelProviderPromptFixture.kt from
-  event-contracts/src/hovel/fixtures/provider-prompt.json, for HovelProviderPromptTest.
 - bridge/EmberHearingFixture.kt from
   event-contracts/src/voice/fixtures/hearing/ember-hearing.v1.json, so HearingContractTest
   checks the hearing states and actions against the contract.
@@ -25,6 +23,10 @@ contract fixture changes:
 - phone/DeviceContractFixtures.kt (commonTest) from the same run: the approval device
   payloads and device routes (`device.*`, `routes.device`) a phone reads and sends, so the
   phone's types are checked on every platform.
+- workspace/WorkspaceProfileFixtures.kt (jvmTest) from
+  event-contracts/src/hovel/companions/fixtures/workspace-profile: workspace profiles,
+  documents and saves, each with the schema it is checked against and whether the server
+  accepts it, for the Mac's lenient decode.
 """
 import functools
 import json
@@ -83,22 +85,27 @@ internal object HostBridgeFixtures {{
 """
 
 
-def provider_prompt(server: Path) -> str:
-    source = "event-contracts/src/hovel/fixtures/provider-prompt.json"
-    return HEADER.format(source, source_commit(server, source)) + f"""package org.formulagen.wrapper.hovel
-
-internal object HovelProviderPromptFixture {{
-    val JSON = {kotlin_string(compact(server / source))}
-}}
-"""
-
-
 def ember_hearing(server: Path) -> str:
     source = "event-contracts/src/voice/fixtures/hearing/ember-hearing.v1.json"
     return HEADER.format(source, source_commit(server, source)) + f"""package org.formulagen.wrapper.bridge
 
 internal object EmberHearingFixture {{
     const val JSON = {kotlin_string(compact(server / source))}
+}}
+"""
+
+
+def workspace_profile(server: Path) -> str:
+    source = "event-contracts/src/hovel/companions/fixtures/workspace-profile"
+    entries = "\n".join(f"        {kotlin_string(path.name)} to {kotlin_string(compact(path))},"
+                        for path in sorted((server / source).glob("*.json")))
+    return HEADER.format(source, source_commit(server, source)) + f"""package org.formulagen.wrapper.workspace
+
+/** Each file as {{"description", "schema": the zod schema it is checked against, "valid": whether the server accepts it, "value"}}. */
+internal object WorkspaceProfileFixtures {{
+    val FILES: Map<String, String> = mapOf(
+{entries}
+    )
 }}
 """
 
@@ -163,10 +170,10 @@ internal object DeviceContractFixtures {{
 
 OUTPUTS = {
     ROOT / TEST.format("commonTest") / "bridge/HostBridgeFixtures.kt": host_bridge,
-    ROOT / TEST.format("jvmTest") / "hovel/HovelProviderPromptFixture.kt": provider_prompt,
     ROOT / TEST.format("commonTest") / "bridge/EmberHearingFixture.kt": ember_hearing,
     ROOT / TEST.format("jvmTest") / "conversations/CompanionContractFixtures.kt": companion_payloads,
     ROOT / TEST.format("commonTest") / "phone/DeviceContractFixtures.kt": device_payloads,
+    ROOT / TEST.format("jvmTest") / "workspace/WorkspaceProfileFixtures.kt": workspace_profile,
 }
 
 

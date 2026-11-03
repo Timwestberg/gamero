@@ -12,6 +12,7 @@ import kotlin.test.assertFails
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.formulagen.wrapper.conversation.DictationState
 
 /**
  * The project folder, conversation voice and contract results, as native code encodes them, equal
