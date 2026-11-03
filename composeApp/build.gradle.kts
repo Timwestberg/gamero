@@ -23,6 +23,10 @@ val releaseProduct = releaseSetting("gamero.product")
 val releaseWebUrl = releaseSetting("gamero.webUrl")
 // Release builds keep gated features off whatever the environment says (Claude: claudeProviderEnabled).
 val releaseBuild = releaseSetting("gamero.release") == "true"
+// A packaged app marked as a development build (-Dgamero.dev=true), so development-gated features
+// such as project workspaces can be checked signed. Never a release.
+val developmentPackage = releaseSetting("gamero.developmentPackage") == "true"
+check(!(developmentPackage && releaseBuild)) { "gamero.developmentPackage and gamero.release cannot be combined" }
 val releaseVersion = releaseSetting("gamero.version") ?: "1.0.0"
 val releaseBuildNumber = releaseSetting("gamero.buildNumber")?.toInt() ?: 1
 fun signingSetting(name: String): String? = providers.environmentVariable(name).orNull?.takeIf { it.isNotBlank() }
@@ -174,6 +178,38 @@ if (mobileTargets) dependencies {
     add("debugImplementation", compose.uiTooling)
 }
 
+/**
+ * pty4j and JNA unpack their macOS natives from their jars to a temporary folder at run time, where
+ * the hardened runtime can refuse them. A packaged app ships them as app resources instead
+ * (macos-arm64/ becomes Contents/app/resources/), signed with the app, and `usePackagedNatives`
+ * points both libraries there. pty4j's spawn helper must stay executable.
+ */
+val workspaceNatives = tasks.register<Sync>("workspaceNatives") {
+    val runtime = configurations.named("jvmRuntimeClasspath").flatMap { it.elements }
+    fun jar(prefix: String) = runtime.map { files -> files.map { it.asFile }.single { it.name.startsWith(prefix) && it.extension == "jar" } }
+    from(zipTree(jar("pty4j-"))) {
+        include("resources/com/pty4j/native/darwin/**")
+        eachFile { path = "macos-arm64/pty4j/darwin/$name" }
+        filesMatching("**/pty4j-unix-spawn-helper") { permissions { unix("rwxr-xr-x") } }
+    }
+    from(zipTree(jar("jna-5."))) {
+        include("com/sun/jna/darwin-aarch64/libjnidispatch.jnilib")
+        eachFile { path = "macos-arm64/jna/$name" }
+    }
+    includeEmptyDirs = false
+    into(layout.buildDirectory.dir("workspace-natives"))
+}
+afterEvaluate { tasks.named("prepareAppResources") { dependsOn(workspaceNatives) } }
+// Compose copies app resources into the image without their file modes (Kotlin's File.copyTo), so
+// the spawn helper arrives as a plain file and pty4j cannot start it. A mode is not part of the seal.
+tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDistributable" }.configureEach {
+    val apps = layout.buildDirectory.dir("compose/binaries")
+    doLast {
+        apps.get().asFileTree.matching { include("**/Contents/app/resources/pty4j/darwin/pty4j-unix-spawn-helper") }
+            .forEach { check(it.setExecutable(true, false)) { "Could not make $it executable" } }
+    }
+}
+
 compose.desktop {
     application {
         mainClass = "org.formulagen.wrapper.MainKt"
@@ -184,6 +220,7 @@ compose.desktop {
         releaseProduct?.let { jvmArgs += "-Dgamero.product=$it" }
         releaseWebUrl?.let { jvmArgs += "-Dgamero.webUrl=$it" }
         if (releaseBuild) jvmArgs += "-Dgamero.release=true"
+        if (developmentPackage) jvmArgs += "-Dgamero.dev=true"
 
         buildTypes.release.proguard {
             // Shrink only, and keep names: KCEF, JCEF and the WebView bridge use reflection.
@@ -196,6 +233,8 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+            // The workspace terminal's natives, in Contents/app/resources so they are signed with the app.
+            appResourcesRootDir.set(layout.buildDirectory.dir("workspace-natives"))
             packageName = "org.formulagen.wrapper"
             packageVersion = releaseVersion
             // The bundled runtime is GAMERO_BROWSER_JAVA_HOME's JetBrains Runtime, whose jcef module

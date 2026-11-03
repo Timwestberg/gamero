@@ -147,6 +147,33 @@ Optional signing and notarization for distribution outside the App Store:
 These are macOS-only. The script refuses them on other systems, and refuses
 notarization unless the signing identity and all three notarization variables are set.
 
+Compose accepts only "Developer ID Application" (and Mac App Store) identities here:
+it prefixes any other name with `Developer ID Application: `. To check a build under
+the hardened runtime with an Apple Development identity, package without signing and
+sign by hand. Notarization is not attempted:
+
+```sh
+GAMERO_BROWSER_JAVA_HOME=<JBR SDK> ./gradlew :composeApp:createDistributable -Pgamero.developmentPackage=true
+GAMERO_MAC_DEV_IDENTITY="Apple Development: <name> (<id>)" \
+  tools/sign-dev-mac-app.sh composeApp/build/compose/binaries/main/app/org.formulagen.wrapper.app
+```
+
+`-Pgamero.developmentPackage=true` marks the package as a development build
+(`-Dgamero.dev=true`) so development-gated features open in it; it cannot be combined
+with `gamero.release`. The script re-signs the native libraries inside the jars, signs
+every Mach-O file with the hardened runtime, then the runtime and the app. It takes an
+optional entitlements file; the default is Compose's (JIT, unsigned executable memory,
+and `disable-library-validation`).
+
+The workspace terminal's natives (pty4j's `libpty.dylib` and spawn helper, JNA's
+`libjnidispatch`) ship as app resources (`Contents/app/resources/`) and are signed with
+the app, so they load even without `disable-library-validation`. Compose copies app
+resources without their file modes, so `createDistributable` and
+`createReleaseDistributable` set the spawn helper executable again afterwards. Compose's
+own signer signs only executables and libraries it finds at signing time, so a
+Developer ID build must check that the helper is signed with the hardened runtime
+before notarizing.
+
 ## iOS
 
 Mac only. Archives the `iosApp` scheme in Release, which also builds the Kotlin
