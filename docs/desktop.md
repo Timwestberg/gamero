@@ -78,6 +78,30 @@ Apple Silicon only ([release.md](release.md#desktop)).
   `HOVEL_WORKSPACE_FOLDER=<folder>` opens one at launch instead.
 - **Shell → New Tab** (⌘T) and **Close Tab** (⌘W). The window's **Develop** menu, or
   **+**, opens Neovim, lazygit or yazi in a tab, started through the login shell.
+- **Window**: ⌘1 to ⌘8 select a tab and ⌘9 the last one; **Show Next Tab** (⌘⇧], also
+  ⌃Tab) and **Show Previous Tab** (⌘⇧[, also ⌃⇧Tab) wrap around. A tab's name follows the
+  title its program sets, and falls back to its kind (Shell, Neovim).
+- **View → Bigger** (⌘+ or ⌘=), **Smaller** (⌘−) and **Default Font Size** (⌘0) zoom
+  every tab of that window, from 9 to 36 points. The font is SF Mono 13 pt when AWT can see
+  it by name, else Menlo 13 pt. On macOS 26, neither JDK 21 nor the JBR 21 sees SF Mono, so
+  it is Menlo; the probe log names the font in use.
+- **As in Terminal**, Option types characters (⌥e then e is é; ⌥← and ⌥→ still move by
+  word), and the cursor does not blink.
+- **Nothing is lost without asking.** Closing a tab (⌘W or ×), closing the window, and
+  quitting (⌘Q, or closing the main window) ask first, in a sheet on the workspace window,
+  when a tab is busy, and name what runs:
+  - a Shell tab is busy while a foreground job runs (`npm run dev`); background jobs and
+    prompt helpers such as powerlevel10k's `gitstatusd` are not;
+  - Neovim is busy while a buffer is modified or its `:terminal` runs a job. Each Neovim tab
+    listens on a socket in `~/Library/Caches/org.formulagen.wrapper/workspace/nvim/`; Hovel
+    asks it with a fixed `nvim --server … --remote-expr …` and counts no answer within a
+    second as busy;
+  - lazygit or yazi is busy while it runs a program of its own, such as `git push`.
+
+  With nothing busy they close, or quit, at once. Quitting asks once for every window, then
+  runs the app's normal shutdown. In a development build the app handles macOS's Quit
+  itself (`Desktop.setQuitHandler`), so quitting during a logout or restart cancels that
+  logout once; quit Hovel first. A release build keeps the JDK's quit.
 - `HOVEL_WORKSPACE_BIN=<folder>` is the folder kept first in each tab's `PATH`
   (default `~/Library/Application Support/Gamero/workspace/bin`, where the tool
   manager will put its wrappers). A tool tab runs that folder's wrapper when it has
@@ -87,8 +111,33 @@ Apple Silicon only ([release.md](release.md#desktop)).
   from a script and writes screen text and images beside the file, for checks with no
   one at the screen (`WorkspaceProbe` lists the steps).
 
+Compose's `run` task is a development build only with `-Pgamero.developmentPackage=true`
+(without it the app starts with no workspaces):
+
+```sh
+HOVEL_WORKSPACE_FOLDER=<folder> HOVEL_WORKSPACE_PROBE=<steps file> \
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :composeApp:run -Pgamero.developmentPackage=true
+```
+
 Hovel's shell startup files go to `~/Library/Caches/org.formulagen.wrapper/workspace/shell/`.
-The fish integration test runs only when `HOVEL_TEST_FISH` names a fish executable.
+The fish integration test runs only when `HOVEL_TEST_FISH` names a fish executable: fish's
+own `fish-<version>.app.zip` release, unzipped anywhere, has one at
+`fish-<version>.app/Contents/Resources/base/usr/local/bin/fish`, with nothing installed. The
+Neovim tests use `/opt/homebrew/bin/nvim` or `HOVEL_TEST_NVIM`, and skip without one.
+
+The probe's `run`, `typing` and `cpu` steps measure responsiveness: the time to finish a
+command with the terminal drawing its output, key-to-paint latency, and the app's CPU use and
+AWT-thread lateness. Measure with the screen unlocked and the window in front: while the Mac
+is locked, macOS presents no frames, and paint-bound numbers mean nothing. For example:
+
+```text
+run 180000 cat big.txt
+run 180000 cat big.txt > /dev/null
+typing 40
+send yes\r
+cpu 5000 yes flood
+send \x03
+```
 
 ## Build boundaries
 
