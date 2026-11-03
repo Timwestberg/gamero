@@ -15,6 +15,7 @@ import com.jediterm.terminal.ui.settings.DefaultSettingsProvider
 import com.jediterm.terminal.ui.settings.SettingsProvider
 import java.awt.CardLayout
 import java.awt.Color
+import java.awt.Font
 import java.awt.Graphics
 import java.awt.event.ActionEvent
 import java.awt.event.ActionListener
@@ -39,10 +40,21 @@ import org.formulagen.wrapper.util.loggingDaemonThreads
 
 private const val TAG = "workspace-terminal"
 
-/** JediTerm's settings for workspace tabs: Hovel's colors, the scrollback guard, mouse reporting, ⌘C and ⌘V. */
-internal open class HovelTerminalSettings : DefaultSettingsProvider() {
+/**
+ * JediTerm's settings for workspace tabs: Hovel's colors, the scrollback guard, mouse reporting, ⌘C
+ * and ⌘V, the terminal font at [fontSize] points, and, as in Terminal, Option typing characters and
+ * a cursor that does not blink.
+ */
+internal open class HovelTerminalSettings(@Volatile var fontSize: Int = TerminalFont.DEFAULT_SIZE) : DefaultSettingsProvider() {
     override fun getBufferMaxLinesCount(): Int = WorkspaceGuards.SCROLLBACK_LINES
     override fun enableMouseReporting(): Boolean = true
+    override fun getTerminalFont(): Font = Font(TerminalFont.family, Font.PLAIN, fontSize)
+    override fun getTerminalFontSize(): Float = fontSize.toFloat()
+    // Option types characters (⌥e e is é), as in Terminal with "Use Option as Meta key" off. ⌥← and
+    // ⌥→ still move by word: JediTerm sends ESC b and ESC f for them on a Mac either way.
+    override fun altSendsEscape(): Boolean = false
+    // A steady cursor, as Terminal's default profile has. It also leaves an idle tab with nothing to repaint.
+    override fun caretBlinkingMs(): Int = 0
     override fun getDefaultForeground(): TerminalColor = terminalColor(fgInk300.toArgb())
     override fun getDefaultBackground(): TerminalColor = terminalColor(fgInk950.toArgb())
     // Deprecated in JediTerm, but JediTermWidget 3.76 still builds its default cell style from it
@@ -60,22 +72,44 @@ private fun terminalColor(argb: Int): TerminalColor = Color(argb).let { Terminal
  * the callbacks of JediTerm's own repaint timer (cursor blink, scrolling, repaint), which it
  * re-registers wrapped ([guardRepaintTimer]). An exception escaping to the event thread reaches the
  * app's default handler, which ends Hovel.
+ *
+ * Key presses that are window shortcuts ([workspaceShortcut]) go to [onShortcut] instead of the terminal.
  */
 internal class GuardedTerminalPanel(settings: SettingsProvider, buffer: TerminalTextBuffer, style: StyleState) :
     TerminalPanel(settings, buffer, style) {
     /** Development probe only. One character cell, in points. */
     val cell: java.awt.Dimension get() = java.awt.Dimension(myCharSize)
 
+    /** A window shortcut was pressed in this terminal. AWT thread. */
+    @Volatile var onShortcut: (WorkspaceAction) -> Unit = {}
+
+    /** The typed event that follows a shortcut's key press is the shortcut's, not the terminal's. */
+    private var shortcutTyped = false
+
     override fun init(scrollBar: JScrollBar) {
         super.init(scrollBar)
         guardRepaintTimer()
     }
 
+    /** Pick up a new font size from the settings: re-measure the cells and resize the terminal. */
+    fun refreshFont() = guard("font") { reinitFontAndResize(); repaint() }
+
     override fun paintComponent(g: Graphics) = guard("paint") { super.paintComponent(g) }
     override fun processKeyEvent(e: KeyEvent) = guard("key") {
+        if (e.id == KeyEvent.KEY_PRESSED) {
+            shortcutTyped = false
+            val action = workspaceShortcut(e)
+            if (action != null) {
+                e.consume()
+                shortcutTyped = true
+                onShortcut(action)
+                return@guard
+            }
+        }
         // ⌘ is never terminal input on a Mac. JediTerm runs its ⌘ actions (copy, paste, clear, find)
         // on the key press, but would type a ⌘-letter's character ("t" for an unbound ⌘T) on the typed event.
-        if (e.id == KeyEvent.KEY_TYPED && e.isMetaDown) e.consume() else super.processKeyEvent(e)
+        if (e.id == KeyEvent.KEY_TYPED && (e.isMetaDown || shortcutTyped)) { shortcutTyped = false; e.consume() }
+        else super.processKeyEvent(e)
     }
     override fun processMouseEvent(e: MouseEvent) = guard("mouse") { super.processMouseEvent(e) }
     override fun processMouseMotionEvent(e: MouseEvent) = guard("mouse motion") { super.processMouseMotionEvent(e) }
@@ -150,14 +184,38 @@ private class HovelTermWidget(size: TermSize, settings: SettingsProvider) : Jedi
 /**
  * One tab's terminal: a JediTerm widget reading from [connector], which is already attached to the
  * tab's session (output waits in it until the widget starts). It lives as long as its tab, whether
- * or not the tab is showing, so switching tabs keeps each screen. AWT thread only, except [screenText].
+ * or not the tab is showing, so switching tabs keeps each screen. AWT thread only, except
+ * [screenText]. [onShortcut] gets the window shortcuts pressed in it, on the AWT thread; [onTitle]
+ * gets each title the program sets (OSC 0 or 2), on JediTerm's emulator thread.
  */
-internal class TerminalView(private val connector: SessionTtyConnector, size: TermSize) {
-    private val widget: JediTermWidget = HovelTermWidget(size, HovelTerminalSettings())
+internal class TerminalView(
+    private val connector: SessionTtyConnector,
+    size: TermSize,
+    fontSize: Int = TerminalFont.DEFAULT_SIZE,
+    onShortcut: (WorkspaceAction) -> Unit = {},
+    onTitle: (String) -> Unit = {},
+) {
+    private val settings = HovelTerminalSettings(fontSize)
+    private val widget: JediTermWidget = HovelTermWidget(size, settings)
+    private val guarded = widget.terminalPanel as GuardedTerminalPanel
 
     init {
+        guarded.onShortcut = onShortcut
+        widget.terminal.addApplicationTitleListener { title ->
+            try { onTitle(title) } catch (error: Throwable) {
+                rethrowIfFatal(error)
+                log(LogLevel.Error, TAG, "Could not show a terminal title", error)
+            }
+        }
         widget.setTtyConnector(connector)
         widget.start()
+    }
+
+    /** Draw at [size] points: the window's zoom. */
+    fun setFontSize(size: Int) {
+        if (settings.fontSize == size) return
+        settings.fontSize = size
+        guarded.refreshFont()
     }
 
     /** Development probe only. Bytes to the session as if typed, past JediTerm's key handling. */
@@ -170,7 +228,7 @@ internal class TerminalView(private val connector: SessionTtyConnector, size: Te
 
     /** Development probe only. The centre of the cell at zero-based [column] and [row], in the panel's points. */
     fun cellCenter(column: Int, row: Int): java.awt.Point {
-        val cell = (widget.terminalPanel as GuardedTerminalPanel).cell
+        val cell = guarded.cell
         return java.awt.Point(column * cell.width + cell.width / 2, row * cell.height + cell.height / 2)
     }
 
@@ -222,6 +280,11 @@ internal class TerminalDeck {
 
     /** Development probe only. */
     fun view(id: String): TerminalView? = views[id]
+
+    /** Every tab's terminal at [size] points. */
+    fun setFontSize(size: Int) {
+        views.values.forEach { it.setFontSize(size) }
+    }
 
     /** Show tab [id] and give it the keyboard. Repeated calls for the tab already showing do nothing. */
     fun show(id: String) {

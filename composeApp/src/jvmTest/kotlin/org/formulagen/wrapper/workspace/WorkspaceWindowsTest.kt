@@ -14,8 +14,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Workspace windows: closing ends their tabs' processes whatever state their start is in; and closing
- * a tab or window, or quitting, asks first exactly when something is busy.
+ * Workspace windows: closing ends their tabs' processes whatever state their start is in; closing a
+ * tab or window, or quitting, asks first exactly when something is busy; and the window shortcuts.
  */
 class WorkspaceWindowsTest {
     private val folder: Path = createTempDirectory("hovel-windows")
@@ -127,7 +127,7 @@ class WorkspaceWindowsTest {
         assertEquals(1, onAwtNow { window.tabs.size }, "no keeps the tab")
         assertFalse(host.sessions.single().isClosed())
         answer = true
-        EventQueue.invokeAndWait { window.requestCloseTab(window.tabs.single()) }
+        EventQueue.invokeAndWait { window.perform(WorkspaceAction.CloseTab) }
         eventually("closed on yes") { window.tabs.isEmpty() }
         assertTrue(host.sessions.single().closed.await(5, SECONDS))
     }
@@ -199,6 +199,97 @@ class WorkspaceWindowsTest {
         EventQueue.invokeAndWait { workspaces.confirmQuit("Hovel") { quits++ } }
         eventually("quit on yes") { quits == 1 }
         assertEquals(2, asked.size)
+    }
+
+    @Test fun tabShortcutsSelectByNumberAndWrapAround() {
+        val window = open()
+        running(window, 1)
+        onAwtNow { repeat(3) { window.addTab(Launch.Shell) } }
+        running(window, 4)
+        val ids = onAwtNow { window.tabs.map { it.id } }
+        fun selectedIndex() = onAwtNow { ids.indexOf(window.selected) }
+        onAwtNow { window.perform(WorkspaceAction.SelectTab(1)) }
+        assertEquals(1, selectedIndex())
+        onAwtNow { window.perform(WorkspaceAction.SelectTab(7)) }
+        assertEquals(1, selectedIndex(), "no eighth tab: nothing changes")
+        onAwtNow { window.perform(WorkspaceAction.SelectLastTab) }
+        assertEquals(3, selectedIndex())
+        onAwtNow { window.perform(WorkspaceAction.NextTab) }
+        assertEquals(0, selectedIndex(), "next wraps to the first")
+        onAwtNow { window.perform(WorkspaceAction.PreviousTab) }
+        assertEquals(3, selectedIndex(), "previous wraps to the last")
+        onAwtNow { window.perform(WorkspaceAction.PreviousTab) }
+        assertEquals(2, selectedIndex())
+    }
+
+    @Test fun aMenuItemRepeatingAKeyPressIsItsEchoAndIgnored() {
+        var now = 0L
+        val window = onAwtNow { WorkspaceWindowState("p", folder, lazy { host }, java.util.concurrent.Executors.newSingleThreadExecutor(), clock = { now }) }
+        onAwtNow {
+            window.performFromKey(WorkspaceAction.ZoomIn)
+            window.performFromMenu(WorkspaceAction.ZoomIn)
+        }
+        assertEquals(TerminalFont.DEFAULT_SIZE + 1, window.fontSize, "the menu's echo of ⌘+ is dropped")
+        onAwtNow { window.performFromMenu(WorkspaceAction.ZoomIn) }
+        assertEquals(TerminalFont.DEFAULT_SIZE + 2, window.fontSize, "a menu click on its own counts")
+        onAwtNow {
+            window.performFromKey(WorkspaceAction.ZoomIn)
+            now += SECONDS.toNanos(1)
+            window.performFromMenu(WorkspaceAction.ZoomIn)
+        }
+        assertEquals(TerminalFont.DEFAULT_SIZE + 4, window.fontSize, "a late menu click is not an echo")
+        onAwtNow {
+            window.performFromKey(WorkspaceAction.ZoomOut)
+            window.performFromMenu(WorkspaceAction.ZoomReset)
+        }
+        assertEquals(TerminalFont.DEFAULT_SIZE, window.fontSize, "another action is not an echo")
+    }
+
+    @Test fun zoomStaysWithinItsLimitsAndResets() {
+        val window = open()
+        running(window, 1)
+        onAwtNow { repeat(100) { window.perform(WorkspaceAction.ZoomIn) } }
+        assertEquals(TerminalFont.MAX_SIZE, window.fontSize)
+        onAwtNow { repeat(100) { window.perform(WorkspaceAction.ZoomOut) } }
+        assertEquals(TerminalFont.MIN_SIZE, window.fontSize)
+        onAwtNow { window.perform(WorkspaceAction.ZoomReset) }
+        assertEquals(TerminalFont.DEFAULT_SIZE, window.fontSize)
+        assertEquals(TerminalFont.MAX_SIZE, TerminalFont.zoomed(TerminalFont.MAX_SIZE, 1))
+        assertEquals(TerminalFont.MIN_SIZE, TerminalFont.zoomed(TerminalFont.MIN_SIZE, -1))
+    }
+
+    @Test fun aTabTitleFollowsTheProgramAndFallsBackToItsLabel() {
+        val window = open()
+        running(window, 1)
+        val tab = onAwtNow { window.tabs.single() }
+        val viewer = host.sessions.single().viewer as SessionTtyConnector
+        fun title(sequence: String) = sequence.toByteArray().let { viewer.output(it, it.size) }
+        title("\u001b]0;vim notes.txt\u0007")
+        eventually("the program's title") { tab.title == "vim notes.txt" }
+        title("\u001b]2;\u0007")
+        eventually("an empty title falls back to the label") { tab.title == "Shell" }
+        title("\u001b]2;make test\u001b\\")
+        eventually("a title ended by ST") { tab.title == "make test" }
+        title("\u001b]2; \u0007")
+        eventually("a blank title falls back") { tab.title == "Shell" }
+        assertEquals("Shell", tab.label)
+        assertNull(programTitle(" \u0007 "))
+        assertEquals(60, programTitle("x".repeat(200))!!.length)
+    }
+
+    @Test fun oneTabEndingLeavesTheOthersAsTheyWere() {
+        val window = open()
+        running(window, 1)
+        onAwtNow { window.addTab(Launch.Shell) }
+        running(window, 2)
+        val (first, second) = onAwtNow { window.tabs.toList() }
+        assertEquals(second.id, onAwtNow { window.selected })
+        host.sessions[0].viewer!!.exited(3)
+        eventually("the first tab exited") { first.state == TabState.Exited(3) }
+        assertEquals(TabState.Running, onAwtNow { second.state })
+        assertEquals(second.id, onAwtNow { window.selected }, "the selection stays")
+        assertFalse(host.sessions[1].isClosed())
+        assertTrue(onAwtNow { window.deck.view(first.id) != null }, "the ended tab keeps its screen")
     }
 
     @Test fun confirmationsAreAskedOnlyWhenSomethingIsBusy() {

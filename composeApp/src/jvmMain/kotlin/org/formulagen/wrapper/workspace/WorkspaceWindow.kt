@@ -70,10 +70,32 @@ private fun WorkspaceWindow(state: WorkspaceWindowState, onClose: () -> Unit) {
         }
         // The last tab closing closes the window, as in Terminal.
         LaunchedEffect(state.tabs.size) { if (state.tabs.isEmpty()) onClose() }
+        // The terminal handles these keys itself when it has focus (workspaceShortcut); the menu bar
+        // gets them too, and performFromMenu drops that echo.
         MenuBar {
             Menu("Shell") {
-                Item("New Tab", shortcut = KeyShortcut(Key.T, meta = true), enabled = state.canAddTab, onClick = { state.addTab(Launch.Shell) })
-                Item("Close Tab", shortcut = KeyShortcut(Key.W, meta = true), onClick = { state.selectedTab()?.let(state::requestCloseTab) })
+                Item("New Tab", shortcut = KeyShortcut(Key.T, meta = true), enabled = state.canAddTab, onClick = { state.performFromMenu(WorkspaceAction.NewTab) })
+                Item("Close Tab", shortcut = KeyShortcut(Key.W, meta = true), onClick = { state.performFromMenu(WorkspaceAction.CloseTab) })
+            }
+            Menu("View") {
+                Item("Bigger", shortcut = KeyShortcut(Key.Equals, meta = true), enabled = state.fontSize < TerminalFont.MAX_SIZE,
+                    onClick = { state.performFromMenu(WorkspaceAction.ZoomIn) })
+                Item("Smaller", shortcut = KeyShortcut(Key.Minus, meta = true), enabled = state.fontSize > TerminalFont.MIN_SIZE,
+                    onClick = { state.performFromMenu(WorkspaceAction.ZoomOut) })
+                Item("Default Font Size", shortcut = KeyShortcut(Key.Zero, meta = true), enabled = state.fontSize != TerminalFont.DEFAULT_SIZE,
+                    onClick = { state.performFromMenu(WorkspaceAction.ZoomReset) })
+            }
+            Menu("Window") {
+                Item("Show Previous Tab", shortcut = KeyShortcut(Key.LeftBracket, meta = true, shift = true), enabled = state.tabs.size > 1,
+                    onClick = { state.performFromMenu(WorkspaceAction.PreviousTab) })
+                Item("Show Next Tab", shortcut = KeyShortcut(Key.RightBracket, meta = true, shift = true), enabled = state.tabs.size > 1,
+                    onClick = { state.performFromMenu(WorkspaceAction.NextTab) })
+                Separator()
+                state.tabs.forEachIndexed { index, tab ->
+                    val shortcut = TAB_KEYS.getOrNull(index)?.let { KeyShortcut(it, meta = true) }
+                    Item(tab.title, shortcut = shortcut, onClick = { state.performFromMenu(WorkspaceAction.SelectTab(index)) })
+                }
+                Item("Show Last Tab", shortcut = KeyShortcut(Key.Nine, meta = true), onClick = { state.performFromMenu(WorkspaceAction.SelectLastTab) })
             }
             // The spike's rendering check: catalog tools started through the login shell.
             Menu("Develop") {
@@ -89,6 +111,9 @@ private fun WorkspaceWindow(state: WorkspaceWindowState, onClose: () -> Unit) {
 }
 
 private val DEV_TOOLS = listOf(WorkspaceTool.NEOVIM, WorkspaceTool.LAZYGIT, WorkspaceTool.YAZI)
+
+/** ⌘1 to ⌘8, one per tab: a window holds at most `TABS` (8). ⌘9 is the last tab. */
+private val TAB_KEYS = listOf(Key.One, Key.Two, Key.Three, Key.Four, Key.Five, Key.Six, Key.Seven, Key.Eight)
 
 @Composable
 private fun TabBar(state: WorkspaceWindowState) {

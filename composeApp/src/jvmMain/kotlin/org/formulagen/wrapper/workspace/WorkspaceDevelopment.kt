@@ -2,6 +2,7 @@ package org.formulagen.wrapper.workspace
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import com.jediterm.terminal.ui.TerminalPanel
 import java.awt.EventQueue
 import java.awt.Frame
 import java.awt.event.InputEvent
@@ -90,7 +91,10 @@ internal fun DevelopmentWorkspaceLaunch(workspaces: WorkspaceWindows, environmen
  * - `send <text>`: bytes to the selected tab's session, as typed. Escapes: `\r \n \t \e \\ \xNN`.
  * - `click <column> <row>`: a left click on that cell (zero-based), through JediTerm's mouse handling.
  * - `key <mods>+<char>`: a key press, release and typed event on the selected terminal, through
- *   JediTerm's own key handling. Mods: `meta`, `ctrl`, `alt`, `shift`, joined with `+`.
+ *   JediTerm's own key handling and the window shortcuts. Mods: `meta`, `ctrl`, `alt`, `shift`,
+ *   joined with `+`. `<char>` is one character, or `tab`, `]` or `[`.
+ * - `ime <text>`: committed input-method text on the selected terminal, as macOS sends a dead key's
+ *   result (⌥e then e is `ime é`).
  * - `wait <ms>`; `await <ms> <text>`: wait until the selected screen shows the text.
  * - `snap <name>`: the selected tab's state, busy state and screen as `<name>.txt`, and its terminal
  *   painted as `<name>.png`, beside the steps file.
@@ -120,6 +124,7 @@ internal class WorkspaceProbe(
 
     private fun run() {
         Files.writeString(logFile, "")
+        record("font ${TerminalFont.family} ${window.fontSize}pt")
         try {
             for (raw in Files.readAllLines(steps)) {
                 val line = raw.trim()
@@ -138,6 +143,7 @@ internal class WorkspaceProbe(
         when (command) {
             "send" -> awt { view().send(unescape(argument).toByteArray(Charsets.UTF_8)) }
             "key" -> awt { key(argument) }
+            "ime" -> awt { ime(argument) }
             "click" -> awt { click(argument.split(' ').map(String::toInt)) }
             "wait" -> Thread.sleep(argument.toLong())
             "await" -> await(argument.substringBefore(' ').toLong(), argument.substringAfter(' '))
@@ -183,7 +189,7 @@ internal class WorkspaceProbe(
         awt {
             val view = view()
             val tree = tab?.session?.processes()?.joinToString { "${it.pid()}:${it.info().command().orElse("?")}" }
-            text = "tab=${tab?.title} state=${tab?.state} busy=$busy focused=${view.panel.isFocusOwner} tree=[$tree]\n" + view.screenText()
+            text = "tab=${tab?.title} label=${tab?.label} state=${tab?.state} busy=$busy focused=${view.panel.isFocusOwner} font=${TerminalFont.family} ${window.fontSize}pt tree=[$tree]\n" + view.screenText()
             val panel = view.panel
             image = BufferedImage(panel.width.coerceAtLeast(1), panel.height.coerceAtLeast(1), BufferedImage.TYPE_INT_RGB).also { target ->
                 val graphics = target.createGraphics()
@@ -197,7 +203,7 @@ internal class WorkspaceProbe(
 
     private fun key(spec: String) {
         val parts = spec.split('+')
-        val char = parts.last().single()
+        val last = parts.last()
         val modifiers = parts.dropLast(1).fold(0) { mask, name ->
             mask or when (name) {
                 "meta" -> InputEvent.META_DOWN_MASK
@@ -207,12 +213,34 @@ internal class WorkspaceProbe(
                 else -> error("Unknown modifier: $name")
             }
         }
-        val panel = view().panel
-        val code = KeyEvent.getExtendedKeyCodeForChar(char.code)
+        val char = if (last == "tab") '\t' else last.single()
+        val code = when (char) {
+            '\t' -> KeyEvent.VK_TAB
+            ']' -> KeyEvent.VK_CLOSE_BRACKET
+            '[' -> KeyEvent.VK_OPEN_BRACKET
+            '=' -> KeyEvent.VK_EQUALS
+            '-' -> KeyEvent.VK_MINUS
+            else -> KeyEvent.getExtendedKeyCodeForChar(char.code)
+        }
+        deliver(view().panel, code, char, modifiers)
+    }
+
+    /**
+     * Press, typed and release, straight to the terminal's key handler, as the focused terminal gets
+     * them: AWT's focus manager would drop synthetic keys while the window is not the active one.
+     */
+    private fun deliver(panel: TerminalPanel, code: Int, char: Char, modifiers: Int) {
         val now = System.currentTimeMillis()
-        panel.dispatchEvent(KeyEvent(panel, KeyEvent.KEY_PRESSED, now, modifiers, code, char))
-        panel.dispatchEvent(KeyEvent(panel, KeyEvent.KEY_TYPED, now, modifiers, KeyEvent.VK_UNDEFINED, char))
-        panel.dispatchEvent(KeyEvent(panel, KeyEvent.KEY_RELEASED, now, modifiers, code, char))
+        panel.processKeyEvent(KeyEvent(panel, KeyEvent.KEY_PRESSED, now, modifiers, code, char))
+        panel.processKeyEvent(KeyEvent(panel, KeyEvent.KEY_TYPED, now, modifiers, KeyEvent.VK_UNDEFINED, char))
+        panel.processKeyEvent(KeyEvent(panel, KeyEvent.KEY_RELEASED, now, modifiers, code, char))
+    }
+
+    /** Committed text from the input method, as macOS sends the result of a dead key or an IME. */
+    private fun ime(text: String) {
+        val panel = view().panel
+        val attributed = java.text.AttributedString(text).iterator
+        panel.dispatchEvent(java.awt.event.InputMethodEvent(panel, java.awt.event.InputMethodEvent.INPUT_METHOD_TEXT_CHANGED, attributed, text.length, null, null))
     }
 
     /** A left click on the cell at zero-based column and row, through JediTerm's mouse handling. */
