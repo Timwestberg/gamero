@@ -73,8 +73,8 @@ class CodexWorkRuntimeTest {
         }
     }
 
-    private fun request() = TurnRequest("50000000-0000-4000-8000-000000000005", "20000000-0000-4000-8000-000000000002", Persona.working("Ember"), null, null,
-        "Add a leap-year test.", WorkScope(folder, "lease-1", "Ember", member))
+    private fun request(edits: EditListener = EditListener.NONE) = TurnRequest("50000000-0000-4000-8000-000000000005", "20000000-0000-4000-8000-000000000002",
+        Persona.working("Ember"), null, null, "Add a leap-year test.", WorkScope(folder, "lease-1", "Ember", member, edits))
 
     @AfterTest fun cleanUp() { root.toFile().deleteRecursively() }
 
@@ -104,10 +104,12 @@ class CodexWorkRuntimeTest {
             }
             servers += server
         } }
+        val edits = CopyOnWriteArrayList<Path?>()
         codex.use {
             val events = Events()
-            codex.startTurn(request(), events)
+            codex.startTurn(request { edits += it }, events)
             assertEquals("completed", events.end.get(10, TimeUnit.SECONDS))
+            assertEquals(listOf(folder.resolve("tests/date.test.ts")), edits, "the completed file change reaches the thread's record")
             val server = servers.single()
             // The player's own Codex decides what to ask: no sandbox or approval override, the persona as developer instructions.
             val start = server.calls.first { it.first == "thread/start" }.second
@@ -132,6 +134,30 @@ class CodexWorkRuntimeTest {
             assertEquals(listOf("opened $thread", "accepted"), events.seen.take(2))
             assertEquals("completed Added it; 13 passing.", events.seen.last())
         }
+    }
+
+    @Test fun aCompletedFileChangeReportsEachFileItNamesAndNoOtherDoes() {
+        val reported = mutableListOf<Path?>()
+        val activity = CodexActivity(WorkPaths(folder)) { reported += it }
+        fun change(id: String, status: String, vararg changes: JsonObject) = activity.receive("item/completed", buildJsonObject {
+            putJsonObject("item") { put("type", "fileChange"); put("id", id); put("status", status); put("changes", JsonArray(changes.toList())) }
+        })
+        // Codex 0.166's shape: `{path, kind: {type: add | delete | update, move_path}, diff}`.
+        fun file(path: String?, kind: JsonObject = buildJsonObject { put("type", "add") }) =
+            buildJsonObject { path?.let { put("path", it) }; put("kind", kind); put("diff", "+a") }
+        val moved = buildJsonObject { put("type", "update"); put("move_path", "$folder/src/new-name.ts") }
+        change("1", "completed", file("$folder/src/a.ts"), file("src/b.ts", buildJsonObject { put("type", "delete") }), file("$folder/src/old-name.ts", moved), file(null))
+        change("2", "declined", file("$folder/declined.ts"))
+        change("3", "failed", file("$folder/failed.ts"))
+        change("4", "inProgress", file("$folder/running.ts"))
+        activity.receive("item/started", buildJsonObject { putJsonObject("item") { put("type", "fileChange"); put("status", "inProgress"); put("changes", JsonArray(listOf(file("$folder/started.ts")))) } })
+        activity.receive("item/completed", buildJsonObject { putJsonObject("item") {
+            put("type", "commandExecution"); put("command", "sed -i '' s/a/b/ src/a.ts"); put("status", "completed"); put("exitCode", 0)
+        } })
+        assertEquals(listOf(Path.of("$folder/src/a.ts"), Path.of("src/b.ts"), Path.of("$folder/src/old-name.ts"), Path.of("$folder/src/new-name.ts"), null), reported,
+            "every file of a multi-file change, a move's new name, and null for a change naming none")
+        assertEquals(listOf(ActivityStatus.DONE, ActivityStatus.DENIED, ActivityStatus.FAILED, ActivityStatus.DONE, ActivityStatus.DONE),
+            activity.activity().steps.map { it.status }, "the page's activity is unchanged")
     }
 
     @Test fun aStopCancelsWhatWaitsAndInterruptsTheTurn() {
