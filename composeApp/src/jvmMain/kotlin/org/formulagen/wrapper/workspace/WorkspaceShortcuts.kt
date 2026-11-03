@@ -1,5 +1,7 @@
 package org.formulagen.wrapper.workspace
 
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyShortcut
 import java.awt.event.InputEvent.ALT_DOWN_MASK
 import java.awt.event.InputEvent.CTRL_DOWN_MASK
 import java.awt.event.InputEvent.META_DOWN_MASK
@@ -56,6 +58,28 @@ internal fun workspaceShortcut(event: KeyEvent): WorkspaceAction? {
         CTRL_DOWN_MASK or SHIFT_DOWN_MASK -> if (code == KeyEvent.VK_TAB) WorkspaceAction.PreviousTab else null
         else -> null
     }
+}
+
+/** ⌘1 to ⌘8, one per tab: a window holds at most `TABS` (8). ⌘9 is the last tab. */
+internal val TAB_KEYS = listOf(Key.One, Key.Two, Key.Three, Key.Four, Key.Five, Key.Six, Key.Seven, Key.Eight)
+
+/** A menu item's shortcut: [key] with ⌘, and with ⇧ when [shift]. */
+internal data class MenuKey(val key: Key, val shift: Boolean = false) {
+    /** The menu bar's form of it. */
+    val shortcut: KeyShortcut get() = KeyShortcut(key, meta = true, shift = shift)
+}
+
+/** The menu bar's key for [action]: one [workspaceShortcut] maps back to it. None for a tab past ⌘8. */
+internal fun menuKey(action: WorkspaceAction): MenuKey? = when (action) {
+    WorkspaceAction.NewTab -> MenuKey(Key.T)
+    WorkspaceAction.CloseTab -> MenuKey(Key.W)
+    is WorkspaceAction.SelectTab -> TAB_KEYS.getOrNull(action.index)?.let(::MenuKey)
+    WorkspaceAction.SelectLastTab -> MenuKey(Key.Nine)
+    WorkspaceAction.NextTab -> MenuKey(Key.RightBracket, shift = true)
+    WorkspaceAction.PreviousTab -> MenuKey(Key.LeftBracket, shift = true)
+    WorkspaceAction.ZoomIn -> MenuKey(Key.Equals)
+    WorkspaceAction.ZoomOut -> MenuKey(Key.Minus)
+    WorkspaceAction.ZoomReset -> MenuKey(Key.Zero)
 }
 
 /** Layouts that move the brackets or plus still type `}`, `{` or `+` with ⌘. */

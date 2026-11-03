@@ -1,5 +1,6 @@
 package org.formulagen.wrapper.workspace
 
+import androidx.compose.ui.input.key.nativeKeyCode
 import com.jediterm.terminal.CursorShape
 import java.awt.Component
 import java.awt.DefaultKeyboardFocusManager
@@ -23,6 +24,8 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.formulagen.wrapper.conversations.eventually
 
@@ -135,6 +138,25 @@ class TerminalPaneTest {
             assertEquals(null, key(code, modifiers), "$code with $modifiers")
         }
         assertEquals(null, workspaceShortcut(KeyEvent(source, KeyEvent.KEY_TYPED, 0, META_DOWN_MASK, KeyEvent.VK_UNDEFINED, '1')))
+    }
+
+    @Test fun everyMenuShortcutMapsBackToItsAction() {
+        val actions = listOf(
+            WorkspaceAction.NewTab, WorkspaceAction.CloseTab, WorkspaceAction.SelectLastTab, WorkspaceAction.NextTab,
+            WorkspaceAction.PreviousTab, WorkspaceAction.ZoomIn, WorkspaceAction.ZoomOut, WorkspaceAction.ZoomReset,
+        ) + (0 until WorkspaceSettingsLimits.TABS).map { WorkspaceAction.SelectTab(it) }
+        val source = JPanel()
+        for (action in actions) {
+            val menu = assertNotNull(menuKey(action), "$action")
+            val modifiers = if (menu.shift) META_DOWN_MASK or SHIFT_DOWN_MASK else META_DOWN_MASK
+            val event = KeyEvent(source, KeyEvent.KEY_PRESSED, 0, modifiers, menu.key.nativeKeyCode, KeyEvent.CHAR_UNDEFINED)
+            assertEquals(action, workspaceShortcut(event), "the menu's $menu")
+        }
+        assertNull(menuKey(WorkspaceAction.SelectTab(WorkspaceSettingsLimits.TABS)), "no key past the last tab")
+    }
+
+    @Test fun thereIsATabKeyForEveryTab() {
+        assertEquals(WorkspaceSettingsLimits.TABS, TAB_KEYS.size)
     }
 
     @Test fun theFontIsSFMonoWhenAwtSeesItElseMenlo() {
