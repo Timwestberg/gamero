@@ -116,7 +116,7 @@ internal fun steadyCursor(shape: CursorShape): CursorShape = when (shape) {
  */
 internal class HovelTerminalPanel(settings: SettingsProvider, buffer: TerminalTextBuffer, style: StyleState) :
     TerminalPanel(settings, buffer, style) {
-    /** Development probe only. One character cell, in points. */
+    /** Development probe and tests. One character cell, in points. */
     val cell: java.awt.Dimension get() = java.awt.Dimension(myCharSize)
 
     /** A window shortcut was pressed in this terminal. AWT thread. */
@@ -235,7 +235,7 @@ internal class HovelTerminalPanel(settings: SettingsProvider, buffer: TerminalTe
         }
     }
 
-    /** Development probe and tests only: the timer [guardRepaintTimer] wrapped. */
+    /** Development probe and tests. The timer [guardRepaintTimer] wrapped. */
     internal fun repaintTimer(): Timer? = try { REPAINT_TIMER?.get(this) as? Timer } catch (_: Exception) { null }
 
     /** One of JediTerm's timer callbacks, catching what it throws into [failures]. */
@@ -359,10 +359,10 @@ internal class TerminalView(
 
     val component: JComponent get() = widget
 
-    /** Development probe only. The panel JediTerm draws into, for snapshots and synthetic events. */
+    /** Development probe and tests. The panel JediTerm draws into, for snapshots and synthetic events. */
     val panel: TerminalPanel get() = widget.terminalPanel
 
-    /** Development probe only. The centre of the cell at zero-based [column] and [row], in the panel's points. */
+    /** Development probe and tests. The centre of the cell at zero-based [column] and [row], in the panel's points. */
     fun cellCenter(column: Int, row: Int): java.awt.Point {
         val cell = guarded.cell
         return java.awt.Point(column * cell.width + cell.width / 2, row * cell.height + cell.height / 2)
@@ -372,7 +372,7 @@ internal class TerminalView(
         widget.requestFocusInWindow()
     }
 
-    /** Development probe only. The visible screen as text, one line per row. */
+    /** Development probe and tests. The visible screen as text, one line per row. */
     fun screenText(): String = widget.terminalTextBuffer.let { buffer ->
         buffer.lock()
         try { buffer.getScreenLines() } finally { buffer.unlock() }
@@ -414,7 +414,7 @@ internal class TerminalDeck {
 
     private var showing: String? = null
 
-    /** Development probe only. */
+    /** Development probe and tests. Tab [id]'s terminal, when it has one. */
     fun view(id: String): TerminalView? = views[id]
 
     /** Every tab's terminal at [size] points. */

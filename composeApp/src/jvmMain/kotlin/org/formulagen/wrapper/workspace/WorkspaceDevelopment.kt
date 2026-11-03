@@ -5,6 +5,7 @@ import androidx.compose.runtime.LaunchedEffect
 import com.jediterm.terminal.ui.TerminalPanel
 import java.awt.EventQueue
 import java.awt.Frame
+import java.awt.Window
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
@@ -14,6 +15,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
+import org.formulagen.wrapper.approvals.NativeDialog
 import org.formulagen.wrapper.conversations.NativeFolderPicker
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
@@ -69,11 +71,39 @@ internal fun openWorkspaceFromPicker(workspaces: WorkspaceWindows, owner: Frame)
 }
 
 /**
- * Opens HOVEL_WORKSPACE_FOLDER at launch and runs HOVEL_WORKSPACE_PROBE against it. [exit] ends the
- * app at once; [requestQuit] is ⌘Q's path, which asks first when work would be lost.
+ * The probe's answers to the close and quit questions: the sheet until an `answer` step sets one.
+ * Built before [WorkspaceWindows], which asks through it, so production code never swaps confirmers.
+ */
+internal class ProbeConfirmer(private val sheet: Confirmer = SheetConfirmer) : Confirmer {
+    /** The `answer` step's choice, or null to ask with the sheet. */
+    @Volatile var answer: Boolean? = null
+    /** Where each answered question is logged: the probe's log once it starts. */
+    @Volatile var record: (String) -> Unit = {}
+
+    override fun confirm(owner: Window?, question: NativeDialog<Boolean>): Boolean {
+        val yes = answer ?: return sheet.confirm(owner, question)
+        record("  asked \"${question.title}\": ${question.lines.joinToString(" | ")} -> ${question.buttons.first { it.second == yes }.first}")
+        return yes
+    }
+}
+
+/** A [ProbeConfirmer] when HOVEL_WORKSPACE_PROBE names a steps file, else null. */
+internal fun probeConfirmer(environment: Map<String, String>): ProbeConfirmer? =
+    environment["HOVEL_WORKSPACE_PROBE"]?.takeIf { it.isNotBlank() }?.let { ProbeConfirmer() }
+
+/**
+ * Opens HOVEL_WORKSPACE_FOLDER at launch and runs HOVEL_WORKSPACE_PROBE against it, answering
+ * through [confirmer]. [exit] ends the app at once; [requestQuit] is ⌘Q's path, which asks first
+ * when work would be lost.
  */
 @Composable
-internal fun DevelopmentWorkspaceLaunch(workspaces: WorkspaceWindows, environment: Map<String, String>, exit: () -> Unit, requestQuit: () -> Unit) {
+internal fun DevelopmentWorkspaceLaunch(
+    workspaces: WorkspaceWindows,
+    environment: Map<String, String>,
+    confirmer: ProbeConfirmer?,
+    exit: () -> Unit,
+    requestQuit: () -> Unit,
+) {
     LaunchedEffect(Unit) {
         val folder = environment["HOVEL_WORKSPACE_FOLDER"]?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
         val window = try { workspaces.open(Path.of(folder)) } catch (error: Throwable) {
@@ -81,9 +111,9 @@ internal fun DevelopmentWorkspaceLaunch(workspaces: WorkspaceWindows, environmen
             log(LogLevel.Error, TAG, "Could not open HOVEL_WORKSPACE_FOLDER", error)
             return@LaunchedEffect
         }
-        environment["HOVEL_WORKSPACE_PROBE"]?.takeIf { it.isNotBlank() }?.let {
-            WorkspaceProbe(workspaces, window, Path.of(it), exit, requestQuit).start()
-        }
+        val steps = environment["HOVEL_WORKSPACE_PROBE"]?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        if (confirmer == null) { log(LogLevel.Warn, TAG, "HOVEL_WORKSPACE_PROBE is set but the windows have no probe confirmer"); return@LaunchedEffect }
+        WorkspaceProbe(workspaces, window, Path.of(steps), confirmer, exit, requestQuit).start()
     }
 }
 
@@ -122,6 +152,7 @@ internal class WorkspaceProbe(
     private val workspaces: WorkspaceWindows,
     private val window: WorkspaceWindowState,
     private val steps: Path,
+    private val confirmer: ProbeConfirmer,
     private val exit: () -> Unit,
     private val requestQuit: () -> Unit,
 ) {
@@ -130,6 +161,7 @@ internal class WorkspaceProbe(
     private var markers = 0
 
     fun start() {
+        confirmer.record = ::record
         loggingDaemonThreads("hovel-workspace-probe").newThread(::run).start()
     }
 
@@ -179,10 +211,7 @@ internal class WorkspaceProbe(
     }
 
     private fun answer(yes: Boolean) {
-        workspaces.confirmer = Confirmer { _, question ->
-            record("  asked \"${question.title}\": ${question.lines.joinToString(" | ")} -> ${question.buttons.first { it.second == yes }.first}")
-            yes
-        }
+        confirmer.answer = yes
     }
 
     private fun await(timeoutMs: Long, text: String) {

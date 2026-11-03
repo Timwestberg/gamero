@@ -40,12 +40,9 @@ private val MENU_ECHO_NANOS = TimeUnit.MILLISECONDS.toNanos(500)
  * Closing a tab or a window, and quitting, ask first when something would be lost ([Busy]), through
  * [confirmer]: a sheet on the workspace window.
  */
-internal class WorkspaceWindows(confirmer: Confirmer = SheetConfirmer, host: () -> SessionHost) : AutoCloseable {
+internal class WorkspaceWindows(private val confirmer: Confirmer = SheetConfirmer, host: () -> SessionHost) : AutoCloseable {
     private val lazyHost = lazy(host)
     private val workers: ExecutorService = Executors.newCachedThreadPool(loggingDaemonThreads("hovel-workspace-window"))
-
-    /** Asks before work ends. Development probe only: replaced to answer without a person. */
-    @Volatile var confirmer: Confirmer = confirmer
 
     /** Windows in opening order. AWT thread. */
     val windows = mutableStateListOf<WorkspaceWindowState>()
@@ -64,7 +61,7 @@ internal class WorkspaceWindows(confirmer: Confirmer = SheetConfirmer, host: () 
         val real = folder.toRealPath()
         require(Files.isDirectory(real)) { "Not a folder: $folder" }
         windows.firstOrNull { it.folder == real }?.let { it.bringForward(); return it }
-        return WorkspaceWindowState("dev-${UUID.randomUUID()}", real, lazyHost, workers, { this.confirmer }).also { window ->
+        return WorkspaceWindowState("dev-${UUID.randomUUID()}", real, lazyHost, workers, confirmer).also { window ->
             windows.add(window)
             window.addTab(Launch.Shell)
         }
@@ -192,7 +189,7 @@ internal class WorkspaceWindowState(
     /** Read only on a worker: building it reads the directory service and writes files. */
     private val host: Lazy<SessionHost>,
     private val workers: ExecutorService,
-    private val confirmer: () -> Confirmer = { SheetConfirmer },
+    private val confirmer: Confirmer = SheetConfirmer,
     private val clock: () -> Long = System::nanoTime,
 ) {
     val title: String = "${folder.fileName ?: folder} · workspace"
@@ -347,7 +344,7 @@ internal class WorkspaceWindowState(
                 try {
                     if (tab !in tabs) return@onAwt
                     val question = Confirmations.closeTab(busy)
-                    if (question == null || confirmer().confirm(awtWindow, question)) closeTab(tab)
+                    if (question == null || confirmer.confirm(awtWindow, question)) closeTab(tab)
                 } finally { tab.closeRequested = false }
             }
         }

@@ -93,7 +93,7 @@ interface Session {
      */
     fun close()
 
-    /** Development probe only. The session's process and its live descendants; none once it has exited. */
+    /** Development probe and tests. The session's process and its live descendants; none once it has exited. */
     fun processes(): List<ProcessHandle> = emptyList()
 }
 

@@ -34,9 +34,11 @@ import org.formulagen.wrapper.hovel.HovelLaunchScreen
 import org.formulagen.wrapper.hovel.HovelStartState
 import org.formulagen.wrapper.providers.projectWorkspaceEnabled
 import org.formulagen.wrapper.workspace.DevelopmentWorkspaceLaunch
+import org.formulagen.wrapper.workspace.SheetConfirmer
 import org.formulagen.wrapper.workspace.WorkspaceWindows
 import org.formulagen.wrapper.workspace.WorkspaceWindowsHost
 import org.formulagen.wrapper.workspace.openWorkspaceFromPicker
+import org.formulagen.wrapper.workspace.probeConfirmer
 import org.formulagen.wrapper.workspace.rethrowIfFatal
 import org.formulagen.wrapper.workspace.spikeSessionHost
 import java.awt.Desktop
@@ -137,8 +139,10 @@ fun main(args: Array<String>) {
     val failure = DesktopFailure { EventQueue.invokeLater { exitAction.get()?.invoke() } }
     Thread.setDefaultUncaughtExceptionHandler(failure)
     val resources = DesktopResources()
-    val workspaces = if (projectWorkspaceEnabled(release = System.getProperty("gamero.release") == "true", development = System.getProperty("gamero.dev") == "true")) {
-        WorkspaceWindows { spikeSessionHost(System.getenv(), desktopSupportFolder().toPath()) }
+    val workspacesEnabled = projectWorkspaceEnabled(release = System.getProperty("gamero.release") == "true", development = System.getProperty("gamero.dev") == "true")
+    val probe = if (workspacesEnabled) probeConfirmer(System.getenv()) else null
+    val workspaces = if (workspacesEnabled) {
+        WorkspaceWindows(probe ?: SheetConfirmer) { spikeSessionHost(System.getenv(), desktopSupportFolder().toPath()) }
     } else null
     resources.workspaces = workspaces
     val productName = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME
@@ -237,7 +241,7 @@ fun main(args: Array<String>) {
                 // Workspace windows render here, in the app's one Compose application.
                 if (workspaces != null) {
                     WorkspaceWindowsHost(workspaces)
-                    DevelopmentWorkspaceLaunch(workspaces, System.getenv(), exit = { EventQueue.invokeLater { exitAction.get()?.invoke() } }, requestQuit = { requestQuit {} })
+                    DevelopmentWorkspaceLaunch(workspaces, System.getenv(), probe, exit = { EventQueue.invokeLater { exitAction.get()?.invoke() } }, requestQuit = { requestQuit {} })
                 }
             }
         }
