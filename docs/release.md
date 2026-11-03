@@ -64,8 +64,11 @@ fails closed:
 - **Development marker.** `-Dgamero.dev=true` marks a local or development
   launch. Gradle's `JavaExec` run tasks and the local jpackage prototypes
   (`scripts/package-catalog-macos.sh`, `scripts/package-embedded-macos.sh`, via
-  the `desktopJvmOptions` list) pass it. Release packaging goes through
-  `compose.desktop`'s own JVM options and never does.
+  the `desktopJvmOptions` list) pass it. Packaging goes through
+  `compose.desktop`'s own JVM options, which pass it only with
+  `-Pgamero.developmentPackage=true` (a development package for signed checks,
+  below). That property cannot be combined with `-Pgamero.release=true`, so a
+  release package never carries the marker.
 - **Release veto.** `-Pgamero.release=true` bakes `-Dgamero.release=true` into
   the packaged app, which turns gated features off whatever the environment says.
 
@@ -161,18 +164,51 @@ GAMERO_MAC_DEV_IDENTITY="Apple Development: <name> (<id>)" \
 `-Pgamero.developmentPackage=true` marks the package as a development build
 (`-Dgamero.dev=true`) so development-gated features open in it; it cannot be combined
 with `gamero.release`. The script re-signs the native libraries inside the jars, signs
-every Mach-O file with the hardened runtime, then the runtime and the app. It takes an
-optional entitlements file; the default is Compose's (JIT, unsigned executable memory,
-and `disable-library-validation`).
+every Mach-O file with the hardened runtime, then the runtime and the app. The app path
+may be relative.
+
+It takes an optional entitlements file. Without one it uses the JVM's two, and leaves
+out Compose's `disable-library-validation`, so a library that loads only unsigned fails
+the check instead of passing it. This is the default, passed explicitly:
+
+```sh
+cat >dev-entitlements.plist <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key><true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+</dict>
+</plist>
+PLIST
+GAMERO_MAC_DEV_IDENTITY="Apple Development: <name> (<id>)" \
+  tools/sign-dev-mac-app.sh composeApp/build/compose/binaries/main/app/org.formulagen.wrapper.app dev-entitlements.plist
+```
 
 The workspace terminal's natives (pty4j's `libpty.dylib` and spawn helper, JNA's
-`libjnidispatch`) ship as app resources (`Contents/app/resources/`) and are signed with
-the app, so they load even without `disable-library-validation`. Compose copies app
-resources without their file modes, so `createDistributable` and
-`createReleaseDistributable` set the spawn helper executable again afterwards. Compose's
-own signer signs only executables and libraries it finds at signing time, so a
-Developer ID build must check that the helper is signed with the hardened runtime
-before notarizing.
+`libjnidispatch`) ship as app resources (`Contents/app/resources/`) in a development
+package, and are signed with the app, so they load without
+`disable-library-validation`. They are Apple Silicon only: Compose packages the
+`macos-arm64` resources only on an arm64 build machine, and JNA's copy is its
+`darwin-aarch64` library. A package built on an Intel Mac has none, and pty4j and JNA
+unpack their own copies from their jars at run time, as in a Gradle run. Compose copies
+app resources without their file modes, so `createDistributable` and
+`createReleaseDistributable` set the spawn helper executable again afterwards. A
+release build (`-Pgamero.release=true`) ships none of them as app resources: project
+workspaces are development-only.
+
+**Must fix before the first notarized release.** The release runtime still carries
+pty4j's jar, and in it `resources/com/pty4j/native/darwin/pty4j-unix-spawn-helper`.
+JetBrains signed the helper with its Developer ID but without the hardened runtime, and
+Compose's signer re-signs only the `.dylib` and `.jnilib` files inside jars, so
+notarization will probably reject the release. Before notarizing, do one of these:
+
+- strip pty4j's native resources (`resources/com/pty4j/native/**`) from the release
+  runtime jar, since a release never starts a terminal; or
+- re-sign the helper inside the jar with the Developer ID identity and the hardened
+  runtime. Neither Compose's signer nor `tools/sign-dev-mac-app.sh` does this today:
+  both re-sign only the `.dylib` and `.jnilib` entries.
 
 ## iOS
 

@@ -1,13 +1,17 @@
 # Hovel workspace, zsh step 1 of 4 (.zshenv).
 #
 # Hovel starts zsh with ZDOTDIR pointing at this folder, so these four files run around the
-# player's own. Each step sets ZDOTDIR to the player's folder, sources the player's file as zsh
-# would, notes any ZDOTDIR change the file made, and points ZDOTDIR back here for the next step.
-# Step 4 (.zlogin) hands ZDOTDIR back for good. Hovel never edits the player's files.
+# player's own. Before each of the player's files, a step sets ZDOTDIR as it would be at that
+# point in the player's terminal: their folder when they have one (HOVEL_USER_ZDOTDIR at the
+# start, or whatever an earlier file of theirs set), otherwise unset. It sources the player's
+# file from ${ZDOTDIR:-$HOME}, as zsh would, keeps what the file left in ZDOTDIR for the next step,
+# and points ZDOTDIR back here so zsh reads Hovel's next file. Step 4 (.zlogin) hands ZDOTDIR back
+# for good. Hovel never edits the player's files.
 
 __hovel_zdotdir=$ZDOTDIR
-__hovel_user_zdotdir=${HOVEL_USER_ZDOTDIR:-$HOME}
 __hovel_path=$HOVEL_PATH_PREPEND
+# Set only while the player has a ZDOTDIR of their own, so "unset" survives from step to step.
+if (( ${+HOVEL_USER_ZDOTDIR} )); then __hovel_user_zdotdir=$HOVEL_USER_ZDOTDIR; fi
 unset HOVEL_USER_ZDOTDIR HOVEL_PATH_PREPEND
 
 # Put Hovel's entries first, in order, wherever the player's files moved them.
@@ -16,12 +20,13 @@ __hovel_prepend_path() {
   [[ -n $__hovel_path ]] || return 0
   local -a first
   first=(${(s.:.)__hovel_path})
+  # ${path:|first}: path minus Hovel's entries.
   path=($first ${path:|first})
 }
 
-ZDOTDIR=$__hovel_user_zdotdir
-if [[ $ZDOTDIR != $__hovel_zdotdir && -r $ZDOTDIR/.zshenv ]]; then
-  builtin source "$ZDOTDIR/.zshenv"
+if (( ${+__hovel_user_zdotdir} )); then ZDOTDIR=$__hovel_user_zdotdir; else unset ZDOTDIR; fi
+if [[ ${ZDOTDIR:-$HOME} != "$__hovel_zdotdir" && -r ${ZDOTDIR:-$HOME}/.zshenv ]]; then
+  builtin source "${ZDOTDIR:-$HOME}/.zshenv"
 fi
-__hovel_user_zdotdir=$ZDOTDIR
+if (( ${+ZDOTDIR} )); then __hovel_user_zdotdir=$ZDOTDIR; else unset __hovel_user_zdotdir; fi
 ZDOTDIR=$__hovel_zdotdir

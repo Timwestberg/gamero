@@ -1,15 +1,15 @@
 # Hovel workspace, zsh step 3 of 4 (.zshrc). See .zshenv.
 
-ZDOTDIR=$__hovel_user_zdotdir
+if (( ${+__hovel_user_zdotdir} )); then ZDOTDIR=$__hovel_user_zdotdir; else unset ZDOTDIR; fi
 # macOS's /etc/zshrc set HISTFILE from ZDOTDIR while it was still Hovel's folder. Point it where
 # it points in the player's own terminal, so history stays theirs.
 if [[ $HISTFILE == "$__hovel_zdotdir/.zsh_history" ]]; then
-  HISTFILE=$ZDOTDIR/.zsh_history
+  HISTFILE=${ZDOTDIR:-$HOME}/.zsh_history
 fi
-if [[ $ZDOTDIR != $__hovel_zdotdir && -r $ZDOTDIR/.zshrc ]]; then
-  builtin source "$ZDOTDIR/.zshrc"
+if [[ ${ZDOTDIR:-$HOME} != "$__hovel_zdotdir" && -r ${ZDOTDIR:-$HOME}/.zshrc ]]; then
+  builtin source "${ZDOTDIR:-$HOME}/.zshrc"
 fi
-__hovel_user_zdotdir=$ZDOTDIR
+if (( ${+ZDOTDIR} )); then __hovel_user_zdotdir=$ZDOTDIR; else unset __hovel_user_zdotdir; fi
 ZDOTDIR=$__hovel_zdotdir
 
 # Hovel's entries first after the player's rc, and before every prompt. The hook is added last, so

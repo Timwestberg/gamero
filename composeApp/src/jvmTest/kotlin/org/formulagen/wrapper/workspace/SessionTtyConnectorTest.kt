@@ -137,6 +137,16 @@ class SessionTtyConnectorTest {
         assertEquals("x", connector.drain())
     }
 
+    @Test fun outputAfterTheEndIsDroppedOnceReadingHasEnded() {
+        val connector = connector()
+        connector.push("last".toByteArray())
+        connector.exited(0)
+        assertEquals("last", connector.drain())
+        // A late chunk must not reach the flushed decoder, which would throw.
+        connector.push("late".toByteArray())
+        assertEquals(-1, connector.read(CharArray(8), 0, 8))
+    }
+
     @Test fun aFailingExitHandlerIsContained() {
         val connector = connector { error("boom") }
         connector.exited(0)

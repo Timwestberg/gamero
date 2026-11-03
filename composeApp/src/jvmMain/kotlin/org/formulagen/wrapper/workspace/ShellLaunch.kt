@@ -9,6 +9,7 @@ import java.nio.file.attribute.PosixFilePermissions
 import kotlin.io.path.isExecutable
 import kotlin.io.path.isRegularFile
 import kotlin.time.Duration.Companion.seconds
+import org.formulagen.wrapper.process.SYSTEM_PATH
 import org.formulagen.wrapper.process.runBounded
 import org.formulagen.wrapper.storage.privateFolder
 
@@ -24,7 +25,10 @@ import org.formulagen.wrapper.storage.privateFolder
 /** What one tab runs: the whole argv and the whole environment. */
 data class ShellCommand(val argv: List<String>, val environment: Map<String, String>)
 
-/** The shells Hovel integrates with. Any other shell starts as a plain login shell. */
+/**
+ * The shells Hovel integrates with. Any other shell starts as a plain login shell, and its tool tabs
+ * run through `/bin/sh`: its `-c` syntax is unknown.
+ */
 enum class ShellKind {
     ZSH, BASH, FISH, OTHER;
 
@@ -39,9 +43,6 @@ enum class ShellKind {
     }
 }
 
-/** The system folders every tab's base `PATH` ends with. The login shell adds the rest. */
-internal val BASE_SYSTEM_PATH = listOf("/usr/bin", "/bin", "/usr/sbin", "/sbin")
-
 /** The fixed script a [Launch.Tool] runs in an sh-family shell: exec its first argument, which is the tool. */
 internal const val TOOL_SCRIPT = "exec \"\$1\""
 
@@ -51,26 +52,32 @@ internal const val FISH_TOOL_SCRIPT = "exec \$argv[1]"
 /** `$0` for [TOOL_SCRIPT], so the tool path is `$1` and never part of the script. */
 internal const val TOOL_ARG0 = "hovel-tool"
 
+/** Runs [TOOL_SCRIPT] for a shell Hovel does not integrate with. Not a login shell: the tab's own environment as is. */
+internal const val PLAIN_SH = "/bin/sh"
+
 /**
  * The startup-file variables Hovel's files read and then unset: the entries to keep first (joined
- * with `:`), and for zsh the player's own `ZDOTDIR` when Hovel was started with one.
+ * with `:`); for zsh the player's own `ZDOTDIR` when Hovel was started with one; for fish Hovel's
+ * startup file, so [FISH_INIT_COMMAND] stays a fixed string whatever the path holds.
  */
 internal const val PATH_PREPEND_VARIABLE = "HOVEL_PATH_PREPEND"
 internal const val USER_ZDOTDIR_VARIABLE = "HOVEL_USER_ZDOTDIR"
+internal const val FISH_INIT_VARIABLE = "HOVEL_FISH_INIT"
+
+/** fish's `--init-command`. Quoted, so an empty value is an error rather than `source` reading the terminal. */
+internal const val FISH_INIT_COMMAND = "source \"\$$FISH_INIT_VARIABLE\""
 
 /**
  * Builds each tab's [ShellCommand].
  *
  * [shell] is the player's login shell ([loginShell]); [parent] is Hovel's own environment, read
  * only for the few variables a tab inherits; [shellFiles] is where [ShellFiles.install] wrote
- * Hovel's startup files; [pathFirst] are Hovel's entries, in the spec's lookup order (the project's
- * trusted tool bins, then `workspace/bin`). For the spike, `pathFirst` is one test `bin` folder.
+ * Hovel's startup files. Hovel's `PATH` entries come with each [command], since they differ by project.
  */
 class ShellLaunch(
     val shell: String,
     private val parent: Map<String, String>,
     private val shellFiles: Path,
-    private val pathFirst: List<String>,
     private val userName: String = System.getProperty("user.name"),
     private val userHome: String = System.getProperty("user.home"),
 ) {
@@ -78,30 +85,35 @@ class ShellLaunch(
 
     init {
         require(File(shell).isAbsolute) { "The login shell must be an absolute path" }
-        // fish takes its startup file inside a command string. The Caches folder has no spaces or quotes,
-        // and refusing anything else here keeps that string fixed.
-        require(SAFE_PATH.matches(shellFiles.toString())) { "Hovel's shell folder must be a plain path: $shellFiles" }
-        require(pathFirst.none { it.isEmpty() || ':' in it || !File(it).isAbsolute }) { "Hovel's PATH entries must be absolute and contain no ':'" }
     }
 
-    /** The argv and environment for [launch]. The working folder is the session's, set by the host. */
-    fun command(launch: Launch): ShellCommand = when (launch) {
-        Launch.Shell -> ShellCommand(shellArgv(), environment())
-        is Launch.Tool -> ShellCommand(toolArgv(toolPath(launch.tool)), environment())
-        is Launch.Diff -> throw UnsupportedOperationException("Diff tabs arrive with the thread changes view")
+    /**
+     * The argv and environment for [launch]. [pathFirst] are Hovel's `PATH` entries for the tab's
+     * project, in the spec's lookup order (the project's trusted tool bins, then `workspace/bin`); for
+     * the spike, one `bin` folder. The working folder is the session's, set by the host.
+     */
+    fun command(launch: Launch, pathFirst: List<String>): ShellCommand {
+        require(pathFirst.none { it.isEmpty() || ':' in it || !File(it).isAbsolute }) { "Hovel's PATH entries must be absolute and contain no ':'" }
+        return when (launch) {
+            Launch.Shell -> ShellCommand(shellArgv(), environment(pathFirst))
+            is Launch.Tool -> ShellCommand(toolArgv(toolPath(launch.tool, pathFirst)), environment(pathFirst))
+            is Launch.Diff -> throw UnsupportedOperationException("Diff tabs arrive with the thread changes view")
+        }
     }
 
     private fun shellArgv(): List<String> = when (kind) {
         ShellKind.ZSH -> listOf(shell, "-l")
         ShellKind.BASH -> listOf(shell, "--init-file", bashFile(), "-i")
-        ShellKind.FISH -> listOf(shell, "--login", "--init-command", fishInit())
+        ShellKind.FISH -> listOf(shell, "--login", "--init-command", FISH_INIT_COMMAND)
         ShellKind.OTHER -> listOf(shell, "-l")
     }
 
     private fun toolArgv(tool: String): List<String> = when (kind) {
-        ShellKind.ZSH, ShellKind.OTHER -> listOf(shell, "-l", "-i", "-c", TOOL_SCRIPT, TOOL_ARG0, tool)
+        ShellKind.ZSH -> listOf(shell, "-l", "-i", "-c", TOOL_SCRIPT, TOOL_ARG0, tool)
         ShellKind.BASH -> listOf(shell, "--init-file", bashFile(), "-i", "-c", TOOL_SCRIPT, TOOL_ARG0, tool)
-        ShellKind.FISH -> listOf(shell, "--login", "--interactive", "--init-command", fishInit(), "-c", FISH_TOOL_SCRIPT, "--", tool)
+        ShellKind.FISH -> listOf(shell, "--login", "--interactive", "--init-command", FISH_INIT_COMMAND, "-c", FISH_TOOL_SCRIPT, "--", tool)
+        // The player's startup files do not run, so a tool without a wrapper is found only on the base PATH.
+        ShellKind.OTHER -> listOf(PLAIN_SH, "-c", TOOL_SCRIPT, TOOL_ARG0, tool)
     }
 
     /**
@@ -109,37 +121,37 @@ class ShellLaunch(
      * found on the player's `PATH`. The tool manager writes a wrapper for every command, so the
      * fallback is the spike's way to run the player's installed tools.
      */
-    private fun toolPath(tool: WorkspaceTool): String {
+    private fun toolPath(tool: WorkspaceTool, pathFirst: List<String>): String {
         val command = tool.commands.first()
         return pathFirst.map { Path.of(it, command) }.firstOrNull { it.isRegularFile() && it.isExecutable() }?.toString() ?: command
     }
 
     private fun bashFile() = shellFiles.resolve(ShellFiles.BASH).toString()
 
-    private fun fishInit() = "source '${shellFiles.resolve(ShellFiles.FISH)}'"
-
     /** The whole environment of a tab. Nothing else from Hovel's process reaches it. */
-    internal fun environment(): Map<String, String> = buildMap {
+    internal fun environment(pathFirst: List<String>): Map<String, String> = buildMap {
         put("HOME", parent["HOME"]?.takeIf { File(it).isAbsolute } ?: userHome)
         put("USER", parent["USER"]?.takeIf { it.isNotBlank() } ?: userName)
         put("LOGNAME", parent["LOGNAME"]?.takeIf { it.isNotBlank() } ?: userName)
         put("SHELL", shell)
         parent["TMPDIR"]?.takeIf { File(it).isAbsolute }?.let { put("TMPDIR", it) }
+        // launchd's ssh-agent socket, which Terminal passes on too: git over SSH needs it.
+        parent["SSH_AUTH_SOCK"]?.takeIf { File(it).isAbsolute }?.let { put("SSH_AUTH_SOCK", it) }
         put("LANG", parent["LANG"]?.takeIf { it.isNotBlank() } ?: "en_US.UTF-8")
-        put("PATH", (pathFirst + BASE_SYSTEM_PATH).distinct().joinToString(File.pathSeparator))
+        put("PATH", (pathFirst + SYSTEM_PATH).distinct().joinToString(File.pathSeparator))
         put("TERM", "xterm-256color")
         put("COLORTERM", "truecolor")
         put("TERM_PROGRAM", "Hovel")
         put("HOVEL_WORKSPACE", "1")
         if (kind != ShellKind.OTHER) put(PATH_PREPEND_VARIABLE, pathFirst.joinToString(File.pathSeparator))
-        if (kind == ShellKind.ZSH) {
-            put("ZDOTDIR", shellFiles.resolve(ShellFiles.ZSH_FOLDER).toString())
-            parent["ZDOTDIR"]?.takeIf { File(it).isAbsolute }?.let { put(USER_ZDOTDIR_VARIABLE, it) }
+        when (kind) {
+            ShellKind.ZSH -> {
+                put("ZDOTDIR", shellFiles.resolve(ShellFiles.ZSH_FOLDER).toString())
+                parent["ZDOTDIR"]?.takeIf { File(it).isAbsolute }?.let { put(USER_ZDOTDIR_VARIABLE, it) }
+            }
+            ShellKind.FISH -> put(FISH_INIT_VARIABLE, shellFiles.resolve(ShellFiles.FISH).toString())
+            ShellKind.BASH, ShellKind.OTHER -> Unit
         }
-    }
-
-    private companion object {
-        val SAFE_PATH = Regex("/[A-Za-z0-9._/-]+")
     }
 }
 
@@ -163,11 +175,13 @@ internal fun readDirectoryShell(userName: String = System.getProperty("user.name
     runBounded(ProcessBuilder("/usr/bin/dscl", ".", "-read", "/Users/$userName", "UserShell"), 5.seconds, limit = 4 * 1024)
         ?.takeIf { it.exitCode == 0 }?.output
 
-private fun isUsableShell(path: String): Boolean = Path.of(path).let { it.isRegularFile() && it.isExecutable() }
+/** An executable file at an absolute path. */
+internal fun isUsableShell(path: String): Boolean = File(path).isAbsolute && Path.of(path).let { it.isRegularFile() && it.isExecutable() }
 
 /**
- * Hovel's shell startup files, copied from resources `workspace/shell/` into a folder with no spaces
- * in its path (`~/Library/Caches/<bundle id>/workspace/shell`, not Application Support).
+ * Hovel's shell startup files, copied from resources `workspace/shell/` into
+ * `~/Library/Caches/<bundle id>/workspace/shell`. Each shell gets its file's path as an argument or a
+ * variable, never inside a command string, so any folder works.
  */
 object ShellFiles {
     /** zsh's `ZDOTDIR`: Hovel's `.zshenv`, `.zprofile`, `.zshrc` and `.zlogin`. */

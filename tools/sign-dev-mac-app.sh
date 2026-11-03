@@ -14,8 +14,10 @@
 # Usage:
 #   GAMERO_MAC_DEV_IDENTITY="Apple Development: Name (ID)" tools/sign-dev-mac-app.sh <App.app> [entitlements.plist]
 #
-# Without an entitlements file it uses Compose's defaults: allow-jit and
-# allow-unsigned-executable-memory for the JVM, and disable-library-validation.
+# Without an entitlements file it uses allow-jit and allow-unsigned-executable-memory, which the JVM
+# needs. Unlike Compose's defaults it leaves out disable-library-validation: this script signs every
+# native in the bundle and its jars, so a library that would load only unsigned fails the check
+# instead of passing it. A check that needs the entitlement passes its own file.
 #
 # Build the app image first, marked as a development build so development-gated features open:
 #   GAMERO_BROWSER_JAVA_HOME=<JBR SDK> ./gradlew :composeApp:createDistributable -Pgamero.developmentPackage=true
@@ -23,6 +25,8 @@
 set -euo pipefail
 
 app="${1:?Usage: $0 <App.app> [entitlements.plist]}"
+# Absolute, so the jar paths below still resolve inside the subshells that cd elsewhere.
+app="$(cd "$app" && pwd)"
 entitlements="${2:-}"
 identity="${GAMERO_MAC_DEV_IDENTITY:?Set GAMERO_MAC_DEV_IDENTITY to a codesigning identity (security find-identity -v -p codesigning)}"
 [[ -d "$app/Contents" ]] || { echo "Not an app bundle: $app" >&2; exit 1; }
@@ -39,7 +43,6 @@ if [[ -z "$entitlements" ]]; then
 <dict>
     <key>com.apple.security.cs.allow-jit</key><true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
-    <key>com.apple.security.cs.disable-library-validation</key><true/>
 </dict>
 </plist>
 PLIST

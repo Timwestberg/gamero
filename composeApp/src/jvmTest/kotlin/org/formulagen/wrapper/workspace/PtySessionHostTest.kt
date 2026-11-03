@@ -3,6 +3,7 @@ package org.formulagen.wrapper.workspace
 import java.io.ByteArrayOutputStream
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest
@@ -38,7 +39,7 @@ internal class CollectingViewer : SessionViewer {
 class PtySessionHostTest {
     private val folder: Path = createTempDirectory("hovel-pty")
     private var scripts = mutableMapOf<Launch, List<String>>()
-    private val host = PtySessionHost { launch -> ShellCommand(scripts.getValue(launch), mapOf("PATH" to "/usr/bin:/bin", "TERM" to "xterm-256color", "LANG" to "en_US.UTF-8")) }
+    private val host = PtySessionHost { spec -> ShellCommand(scripts.getValue(spec.launch), mapOf("PATH" to "/usr/bin:/bin", "TERM" to "xterm-256color", "LANG" to "en_US.UTF-8")) }
 
     @AfterTest fun cleanUp() {
         host.close()
@@ -85,6 +86,30 @@ class PtySessionHostTest {
         assertEquals(7, first.exit.get(5, TimeUnit.SECONDS))
         val late = CollectingViewer().also { session.attach(it) }
         assertEquals(7, late.exit.get(1, TimeUnit.SECONDS))
+    }
+
+    @Test fun everyViewerHearsTheEndOnce() {
+        class Counting : SessionViewer {
+            val exits = CopyOnWriteArrayList<Int>()
+            override fun output(bytes: ByteArray, length: Int) {}
+            override fun exited(code: Int) { exits.add(code) }
+        }
+        val session = start("read _")
+        val early = Counting().also { session.attach(it) }
+        // SIGHUP ends the shell, so the exit watcher and close both report: each viewer hears one of them.
+        session.close()
+        val late = Counting().also { session.attach(it) }
+        Thread.sleep(200)
+        assertEquals(1, early.exits.size, "${early.exits}")
+        assertEquals(early.exits, late.exits)
+    }
+
+    @Test fun processesListsTheRunningTreeForTheProbe() {
+        val session = start("sleep 30 & wait")
+        session.attach(CollectingViewer())
+        Thread.sleep(200)
+        val commands = session.processes().map { it.info().command().orElse("?") }
+        assertTrue(commands.size >= 2 && commands.any { it.endsWith("/sleep") }, "$commands")
     }
 
     @Test fun busyMeansTheProcessHasLiveChildren() {

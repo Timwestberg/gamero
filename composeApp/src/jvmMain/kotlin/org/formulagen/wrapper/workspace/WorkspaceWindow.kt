@@ -77,7 +77,7 @@ private fun WorkspaceWindow(state: WorkspaceWindowState, onClose: () -> Unit) {
             }
             // The spike's rendering check: catalog tools started through the login shell.
             Menu("Develop") {
-                for ((label, tool) in DEV_TOOLS) Item("Open $label", enabled = state.canAddTab, onClick = { state.addTab(Launch.Tool(tool)) })
+                for (tool in DEV_TOOLS) Item("Open ${tool.label}", enabled = state.canAddTab, onClick = { state.addTab(Launch.Tool(tool)) })
             }
         }
         Column(Modifier.fillMaxSize().background(fgInk950)) {
@@ -88,7 +88,7 @@ private fun WorkspaceWindow(state: WorkspaceWindowState, onClose: () -> Unit) {
     }
 }
 
-private val DEV_TOOLS = listOf("Neovim" to WorkspaceTool.NEOVIM, "lazygit" to WorkspaceTool.LAZYGIT, "yazi" to WorkspaceTool.YAZI)
+private val DEV_TOOLS = listOf(WorkspaceTool.NEOVIM, WorkspaceTool.LAZYGIT, WorkspaceTool.YAZI)
 
 @Composable
 private fun TabBar(state: WorkspaceWindowState) {
@@ -116,7 +116,7 @@ private fun NewTabMenu(state: WorkspaceWindowState) {
             modifier = Modifier.clickable(enabled = state.canAddTab) { open = true }.padding(horizontal = 10.dp, vertical = 4.dp))
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(text = { Text("Shell") }, onClick = { open = false; state.addTab(Launch.Shell) })
-            for ((label, tool) in DEV_TOOLS) DropdownMenuItem(text = { Text(label) }, onClick = { open = false; state.addTab(Launch.Tool(tool)) })
+            for (tool in DEV_TOOLS) DropdownMenuItem(text = { Text(tool.label) }, onClick = { open = false; state.addTab(Launch.Tool(tool)) })
         }
     }
 }

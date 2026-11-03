@@ -48,11 +48,19 @@ internal class WorkspaceWindows(host: () -> SessionHost) : AutoCloseable {
         }
     }
 
-    /** Close [window] and end every process in it. AWT thread; the processes end on a worker. */
+    /**
+     * Close [window] and end every process in it: its project's sessions, and the ones its tabs hold
+     * (a session the host had not registered yet when [SessionHost.closeProject] ran). A tab still
+     * starting closes its own session when it finishes ([WorkspaceWindowState.start]). AWT thread;
+     * the processes end on a worker.
+     */
     fun close(window: WorkspaceWindowState) {
         if (!windows.remove(window)) return
-        window.deck.closeAll()
-        workers.execute { lazyHost.value.closeProject(window.projectId) }
+        val held = window.close()
+        workers.execute {
+            lazyHost.value.closeProject(window.projectId)
+            held.forEach { it.close() }
+        }
     }
 
     /** At app exit: end every session, waiting for them. Off the AWT thread. */
@@ -93,8 +101,10 @@ internal class WorkspaceWindowState(
     /** Bumped to ask the window to come to the front. */
     var frontRequests: Int by mutableIntStateOf(0)
         private set
-    /** The AWT window while it is showing; for development probes. */
+    /** Development probe only. The AWT window while it is showing. */
     @Volatile var awtWindow: java.awt.Window? = null
+    /** The window has closed: no tab starts or shows again. AWT thread. */
+    private var closed = false
 
     fun bringForward() { frontRequests++ }
 
@@ -113,8 +123,12 @@ internal class WorkspaceWindowState(
 
     fun selectedTab(): WorkspaceTab? = tabs.firstOrNull { it.id == selected }
 
-    /** Start [tab]'s process on a worker, then its terminal on the AWT thread. */
+    /**
+     * Start [tab]'s process on a worker, then its terminal on the AWT thread. Any failure, including
+     * a terminal library that will not load ([LinkageError]), leaves the tab [TabState.Failed] with Retry.
+     */
     fun start(tab: WorkspaceTab) {
+        if (closed) return
         tab.state = TabState.Starting
         workers.execute {
             try {
@@ -124,16 +138,28 @@ internal class WorkspaceWindowState(
                 val connector = SessionTtyConnector(tab.title) { code -> onAwt { tab.state = TabState.Exited(code) } }
                 connector.connect(session)
                 onAwt {
-                    if (tab !in tabs) { workers.execute { session.close() }; return@onAwt }
+                    // The tab, or its whole window, closed while the process started: nothing will show it.
+                    if (closed || tab !in tabs) { workers.execute { session.close() }; return@onAwt }
                     deck.add(tab.id, TerminalView(connector, INITIAL_SIZE))
                     if (tab.state == TabState.Starting) tab.state = TabState.Running
                     if (selected == tab.id) deck.show(tab.id)
                 }
-            } catch (error: Exception) {
+            } catch (error: Throwable) {
+                rethrowIfFatal(error)
                 log(LogLevel.Error, TAG, "Could not start ${tab.title}", error)
                 onAwt { tab.state = TabState.Failed(error.message ?: error.javaClass.simpleName) }
             }
         }
+    }
+
+    /**
+     * The window closed: stop drawing its terminals, and return the sessions its tabs hold, for
+     * [WorkspaceWindows.close] to end. A start still running sees [closed] and ends its own. AWT thread.
+     */
+    fun close(): List<Session> {
+        closed = true
+        deck.closeAll()
+        return tabs.mapNotNull { it.session }
     }
 
     /** Start the tab's process again after it exited or failed. */
@@ -162,35 +188,27 @@ internal class WorkspaceWindowState(
 
     private fun tabTitle(launch: Launch): String = when (launch) {
         Launch.Shell -> "Shell"
-        is Launch.Tool -> when (launch.tool) {
-            WorkspaceTool.NEOVIM -> "Neovim"
-            WorkspaceTool.LAZYGIT -> "lazygit"
-            WorkspaceTool.YAZI -> "yazi"
-            else -> launch.tool.id
-        }
+        is Launch.Tool -> launch.tool.label
         is Launch.Diff -> launch.file
     }
-}
-
-/**
- * The terminal spike's session host: the player's login shell, Hovel's startup files in the Caches
- * folder, and one `bin` folder kept first in `PATH`. That folder is `HOVEL_WORKSPACE_BIN` when set
- * (development), else `<support>/workspace/bin`, where the tool manager will write its wrappers.
- * `HOVEL_WORKSPACE_SHELL` (development) tries another shell in place of the login shell.
- */
-internal fun spikeSessionHost(environment: Map<String, String>, support: Path): SessionHost {
-    usePackagedNatives()
-    val shell = environment["HOVEL_WORKSPACE_SHELL"]?.let { loginShell(null, mapOf("SHELL" to it)).takeIf { found -> found == it } }
-        ?: loginShell(readDirectoryShell(), environment)
-    val files = ShellFiles.install(ShellFiles.defaultFolder())
-    val bin = environment["HOVEL_WORKSPACE_BIN"]?.takeIf { Path.of(it).isAbsolute } ?: support.resolve("workspace/bin").toString()
-    log(LogLevel.Info, TAG, "Workspace shell ${ShellKind.of(shell)}; natives ${System.getProperty(PTY4J_NATIVE_FOLDER) ?: "unpacked by pty4j"} and ${System.getProperty(JNA_BOOT_PATH) ?: "unpacked by JNA"}")
-    return PtySessionHost(ShellLaunch(shell, environment, files, listOf(bin))::command)
 }
 
 /** Run [block] on the AWT thread, logging anything it throws: an escape there ends the app. */
 internal fun onAwt(block: () -> Unit) {
     EventQueue.invokeLater {
-        try { block() } catch (error: Exception) { log(LogLevel.Error, TAG, "A workspace update failed", error) }
+        try { block() } catch (error: Throwable) {
+            rethrowIfFatal(error)
+            log(LogLevel.Error, TAG, "A workspace update failed", error)
+        }
     }
+}
+
+/**
+ * For a workspace edge that contains and logs what it catches: rethrows [error] when the JVM itself
+ * is failing (out of memory, a stack overflow, an internal error), which should still end the app.
+ * Anything else is contained, including a library that will not load ([LinkageError]:
+ * `UnsatisfiedLinkError`, `ExceptionInInitializerError`, `NoClassDefFoundError`).
+ */
+internal fun rethrowIfFatal(error: Throwable) {
+    if (error is VirtualMachineError) throw error
 }

@@ -20,6 +20,7 @@ import org.formulagen.wrapper.util.loggingDaemonThreads
  * The terminal spike's development entry points. Only a development build has a [WorkspaceWindows]
  * (`projectWorkspaceEnabled`), so none of this exists in a release:
  *
+ * - [spikeSessionHost] builds the windows' session host.
  * - Develop → Open Workspace… in the main window picks a folder and opens a window with a Shell tab.
  * - HOVEL_WORKSPACE_FOLDER opens one at launch.
  * - HOVEL_WORKSPACE_PROBE, with HOVEL_WORKSPACE_FOLDER, runs a steps file against that window and
@@ -29,11 +30,37 @@ import org.formulagen.wrapper.util.loggingDaemonThreads
 
 private const val TAG = "workspace-development"
 
+/**
+ * The terminal spike's session host: the player's login shell, Hovel's startup files in the Caches
+ * folder, and one `bin` folder kept first in every project's `PATH`. That folder is
+ * `HOVEL_WORKSPACE_BIN` when set (development), else `<support>/workspace/bin`, where the tool
+ * manager will write its wrappers. `HOVEL_WORKSPACE_SHELL` (development) tries another shell in
+ * place of the login shell.
+ */
+internal fun spikeSessionHost(environment: Map<String, String>, support: Path): SessionHost {
+    val shell = developmentShell(environment) ?: loginShell(readDirectoryShell(), environment)
+    val files = ShellFiles.install(ShellFiles.defaultFolder())
+    val bin = environment["HOVEL_WORKSPACE_BIN"]?.takeIf { Path.of(it).isAbsolute } ?: support.resolve("workspace/bin").toString()
+    val launch = ShellLaunch(shell, environment, files)
+    val host = PtySessionHost { spec -> launch.command(spec.launch, listOf(bin)) }
+    log(LogLevel.Info, TAG, "Workspace shell ${ShellKind.of(shell)}; natives ${System.getProperty(PTY4J_NATIVE_FOLDER) ?: "unpacked by pty4j"} and ${System.getProperty(JNA_BOOT_PATH) ?: "unpacked by JNA"}")
+    return host
+}
+
+/** `HOVEL_WORKSPACE_SHELL` when it names an executable by absolute path; otherwise null, and the login shell is used. */
+private fun developmentShell(environment: Map<String, String>): String? {
+    val shell = environment["HOVEL_WORKSPACE_SHELL"]?.takeIf { it.isNotBlank() } ?: return null
+    if (isUsableShell(shell)) return shell
+    log(LogLevel.Warn, TAG, "HOVEL_WORKSPACE_SHELL is not an executable at an absolute path; using the login shell")
+    return null
+}
+
 /** Develop → Open Workspace…: the native folder picker, then a window on the chosen folder. AWT thread. */
 internal fun openWorkspaceFromPicker(workspaces: WorkspaceWindows, owner: Frame) {
     try {
         NativeFolderPicker { owner }.choose("Open a workspace on a folder", null)?.let(workspaces::open)
-    } catch (error: Exception) {
+    } catch (error: Throwable) {
+        rethrowIfFatal(error)
         log(LogLevel.Error, TAG, "Could not open a workspace", error)
     }
 }
@@ -43,7 +70,8 @@ internal fun openWorkspaceFromPicker(workspaces: WorkspaceWindows, owner: Frame)
 internal fun DevelopmentWorkspaceLaunch(workspaces: WorkspaceWindows, environment: Map<String, String>, exit: () -> Unit) {
     LaunchedEffect(Unit) {
         val folder = environment["HOVEL_WORKSPACE_FOLDER"]?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
-        val window = try { workspaces.open(Path.of(folder)) } catch (error: Exception) {
+        val window = try { workspaces.open(Path.of(folder)) } catch (error: Throwable) {
+            rethrowIfFatal(error)
             log(LogLevel.Error, TAG, "Could not open HOVEL_WORKSPACE_FOLDER", error)
             return@LaunchedEffect
         }
@@ -61,7 +89,8 @@ internal fun DevelopmentWorkspaceLaunch(workspaces: WorkspaceWindows, environmen
  * - `wait <ms>`; `await <ms> <text>`: wait until the selected screen shows the text.
  * - `snap <name>`: the selected tab's state, busy flag and screen as `<name>.txt`, and its terminal
  *   painted as `<name>.png`, beside the steps file.
- * - `tab <shell|neovim|lazygit|yazi>`: open a tab and select it. `select <index>`. `close`.
+ * - `tab <shell|tool id>`: open a tab (`shell`, or a catalog id such as `neovim`, `lazygit` or
+ *   `yazi`) and select it. `select <index>`. `close`.
  * - `size <width>x<height>`: resize the window, in points.
  * - `quit`: end the app.
  *
@@ -126,11 +155,7 @@ internal class WorkspaceProbe(private val window: WorkspaceWindowState, private 
         awt {
             val tab = window.selectedTab()
             val view = view()
-            val tree = (tab?.session as? PtySession)?.let { session ->
-                ProcessHandle.of(session.pid).map { root ->
-                    (listOf(root) + root.descendants().toList()).joinToString { "${it.pid()}:${it.info().command().orElse("?")}" }
-                }.orElse("exited")
-            }
+            val tree = tab?.session?.processes()?.joinToString { "${it.pid()}:${it.info().command().orElse("?")}" }
             text = "tab=${tab?.title} state=${tab?.state} busy=${tab?.session?.busy()} focused=${view.panel.isFocusOwner} tree=[$tree]\n" + view.screenText()
             val panel = view.panel
             image = BufferedImage(panel.width.coerceAtLeast(1), panel.height.coerceAtLeast(1), BufferedImage.TYPE_INT_RGB).also { target ->
@@ -183,13 +208,9 @@ internal class WorkspaceProbe(private val window: WorkspaceWindowState, private 
 
     private fun view(): TerminalView = requireNotNull(window.selectedTab()?.let { window.deck.view(it.id) }) { "The selected tab has no terminal yet" }
 
-    private fun launchNamed(name: String): Launch = when (name) {
-        "shell" -> Launch.Shell
-        "neovim" -> Launch.Tool(WorkspaceTool.NEOVIM)
-        "lazygit" -> Launch.Tool(WorkspaceTool.LAZYGIT)
-        "yazi" -> Launch.Tool(WorkspaceTool.YAZI)
-        else -> error("Unknown tab: $name")
-    }
+    private fun launchNamed(name: String): Launch =
+        if (name == "shell") Launch.Shell
+        else Launch.Tool(WorkspaceTool.entries.singleOrNull { it.id == name } ?: error("Unknown tab: $name"))
 
     private fun awt(block: () -> Unit) {
         var failure: Throwable? = null

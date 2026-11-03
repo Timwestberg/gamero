@@ -34,8 +34,12 @@ class ShellLaunchTest {
 
     @AfterTest fun cleanUp() { root.toFile().deleteRecursively() }
 
+    private val pathFirst = listOf(bin.toString(), "/hovel/second")
+
     private fun launch(shell: String, parent: Map<String, String> = this.parent) =
-        ShellLaunch(shell, parent, files, listOf(bin.toString(), "/hovel/second"), userName = "fallback", userHome = "/Users/fallback")
+        ShellLaunch(shell, parent, files, userName = "fallback", userHome = "/Users/fallback")
+
+    private fun ShellLaunch.command(launch: Launch) = command(launch, pathFirst)
 
     @Test fun theLoginShellComesFromTheDirectoryThenShellThenZsh() {
         val usable = setOf("/bin/bash", "/opt/homebrew/bin/fish")::contains
@@ -62,7 +66,7 @@ class ShellLaunchTest {
     }
 
     @Test fun aTabGetsOnlyTheMinimalEnvironment() {
-        val environment = launch("/bin/sh").environment()
+        val environment = launch("/bin/sh").environment(pathFirst)
         assertEquals(
             mapOf(
                 "HOME" to "/Users/player", "USER" to "player", "LOGNAME" to "player", "SHELL" to "/bin/sh",
@@ -75,12 +79,27 @@ class ShellLaunchTest {
     }
 
     @Test fun missingValuesFallBack() {
-        val environment = launch("/bin/sh", mapOf("HOME" to "relative", "LANG" to " ", "TMPDIR" to "tmp")).environment()
+        val environment = launch("/bin/sh", mapOf("HOME" to "relative", "LANG" to " ", "TMPDIR" to "tmp")).environment(pathFirst)
         assertEquals("/Users/fallback", environment["HOME"])
         assertEquals("fallback", environment["USER"])
         assertEquals("fallback", environment["LOGNAME"])
         assertEquals("en_US.UTF-8", environment["LANG"])
         assertFalse("TMPDIR" in environment)
+    }
+
+    @Test fun theSshAgentSocketPassesThroughWhenItIsAnAbsolutePath() {
+        val socket = "/private/tmp/com.apple.launchd.abc/Listeners"
+        assertEquals(socket, launch("/bin/zsh", parent + ("SSH_AUTH_SOCK" to socket)).environment(pathFirst)["SSH_AUTH_SOCK"])
+        assertFalse("SSH_AUTH_SOCK" in launch("/bin/zsh", parent + ("SSH_AUTH_SOCK" to "relative/socket")).environment(pathFirst))
+        assertFalse("SSH_AUTH_SOCK" in launch("/bin/zsh").environment(pathFirst))
+    }
+
+    @Test fun eachCommandTakesItsProjectsPathEntries() {
+        val shell = launch("/bin/zsh")
+        val one = shell.command(Launch.Shell, listOf("/projects/one/bin")).environment
+        val two = shell.command(Launch.Shell, listOf("/projects/two/bin", "/hovel/bin")).environment
+        assertEquals("/projects/one/bin:/usr/bin:/bin:/usr/sbin:/sbin", one["PATH"])
+        assertEquals("/projects/two/bin:/hovel/bin", two[PATH_PREPEND_VARIABLE])
     }
 
     @Test fun zshStartsAsALoginShellThroughHovelsZdotdir() {
@@ -107,7 +126,9 @@ class ShellLaunchTest {
 
     @Test fun fishSourcesHovelsFileAfterThePlayersConfig() {
         val command = launch("/usr/local/bin/fish").command(Launch.Shell)
-        assertEquals(listOf("/usr/local/bin/fish", "--login", "--init-command", "source '${files.resolve("hovel.fish")}'"), command.argv)
+        // The file's path is a variable, never part of the command string.
+        assertEquals(listOf("/usr/local/bin/fish", "--login", "--init-command", "source \"\$HOVEL_FISH_INIT\""), command.argv)
+        assertEquals(files.resolve("hovel.fish").toString(), command.environment[FISH_INIT_VARIABLE])
         assertEquals("$bin:/hovel/second", command.environment[PATH_PREPEND_VARIABLE])
         assertFalse("ZDOTDIR" in command.environment)
     }
@@ -116,6 +137,7 @@ class ShellLaunchTest {
         val command = launch("/bin/ksh").command(Launch.Shell)
         assertEquals(listOf("/bin/ksh", "-l"), command.argv)
         assertFalse(PATH_PREPEND_VARIABLE in command.environment)
+        assertFalse(FISH_INIT_VARIABLE in command.environment)
         assertTrue(command.environment.getValue("PATH").startsWith("$bin:/hovel/second:"))
     }
 
@@ -128,10 +150,13 @@ class ShellLaunchTest {
             launch("/bin/bash").command(tool).argv,
         )
         assertEquals(
-            listOf("/usr/local/bin/fish", "--login", "--interactive", "--init-command", "source '${files.resolve("hovel.fish")}'", "-c", "exec \$argv[1]", "--", nvim.toString()),
+            listOf("/usr/local/bin/fish", "--login", "--interactive", "--init-command", "source \"\$HOVEL_FISH_INIT\"", "-c", "exec \$argv[1]", "--", nvim.toString()),
             launch("/usr/local/bin/fish").command(tool).argv,
         )
-        assertEquals(listOf("/bin/ksh", "-l", "-i", "-c", "exec \"\$1\"", "hovel-tool", nvim.toString()), launch("/bin/ksh").command(tool).argv)
+        // Another shell's -c syntax is unknown, so the same script runs in /bin/sh, with the tab's environment.
+        val other = launch("/bin/tcsh").command(tool)
+        assertEquals(listOf("/bin/sh", "-c", "exec \"\$1\"", "hovel-tool", nvim.toString()), other.argv)
+        assertEquals(launch("/bin/tcsh").command(Launch.Shell).environment, other.environment)
     }
 
     @Test fun aToolWithoutAWrapperIsFoundOnThePlayersPath() {
@@ -149,12 +174,21 @@ class ShellLaunchTest {
         assertFailsWith<UnsupportedOperationException> { launch("/bin/zsh").command(Launch.Diff("README.md", history = false)) }
     }
 
-    @Test fun refusesPathsItCannotQuoteOrJoin() {
-        assertFailsWith<IllegalArgumentException> { ShellLaunch("zsh", parent, files, emptyList()) }
-        assertFailsWith<IllegalArgumentException> { ShellLaunch("/bin/zsh", parent, root.resolve("with space"), emptyList()) }
-        assertFailsWith<IllegalArgumentException> { ShellLaunch("/bin/fish", parent, root.resolve("it's"), emptyList()) }
-        assertFailsWith<IllegalArgumentException> { ShellLaunch("/bin/zsh", parent, files, listOf("/a:/b")) }
-        assertFailsWith<IllegalArgumentException> { ShellLaunch("/bin/zsh", parent, files, listOf("relative/bin")) }
+    @Test fun refusesPathsItCannotJoin() {
+        assertFailsWith<IllegalArgumentException> { ShellLaunch("zsh", parent, files) }
+        assertFailsWith<IllegalArgumentException> { launch("/bin/zsh").command(Launch.Shell, listOf("/a:/b")) }
+        assertFailsWith<IllegalArgumentException> { launch("/bin/zsh").command(Launch.Shell, listOf("relative/bin")) }
+        assertFailsWith<IllegalArgumentException> { launch("/bin/zsh").command(Launch.Shell, listOf("")) }
+    }
+
+    @Test fun anyShellFolderWorksSinceNoPathIsPartOfACommandString() {
+        val odd = root.resolve("Björn's shell files")
+        for (shell in listOf("/bin/zsh", "/bin/bash", "/usr/local/bin/fish")) {
+            val command = ShellLaunch(shell, parent, odd).command(Launch.Tool(WorkspaceTool.LAZYGIT), pathFirst)
+            val script = command.argv[command.argv.indexOf("-c") + 1]
+            assertFalse(odd.toString() in script, "$shell: $script")
+            assertTrue(command.argv.any { odd.toString() in it } || command.environment.values.any { odd.toString() in it }, shell)
+        }
     }
 
     @Test fun installsEachStartupFileAndRestoresAChangedOne() {

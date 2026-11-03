@@ -1,8 +1,8 @@
-# Hovel workspace: fish's --init-command, which fish runs after the player's own config.
-# Hovel never edits the player's files.
+# Hovel workspace: sourced by fish's --init-command (from HOVEL_FISH_INIT), which fish runs after
+# the player's own config. Hovel never edits the player's files.
 
 set -g __hovel_path (string split --no-empty : -- "$HOVEL_PATH_PREPEND")
-set -e HOVEL_PATH_PREPEND
+set -e HOVEL_PATH_PREPEND HOVEL_FISH_INIT
 
 # Put Hovel's entries first, in order: now, and before every prompt.
 function __hovel_prepend_path --on-event fish_prompt

@@ -16,8 +16,8 @@ import org.formulagen.wrapper.companion.terminateProcessTree
  * [allowlistedEnvironment]; Codex predates it and scrubs a blocklist instead (`codexProcess`).
  */
 
-/** The system folders every child's `PATH` ends with. */
-private val SYSTEM_PATH = listOf("/usr/bin", "/bin", "/usr/sbin", "/sbin")
+/** The system folders every child's `PATH` ends with, a runtime's or a workspace tab's. */
+internal val SYSTEM_PATH = listOf("/usr/bin", "/bin", "/usr/sbin", "/sbin")
 
 /**
  * The whole environment of a runtime child: each of [keys] copied from [parent] when present, a

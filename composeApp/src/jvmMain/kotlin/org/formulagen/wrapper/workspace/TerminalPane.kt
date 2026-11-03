@@ -4,11 +4,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.SwingPanel
 import androidx.compose.ui.graphics.toArgb
-import com.jediterm.core.util.TermSize as JediTermSize
 import com.jediterm.terminal.TerminalColor
 import com.jediterm.terminal.TerminalExecutorServiceManager
 import com.jediterm.terminal.TextStyle
-import com.jediterm.terminal.TtyConnector
 import com.jediterm.terminal.model.StyleState
 import com.jediterm.terminal.model.TerminalTextBuffer
 import com.jediterm.terminal.ui.JediTermWidget
@@ -17,22 +15,14 @@ import com.jediterm.terminal.ui.settings.DefaultSettingsProvider
 import com.jediterm.terminal.ui.settings.SettingsProvider
 import java.awt.CardLayout
 import java.awt.Color
-import java.awt.EventQueue
 import java.awt.Graphics
 import java.awt.event.InputMethodEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import java.awt.event.MouseWheelEvent
-import java.nio.ByteBuffer
-import java.nio.CharBuffer
-import java.nio.charset.CodingErrorAction
-import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.TimeUnit.MILLISECONDS
-import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JComponent
 import javax.swing.JPanel
 import org.formulagen.wrapper.logger.LogLevel
@@ -46,123 +36,6 @@ private const val TAG = "workspace-terminal"
 
 /** Scrollback per terminal tab. Moves to `WorkspaceGuards.SCROLLBACK_LINES` when `WorkspaceLimits.kt` lands. */
 private const val SCROLLBACK_LINES = 10_000
-
-/** Output chunks (up to [PTY_READ_BYTES] each) waiting for the emulator. A full queue holds the reader, and so the process. */
-private const val QUEUED_CHUNKS = 64
-
-/**
- * Adapts a [Session]'s pushed output to the pull-based [TtyConnector] JediTerm reads from.
- *
- * The session's reader thread hands over bytes ([output]); JediTerm's emulator thread pulls
- * characters ([read]). Decoding happens on the emulator thread with one stateful UTF-8 decoder, so
- * a character split across two reads stays whole and malformed bytes become U+FFFD. Keys and
- * resizes go to the session's [Attachment]. [onExit] runs once, on the session's exit thread.
- */
-internal class SessionTtyConnector(private val name: String, private val onExit: (Int) -> Unit = {}) : TtyConnector, SessionViewer {
-    private val chunks = ArrayBlockingQueue<ByteArray>(QUEUED_CHUNKS)
-    private val decoder = Charsets.UTF_8.newDecoder()
-        .onMalformedInput(CodingErrorAction.REPLACE)
-        .onUnmappableCharacter(CodingErrorAction.REPLACE)
-    /** The start of a character whose remaining bytes have not arrived yet. Emulator thread only. */
-    private var carried: ByteBuffer = EMPTY_BYTES
-    /** Decoded characters JediTerm has not read yet. Emulator thread only. */
-    private var decoded: CharBuffer = EMPTY_CHARS
-    private var flushed = false
-    private val ended = CountDownLatch(1)
-    @Volatile private var exitCode = 0
-    private val closed = AtomicBoolean(false)
-    @Volatile private var attachment: Attachment? = null
-
-    /** Attach to [session]. Output from now on reaches JediTerm. */
-    fun connect(session: Session) {
-        attachment = session.attach(this)
-    }
-
-    override fun output(bytes: ByteArray, length: Int) {
-        val copy = bytes.copyOf(length)
-        while (!closed.get()) {
-            if (chunks.offer(copy, POLL_MS, MILLISECONDS)) return
-        }
-    }
-
-    override fun exited(code: Int) {
-        if (ended.count == 0L) return
-        exitCode = code
-        ended.countDown()
-        try { onExit(code) } catch (error: Exception) { log(LogLevel.Error, TAG, "The exit handler of $name failed", error) }
-    }
-
-    override fun read(buf: CharArray, offset: Int, length: Int): Int {
-        while (true) {
-            if (decoded.hasRemaining()) {
-                val count = minOf(length, decoded.remaining())
-                decoded.get(buf, offset, count)
-                return count
-            }
-            val chunk = nextChunk()
-            if (chunk != null) decode(chunk, endOfInput = false)
-            else if (!flushed) { flushed = true; decode(ByteArray(0), endOfInput = true) }
-            else return -1
-        }
-    }
-
-    /** The next chunk, or null once the session has exited (or the connector closed) and nothing is left. */
-    private fun nextChunk(): ByteArray? {
-        while (true) {
-            chunks.poll()?.let { return it }
-            if (closed.get() || ended.count == 0L) return null
-            chunks.poll(POLL_MS, MILLISECONDS)?.let { return it }
-        }
-    }
-
-    private fun decode(chunk: ByteArray, endOfInput: Boolean) {
-        val input = if (carried.hasRemaining()) {
-            ByteBuffer.allocate(carried.remaining() + chunk.size).put(carried).put(chunk).flip()
-        } else ByteBuffer.wrap(chunk)
-        // UTF-8 never decodes to more characters than bytes, plus one replacement for a cut-off end.
-        val output = CharBuffer.allocate(input.remaining() + 2)
-        decoder.decode(input, output, endOfInput)
-        if (endOfInput) decoder.flush(output)
-        carried = if (input.hasRemaining()) ByteBuffer.allocate(input.remaining()).put(input).flip() else EMPTY_BYTES
-        decoded = output.flip()
-    }
-
-    override fun write(bytes: ByteArray) {
-        try { attachment?.input(bytes) } catch (error: Exception) { log(LogLevel.Error, TAG, "Could not send keys to $name", error) }
-    }
-
-    override fun write(string: String) = write(string.toByteArray(Charsets.UTF_8))
-
-    override fun resize(termSize: JediTermSize) {
-        try { attachment?.resize(TermSize(termSize.columns, termSize.rows)) } catch (error: Exception) {
-            log(LogLevel.Error, TAG, "Could not resize $name", error)
-        }
-    }
-
-    override fun isConnected(): Boolean = !closed.get() && ended.count > 0
-
-    override fun waitFor(): Int {
-        ended.await()
-        return exitCode
-    }
-
-    override fun ready(): Boolean = decoded.hasRemaining() || chunks.isNotEmpty()
-
-    override fun getName(): String = name
-
-    /** Detach from the session; JediTerm calls this when its emulator stops. The session keeps running. */
-    override fun close() {
-        if (!closed.compareAndSet(false, true)) return
-        try { attachment?.close() } catch (error: Exception) { log(LogLevel.Error, TAG, "Could not detach $name", error) }
-        attachment = null
-    }
-
-    private companion object {
-        const val POLL_MS = 50L
-        val EMPTY_BYTES: ByteBuffer = ByteBuffer.allocate(0)
-        val EMPTY_CHARS: CharBuffer = CharBuffer.allocate(0)
-    }
-}
 
 /** JediTerm's settings for workspace tabs: Hovel's colors, the scrollback guard, mouse reporting, ⌘C and ⌘V. */
 internal open class HovelTerminalSettings : DefaultSettingsProvider() {
@@ -186,7 +59,7 @@ private fun terminalColor(argb: Int): TerminalColor = Color(argb).let { Terminal
  */
 private class GuardedTerminalPanel(settings: SettingsProvider, buffer: TerminalTextBuffer, style: StyleState) :
     TerminalPanel(settings, buffer, style) {
-    /** One character cell, in points. */
+    /** Development probe only. One character cell, in points. */
     val cell: java.awt.Dimension get() = java.awt.Dimension(myCharSize)
 
     override fun paintComponent(g: Graphics) = guard("paint") { super.paintComponent(g) }
@@ -201,7 +74,10 @@ private class GuardedTerminalPanel(settings: SettingsProvider, buffer: TerminalT
     override fun processInputMethodEvent(e: InputMethodEvent) = guard("input method") { super.processInputMethodEvent(e) }
 
     private inline fun guard(what: String, block: () -> Unit) {
-        try { block() } catch (error: Exception) { log(LogLevel.Error, TAG, "The terminal failed on $what", error) }
+        try { block() } catch (error: Throwable) {
+            rethrowIfFatal(error)
+            log(LogLevel.Error, TAG, "The terminal failed on $what", error)
+        }
     }
 }
 
@@ -237,15 +113,15 @@ internal class TerminalView(private val connector: SessionTtyConnector, size: Te
         widget.start()
     }
 
-    /** Bytes to the session as if typed, past JediTerm's key handling. Development probes only. */
+    /** Development probe only. Bytes to the session as if typed, past JediTerm's key handling. */
     fun send(bytes: ByteArray) = connector.write(bytes)
 
     val component: JComponent get() = widget
 
-    /** The panel JediTerm draws into, for focus and for development snapshots. */
+    /** Development probe only. The panel JediTerm draws into, for snapshots and synthetic events. */
     val panel: TerminalPanel get() = widget.terminalPanel
 
-    /** The centre of the cell at zero-based [column] and [row], in the panel's points. */
+    /** Development probe only. The centre of the cell at zero-based [column] and [row], in the panel's points. */
     fun cellCenter(column: Int, row: Int): java.awt.Point {
         val cell = (widget.terminalPanel as GuardedTerminalPanel).cell
         return java.awt.Point(column * cell.width + cell.width / 2, row * cell.height + cell.height / 2)
@@ -255,7 +131,7 @@ internal class TerminalView(private val connector: SessionTtyConnector, size: Te
         widget.requestFocusInWindow()
     }
 
-    /** The visible screen as text, one line per row. */
+    /** Development probe only. The visible screen as text, one line per row. */
     fun screenText(): String = widget.terminalTextBuffer.let { buffer ->
         buffer.lock()
         try { buffer.getScreenLines() } finally { buffer.unlock() }
@@ -263,7 +139,10 @@ internal class TerminalView(private val connector: SessionTtyConnector, size: Te
 
     /** Stop drawing and detach from the session. Closing the session is the window's call. */
     fun close() {
-        try { widget.close() } catch (error: Exception) { log(LogLevel.Error, TAG, "Could not close a terminal", error) }
+        try { widget.close() } catch (error: Throwable) {
+            rethrowIfFatal(error)
+            log(LogLevel.Error, TAG, "Could not close a terminal", error)
+        }
     }
 }
 
@@ -294,6 +173,7 @@ internal class TerminalDeck {
 
     private var showing: String? = null
 
+    /** Development probe only. */
     fun view(id: String): TerminalView? = views[id]
 
     /** Show tab [id] and give it the keyboard. Repeated calls for the tab already showing do nothing. */
@@ -303,7 +183,7 @@ internal class TerminalDeck {
         showing = id
         cards.show(panel, id)
         // After the card swap is laid out, so the newly visible panel can take focus.
-        EventQueue.invokeLater { try { view.focus() } catch (error: Exception) { log(LogLevel.Error, TAG, "Could not focus a terminal", error) } }
+        onAwt { view.focus() }
     }
 
     fun closeAll() {

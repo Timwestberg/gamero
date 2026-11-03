@@ -67,10 +67,12 @@ alone as Hovel conversation or reconnect acceptance; follow
 
 ### Project workspace (development builds)
 
-A development build (`-Dgamero.dev=true`: Gradle runs and the local launchers) can open
-a project workspace window: a native terminal with a Shell tab in a folder
-(`jvmMain/.../workspace/`; spec and architecture in game-platform
-`docs/launcher/project-workspace.*`). Release builds never offer it.
+A development build (`-Dgamero.dev=true`: Gradle runs, the local launchers, and a package
+built with `-Pgamero.developmentPackage=true`) can open a project workspace window: a
+native terminal with a Shell tab in a folder (`jvmMain/.../workspace/`; spec and
+architecture in game-platform `docs/launcher/project-workspace.*`). Release builds never
+offer it, and do not ship its natives. A development package ships them signed, for
+Apple Silicon only ([release.md](release.md#desktop)).
 
 - **Develop → Open Workspace…** in the main window picks a folder.
   `HOVEL_WORKSPACE_FOLDER=<folder>` opens one at launch instead.

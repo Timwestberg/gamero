@@ -75,9 +75,9 @@ private class DesktopResources : AutoCloseable {
         browser.set(null)
         keyboardClient?.removeKeyboardHandler()
         keyboardClient = null
-        // The bridge stops taking requests before the services it calls go away. Workspace
-        // processes end with the app.
-        try { bridge?.close() } finally { try { services?.close() } finally { workspaces?.close() } }
+        // Last first: the bridge stops taking requests before the services it calls go away, and
+        // workspace processes end with the app.
+        closeInReverse(listOfNotNull<AutoCloseable>(workspaces, services, bridge))
     }
 }
 

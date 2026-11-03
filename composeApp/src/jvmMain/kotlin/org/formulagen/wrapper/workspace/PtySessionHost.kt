@@ -31,26 +31,29 @@ private const val HANGUP_GRACE_MS = 500L
 /** How long the exit watcher waits for the reader to deliver the last output before reporting the exit. */
 private const val DRAIN_GRACE_MS = 1_000L
 
-/** The exit code reported when the process was ended by [Session.close] before it exited by itself. */
-internal const val CLOSED_EXIT_CODE = -1
-
 /**
  * [SessionHost] on pty4j. Each session is one process on its own pseudo-terminal (pty4j's spawn
  * helper makes it a session leader, so its process group is its pid), with one reader thread and one
- * exit watcher. [commands] builds each [Launch]'s argv and environment ([ShellLaunch.command]).
+ * exit watcher. [commands] builds each session's argv and environment from its spec: its [Launch],
+ * and its project's `PATH` entries ([ShellLaunch.command]).
  *
  * Sessions belong to their project, not to a window: a viewer detaching leaves the process running,
  * and only [Session.close], [closeProject] or [close] end it.
  */
-class PtySessionHost(private val commands: (Launch) -> ShellCommand) : SessionHost {
+class PtySessionHost(private val commands: (SessionSpec) -> ShellCommand) : SessionHost {
     private val sessions = ConcurrentHashMap<String, MutableSet<PtySession>>()
     private val threads = loggingDaemonThreads("hovel-workspace-session")
     private val counter = AtomicInteger()
     private val closed = AtomicBoolean(false)
 
+    init {
+        // Before pty4j's first use: JNA reads its settings once.
+        usePackagedNatives()
+    }
+
     override fun start(spec: SessionSpec): Session {
         check(!closed.get()) { "The session host is closed" }
-        val command = commands(spec.launch)
+        val command = commands(spec)
         val process = PtyProcessBuilder(command.argv.toTypedArray())
             .setEnvironment(command.environment)
             .setDirectory(spec.folder.toString())
@@ -100,13 +103,12 @@ internal class PtySession(
     /** The process as the JDK's process tools see it: pty4j's own has no [Process.toHandle]. */
     private val tree: Process = HandledProcess(process)
     private val closing = AtomicBoolean(false)
-    private val reported = AtomicBoolean(false)
     private val reading = AtomicBoolean(false)
     @Volatile private var exitCode: Int? = null
+    /** The code every viewer hears, once set. Set, and read with a new viewer, under [viewers]' lock. */
+    private var reportedCode: Int? = null
     @Volatile private var reader: Thread? = null
     private lateinit var threads: ThreadFactory
-
-    val pid: Long get() = process.pid()
 
     /**
      * Start the exit watcher. The reader starts with the first viewer: until then the
@@ -139,12 +141,17 @@ internal class PtySession(
     }
 
     override fun attach(viewer: SessionViewer): Attachment {
-        viewers.add(viewer)
+        // Under the lock, so the viewer hears the exit from [report] or from here, never both.
+        val ended = synchronized(viewers) { viewers.add(viewer); reportedCode }
         if (reading.compareAndSet(false, true)) reader = threads.newThread(::read).apply { name = "$name-reader"; start() }
         // A viewer that attaches late sees only new output. One that attaches after the exit hears it at once.
-        exitCode?.takeIf { reported.get() }?.let { code -> notifyExit(viewer, code) }
+        ended?.let { code -> notifyExit(viewer, code) }
         return PtyAttachment(viewer)
     }
+
+    override fun processes(): List<ProcessHandle> = ProcessHandle.of(process.pid()).map { root ->
+        listOf(root) + root.descendants().use { it.toList() }
+    }.orElse(emptyList())
 
     /**
      * SIGHUP to the process group, as a terminal does when its window closes; a short wait; then
@@ -214,9 +221,13 @@ internal class PtySession(
     }
 
     private fun report(code: Int) {
-        if (!reported.compareAndSet(false, true)) return
-        exitCode = exitCode ?: code
-        viewers.forEach { notifyExit(it, exitCode ?: code) }
+        val (final, targets) = synchronized(viewers) {
+            if (reportedCode != null) return
+            val final = exitCode ?: code
+            reportedCode = final
+            final to viewers.toList()
+        }
+        targets.forEach { notifyExit(it, final) }
     }
 
     private fun notifyExit(viewer: SessionViewer, code: Int) {
@@ -282,10 +293,11 @@ private class HandledProcess(private val pty: PtyProcess) : Process() {
 /**
  * Point pty4j, and JNA under it, at natives shipped inside the app bundle and signed with it,
  * instead of letting each unpack its own copies to a temporary folder at run time, which the
- * hardened runtime refuses unless library validation is off. A packaged app has them in Compose's
- * app resources (`-Dcompose.application.resources.dir`, `Contents/app/resources/`): `pty4j/darwin/`
- * and `jna/`. Development runs have neither and keep each library's default. Call before pty4j's
- * first use: JNA reads its settings once.
+ * hardened runtime refuses unless library validation is off. A packaged development build for Apple
+ * Silicon has them in Compose's app resources (`-Dcompose.application.resources.dir`,
+ * `Contents/app/resources/`): `pty4j/darwin/` and `jna/`. Gradle runs and release builds ship
+ * neither, and keep each library's default.
+ * [PtySessionHost]'s init calls it, before pty4j's first use: JNA reads its settings once.
  */
 internal fun usePackagedNatives(resources: String? = System.getProperty("compose.application.resources.dir")) {
     if (resources == null) return

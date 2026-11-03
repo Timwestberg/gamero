@@ -180,9 +180,13 @@ if (mobileTargets) dependencies {
 
 /**
  * pty4j and JNA unpack their macOS natives from their jars to a temporary folder at run time, where
- * the hardened runtime can refuse them. A packaged app ships them as app resources instead
- * (macos-arm64/ becomes Contents/app/resources/), signed with the app, and `usePackagedNatives`
- * points both libraries there. pty4j's spawn helper must stay executable.
+ * the hardened runtime can refuse them. A packaged development build ships them as app resources
+ * instead (macos-arm64/ becomes Contents/app/resources/), signed with the app, and
+ * `usePackagedNatives` points both libraries there. pty4j's spawn helper must stay executable.
+ * Apple Silicon only: Compose packages macos-arm64/ only on an arm64 build machine, and JNA's copy is
+ * its darwin-aarch64 library. A release build (gamero.release) ships none of them, since project
+ * workspaces are development-only (`projectWorkspaceEnabled`); see docs/release.md for what its
+ * runtime jars still carry.
  */
 val workspaceNatives = tasks.register<Sync>("workspaceNatives") {
     val runtime = configurations.named("jvmRuntimeClasspath").flatMap { it.elements }
@@ -199,14 +203,16 @@ val workspaceNatives = tasks.register<Sync>("workspaceNatives") {
     includeEmptyDirs = false
     into(layout.buildDirectory.dir("workspace-natives"))
 }
-afterEvaluate { tasks.named("prepareAppResources") { dependsOn(workspaceNatives) } }
-// Compose copies app resources into the image without their file modes (Kotlin's File.copyTo), so
-// the spawn helper arrives as a plain file and pty4j cannot start it. A mode is not part of the seal.
-tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDistributable" }.configureEach {
-    val apps = layout.buildDirectory.dir("compose/binaries")
-    doLast {
-        apps.get().asFileTree.matching { include("**/Contents/app/resources/pty4j/darwin/pty4j-unix-spawn-helper") }
-            .forEach { check(it.setExecutable(true, false)) { "Could not make $it executable" } }
+if (!releaseBuild) {
+    afterEvaluate { tasks.named("prepareAppResources") { dependsOn(workspaceNatives) } }
+    // Compose copies app resources into the image without their file modes (Kotlin's File.copyTo), so
+    // the spawn helper arrives as a plain file and pty4j cannot start it. A mode is not part of the seal.
+    tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDistributable" }.configureEach {
+        val apps = layout.buildDirectory.dir("compose/binaries")
+        doLast {
+            apps.get().asFileTree.matching { include("**/Contents/app/resources/pty4j/darwin/pty4j-unix-spawn-helper") }
+                .forEach { check(it.setExecutable(true, false)) { "Could not make $it executable" } }
+        }
     }
 }
 
@@ -233,8 +239,9 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            // The workspace terminal's natives, in Contents/app/resources so they are signed with the app.
-            appResourcesRootDir.set(layout.buildDirectory.dir("workspace-natives"))
+            // The workspace terminal's natives, in Contents/app/resources so they are signed with the
+            // app. Development packages only (workspaceNatives).
+            if (!releaseBuild) appResourcesRootDir.set(layout.buildDirectory.dir("workspace-natives"))
             packageName = "org.formulagen.wrapper"
             packageVersion = releaseVersion
             // The bundled runtime is GAMERO_BROWSER_JAVA_HOME's JetBrains Runtime, whose jcef module
@@ -261,7 +268,8 @@ compose.desktop {
 }
 
 // Development launches (Gradle run tasks and the local jpackage prototypes) are marked, so features gated to
-// development builds may turn on; release packaging uses compose.desktop's jvmArgs and is never marked.
+// development builds may turn on. Packaging uses compose.desktop's jvmArgs, which carry the marker only with
+// -Pgamero.developmentPackage=true (never with gamero.release).
 val developmentJvmOptions = listOf("-Dgamero.dev=true")
 
 // Required by the existing KCEF desktop WebView implementation.
