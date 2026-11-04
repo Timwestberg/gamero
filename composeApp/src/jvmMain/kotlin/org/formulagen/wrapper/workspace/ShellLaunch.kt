@@ -67,6 +67,12 @@ internal const val PATH_PREPEND_VARIABLE = "HOVEL_PATH_PREPEND"
 internal const val USER_ZDOTDIR_VARIABLE = "HOVEL_USER_ZDOTDIR"
 internal const val FISH_INIT_VARIABLE = "HOVEL_FISH_INIT"
 
+/**
+ * The argv before [ShellFiles.CONTROLS]: macOS's own perl, with `-T` so `PERL5OPT` and `PERL5LIB`
+ * are ignored and `-C0` so `PERL_UNICODE` is (docs/desktop.md, "The changes view").
+ */
+internal val CONTROL_FILTER = listOf("/usr/bin/perl", "-T", "-C0")
+
 /** fish's `--init-command`. Quoted, so an empty value is an error rather than `source` reading the terminal. */
 internal const val FISH_INIT_COMMAND = "source \"\$$FISH_INIT_VARIABLE\""
 
@@ -100,6 +106,7 @@ class ShellLaunch(
         return when (launch) {
             Launch.Shell -> ShellCommand(shellArgv(), environment(pathFirst))
             is Launch.Tool -> ShellCommand(toolArgv(listOf(toolPath(launch.tool, pathFirst)) + toolArguments), environment(pathFirst))
+            // TODO: the pipeline Launch.Diff describes.
             is Launch.Diff -> throw UnsupportedOperationException("Diff tabs arrive with the thread changes view")
         }
     }
@@ -133,6 +140,9 @@ class ShellLaunch(
 
     /** Hovel's bash startup file. */
     private fun bashFile() = shellFiles.resolve(ShellFiles.BASH).toString()
+
+    /** The changes view's filter between git and delta, as an argv ([ShellFiles.CONTROLS]). */
+    internal fun controlFilter(): List<String> = CONTROL_FILTER + shellFiles.resolve(ShellFiles.CONTROLS).toString()
 
     /** The whole environment of a tab. Nothing else from Hovel's process reaches it. */
     internal fun environment(pathFirst: List<String>): Map<String, String> = buildMap {
@@ -201,6 +211,8 @@ object ShellFiles {
     const val ZSH_FOLDER = "zsh"
     const val BASH = "hovel.bash"
     const val FISH = "hovel.fish"
+    /** The changes view's filter: every control character in a diff made visible (docs/desktop.md, "The changes view"). */
+    const val CONTROLS = "visible-controls.pl"
 
     /** Resource name to installed name. Resources carry no leading dot, so none are hidden in the repository. */
     private val FILES = mapOf(
@@ -210,6 +222,7 @@ object ShellFiles {
         "zsh/zlogin" to "$ZSH_FOLDER/.zlogin",
         BASH to BASH,
         FISH to FISH,
+        CONTROLS to CONTROLS,
     )
 
     /** `~/Library/Caches/<bundle id>/workspace/shell`. */

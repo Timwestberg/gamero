@@ -15,7 +15,11 @@ sealed interface Launch {
     data object Shell : Launch
     /** A catalog tool, started through the shell so the player's PATH and Hovel's order apply. */
     data class Tool(val tool: WorkspaceTool) : Launch
-    /** A read-only git diff of recorded files, piped through delta, built natively. */
+    /**
+     * A read-only git diff of a recorded file, built natively; not yet. A fixed `/bin/sh` script, given git, the
+     * pathspec, [ShellLaunch.controlFilter] and delta as arguments, runs `git … diff --no-color … | <filter> | <delta>
+     * --paging=always`, so no byte of the file reaches delta or the terminal unfiltered (docs/desktop.md, "The changes view").
+     */
     data class Diff(val file: String, val history: Boolean) : Launch
 }
 

@@ -219,6 +219,45 @@ the action a key press performed within 500 ms is taken as that echo and ignored
   (`steadyCursor`): JediTerm reads `CSI 0 q` as a blinking block, and a period of 0 would
   repaint a focused idle tab on every timer tick.
 
+#### The changes view
+
+Diff tabs are not built yet (`ShellLaunch.command` throws for `Launch.Diff`), but their
+filter is. git passes a file's own bytes through untouched, so an agent-edited file can carry
+escape sequences to the terminal. JediTerm honours SGR, including hidden text (`ESC[8m`) and a
+foreground set to the background, and cursor moves (`ESC[1A`, `ESC[2K`) that overwrite lines.
+Carriage return and backspace overwrite text too, and C1 controls (U+0080 to U+009F, where
+U+009B is a one-character CSI) act as well. A reviewer could then miss lines in exactly the
+view meant for reviewing agent edits. So a diff tab runs a fixed `/bin/sh` script, given git,
+the `:(literal)` pathspec, the filter and the delta wrapper as arguments:
+
+```text
+git -c core.fsmonitor=false --no-optional-locks diff --no-color --no-ext-diff --no-textconv HEAD -- <file> | <filter> | <delta> --paging=always
+```
+
+History is `git log -p --follow --no-color …`, and an untracked or added file
+`git diff --no-index --no-color /dev/null <file>`, through the same filter. It is
+`--no-color`, not `-c color.ui=never`: a repository's `color.diff=always` overrides
+`color.ui`. Delta does its own colouring. No byte of the file reaches delta or the terminal
+but through the filter; if the filter cannot start, delta gets nothing, never the raw diff.
+
+The filter is `visible-controls.pl` (resources `workspace/shell/`, installed beside the
+shell startup files), run as `/usr/bin/perl -T -C0 <file>` (`ShellLaunch.controlFilter()`):
+
+- Tab and newline pass. ESC shows as `^[`, CR as `^M`, BS as `^H`, and other C0 controls and
+  DEL in caret form (`^@`, `^?`).
+- C1 controls show as `<U+0080>` to `<U+009F>`.
+- A byte that is not part of valid UTF-8 (a stray byte, a cut sequence, an overlong form, a
+  surrogate, a code point past U+10FFFF) shows as `<XX>`, as `less` shows it.
+- Valid UTF-8 passes unchanged, emoji and accents included.
+
+Perl works on bytes, so it needs no decoding and invalid UTF-8 cannot confuse it. It streams
+a line at a time, and macOS ships it (5.34 on macOS 26), so nothing new is downloaded or
+signed. `cat -v` writes every non-ASCII byte in `M-` form, which breaks UTF-8 text, and `sed`
+and `tr` cannot tell valid UTF-8 from invalid. `-T` makes perl ignore `PERL5OPT` and
+`PERL5LIB`, and `-C0` with the script's raw layers ignores `PERL_UNICODE` and `PERLIO`, so
+the player's environment cannot change the filter. If a later macOS drops `/usr/bin/perl`, the
+diff tab must say so and not start, never fall back to an unfiltered diff.
+
 #### Quitting
 
 In a development build the app handles macOS's Quit itself (`Desktop.setQuitHandler`):

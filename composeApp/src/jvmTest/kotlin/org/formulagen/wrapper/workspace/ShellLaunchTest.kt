@@ -203,7 +203,7 @@ class ShellLaunchTest {
 
     @Test fun installsEachStartupFileAndRestoresAChangedOne() {
         ShellFiles.install(files)
-        val installed = listOf("zsh/.zshenv", "zsh/.zprofile", "zsh/.zshrc", "zsh/.zlogin", "hovel.bash", "hovel.fish").map(files::resolve)
+        val installed = listOf("zsh/.zshenv", "zsh/.zprofile", "zsh/.zshrc", "zsh/.zlogin", "hovel.bash", "hovel.fish", "visible-controls.pl").map(files::resolve)
         installed.forEach { assertTrue(Files.isRegularFile(it), "$it") }
         assertTrue(installed[2].readText().contains("add-zsh-hook precmd __hovel_prepend_path"))
         val modified = Files.getLastModifiedTime(installed[4])
