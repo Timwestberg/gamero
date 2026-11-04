@@ -508,12 +508,3 @@ internal fun onAwt(block: () -> Unit) {
     }
 }
 
-/**
- * For a workspace edge that contains and logs what it catches: rethrows [error] when the JVM itself
- * is failing (out of memory, a stack overflow, an internal error), which should still end the app.
- * Anything else is contained, including a library that will not load ([LinkageError]:
- * `UnsatisfiedLinkError`, `ExceptionInInitializerError`, `NoClassDefFoundError`).
- */
-internal fun rethrowIfFatal(error: Throwable) {
-    if (error is VirtualMachineError) throw error
-}

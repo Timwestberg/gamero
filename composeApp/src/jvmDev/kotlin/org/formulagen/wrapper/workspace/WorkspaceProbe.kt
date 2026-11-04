@@ -1,10 +1,7 @@
 package org.formulagen.wrapper.workspace
 
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import com.jediterm.terminal.ui.TerminalPanel
 import java.awt.EventQueue
-import java.awt.Frame
 import java.awt.Window
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
@@ -16,61 +13,18 @@ import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 import org.formulagen.wrapper.approvals.NativeDialog
-import org.formulagen.wrapper.conversations.NativeFolderPicker
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.util.loggingDaemonThreads
 
 /*
- * The terminal spike's development entry points. Only a development build has a [WorkspaceWindows]
- * (`projectWorkspaceEnabled`), so none of this exists in a release:
- *
- * - [spikeSessionHost] builds the windows' session host.
- * - Develop → Open Workspace… in the main window picks a folder and opens a window with a Shell tab.
- *   Develop → Forget Trusted Folders makes every folder ask again.
- * - HOVEL_WORKSPACE_FOLDER opens one at launch. Both ask first for a folder not yet trusted.
- * - HOVEL_WORKSPACE_PROBE, with HOVEL_WORKSPACE_FOLDER, runs a steps file against that window and
- *   writes screen text and images beside it: the spike's rendering and signing checks when no one
- *   is at the screen. See [WorkspaceProbe].
+ * The workspace probe, a lasting development tool: HOVEL_WORKSPACE_PROBE names a steps file that
+ * drives the HOVEL_WORKSPACE_FOLDER window and answers its questions, for checks with no one at the
+ * screen (docs/desktop.md, "The probe"). It is in src/jvmDev, which a release never compiles, and a
+ * release build fails if any of it reaches the app (release-excluded.txt).
  */
 
-private const val TAG = "workspace-development"
-
-/**
- * The terminal spike's session host: the player's login shell, Hovel's startup files in the Caches
- * folder, Neovim's sockets beside them, and one `bin` folder kept first in every project's `PATH`. That folder is
- * `HOVEL_WORKSPACE_BIN` when set (development), else `<support>/workspace/bin`, where the tool
- * manager will write its wrappers. `HOVEL_WORKSPACE_SHELL` (development) tries another shell in
- * place of the login shell.
- */
-internal fun spikeSessionHost(environment: Map<String, String>, support: Path): SessionHost {
-    val shell = developmentShell(environment) ?: loginShell(readDirectoryShell(), environment)
-    val files = ShellFiles.install(ShellFiles.defaultFolder())
-    val bin = environment["HOVEL_WORKSPACE_BIN"]?.takeIf { Path.of(it).isAbsolute } ?: support.resolve("workspace/bin").toString()
-    val launch = ShellLaunch(shell, environment, files)
-    val host = PtySessionHost(EditorSockets(EditorSockets.defaultFolder())) { spec, toolArguments -> launch.command(spec.launch, listOf(bin), toolArguments) }
-    log(LogLevel.Info, TAG, "Workspace shell ${ShellKind.of(shell)}; natives ${System.getProperty(PTY4J_NATIVE_FOLDER) ?: "unpacked by pty4j"} and ${System.getProperty(JNA_BOOT_PATH) ?: "unpacked by JNA"}")
-    return host
-}
-
-/** `HOVEL_WORKSPACE_SHELL` when it names an executable by absolute path; otherwise null, and the login shell is used. */
-private fun developmentShell(environment: Map<String, String>): String? {
-    val shell = environment["HOVEL_WORKSPACE_SHELL"]?.takeIf { it.isNotBlank() } ?: return null
-    if (isUsableShell(shell)) return shell
-    log(LogLevel.Warn, TAG, "HOVEL_WORKSPACE_SHELL is not an executable at an absolute path; using the login shell")
-    return null
-}
-
-/** Develop → Open Workspace…: the native folder picker, then a window on the chosen folder, if trusted. AWT thread. */
-internal fun openWorkspaceFromPicker(workspaces: WorkspaceWindows, owner: Frame) {
-    try {
-        val folder = NativeFolderPicker { owner }.choose("Open a workspace on a folder", null) ?: return
-        if (workspaces.open(folder) == null) log(LogLevel.Info, TAG, "The workspace was not opened: the folder was not trusted")
-    } catch (error: Throwable) {
-        rethrowIfFatal(error)
-        log(LogLevel.Error, TAG, "Could not open a workspace", error)
-    }
-}
+private const val TAG = "workspace-probe"
 
 /**
  * The probe's answers to the workspace's questions: the sheet until an `answer` step sets one.
@@ -92,36 +46,6 @@ internal class ProbeConfirmer(private val sheet: Confirmer = SheetConfirmer) : C
 /** A [ProbeConfirmer] when HOVEL_WORKSPACE_PROBE names a steps file, else null. */
 internal fun probeConfirmer(environment: Map<String, String>): ProbeConfirmer? =
     environment["HOVEL_WORKSPACE_PROBE"]?.takeIf { it.isNotBlank() }?.let { ProbeConfirmer() }
-
-/**
- * Opens HOVEL_WORKSPACE_FOLDER at launch, asking first when it is not trusted. With HOVEL_WORKSPACE_PROBE,
- * the probe opens it and runs its steps, answering through [confirmer]. [exit] ends the app at once;
- * [requestQuit] is ⌘Q's path, which asks first when work would be lost.
- */
-@Composable
-internal fun DevelopmentWorkspaceLaunch(
-    workspaces: WorkspaceWindows,
-    environment: Map<String, String>,
-    confirmer: ProbeConfirmer?,
-    exit: () -> Unit,
-    requestQuit: () -> Unit,
-) {
-    LaunchedEffect(Unit) {
-        val folder = environment["HOVEL_WORKSPACE_FOLDER"]?.takeIf { it.isNotBlank() }?.let(Path::of) ?: return@LaunchedEffect
-        val steps = environment["HOVEL_WORKSPACE_PROBE"]?.takeIf { it.isNotBlank() }
-        if (steps != null && confirmer != null) {
-            WorkspaceProbe(workspaces, folder, Path.of(steps), confirmer, exit, requestQuit).start()
-            return@LaunchedEffect
-        }
-        if (steps != null) log(LogLevel.Warn, TAG, "HOVEL_WORKSPACE_PROBE is set but the windows have no probe confirmer")
-        try {
-            if (workspaces.open(folder) == null) log(LogLevel.Info, TAG, "HOVEL_WORKSPACE_FOLDER was not opened: the folder was not trusted")
-        } catch (error: Throwable) {
-            rethrowIfFatal(error)
-            log(LogLevel.Error, TAG, "Could not open HOVEL_WORKSPACE_FOLDER", error)
-        }
-    }
-}
 
 /**
  * Runs a steps file against one workspace window, one step per line (`#` starts a comment):
@@ -202,7 +126,7 @@ internal class WorkspaceProbe(
     private fun step(command: String, argument: String) {
         if (opened == null && command != "answer" && command != "wait") openFolder()
         when (command) {
-            "send" -> awt { view().send(unescape(argument).toByteArray(Charsets.UTF_8)) }
+            "send" -> awt { connector().write(unescape(argument).toByteArray(Charsets.UTF_8)) }
             "key" -> awt { key(argument) }
             "ime" -> awt { ime(argument) }
             "click" -> awt { click(argument.split(' ').map(String::toInt)) }
@@ -244,11 +168,12 @@ internal class WorkspaceProbe(
     /** Type [command] and a marker at the prompt; the time until the marker shows is the run's. */
     private fun runTimed(timeoutMs: Long, command: String) {
         val view = awtValue { view() }
+        val connector = awtValue { connector() }
         val marker = "PROBE_${++markers}_DONE"
         // The marker reaches the screen only through %s, so the typed line never matches it.
         val line = "$command; printf 'PROBE_%s_DONE\\n' $markers\r"
         val started = System.nanoTime()
-        awt { view.send(line.toByteArray(Charsets.UTF_8)) }
+        awt { connector.write(line.toByteArray(Charsets.UTF_8)) }
         val deadline = started + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
         while (System.nanoTime() < deadline) {
             // Off the AWT thread: the text buffer has its own lock.
@@ -264,6 +189,7 @@ internal class WorkspaceProbe(
     /** Key event to the first paint showing its echo, per letter: the paint reports the text it drew. */
     private fun typing(count: Int) {
         val view = awtValue { view() }
+        val connector = awtValue { connector() }
         val letters = "hovelprobetyping"
         // A prefix no screen holds yet, so each key's echo is told apart.
         val typed = StringBuilder("zq")
@@ -287,7 +213,7 @@ internal class WorkspaceProbe(
             }
         } finally {
             view.paintObserver = null
-            awt { view.send(byteArrayOf(0x15)) }
+            awt { connector.write(byteArrayOf(0x15)) }
         }
         val sorted = latencies.sorted().map { it / 1_000 / 1_000.0 }
         fun at(fraction: Double) = sorted[((sorted.size - 1) * fraction).toInt()]
@@ -413,6 +339,9 @@ internal class WorkspaceProbe(
     }
 
     private fun view(): TerminalView = requireNotNull(window.selectedTab()?.let { window.deck.view(it.id) }) { "The selected tab has no terminal yet" }
+
+    /** The selected tab's connector: bytes written to it reach the session as typed, past JediTerm's key handling. */
+    private fun connector(): SessionTtyConnector = requireNotNull(window.selectedTab()?.connector) { "The selected tab has no terminal yet" }
 
     private fun launchNamed(name: String): Launch =
         if (name == "shell") Launch.Shell

@@ -432,9 +432,6 @@ internal class TerminalView(
         get() = guarded.paintObserver
         set(value) { guarded.paintObserver = value }
 
-    /** Development probe only. Bytes to the session as if typed, past JediTerm's key handling. */
-    fun send(bytes: ByteArray) = connector.write(bytes)
-
     val component: JComponent get() = widget
 
     /** Development probe and tests. The panel JediTerm draws into, for snapshots and synthetic events. */

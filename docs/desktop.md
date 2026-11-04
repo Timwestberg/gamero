@@ -70,10 +70,11 @@ alone as Hovel conversation or reconnect acceptance; follow
 A development build (`-Dgamero.dev=true`: the local jpackage launchers, the plain
 `JavaExec` entry points such as `runCompanions`, and Compose's `run` or a package only with
 `-Pgamero.developmentPackage=true`; see below) can open a project workspace window: a
-native terminal with a Shell tab in a folder (`jvmMain/.../workspace/`; spec and
-architecture in game-platform `docs/launcher/project-workspace.*`). Release builds never
-offer it, and do not ship its natives. A development package ships them signed, for
-Apple Silicon only ([release.md](release.md#desktop)).
+native terminal with a Shell tab in a folder (`src/jvmDev/.../workspace/`; spec and
+architecture in game-platform `docs/launcher/project-workspace.*`). A release build does not
+contain it, its terminal libraries or the probe at all ([Development-only code](#development-only-code)).
+A development package ships the terminal's natives signed, for Apple Silicon only
+([release.md](release.md#desktop)).
 
 - **Develop → Open Workspace…** in the main window picks a folder.
   `HOVEL_WORKSPACE_FOLDER=<folder>` opens one at launch instead. The first open of each
@@ -104,7 +105,8 @@ Apple Silicon only ([release.md](release.md#desktop)).
 - `HOVEL_WORKSPACE_PROBE=<steps file>`, with `HOVEL_WORKSPACE_FOLDER`, drives the window
   from a script and writes screen text and images beside the file, for checks with no
   one at the screen (`WorkspaceProbe` lists the steps). Start the file with `answer yes`
-  to answer the folder's trust question.
+  to answer the folder's trust question. The probe is a lasting development tool, in its
+  own file (`WorkspaceProbe.kt`), and never reaches a release.
 
 Compose's `run` task is a development build only with `-Pgamero.developmentPackage=true`
 (without it the app starts with no workspaces):
@@ -375,6 +377,30 @@ AGP 9 rejects `com.android.application` inside a Kotlin Multiplatform module.
 `gradle.properties` sets `android.builtInKotlin=false` and `android.newDsl=false`
 to opt out temporarily. Remove both once the Android app moves to its own module
 that depends on `composeApp`.
+
+### Development-only code
+
+The project workspace, its terminal, the probe and their development entry points are in
+`composeApp/src/jvmDev/` (Kotlin, and the shell files in `resources/`), with their tests in
+`src/jvmDevTest/`. Only a development build compiles them: unless `-Pgamero.release=true`,
+`build.gradle.kts` adds those folders to `jvmMain` and `jvmTest`, with pty4j, JNA and
+JediTerm. A release compiles `src/jvmRelease/` instead, whose `desktopWorkspaces` is null, so
+`main.kt` builds either way and reaches the workspace only through `DesktopWorkspaces`.
+`jvmMain` keeps what ships: the thread edit record, the limits, the profile's wire types and
+the tool catalog. Nothing else in the app uses JNA, so a release has none of the three.
+`annotations` and `slf4j-api` are named at the versions pty4j and JediTerm raised them to,
+so a release resolves the same versions as before.
+
+A release build checks what it made. After `createDistributable` or
+`createReleaseDistributable`, every jar in the app is scanned for the entry prefixes in
+`composeApp/release-excluded.txt` (the probe's and the terminal's classes, the shell files,
+`com/pty4j/`, `com/jediterm/`, `com/sun/jna/`), and the build fails, naming each one found.
+An app with no jars fails too. `WorkspaceProbeTest` checks that every Hovel class listed there
+exists in a development build, so a rename cannot leave the check looking for nothing.
+
+Switching between a development and a release build in the same `build/` folder recompiles.
+If Kotlin's incremental compile then reports workspace classes as unresolved, run
+`:composeApp:compileKotlinJvm --rerun` once.
 
 ### Terminal library checksums
 

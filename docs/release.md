@@ -194,21 +194,26 @@ package, and are signed with the app, so they load without
 `darwin-aarch64` library. A package built on an Intel Mac has none, and pty4j and JNA
 unpack their own copies from their jars at run time, as in a Gradle run. Compose copies
 app resources without their file modes, so `createDistributable` and
-`createReleaseDistributable` set the spawn helper executable again afterwards. A
-release build (`-Pgamero.release=true`) ships none of them as app resources: project
-workspaces are development-only.
+`createReleaseDistributable` set the spawn helper executable again afterwards.
 
-**Must fix before the first notarized release.** The release runtime still carries
-pty4j's jar, and in it `resources/com/pty4j/native/darwin/pty4j-unix-spawn-helper`.
-JetBrains signed the helper with its Developer ID but without the hardened runtime, and
-Compose's signer re-signs only the `.dylib` and `.jnilib` files inside jars, so
-notarization will probably reject the release. Before notarizing, do one of these:
+**A release build (`-Pgamero.release=true`) carries none of the workspace's code or
+natives.** Project workspaces are development-only, so a release neither compiles them nor
+depends on pty4j, JNA or JediTerm ([desktop.md](desktop.md#development-only-code)). Its
+runtime jars therefore hold no `pty4j-unix-spawn-helper`, no `libpty` and no
+`libjnidispatch`, which JetBrains signed without the hardened runtime and which notarization
+would reject inside a jar. Nothing else in the app uses JNA. Every distributable a release
+build makes is scanned for them, and for the probe, and the build fails if any is found.
 
-- strip pty4j's native resources (`resources/com/pty4j/native/**`) from the release
-  runtime jar, since a release never starts a terminal; or
-- re-sign the helper inside the jar with the Developer ID identity and the hardened
-  runtime. Neither Compose's signer nor `tools/sign-dev-mac-app.sh` does this today:
-  both re-sign only the `.dylib` and `.jnilib` entries.
+Checked on 2026-11-03 with `createReleaseDistributable` and the script's flags: 104 jars,
+14,424 entries, none from the workspace. The one Mach-O file left inside a jar is skiko's
+`libskiko-macos-x64.dylib`, a `.dylib`, which Compose's signer re-signs. The app started with
+a throwaway home and showed its main window.
+
+When the workspace ships to players, its terminal libraries come back into the release, and
+the helper problem with them: strip `resources/com/pty4j/native/**` from the release jar and
+ship the natives as app resources, as development packages already do, or re-sign the helper
+inside the jar with the hardened runtime. Neither Compose's signer nor
+`tools/sign-dev-mac-app.sh` does the second today.
 
 ## iOS
 

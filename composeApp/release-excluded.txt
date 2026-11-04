@@ -1,0 +1,23 @@
+# Jar entries a release build's app must not hold, by prefix. A development build compiles
+# src/jvmDev and depends on the terminal libraries; a release compiles src/jvmRelease and does not.
+# build.gradle.kts scans every distributable a release build makes for these, and
+# WorkspaceReleaseExclusionsTest checks that each Hovel class named here exists in a development build.
+
+# The probe and the development entry points.
+org/formulagen/wrapper/workspace/WorkspaceProbe
+org/formulagen/wrapper/workspace/ProbeConfirmer
+org/formulagen/wrapper/workspace/WorkspaceDevelopmentKt
+org/formulagen/wrapper/workspace/DevelopmentWorkspaces
+
+# The workspace terminal and windows.
+org/formulagen/wrapper/workspace/WorkspaceWindows
+org/formulagen/wrapper/workspace/PtySessionHost
+org/formulagen/wrapper/workspace/HovelTerminalPanel
+org/formulagen/wrapper/workspace/TerminalPaneKt
+
+# Its shell files, and the terminal libraries with their natives.
+workspace/shell/
+com/pty4j/
+resources/com/pty4j/
+com/jediterm/
+com/sun/jna/

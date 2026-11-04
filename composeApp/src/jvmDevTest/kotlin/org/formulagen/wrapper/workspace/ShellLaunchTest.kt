@@ -218,10 +218,4 @@ class ShellLaunchTest {
     @Test fun theDefaultFolderIsUnderCachesWithNoSpaces() {
         assertEquals(Path.of("/Users/player/Library/Caches/org.formulagen.wrapper/workspace/shell"), ShellFiles.defaultFolder("/Users/player"))
     }
-
-    @Test fun probeEscapes() {
-        assertEquals("ls\r\u001b[A\t\\x", unescape("ls\\r\\e[A\\t\\\\x"))
-        assertEquals("é", unescape("\\xe9"))
-        assertEquals("trailing\\", unescape("trailing\\"))
-    }
 }

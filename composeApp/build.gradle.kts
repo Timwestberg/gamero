@@ -1,6 +1,7 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.zip.ZipFile
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -122,16 +123,31 @@ kotlin {
             implementation("org.jogamp.jogl:jogl-all:2.6.0")
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutinesSwing)
-            // Project workspace terminal. pty4j (EPL-1.0, Maven Central) runs each tab's process on a
-            // pseudo-terminal; JediTerm (dual LGPLv3/Apache-2.0, used under Apache-2.0; JetBrains'
-            // repository, see settings.gradle.kts) draws it in Swing.
-            implementation("org.jetbrains.pty4j:pty4j:0.14.0")
-            // pty4j's own JNA (runtime scope in its POM), named here to call tcgetpgrp for a Shell
-            // tab's busy check. Keep it at the version pty4j brings.
-            implementation("net.java.dev.jna:jna:5.19.1")
-            implementation("org.jetbrains.jediterm:jediterm-core:3.76")
-            implementation("org.jetbrains.jediterm:jediterm-ui:3.76")
+            // The versions pty4j and JediTerm raised these to, named so a release, which has neither,
+            // still resolves them.
+            implementation("org.jetbrains:annotations:26.1.0")
+            implementation("org.slf4j:slf4j-api:2.0.19")
+            if (!releaseBuild) {
+                // Project workspace terminal, development builds only (src/jvmDev). pty4j (EPL-1.0,
+                // Maven Central) runs each tab's process on a pseudo-terminal; JediTerm (dual
+                // LGPLv3/Apache-2.0, used under Apache-2.0; JetBrains' repository, see
+                // settings.gradle.kts) draws it in Swing.
+                implementation("org.jetbrains.pty4j:pty4j:0.14.0")
+                // pty4j's own JNA (runtime scope in its POM), named here to call tcgetpgrp for a Shell
+                // tab's busy check. Keep it at the version pty4j brings.
+                implementation("net.java.dev.jna:jna:5.19.1")
+                implementation("org.jetbrains.jediterm:jediterm-core:3.76")
+                implementation("org.jetbrains.jediterm:jediterm-ui:3.76")
+            }
         }
+        // Development builds also compile src/jvmDev: the project workspace, its terminal, the probe
+        // and their entry points. A release compiles src/jvmRelease instead, so none of it, and none of
+        // the terminal libraries above, can reach a release (docs/desktop.md, "Build boundaries").
+        getByName("jvmMain") {
+            kotlin.srcDir(if (releaseBuild) "src/jvmRelease/kotlin" else "src/jvmDev/kotlin")
+            if (!releaseBuild) resources.srcDir("src/jvmDev/resources")
+        }
+        if (!releaseBuild) getByName("jvmTest").kotlin.srcDir("src/jvmDevTest/kotlin")
     }
 }
 
@@ -187,26 +203,25 @@ if (mobileTargets) dependencies {
  * instead (macos-arm64/ becomes Contents/app/resources/), signed with the app, and
  * `usePackagedNatives` points both libraries there. pty4j's spawn helper must stay executable.
  * Apple Silicon only: Compose packages macos-arm64/ only on an arm64 build machine, and JNA's copy is
- * its darwin-aarch64 library. A release build (gamero.release) ships none of them, since project
- * workspaces are development-only (`projectWorkspaceEnabled`); see docs/release.md for what its
- * runtime jars still carry.
+ * its darwin-aarch64 library. A release build (gamero.release) has none of them: it does not depend
+ * on pty4j, JNA or JediTerm at all (see the source split above, and docs/release.md).
  */
-val workspaceNatives = tasks.register<Sync>("workspaceNatives") {
-    val runtime = configurations.named("jvmRuntimeClasspath").flatMap { it.elements }
-    fun jar(prefix: String) = runtime.map { files -> files.map { it.asFile }.single { it.name.startsWith(prefix) && it.extension == "jar" } }
-    from(zipTree(jar("pty4j-"))) {
-        include("resources/com/pty4j/native/darwin/**")
-        eachFile { path = "macos-arm64/pty4j/darwin/$name" }
-        filesMatching("**/pty4j-unix-spawn-helper") { permissions { unix("rwxr-xr-x") } }
-    }
-    from(zipTree(jar("jna-5."))) {
-        include("com/sun/jna/darwin-aarch64/libjnidispatch.jnilib")
-        eachFile { path = "macos-arm64/jna/$name" }
-    }
-    includeEmptyDirs = false
-    into(layout.buildDirectory.dir("workspace-natives"))
-}
 if (!releaseBuild) {
+    val workspaceNatives = tasks.register<Sync>("workspaceNatives") {
+        val runtime = configurations.named("jvmRuntimeClasspath").flatMap { it.elements }
+        fun jar(prefix: String) = runtime.map { files -> files.map { it.asFile }.single { it.name.startsWith(prefix) && it.extension == "jar" } }
+        from(zipTree(jar("pty4j-"))) {
+            include("resources/com/pty4j/native/darwin/**")
+            eachFile { path = "macos-arm64/pty4j/darwin/$name" }
+            filesMatching("**/pty4j-unix-spawn-helper") { permissions { unix("rwxr-xr-x") } }
+        }
+        from(zipTree(jar("jna-5."))) {
+            include("com/sun/jna/darwin-aarch64/libjnidispatch.jnilib")
+            eachFile { path = "macos-arm64/jna/$name" }
+        }
+        includeEmptyDirs = false
+        into(layout.buildDirectory.dir("workspace-natives"))
+    }
     afterEvaluate { tasks.named("prepareAppResources") { dependsOn(workspaceNatives) } }
     // Compose copies app resources into the image without their file modes (Kotlin's File.copyTo), so
     // the spawn helper arrives as a plain file and pty4j cannot start it. A mode is not part of the seal.
@@ -215,6 +230,31 @@ if (!releaseBuild) {
         doLast {
             apps.get().asFileTree.matching { include("**/Contents/app/resources/pty4j/darwin/pty4j-unix-spawn-helper") }
                 .forEach { check(it.setExecutable(true, false)) { "Could not make $it executable" } }
+        }
+    }
+}
+
+/*
+ * A release app must hold no entry listed in release-excluded.txt: the probe and the development entry
+ * points, the workspace terminal, pty4j, JNA, JediTerm and their natives. Each distributable a release
+ * build makes is scanned when it is made, and the build fails on the first one found (docs/release.md, "Desktop").
+ */
+if (releaseBuild) {
+    val excluded = layout.projectDirectory.file("release-excluded.txt")
+    tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDistributable" }.configureEach {
+        val app = layout.buildDirectory.dir(if (name == "createReleaseDistributable") "compose/binaries/main-release/app" else "compose/binaries/main/app")
+        inputs.file(excluded)
+        doLast {
+            val prefixes = excluded.asFile.readLines().map(String::trim).filter { it.isNotEmpty() && !it.startsWith("#") }
+            val jars = app.get().asFileTree.matching { include("**/*.jar") }.files
+            check(jars.isNotEmpty()) { "No jars under ${app.get().asFile}, so the release check would pass by finding nothing" }
+            val found = jars.flatMap { jar ->
+                ZipFile(jar).use { zip ->
+                    zip.entries().asSequence().map { it.name }.filter { entry -> prefixes.any(entry::startsWith) }.map { "${jar.name}!$it" }.toList()
+                }
+            }
+            check(found.isEmpty()) { "This release app holds development-only code (release-excluded.txt):\n" + found.take(20).joinToString("\n") }
+            logger.lifecycle("Release check: ${jars.size} jars, none holds an entry from release-excluded.txt")
         }
     }
 }
