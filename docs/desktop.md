@@ -197,7 +197,7 @@ the action a key press performed within 500 ms is taken as that echo and ignored
 
 #### The terminal
 
-`HovelTerminalPanel` is JediTerm's panel with three changes:
+`HovelTerminalPanel` is JediTerm's panel with these changes:
 
 - **Off-screen painting.** JediTerm paints while holding its text buffer's lock, and a paint
   straight to the screen can wait on the Metal pipeline: the JDK presents each frame on the
@@ -218,6 +218,33 @@ the action a key press performed within 500 ms is taken as that echo and ignored
   The cursor's period stays JediTerm's 505 ms, and every shape is drawn steady
   (`steadyCursor`): JediTerm reads `CSI 0 q` as a blinking block, and a period of 0 would
   repaint a focused idle tab on every timer tick.
+- **Safe pasting.** See [Pasting](#pasting).
+
+#### Pasting
+
+JediTerm 3.76's paste (`TerminalPanel.pasteFromClipboard`, private) takes the clipboard's
+text from `TerminalCopyPasteHandler.getContents`, turns `\r\n` into `\n` and `\n` into `\r`,
+and wraps it in bracketed-paste markers when the program turned that mode on. It strips
+nothing. So pasted text holding `ESC[201~` ends bracketed paste early and the rest runs as if
+typed ("pastejacking"), and without bracketed paste any multi-line paste runs line by line.
+`HovelTerminalPanel` changes that:
+
+- **Strip.** Pasted text loses ESC and every other C0 control except tab, newline and carriage
+  return, plus DEL and the C1 controls (`pasteText`). `createCopyPasteHandler()` returns a
+  `CleanPasteHandler` over the clipboard, so JediTerm's own reads are cleaned too. Copying is
+  unchanged.
+- **Ask.** The panel follows bracketed-paste mode (`setBracketedPasteMode`). When the cleaned
+  text has a line break and the mode is off, it asks first, in a sheet on the workspace
+  window: "Paste 2 lines into Shell?", naming the tab by its kind, never by the title its
+  program set. Cancel, the default, pastes nothing. With the mode on, the paste is wrapped
+  and sent at once, as the program asked.
+- **Every path.** ⌘V and the context menu's Paste are one JediTerm action, which
+  `getActions()` replaces with Hovel's paste. The question cannot live in `getContents`:
+  JediTerm also reads the clipboard there to enable the action, on every ⌘V and whenever the
+  menu opens. A middle click pastes only with `pasteOnMiddleMouseClick()`, which Hovel's
+  settings keep false. The workspace window has no Edit menu, and the main window's Edit →
+  Paste acts on the page, never on a tab. Committed input-method text (a dead key's é, dictation) is
+  typing, not a paste, and is not asked about.
 
 #### The changes view
 

@@ -1,5 +1,6 @@
 package org.formulagen.wrapper.workspace
 
+import com.jediterm.terminal.TerminalCopyPasteHandler
 import java.awt.EventQueue
 import java.io.ByteArrayOutputStream
 import java.nio.file.Path
@@ -101,6 +102,12 @@ internal class MemoryFolderTrust(private val all: Boolean = false) : FolderTrust
     override fun trusted(folder: Path): Boolean = all || folder in folders
     override fun trust(folder: Path) { folders.add(folder) }
     override fun forget() { folders.clear() }
+}
+
+/** A clipboard holding [text], so tests never read or change the system's. */
+internal class FakeClipboard(@Volatile var text: String? = null) : TerminalCopyPasteHandler {
+    override fun setContents(text: String, useSystemSelectionClipboardIfAvailable: Boolean) { this.text = text }
+    override fun getContents(useSystemSelectionClipboardIfAvailable: Boolean): String? = text
 }
 
 /** [read]'s value, computed on the AWT thread; what it throws is rethrown here. */

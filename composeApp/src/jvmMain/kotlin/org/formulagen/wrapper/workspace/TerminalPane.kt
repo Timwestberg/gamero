@@ -5,12 +5,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.SwingPanel
 import androidx.compose.ui.graphics.toArgb
 import com.jediterm.terminal.CursorShape
+import com.jediterm.terminal.DefaultTerminalCopyPasteHandler
 import com.jediterm.terminal.TerminalColor
+import com.jediterm.terminal.TerminalCopyPasteHandler
 import com.jediterm.terminal.TerminalExecutorServiceManager
 import com.jediterm.terminal.TextStyle
 import com.jediterm.terminal.model.StyleState
 import com.jediterm.terminal.model.TerminalTextBuffer
 import com.jediterm.terminal.ui.JediTermWidget
+import com.jediterm.terminal.ui.TerminalAction
 import com.jediterm.terminal.ui.TerminalPanel
 import com.jediterm.terminal.ui.settings.DefaultSettingsProvider
 import com.jediterm.terminal.ui.settings.SettingsProvider
@@ -39,6 +42,7 @@ import javax.swing.JPanel
 import javax.swing.JScrollBar
 import javax.swing.Timer
 import kotlin.math.ceil
+import org.formulagen.wrapper.approvals.NativeDialog
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.ui.fgBlue500
@@ -60,6 +64,8 @@ internal open class HovelTerminalSettings(@Volatile var fontSize: Int = Terminal
     override fun getTerminalFontSize(): Float = fontSize.toFloat()
     /** Option types characters (⌥e e is é), as in Terminal; ⌥← and ⌥→ still send ESC b and ESC f. */
     override fun altSendsEscape(): Boolean = false
+    /** Never: a middle click would paste past [HovelTerminalPanel]'s question (docs/desktop.md, "Pasting"). */
+    override fun pasteOnMiddleMouseClick(): Boolean = false
     override fun getDefaultForeground(): TerminalColor = terminalColor(fgInk300.toArgb())
     override fun getDefaultBackground(): TerminalColor = terminalColor(fgInk950.toArgb())
     /** The two colors above: JediTermWidget 3.76 still builds erased cells' style from this, else white. */
@@ -106,17 +112,49 @@ internal fun steadyCursor(shape: CursorShape): CursorShape = when (shape) {
     CursorShape.STEADY_BLOCK, CursorShape.STEADY_UNDERLINE, CursorShape.STEADY_VERTICAL_BAR -> shape
 }
 
+/** [text] as a paste sends it: without ESC or any other C0 control but tab, newline and return, DEL or C1 control. */
+internal fun pasteText(text: String): String = text.filter { !Character.isISOControl(it) || it == '\t' || it == '\n' || it == '\r' }
+
+/** How many lines pasting [text] would enter, or 0 when it has no line break (`\n`, `\r` or both). */
+internal fun pastedLines(text: String): Int {
+    if ('\n' !in text && '\r' !in text) return 0
+    val lines = text.split("\r\n", "\n", "\r")
+    return if (lines.last().isEmpty()) lines.size - 1 else lines.size
+}
+
+/** A clipboard whose pasted text is cleaned by [pasteText]; copying is [clipboard]'s own. */
+internal class CleanPasteHandler(private val clipboard: () -> TerminalCopyPasteHandler) : TerminalCopyPasteHandler {
+    override fun setContents(text: String, useSystemSelectionClipboardIfAvailable: Boolean) =
+        clipboard().setContents(text, useSystemSelectionClipboardIfAvailable)
+
+    override fun getContents(useSystemSelectionClipboardIfAvailable: Boolean): String? =
+        clipboard().getContents(useSystemSelectionClipboardIfAvailable)?.let(::pasteText)
+}
+
 /**
- * JediTerm's panel, painting off screen, guarding its AWT-thread entry points and repaint timer, and
- * sending window shortcuts to [onShortcut] (docs/desktop.md, "The terminal").
+ * JediTerm's panel, painting off screen, guarding its AWT-thread entry points and repaint timer,
+ * sending window shortcuts to [onShortcut], and pasting safely (docs/desktop.md, "The terminal").
  */
-internal class HovelTerminalPanel(settings: SettingsProvider, buffer: TerminalTextBuffer, style: StyleState) :
+internal class HovelTerminalPanel(private val settings: SettingsProvider, buffer: TerminalTextBuffer, style: StyleState) :
     TerminalPanel(settings, buffer, style) {
     /** Development probe and tests. One character cell, in points. */
     val cell: java.awt.Dimension get() = java.awt.Dimension(myCharSize)
 
     /** A window shortcut was pressed in this terminal. AWT thread. */
     @Volatile var onShortcut: (WorkspaceAction) -> Unit = {}
+
+    /** Asks before a paste that could run line by line; Cancel, and so no paste, until set. AWT thread. */
+    @Volatile var confirmPaste: (NativeDialog<Boolean>) -> Boolean = { false }
+
+    /** The tab's kind, as the paste question names it: never a title the program set. */
+    @Volatile var pasteTab: String = "this tab"
+
+    /** Where pastes read from, raw: the system clipboard. Tests set their own. */
+    @Volatile var clipboard: TerminalCopyPasteHandler = DefaultTerminalCopyPasteHandler()
+
+    /** The program has turned on bracketed paste (`CSI ? 2004 h`). Set on the emulator thread. */
+    @Volatile var bracketedPaste = false
+        private set
 
     /** The typed event that follows a shortcut's key press is the shortcut's, not the terminal's. */
     private var shortcutTyped = false
@@ -144,6 +182,34 @@ internal class HovelTerminalPanel(settings: SettingsProvider, buffer: TerminalTe
 
     /** A program's cursor shape (DECSCUSR), drawn steady: JediTerm reads `CSI 0 q` as a blinking block. */
     override fun setCursorShape(cursorShape: CursorShape?) = super.setCursorShape(cursorShape?.let(::steadyCursor))
+
+    /** Whether a paste is wrapped in bracketed-paste markers, as JediTerm keeps it, followed here for [paste]. */
+    override fun setBracketedPasteMode(enabled: Boolean) {
+        bracketedPaste = enabled
+        super.setBracketedPasteMode(enabled)
+    }
+
+    /** JediTerm's own clipboard: [clipboard], read through [pasteText]. Called before this class's fields are set. */
+    override fun createCopyPasteHandler(): TerminalCopyPasteHandler = CleanPasteHandler { clipboard }
+
+    /** JediTerm's actions, with Paste (⌘V and the context menu) replaced by [paste]. */
+    override fun getActions(): List<TerminalAction> {
+        val pasteName = settings.pasteActionPresentation.name
+        return super.getActions().map { action ->
+            if (action.name != pasteName) action
+            else TerminalAction(action.presentation) { paste(); true }.withMnemonicKey(KeyEvent.VK_P).withEnabledSupplier { clipboard.getContents(false) != null }
+        }
+    }
+
+    /** The clipboard's text through [pasteText], asked about first when it could run line by line (docs/desktop.md, "Pasting"). */
+    private fun paste() = guard("paste") {
+        val text = clipboard.getContents(false)?.let(::pasteText) ?: return@guard
+        val lines = pastedLines(text)
+        if (lines > 0 && !bracketedPaste && !confirmPaste(Confirmations.paste(lines, pasteTab))) return@guard
+        // As JediTerm sends it.
+        val sent = text.replace("\r\n", "\n").replace('\n', '\r')
+        terminalOutputStream?.sendString(if (bracketedPaste) "\u001b[200~$sent\u001b[201~" else sent, true)
+    }
 
     /** Development probe only: called after each paint with the screen text that paint drew. AWT thread. */
     @Volatile var paintObserver: ((String) -> Unit)? = null
@@ -298,8 +364,9 @@ private class HovelTermWidget(size: TermSize, settings: SettingsProvider) : Jedi
 
 /**
  * One tab's terminal, as long as its tab lives: a JediTerm widget reading from [connector], already
- * attached to the session. AWT thread only, except [screenText]. [onShortcut] gets the window
- * shortcuts pressed in it; [onTitle] the latest title the program set (OSC 0 or 2), both on the AWT thread.
+ * attached to the session. AWT thread only, except [screenText]. [onShortcut] gets the window shortcuts
+ * pressed in it; [onTitle] the latest title the program set (OSC 0 or 2); [confirmPaste] asks before a
+ * paste that could run line by line, naming the tab by [connector]'s name, its kind. All on the AWT thread.
  */
 internal class TerminalView(
     private val connector: SessionTtyConnector,
@@ -307,6 +374,7 @@ internal class TerminalView(
     fontSize: Int = TerminalFont.DEFAULT_SIZE,
     onShortcut: (WorkspaceAction) -> Unit = {},
     onTitle: (String) -> Unit = {},
+    confirmPaste: (NativeDialog<Boolean>) -> Boolean = { false },
 ) {
     private val settings = HovelTerminalSettings(fontSize)
     private val widget: JediTermWidget = HovelTermWidget(size, settings)
@@ -316,6 +384,8 @@ internal class TerminalView(
 
     init {
         guarded.onShortcut = onShortcut
+        guarded.confirmPaste = confirmPaste
+        guarded.pasteTab = connector.name
         // One AWT hop per burst.
         widget.terminal.addApplicationTitleListener { title ->
             if (pendingTitle.getAndSet(title) == null) onAwt { pendingTitle.getAndSet(null)?.let(onTitle) }

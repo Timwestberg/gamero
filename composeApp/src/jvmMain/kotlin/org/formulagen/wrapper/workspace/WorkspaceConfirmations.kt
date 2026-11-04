@@ -12,12 +12,12 @@ import org.formulagen.wrapper.approvals.NativeDialog
 
 /*
  * The workspace's questions (project-workspace.SPEC.md, "Opening a workspace" and "Security"):
- * opening a folder for the first time, closing a busy tab, closing a window with busy tabs, and
- * quitting with any. Each is worded from plain data, so the decisions are plain functions; [Confirmer] asks.
+ * opening a folder for the first time, a paste that could run line by line, closing a busy tab,
+ * closing a window with busy tabs, and quitting with any. Each is worded from plain data, so the decisions are plain functions; [Confirmer] asks.
  */
 
-/** The most of a folder's name a question shows. */
-private const val FOLDER_NAME_CHARS = 60
+/** The most of a folder's or tab's name a question shows. */
+private const val NAME_CHARS = 60
 
 /** The most of a folder's path a question shows. */
 private const val FOLDER_PATH_CHARS = 300
@@ -34,7 +34,7 @@ internal object Confirmations {
 
     /** Before the first workspace in [folder], a real path: what opening one runs there (docs/desktop.md, "Folder trust"). */
     fun openFolder(folder: Path): NativeDialog<Boolean> = question(
-        "Open a workspace in “${clip((folder.fileName ?: folder).toString(), FOLDER_NAME_CHARS)}”?",
+        "Open a workspace in “${clip((folder.fileName ?: folder).toString(), NAME_CHARS)}”?",
         listOf(
             clip(folder.toString(), FOLDER_PATH_CHARS),
             "",
@@ -44,6 +44,13 @@ internal object Confirmations {
             "Only open folders you trust.",
         ),
         "Open Workspace",
+    )
+
+    /** Before pasting [lines] lines into a tab of kind [tab] whose program has not turned on bracketed paste. */
+    fun paste(lines: Int, tab: String): NativeDialog<Boolean> = question(
+        "Paste ${if (lines == 1) "1 line" else "$lines lines"} into ${clip(tab, NAME_CHARS)}?",
+        listOf("The program in this tab has not turned on safe pasting, so each line may run as soon as it arrives."),
+        "Paste",
     )
 
     /** Null closes the tab at once: nothing in it is busy. */

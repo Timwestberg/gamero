@@ -376,7 +376,8 @@ internal class WorkspaceWindowState(
         val view = try {
             TerminalView(connector, INITIAL_SIZE, fontSize,
                 onShortcut = ::performFromKey,
-                onTitle = { title -> if (tab.session === session) tab.programTitle = programTitle(title) })
+                onTitle = { title -> if (tab.session === session) tab.programTitle = programTitle(title) },
+                confirmPaste = { question -> confirmer.confirm(awtWindow, question) })
         } catch (error: Throwable) {
             rethrowIfFatal(error)
             failed(tab, session, error)

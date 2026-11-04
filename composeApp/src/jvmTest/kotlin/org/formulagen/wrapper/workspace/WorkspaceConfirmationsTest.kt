@@ -47,6 +47,17 @@ class WorkspaceConfirmationsTest {
         assertEquals("Cancel", onAwtNow { SheetConfirmer.pane(Confirmations.openFolder(path)).initialValue })
     }
 
+    @Test fun thePasteQuestionIsPlainTextWithCancelTheDefault() {
+        val question = Confirmations.paste(3, "<html><b>x")
+        assertEquals("Paste 3 lines into <html><b>x?", question.title)
+        assertEquals("Paste 1 line into Shell?", Confirmations.paste(1, "Shell").title)
+        val found = onAwtNow { labels(SheetConfirmer.pane(question)) }
+        for (label in found) assertNull(label.getClientProperty(BasicHTML.propertyKey), "no HTML view for \"${label.text}\"")
+        assertTrue("Paste 3 lines into <html><b>x?" in found.map { it.text })
+        assertEquals(listOf("Paste" to true, "Cancel" to false), question.buttons)
+        assertEquals("Cancel", onAwtNow { SheetConfirmer.pane(question).initialValue })
+    }
+
     @Test fun theControlAStringMessageWithMarkupAnywhereIsDrawnAsHtml() {
         // Why the sheet never passes Swing a String: this is what it would draw.
         val found = onAwtNow { labels(javax.swing.JOptionPane(arrayOf<Any>("Quitting ends:", "• Shell: “rg <html><b>x</b></html>” is running"))) }

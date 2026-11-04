@@ -2,23 +2,28 @@ package org.formulagen.wrapper.workspace
 
 import androidx.compose.ui.input.key.nativeKeyCode
 import com.jediterm.terminal.CursorShape
+import com.jediterm.terminal.ui.TerminalAction
 import java.awt.Component
 import java.awt.DefaultKeyboardFocusManager
 import java.awt.EventQueue
 import java.awt.KeyboardFocusManager
+import java.awt.event.InputEvent
 import java.awt.event.InputEvent.ALT_DOWN_MASK
 import java.awt.event.InputEvent.CTRL_DOWN_MASK
 import java.awt.event.InputEvent.META_DOWN_MASK
 import java.awt.event.InputEvent.SHIFT_DOWN_MASK
 import java.awt.event.InputMethodEvent
 import java.awt.event.KeyEvent
+import java.awt.event.MouseEvent
 import java.text.AttributedString
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.JComponent
+import javax.swing.JMenuItem
 import javax.swing.JPanel
+import javax.swing.JPopupMenu
 import javax.swing.RepaintManager
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -27,14 +32,23 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.formulagen.wrapper.approvals.NativeDialog
 import org.formulagen.wrapper.conversations.eventually
 
-/** A tab's terminal as the player types into it: Option, the input method, window shortcuts, the font. */
+/** A tab's terminal as the player types and pastes into it: Option, the input method, window shortcuts, pasting, the font. */
 class TerminalPaneTest {
     private val session = FakeSession()
     private val shortcuts = CopyOnWriteArrayList<WorkspaceAction>()
     private val connector = SessionTtyConnector("Shell").also { it.connect(session) }
-    private val view: TerminalView = onAwtNow { TerminalView(connector, TermSize(80, 24), onShortcut = { shortcuts.add(it) }) }
+    private val pasteQuestions = CopyOnWriteArrayList<NativeDialog<Boolean>>()
+    @Volatile private var pasteAnswer = false
+    private val clipboard = FakeClipboard()
+    private val view: TerminalView = onAwtNow {
+        TerminalView(connector, TermSize(80, 24), onShortcut = { shortcuts.add(it) }, confirmPaste = { pasteQuestions.add(it); pasteAnswer })
+    }
+    private val panel: HovelTerminalPanel get() = view.panel as HovelTerminalPanel
+
+    init { panel.clipboard = clipboard }
 
     @AfterTest fun cleanUp() {
         connector.exited(0)
@@ -68,6 +82,93 @@ class TerminalPaneTest {
             Thread.sleep(20)
         }
         return session.input.joinToString("")
+    }
+
+    /** ⌘V, as macOS delivers it to the focused terminal. */
+    private fun pasteKey() = press(KeyEvent.VK_V, 'v', META_DOWN_MASK)
+
+    /** [output] from the program, once the emulator has read it all. */
+    private fun program(output: String) {
+        val marker = "read-${System.nanoTime()}"
+        val bytes = (output + marker).toByteArray()
+        connector.output(bytes, bytes.size)
+        eventually("the output was read") { marker in view.screenText() }
+    }
+
+    @Test fun pastedTextLosesEveryControlButTabAndLineBreaks() {
+        assertEquals("[201~rm -rf ~\n", pasteText("\u001b[201~rm -rf ~\n"))
+        assertEquals("abcdef\tg\rh\ni", pasteText("a\u0000b\u0007c\u007fd\u009be\u0085f\tg\rh\ni"))
+        assertEquals("café 😀 日本", pasteText("café 😀 日本"))
+        assertEquals("[201~rm -rf ~\n", CleanPasteHandler { FakeClipboard("\u001b[201~rm -rf ~\n") }.getContents(false))
+        assertNull(CleanPasteHandler { FakeClipboard(null) }.getContents(false))
+        assertEquals(0, pastedLines("one line"))
+        assertEquals(1, pastedLines("ls\n"))
+        assertEquals(2, pastedLines("a\r\nb"))
+        assertEquals(3, pastedLines("a\rb\nc\n"))
+    }
+
+    @Test fun aSingleLinePastesWithoutAskingAndWithoutItsControls() {
+        clipboard.text = "echo \u001b[31mhi\u0007"
+        pasteKey()
+        assertEquals("echo [31mhi", sent("echo [31mhi"))
+        assertTrue(pasteQuestions.isEmpty())
+    }
+
+    @Test fun withBracketedPasteOnAMultiLinePasteIsWrappedWithoutAsking() {
+        program("\u001b[?2004h")
+        assertTrue(panel.bracketedPaste)
+        clipboard.text = "safe\u001b[201~rm -rf ~\nls\r\n"
+        pasteKey()
+        val expected = "\u001b[200~safe[201~rm -rf ~\rls\r\u001b[201~"
+        assertEquals(expected, sent(expected), "the pasted end marker lost its ESC, so the paste cannot end early")
+        assertTrue(pasteQuestions.isEmpty())
+        program("\u001b[?2004l")
+        assertFalse(panel.bracketedPaste)
+    }
+
+    @Test fun withBracketedPasteOffAMultiLinePasteAsksAndCancelSendsNothing() {
+        clipboard.text = "echo one\necho two\n"
+        pasteKey()
+        assertEquals(
+            NativeDialog(
+                "Paste 2 lines into Shell?",
+                listOf("The program in this tab has not turned on safe pasting, so each line may run as soon as it arrives."),
+                listOf("Paste" to true, "Cancel" to false),
+                false,
+            ),
+            pasteQuestions.single(),
+        )
+        Thread.sleep(300)
+        assertTrue(session.input.isEmpty(), "Cancel pastes nothing")
+        pasteAnswer = true
+        pasteKey()
+        assertEquals("echo one\recho two\r", sent("echo two\r"))
+        assertEquals(2, pasteQuestions.size)
+    }
+
+    @Test fun theContextMenusPasteAsksToo() {
+        clipboard.text = "a\nb"
+        val item = onAwtNow { JPopupMenu().also { TerminalAction.fillMenu(it, panel) }.components.filterIsInstance<JMenuItem>().single { it.text == "Paste" } }
+        assertTrue(item.isEnabled)
+        EventQueue.invokeAndWait { item.doClick() }
+        assertEquals(1, pasteQuestions.size, "the menu's Paste is the same as ⌘V")
+        clipboard.text = null
+        assertFalse(onAwtNow { panel.actions.single { it.name == "Paste" }.isEnabled(null) }, "nothing to paste")
+    }
+
+    @Test fun aMiddleClickNeverPastes() {
+        assertFalse(HovelTerminalSettings().pasteOnMiddleMouseClick())
+        clipboard.text = "ls\n"
+        EventQueue.invokeAndWait {
+            val now = System.currentTimeMillis()
+            for (id in listOf(MouseEvent.MOUSE_PRESSED, MouseEvent.MOUSE_RELEASED, MouseEvent.MOUSE_CLICKED)) {
+                val mask = if (id == MouseEvent.MOUSE_PRESSED) InputEvent.BUTTON2_DOWN_MASK else 0
+                panel.dispatchEvent(MouseEvent(panel, id, now, mask, 10, 10, 1, false, MouseEvent.BUTTON2))
+            }
+        }
+        Thread.sleep(300)
+        assertTrue(session.input.isEmpty())
+        assertTrue(pasteQuestions.isEmpty())
     }
 
     @Test fun optionTypesCharactersAsInTerminal() {

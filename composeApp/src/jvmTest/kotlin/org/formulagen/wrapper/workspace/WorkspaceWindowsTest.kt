@@ -29,7 +29,9 @@ class WorkspaceWindowsTest {
     @Volatile private var answer = false
     /** Runs while a question is up, as the sheet's modal loop would deliver more requests. */
     @Volatile private var duringQuestion: () -> Unit = {}
-    private val confirmer = Confirmer { _, question -> asked.add(question); duringQuestion(); answer }
+    /** The window each question was asked on. */
+    private val owners = CopyOnWriteArrayList<java.awt.Window?>()
+    private val confirmer = Confirmer { owner, question -> owners.add(owner); asked.add(question); duringQuestion(); answer }
     /** Every folder is trusted here; the trust question's own tests use their own windows. */
     private val workspaces = WorkspaceWindows(MemoryFolderTrust(all = true), confirmer) { host }
 
@@ -555,6 +557,30 @@ class WorkspaceWindowsTest {
         assertEquals("Shell", tab.label)
         assertNull(programTitle(" \u0007 "))
         assertEquals(60, programTitle("x".repeat(200))!!.length)
+    }
+
+    @Test fun aPasteAsksOnItsWindowNamingTheTabByItsKind() {
+        val window = open()
+        running(window, 1)
+        val tab = onAwtNow { window.tabs.single() }
+        val viewer = host.sessions.single().viewer as SessionTtyConnector
+        "\u001b]2;<html>evil\u0007".toByteArray().let { viewer.output(it, it.size) }
+        eventually("the program's title") { tab.title == "<html>evil" }
+        val frame = java.awt.Frame()
+        try {
+            val panel = onAwtNow { window.awtWindow = frame; window.deck.view(tab.id)!!.panel as HovelTerminalPanel }
+            panel.clipboard = FakeClipboard("make\nmake install\n")
+            EventQueue.invokeAndWait {
+                val now = System.currentTimeMillis()
+                panel.processKeyEvent(java.awt.event.KeyEvent(panel, java.awt.event.KeyEvent.KEY_PRESSED, now, java.awt.event.InputEvent.META_DOWN_MASK, java.awt.event.KeyEvent.VK_V, 'v'))
+            }
+            assertEquals(Confirmations.paste(2, "Shell"), asked.single(), "named by its kind, never the program's title")
+            assertSame(frame, owners.single(), "a sheet on the workspace window")
+            settle()
+            assertTrue(host.sessions.single().input.isEmpty(), "Cancel pastes nothing")
+        } finally {
+            onAwtNow { window.awtWindow = null; frame.dispose() }
+        }
     }
 
     @Test fun aMinimizedWindowIsRestoredBeforeItsQuestion() {
