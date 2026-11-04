@@ -178,6 +178,40 @@ class PtySessionHostTest {
         assertEquals(Busy.Running("a program"), awaitBusy(shell) { it != null })
     }
 
+    @Test fun aForegroundGroupWhoseLeaderIsGoneIsStillBusy() {
+        // A job's leader takes the terminal, leaves a child holding it, and exits.
+        val script = folder.resolve("orphan.py")
+        java.nio.file.Files.writeString(script, """
+            |import os, signal, time
+            |signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+            |r, w = os.pipe()
+            |leader = os.fork()
+            |if leader == 0:
+            |    os.setpgid(0, 0)
+            |    os.tcsetpgrp(0, os.getpgrp())
+            |    holder = os.fork()
+            |    if holder == 0:
+            |        time.sleep(20)
+            |        os._exit(0)
+            |    os.write(w, str(holder).encode())
+            |    os._exit(0)
+            |os.waitpid(leader, 0)
+            |print("holder", os.read(r, 32).decode(), "leader", leader, flush=True)
+            |time.sleep(20)
+            |""".trimMargin())
+        val session = start("exec /usr/bin/python3 \"$script\"")
+        val viewer = CollectingViewer().also { session.attach(it) }
+        val (holder, leader) = viewer.await(Regex("holder (\\d+) leader (\\d+)")).destructured
+        try {
+            assertTrue(ProcessHandle.of(leader.toLong()).filter(ProcessHandle::isAlive).isEmpty, "the leader is gone")
+            assertTrue(session.processes().none { it.pid() == holder.toLong() }, "its child is outside the tab's tree")
+            assertEquals(Busy.Running("a program"), session.busy(), "the terminal is still held, so closing asks")
+        } finally {
+            // The test started it, so it ends it.
+            ProcessHandle.of(holder.toLong()).ifPresent { it.destroyForcibly() }
+        }
+    }
+
     @Test fun promptHelpersDoNotMakeAShellTabBusy() {
         // Like powerlevel10k's gitstatusd (a disowned daemon) and zsh-async's workers (a zpty, its own terminal).
         val (shell, _) = interactiveShell("sleep 30 &!\nzmodload zsh/zpty && zpty hovel_worker sleep 30")

@@ -153,7 +153,10 @@ internal class PtySession(
         }
     }
 
-    /** A Shell tab's foreground job, else a job it suspended; any live child when the terminal cannot be asked. */
+    /**
+     * A Shell tab's foreground job, else a job it suspended; any live child when the terminal cannot be asked.
+     * A foreground group not the shell's is busy even with its leader gone and no child left (a daemon holding the terminal).
+     */
     private fun foregroundJob(): Busy? {
         val group = foregroundGroup() ?: return anyChild()
         if (group == process.pid()) {
@@ -162,8 +165,8 @@ internal class PtySession(
             return if (running in SHELL_NAMES || running == File(executable).name) suspendedJob() else Busy.Running(describe(root))
         }
         // Name the job by its leader.
-        val program = ProcessHandle.of(group).filter(ProcessHandle::isAlive).orElse(null) ?: firstChild { true } ?: return null
-        return Busy.Running(describe(program))
+        val program = ProcessHandle.of(group).filter(ProcessHandle::isAlive).orElse(null) ?: firstChild { true }
+        return Busy.Running(program?.let(::describe) ?: UNNAMED_PROGRAM)
     }
 
     /** The foreground process group of the session's terminal, or null when it cannot be read. */

@@ -182,6 +182,9 @@ internal fun isStopped(process: ProcessHandle): Boolean? {
     }
 }
 
+/** What a confirmation calls a program it cannot name. */
+internal const val UNNAMED_PROGRAM = "a program"
+
 /** Interpreters whose first argument is the script that names the program. */
 private val INTERPRETERS = Regex("node|bun|deno|ruby|perl|php|python[0-9.]*|sh|bash|zsh|dash|fish")
 
@@ -190,7 +193,7 @@ private val INTERPRETERS = Regex("node|bun|deno|ruby|perl|php|python[0-9.]*|sh|b
  * script's interpreter left out (`node /opt/homebrew/bin/npm run dev` is `npm run dev`).
  */
 internal fun commandLabel(executable: String?, arguments: List<String>): String {
-    val name = executable?.let { File(it).name }?.takeIf { it.isNotEmpty() } ?: return "a program"
+    val name = executable?.let { File(it).name }?.takeIf { it.isNotEmpty() } ?: return UNNAMED_PROGRAM
     val script = arguments.firstOrNull()?.takeIf { INTERPRETERS.matches(name) && it.startsWith("/") }
     val words = if (script != null) listOf(File(script).name) + arguments.drop(1) else listOf(name) + arguments
     return clip(words.joinToString(" "), 60)
