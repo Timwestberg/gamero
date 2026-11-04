@@ -31,6 +31,24 @@ class PtySessionHostTest {
         return host.start(SessionSpec(project, "Shell", folder, Launch.Shell, TermSize(80, 24)))
     }
 
+    @Test fun aCloseDuringTheSpawnEndsTheProcessItStarted() {
+        assumeTrue("Pseudo-terminal tests run on macOS", System.getProperty("os.name").contains("Mac"))
+        val marker = "hovel-race-${System.nanoTime()}"
+        lateinit var racing: PtySessionHost
+        // The app's exit runs between the start's checks.
+        racing = PtySessionHost { _, _ ->
+            racing.close()
+            ShellCommand(listOf("/bin/sh", "-c", "sleep 30; :", marker), environment)
+        }
+        kotlin.test.assertFailsWith<IllegalStateException> {
+            racing.start(SessionSpec("p1", "Shell", folder, Launch.Shell, TermSize(80, 24)))
+        }
+        fun marked() = ProcessHandle.current().descendants().use { all ->
+            all.filter { it.isAlive && it.info().arguments().map { args -> marker in args }.orElse(false) }.count()
+        }
+        eventually("the process it started has ended") { marked() == 0L }
+    }
+
     @Test fun outputFromBeforeTheFirstViewerIsNotLost() {
         val session = start("printf 'héllo wörld\\n'; exit 3")
         Thread.sleep(300)

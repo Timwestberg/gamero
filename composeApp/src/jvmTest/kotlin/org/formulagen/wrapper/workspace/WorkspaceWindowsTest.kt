@@ -43,11 +43,13 @@ class WorkspaceWindowsTest {
     private class FakeHost : SessionHost {
         val starting = CountDownLatch(1)
         @Volatile var release = CountDownLatch(0)
+        /** Sessions started from now on cannot be attached to. */
+        @Volatile var attachFails = false
         val sessions = CopyOnWriteArrayList<FakeSession>()
         override fun start(spec: SessionSpec): Session {
             starting.countDown()
             release.await()
-            return FakeSession().also(sessions::add)
+            return FakeSession().also { it.attachFails = attachFails }.also(sessions::add)
         }
         override fun closeProject(projectId: String) {}
         override fun close() {}
@@ -70,6 +72,58 @@ class WorkspaceWindowsTest {
         eventually("the session arrives") { host.sessions.size == 1 }
         assertTrue(host.sessions.single().closed.await(5, SECONDS), "the session that arrived after the close is ended")
         assertNull(onAwtNow { window.deck.view(window.tabs.single().id) }, "and never shown")
+    }
+
+    @Test fun aTabWhoseTerminalCannotConnectEndsTheProcessItStarted() {
+        host.attachFails = true
+        val window = open()
+        eventually("the tab failed") { window.tabs.single().state is TabState.Failed }
+        assertTrue(host.sessions.single().closed.await(5, SECONDS), "the process it started is ended")
+        assertNull(onAwtNow { window.tabs.single().session }, "and the tab no longer holds it")
+    }
+
+    @Test fun anEndedSessionsExitDoesNotReachTheTabAfterARestart() {
+        val window = open()
+        running(window, 1)
+        val old = host.sessions.single()
+        onAwtNow { window.restart(window.tabs.single()) }
+        eventually("the new session runs") { host.sessions.size == 2 && window.tabs.single().state == TabState.Running }
+        old.viewer!!.exited(0)
+        Thread.sleep(300)
+        assertEquals(TabState.Running, onAwtNow { window.tabs.single().state }, "the old session's exit is not the new one's")
+    }
+
+    @Test fun aTabStartAfterTheAppsExitIsRefused() {
+        val window = open()
+        running(window, 1)
+        workspaces.close()
+        onAwtNow { window.start(window.tabs.single()) }
+        eventually("the start is refused") { window.tabs.single().state is TabState.Failed }
+        assertEquals(1, host.sessions.size, "no process started after the exit")
+    }
+
+    @Test fun theHostIsBuiltOnceOnFirstUseAndStartsNothingOnceClosed() {
+        val builds = java.util.concurrent.atomic.AtomicInteger()
+        val closes = java.util.concurrent.atomic.AtomicInteger()
+        val unused = WorkspaceHost { builds.incrementAndGet(); host }
+        unused.close()
+        assertEquals(0, builds.get(), "closing builds nothing")
+        val used = WorkspaceHost { builds.incrementAndGet(); object : SessionHost by host { override fun close() { closes.incrementAndGet() } } }
+        assertNull(used.built())
+        val first = used.get()
+        assertTrue(first === used.get() && first === used.built(), "built once")
+        used.close()
+        assertEquals(1, closes.get(), "closing ends the host it built")
+        assertNull(used.built())
+        kotlin.test.assertFailsWith<IllegalStateException> { used.get() }
+        assertEquals(1, builds.get())
+    }
+
+    @Test fun workTheStoppedWorkersRefuseStillRuns() {
+        val stopped = java.util.concurrent.Executors.newSingleThreadExecutor().apply { shutdown() }
+        val ran = CountDownLatch(1)
+        stopped.executeOrSpawn { ran.countDown() }
+        assertTrue(ran.await(5, SECONDS))
     }
 
     @Test fun closingTheWindowEndsTheSessionsItsTabsHold() {
@@ -354,7 +408,7 @@ class WorkspaceWindowsTest {
 
     @Test fun aMenuItemRepeatingAKeyPressIsItsEchoAndIgnored() {
         var now = 0L
-        val window = onAwtNow { WorkspaceWindowState("p", folder, lazy { host }, java.util.concurrent.Executors.newSingleThreadExecutor(), clock = { now }) }
+        val window = onAwtNow { WorkspaceWindowState("p", folder, WorkspaceHost { host }, java.util.concurrent.Executors.newSingleThreadExecutor(), clock = { now }) }
         onAwtNow {
             window.performFromKey(WorkspaceAction.ZoomIn)
             window.performFromMenu(WorkspaceAction.ZoomIn)

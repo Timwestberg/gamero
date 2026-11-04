@@ -70,6 +70,8 @@ internal class FakeSession(override val title: String = "Shell") : Session {
     @Volatile var viewer: SessionViewer? = null
     /** An attachment was closed. */
     @Volatile var detached = false
+    /** [attach] throws, as a terminal that cannot connect would. */
+    @Volatile var attachFails = false
 
     override fun busy(): Busy? {
         busyCalls.incrementAndGet()
@@ -77,6 +79,7 @@ internal class FakeSession(override val title: String = "Shell") : Session {
     }
 
     override fun attach(viewer: SessionViewer): Attachment {
+        if (attachFails) throw IllegalStateException("attach boom")
         this.viewer = viewer
         return object : Attachment {
             override fun input(bytes: ByteArray) { input.add(bytes.decodeToString()) }

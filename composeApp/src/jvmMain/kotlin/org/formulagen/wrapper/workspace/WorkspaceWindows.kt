@@ -30,13 +30,45 @@ private const val EDITOR_FALLBACK_ROUNDS = 5
 /** How long after a key press a menu item for the same action is taken as its echo (see [workspaceShortcut]). */
 private val MENU_ECHO_NANOS = TimeUnit.MILLISECONDS.toNanos(500)
 
+/** Threads for work the stopped workers refuse: ending a session at app exit. */
+private val LATE_WORK = loggingDaemonThreads("hovel-workspace-late")
+
+/** Run [task] on a worker, or on a thread of its own once the workers have stopped, so it always runs. */
+internal fun ExecutorService.executeOrSpawn(task: () -> Unit) {
+    try { execute(task) } catch (_: RejectedExecutionException) { LATE_WORK.newThread(task).start() }
+}
+
+/**
+ * The windows' [SessionHost], built by [build] on first use (it reads the directory service and
+ * writes files), that starts nothing once closed: a start racing the app's exit fails, not leaks.
+ */
+internal class WorkspaceHost(private val build: () -> SessionHost) : AutoCloseable {
+    private var host: SessionHost? = null
+    private var closed = false
+
+    /** The host, built on first use. Throws once closed. Workers only. */
+    @Synchronized fun get(): SessionHost {
+        check(!closed) { "The workspace host is closed" }
+        return host ?: build().also { host = it }
+    }
+
+    /** The host if it was built and is open, without building it. */
+    @Synchronized fun built(): SessionHost? = host.takeUnless { closed }
+
+    /** Build nothing more, and end every session of the host built, waiting for them. */
+    override fun close() {
+        val built = synchronized(this) { closed = true; host }
+        built?.close()
+    }
+}
+
 /**
  * The open workspace windows, one per folder, rendered by `main.kt` (project-workspace.ARCH.md,
  * "Window and tabs"). [host] is built on a worker when the first tab starts, so a launch that opens
  * no workspace pays nothing. Closing and quitting ask through [confirmer] when work would be lost.
  */
 internal class WorkspaceWindows(private val confirmer: Confirmer = SheetConfirmer, host: () -> SessionHost) : AutoCloseable {
-    private val lazyHost = lazy(host)
+    private val sessionHost = WorkspaceHost(host)
     private val workers: ExecutorService = Executors.newCachedThreadPool(loggingDaemonThreads("hovel-workspace-window"))
 
     /** Windows in opening order. AWT thread. */
@@ -56,7 +88,7 @@ internal class WorkspaceWindows(private val confirmer: Confirmer = SheetConfirme
         val real = folder.toRealPath()
         require(Files.isDirectory(real)) { "Not a folder: $folder" }
         windows.firstOrNull { it.folder == real }?.let { it.bringForward(); return it }
-        return WorkspaceWindowState("dev-${UUID.randomUUID()}", real, lazyHost, workers, confirmer).also { window ->
+        return WorkspaceWindowState("dev-${UUID.randomUUID()}", real, sessionHost, workers, confirmer).also { window ->
             windows.add(window)
             window.addTab(Launch.Shell)
         }
@@ -89,8 +121,8 @@ internal class WorkspaceWindows(private val confirmer: Confirmer = SheetConfirme
     fun close(window: WorkspaceWindowState) {
         if (!windows.remove(window)) return
         val held = window.close()
-        workers.execute {
-            lazyHost.value.closeProject(window.projectId)
+        workers.executeOrSpawn {
+            sessionHost.built()?.closeProject(window.projectId)
             held.forEach { it.close() }
         }
     }
@@ -137,10 +169,13 @@ internal class WorkspaceWindows(private val confirmer: Confirmer = SheetConfirme
         cancels.forEach { it() }
     }
 
-    /** At app exit: end every session, waiting for them. Off the AWT thread. */
+    /**
+     * At app exit: end every session, waiting for them, then stop the workers. In that order, so a
+     * start still running is refused or ended by the host. Off the AWT thread.
+     */
     override fun close() {
+        sessionHost.close()
         workers.shutdown()
-        if (lazyHost.isInitialized()) lazyHost.value.close()
     }
 }
 
@@ -184,7 +219,7 @@ internal class WorkspaceWindowState(
     val projectId: String,
     val folder: Path,
     /** Read only on a worker: building it reads the directory service and writes files. */
-    private val host: Lazy<SessionHost>,
+    private val host: WorkspaceHost,
     private val workers: ExecutorService,
     private val confirmer: Confirmer = SheetConfirmer,
     private val clock: () -> Long = System::nanoTime,
@@ -283,36 +318,64 @@ internal class WorkspaceWindowState(
 
     /**
      * Start [tab]'s process on a worker, then its terminal on the AWT thread. Any failure, including
-     * a terminal library that will not load ([LinkageError]), leaves the tab [TabState.Failed] with Retry.
+     * a terminal library that will not load ([LinkageError]), ends the process it started and leaves
+     * the tab [TabState.Failed] with Retry.
      */
     fun start(tab: WorkspaceTab) {
         if (closed) return
         tab.state = TabState.Starting
         tab.programTitle = null
-        workers.execute {
-            try {
-                val session = host.value.start(SessionSpec(projectId, tab.label, folder, tab.launch, INITIAL_SIZE))
-                tab.session = session
-                // Attach first: the connector holds output.
-                val connector = SessionTtyConnector(tab.label) { code -> onAwt { tab.state = TabState.Exited(code) } }
-                tab.connector = connector
-                connector.connect(session)
-                onAwt {
-                    // Closed meanwhile: end it unshown.
-                    if (closed || tab !in tabs) { workers.execute { session.close() }; return@onAwt }
-                    val view = TerminalView(connector, INITIAL_SIZE, fontSize,
-                        onShortcut = ::performFromKey,
-                        onTitle = { title -> if (tab.session === session) tab.programTitle = programTitle(title) })
-                    deck.add(tab.id, view)
-                    if (tab.state == TabState.Starting) tab.state = TabState.Running
-                    if (selected == tab.id) deck.show(tab.id)
-                }
-            } catch (error: Throwable) {
-                rethrowIfFatal(error)
-                log(LogLevel.Error, TAG, "Could not start ${tab.label}", error)
-                onAwt { tab.state = TabState.Failed(error.message ?: error.javaClass.simpleName) }
-            }
+        try {
+            workers.execute { startNow(tab) }
+        } catch (error: RejectedExecutionException) {
+            failed(tab, null, error)
         }
+    }
+
+    /** [start]'s work on a worker: the process, then its connector, then the terminal on the AWT thread. */
+    private fun startNow(tab: WorkspaceTab) {
+        var started: Session? = null
+        try {
+            val session = host.get().start(SessionSpec(projectId, tab.label, folder, tab.launch, INITIAL_SIZE))
+            started = session
+            tab.session = session
+            // Attach first: the connector holds output.
+            val connector = SessionTtyConnector(tab.label) { code -> onAwt { if (tab.session === session) tab.state = TabState.Exited(code) } }
+            tab.connector = connector
+            connector.connect(session)
+            onAwt { show(tab, session, connector) }
+        } catch (error: Throwable) {
+            rethrowIfFatal(error)
+            failed(tab, started, error)
+        }
+    }
+
+    /** [tab]'s terminal, once its process runs; a window closed meanwhile ends it unshown. AWT thread. */
+    private fun show(tab: WorkspaceTab, session: Session, connector: SessionTtyConnector) {
+        if (closed || tab !in tabs) { workers.executeOrSpawn { session.close() }; return }
+        val view = try {
+            TerminalView(connector, INITIAL_SIZE, fontSize,
+                onShortcut = ::performFromKey,
+                onTitle = { title -> if (tab.session === session) tab.programTitle = programTitle(title) })
+        } catch (error: Throwable) {
+            rethrowIfFatal(error)
+            failed(tab, session, error)
+            return
+        }
+        deck.add(tab.id, view)
+        if (tab.state == TabState.Starting) tab.state = TabState.Running
+        if (selected == tab.id) deck.show(tab.id)
+    }
+
+    /** [tab] could not start: end the [session] it started, if any, and offer Retry. Any thread. */
+    private fun failed(tab: WorkspaceTab, session: Session?, error: Throwable) {
+        log(LogLevel.Error, TAG, "Could not start ${tab.label}", error)
+        if (session != null && tab.session === session) {
+            tab.session = null
+            tab.connector = null
+        }
+        session?.let { workers.executeOrSpawn { it.close() } }
+        onAwt { tab.state = TabState.Failed(error.message ?: error.javaClass.simpleName) }
     }
 
     /**
@@ -328,7 +391,7 @@ internal class WorkspaceWindowState(
     /** Start the tab's process again after it exited or failed. */
     fun restart(tab: WorkspaceTab) {
         deck.remove(tab.id)
-        tab.session?.let { session -> workers.execute { session.close() } }
+        tab.session?.let { session -> workers.executeOrSpawn { session.close() } }
         tab.session = null
         tab.connector = null
         start(tab)
@@ -357,7 +420,7 @@ internal class WorkspaceWindowState(
         val index = tabs.indexOf(tab).takeIf { it >= 0 } ?: return
         tabs.removeAt(index)
         deck.remove(tab.id)
-        tab.session?.let { session -> workers.execute { session.close() } }
+        tab.session?.let { session -> workers.executeOrSpawn { session.close() } }
         if (selected == tab.id) selected = tabs.getOrNull(index.coerceAtMost(tabs.size - 1))?.id
     }
 

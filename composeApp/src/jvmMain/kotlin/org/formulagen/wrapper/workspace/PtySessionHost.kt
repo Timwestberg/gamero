@@ -73,6 +73,11 @@ class PtySessionHost(
         }
         sessions.computeIfAbsent(spec.projectId) { ConcurrentHashMap.newKeySet() }.add(session)
         session.begin(threads)
+        // A close during the spawn missed it.
+        if (closed.get()) {
+            session.close()
+            throw IllegalStateException("The session host is closed")
+        }
         return session
     }
 
