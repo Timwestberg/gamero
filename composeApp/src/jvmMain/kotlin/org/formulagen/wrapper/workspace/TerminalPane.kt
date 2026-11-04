@@ -116,7 +116,7 @@ internal fun steadyCursor(shape: CursorShape): CursorShape = when (shape) {
     CursorShape.STEADY_BLOCK, CursorShape.STEADY_UNDERLINE, CursorShape.STEADY_VERTICAL_BAR -> shape
 }
 
-/** [text] as a paste sends it: without ESC or any other C0 control but tab, newline and return, DEL or C1 control. */
+/** [text] as a paste sends it: ESC, every other C0 control but tab, newline and return, DEL and the C1 controls removed. */
 internal fun pasteText(text: String): String = text.filter { !Character.isISOControl(it) || it == '\t' || it == '\n' || it == '\r' }
 
 /** How many lines pasting [text] would enter, or 0 when it has no line break (`\n`, `\r` or both). */
@@ -197,7 +197,7 @@ internal class HovelTerminalPanel(private val settings: SettingsProvider, buffer
     /** A program's cursor shape (DECSCUSR), drawn steady: JediTerm reads `CSI 0 q` as a blinking block. */
     override fun setCursorShape(cursorShape: CursorShape?) = super.setCursorShape(cursorShape?.let(::steadyCursor))
 
-    /** Whether a paste is wrapped in bracketed-paste markers, as JediTerm keeps it, followed here for [paste]. */
+    /** The program's bracketed-paste mode, which JediTerm keeps, followed here for [paste]. */
     override fun setBracketedPasteMode(enabled: Boolean) {
         bracketedPaste = enabled
         super.setBracketedPasteMode(enabled)

@@ -320,13 +320,14 @@ build installs no handler and keeps the JDK's quit.
 
 #### Confirmation sheets
 
-`Confirmations` words every question from `Busy` data, as a `NativeDialog<Boolean>`;
-`SheetConfirmer` shows it. The sheet is owned by the workspace window, never by
-`NativeDialogs`, which always raises the main window. Cancel is the default button, so a
-stray Return keeps the work. macOS makes a sheet only of a document-modal dialog whose root
-pane says so before it is first shown, so the dialog is built by hand rather than by
+`Confirmations` words every question from plain data (`Busy`, a folder, a paste's line
+count), as a `NativeDialog<Boolean>`, and `SheetConfirmer` shows it through the injected
+`Confirmer`, so the probe and tests can answer. The sheet is owned by the workspace window,
+never by `NativeDialogs`, which always raises the main window. Cancel is the default button,
+so a stray Return keeps the work. macOS makes a sheet only of a document-modal dialog whose
+root pane says so before it is first shown, so the dialog is built by hand rather than by
 `JOptionPane.createDialog`, which makes an application-modal one; with no window to attach
-to, it is application-modal.
+to, such as the folder question, it is application-modal.
 
 Every line is its own `JLabel`, created empty, with `html.disable` set before its text. The
 sheet never hands Swing a `String` message: JBR 21's `BasicOptionPaneUI` draws any string
