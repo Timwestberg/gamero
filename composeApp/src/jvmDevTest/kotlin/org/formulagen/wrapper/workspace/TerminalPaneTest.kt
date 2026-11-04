@@ -50,7 +50,24 @@ class TerminalPaneTest {
     }
     private val panel: HovelTerminalPanel get() = view.panel as HovelTerminalPanel
 
-    init { panel.clipboard = clipboard }
+    init {
+        panel.clipboard = clipboard
+        awaitEmulator()
+    }
+
+    /**
+     * Wait until JediTerm's emulator runs, then clear the screen: until then its pre-connect handler
+     * holds the keyboard and drops every key, so a test's first key could be lost.
+     */
+    private fun awaitEmulator() {
+        val marker = "started-${System.nanoTime()}"
+        val bytes = marker.toByteArray()
+        connector.output(bytes, bytes.size)
+        eventually("the emulator runs") { marker in view.screenText() }
+        val clear = "\u001b[H\u001b[2J".toByteArray()
+        connector.output(clear, clear.size)
+        eventually("the screen is clear") { marker !in view.screenText() }
+    }
 
     @AfterTest fun cleanUp() {
         connector.exited(0)
