@@ -71,6 +71,23 @@ Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
   stays. A Release build from Xcode loads the web app directly; an archive from
   `tools/build-release.sh ios` shows the start screen.
 
+### 3c. Hovel draws edge to edge
+
+- **Preconditions:** Hovel is served over HTTPS and its certificate is trusted
+  in the simulator. An iPhone simulator with a Dynamic Island (iPhone 17 Pro).
+- **Steps:**
+  1. Launch the Hovel product, tap "Open the door" and sign in. Open Companions,
+     then a conversation, and tap its composer.
+  2. Launch again with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero`.
+- **Expected:** In step 1 the page fills the screen with no blank band above or
+  below it. Its heading sits just under the Dynamic Island, the toolbar and
+  composer just above the home indicator, and with the keyboard up the composer
+  sits just above it. A page reads `env(safe-area-inset-top)` as 62px and
+  `env(safe-area-inset-bottom)` as 34px. In step 2 the web view keeps the inset,
+  so both read 0.
+- **Status:** Verified on an iOS 26.2 simulator with a probe page: 62px and
+  34px for Hovel, 0 for gamero.
+
 ### 4. HTTPS URL from the xcconfig
 
 - **Preconditions:** A reachable HTTPS deployment of Hovel.
