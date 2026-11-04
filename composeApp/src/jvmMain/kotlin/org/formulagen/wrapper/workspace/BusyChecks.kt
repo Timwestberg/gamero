@@ -55,8 +55,8 @@ internal const val NEOVIM_STATE_EXPRESSION =
 
 /**
  * Ask the Neovim listening on [socket] what it holds, with [nvim] (the running editor's own
- * executable) as the client: fixed arguments (`--clean`, so no config or plugins run), and an
- * empty environment. Null when nothing is modified; [Busy.NoAnswer] for no answer within [timeout].
+ * executable) as the client: fixed arguments (`--clean`, no config or plugins), and only `HOME`
+ * and [SYSTEM_PATH] set. Null when nothing is modified; [Busy.NoAnswer] for no answer within [timeout].
  */
 internal fun askNeovim(nvim: String, socket: Path, editor: String, timeout: Duration = NEOVIM_ANSWER_TIMEOUT): Busy? {
     if (!Files.exists(socket)) return Busy.NoAnswer(editor)
