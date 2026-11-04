@@ -16,7 +16,8 @@ import kotlin.test.assertTrue
 
 /**
  * The changes view's filter between git and delta: every control character in a file's diff made
- * visible, so hidden text, cursor moves and overwrites cannot hide a line, and valid UTF-8 untouched.
+ * visible, so hidden text, cursor moves and overwrites cannot hide a line, and so are the characters
+ * that hide or reorder text (Trojan Source). Other valid UTF-8 is untouched.
  */
 class ControlFilterTest {
     private val root: Path = createTempDirectory("hovel-controls")
@@ -67,6 +68,29 @@ class ControlFilterTest {
 
     @Test fun c1ControlsIncludingTheOneCharacterCsiBecomeVisible() {
         assertEquals("+<U+009B>31m red <U+0085> <U+0080><U+009F>\n", filtered("+\u009b31m red \u0085 \u0080\u009f\n"))
+    }
+
+    @Test fun charactersThatHideOrReorderTextBecomeVisible() {
+        val marked = listOf(0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069, 0x200B, 0x2060, 0xFEFF)
+        for (code in marked) {
+            val char = String(Character.toChars(code))
+            assertEquals("+a<U+%04X>b\n".format(code), filtered("+a${char}b\n"), "U+%04X".format(code))
+        }
+        // Trojan Source's early return: the code reads as a comment.
+        val trojan = "+    /* \u202e } \u2066if (isAdmin)\u2069 \u2066 begin admins only */\n"
+        assertEquals("+    /* <U+202E> } <U+2066>if (isAdmin)<U+2069> <U+2066> begin admins only */\n", filtered(trojan))
+    }
+
+    @Test fun rightToLeftAndJoinedTextComesThroughUnchanged() {
+        val text = listOf(
+            "+שלום עולם",                         // Hebrew
+            "+مرحبا بالعالم",                     // Arabic
+            "+می\u200cخواهم",                    // Persian, with a ZWNJ
+            "+क्\u200dष",                         // Devanagari, with a ZWJ
+            "+👩\u200d💻 👨\u200d👩\u200d👧",       // ZWJ emoji
+            "+a\u200eb\u200fc",                  // LRM and RLM
+        ).joinToString("\n", postfix = "\n")
+        assertContentEquals(text.toByteArray(), filtered(text.toByteArray()))
     }
 
     @Test fun bytesThatAreNotUtf8AreShownNeverPassedRaw() {

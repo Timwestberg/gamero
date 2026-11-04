@@ -295,9 +295,14 @@ shell startup files), run as `/usr/bin/perl -T -C0 <file>` (`ShellLaunch.control
 - Tab and newline pass. ESC shows as `^[`, CR as `^M`, BS as `^H`, and other C0 controls and
   DEL in caret form (`^@`, `^?`).
 - C1 controls show as `<U+0080>` to `<U+009F>`.
+- The characters that hide or reorder text, as GitHub warns about hidden or bidirectional
+  text (Trojan Source), show by code point: the bidi embeddings and overrides U+202A to
+  U+202E, the isolates U+2066 to U+2069, and the zero widths U+200B, U+2060 and U+FEFF, as
+  `<U+202E>` and so on. ZWNJ (U+200C), ZWJ (U+200D), LRM and RLM (U+200E, U+200F) pass:
+  emoji sequences and real Persian, Arabic and Indic text use them.
 - A byte that is not part of valid UTF-8 (a stray byte, a cut sequence, an overlong form, a
   surrogate, a code point past U+10FFFF) shows as `<XX>`, as `less` shows it.
-- Valid UTF-8 passes unchanged, emoji and accents included.
+- Other valid UTF-8 passes unchanged: emoji, accents, Hebrew and Arabic included.
 
 Perl works on bytes, so it needs no decoding and invalid UTF-8 cannot confuse it. It streams
 a line at a time, and macOS ships it (5.34 on macOS 26), so nothing new is downloaded or
