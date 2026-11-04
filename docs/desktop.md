@@ -256,6 +256,26 @@ AGP 9 rejects `com.android.application` inside a Kotlin Multiplatform module.
 to opt out temporarily. Remove both once the Android app moves to its own module
 that depends on `composeApp`.
 
+### Terminal library checksums
+
+`gradle/verification-metadata.xml` pins the SHA-256 of every pty4j, JNA and
+JediTerm artifact the build resolves. pty4j and JNA ship natives that development
+packages re-sign with our identity, and JediTerm runs in the app. That includes
+JNA 5.6.0, which Gradle's own tools resolve. Every other group is trusted, as are
+IDE source and javadoc downloads. If an artifact from those three groups is
+changed or not listed, the build fails with "Dependency verification failed" and
+names the artifact.
+
+After bumping one of them, check the new release, then regenerate the entries:
+
+```bash
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew --write-verification-metadata sha256 -Pgamero.mobileTargets=true :composeApp:jvmTest :composeApp:prepareAppResources :composeApp:testDebugUnitTest --continue
+```
+
+Review the diff: only the bumped components should change. Compare each new jar's
+checksum with the `.sha256` or `.sha1` file next to it in its repository, and
+delete entries for versions nothing resolves any more.
+
 Sources: [Kotlin compatibility](https://kotlinlang.org/docs/multiplatform/multiplatform-compatibility-guide.html),
 [Compose compatibility](https://kotlinlang.org/docs/multiplatform/compose-compatibility-and-versioning.html),
 [WebView desktop setup](https://github.com/KevinnZou/compose-webview-multiplatform/blob/main/README.desktop.md).
