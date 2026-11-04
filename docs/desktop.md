@@ -219,6 +219,7 @@ the action a key press performed within 500 ms is taken as that echo and ignored
   (`steadyCursor`): JediTerm reads `CSI 0 q` as a blinking block, and a period of 0 would
   repaint a focused idle tab on every timer tick.
 - **Safe pasting.** See [Pasting](#pasting).
+- **Web links only.** See [Links](#links).
 
 #### Pasting
 
@@ -245,6 +246,25 @@ typed ("pastejacking"), and without bracketed paste any multi-line paste runs li
   settings keep false. The workspace window has no Edit menu, and the main window's Edit →
   Paste acts on the page, never on a tab. Committed input-method text (a dead key's é, dictation) is
   typing, not a paste, and is not asked about.
+
+#### Links
+
+JediTerm's `TerminalPanel.openSelectionAsURL()`, the context menu's **Open as URL**, passes
+the selected text to `Desktop.browse` whatever its scheme: `file:` (which can open an app), an
+app's own scheme such as `x-apple.systempreferences:`, `smb:`. `HovelTerminalPanel`
+overrides it to open only an `http` or `https` URI with a host that parses (`webLink`);
+anything else does nothing. In JediTerm 3.76 that is the only way a click in a terminal opens
+anything:
+
+- **OSC 8 hyperlinks.** `JediTerminal.setLinkUriStarted` makes a link only through its URL
+  filter, and nothing calls `setUrlHyperlinkFilter`, so OSC 8 text draws as plain text.
+- **URLs in output.** JediTerm finds links only through filters added with
+  `JediTermWidget.addHyperlinkFilter`. It installs none, and neither does Hovel. A click
+  follows a link only over one (the hand cursor), so there is none to follow.
+- `Desktop` appears in JediTerm only in `openSelectionAsURL`.
+
+A test pins that OSC 8 and a bare URL make no `HyperlinkStyle`, so a JediTerm update that adds
+link detection is noticed. Any link support added later goes through `webLink`.
 
 #### The changes view
 

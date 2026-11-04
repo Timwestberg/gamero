@@ -10,6 +10,7 @@ import com.jediterm.terminal.TerminalColor
 import com.jediterm.terminal.TerminalCopyPasteHandler
 import com.jediterm.terminal.TerminalExecutorServiceManager
 import com.jediterm.terminal.TextStyle
+import com.jediterm.terminal.model.SelectionUtil
 import com.jediterm.terminal.model.StyleState
 import com.jediterm.terminal.model.TerminalTextBuffer
 import com.jediterm.terminal.ui.JediTermWidget
@@ -19,6 +20,7 @@ import com.jediterm.terminal.ui.settings.DefaultSettingsProvider
 import com.jediterm.terminal.ui.settings.SettingsProvider
 import java.awt.CardLayout
 import java.awt.Color
+import java.awt.Desktop
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
@@ -32,6 +34,8 @@ import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import java.awt.event.MouseWheelEvent
 import java.lang.reflect.Field
+import java.net.URI
+import java.net.URISyntaxException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -122,6 +126,13 @@ internal fun pastedLines(text: String): Int {
     return if (lines.last().isEmpty()) lines.size - 1 else lines.size
 }
 
+/** [text] as a web page to open: an http or https URI with a host that parses, else null (docs/desktop.md, "Links"). */
+internal fun webLink(text: String): URI? {
+    val uri = try { URI(text.trim()) } catch (_: URISyntaxException) { return null }
+    val web = uri.scheme.equals("http", ignoreCase = true) || uri.scheme.equals("https", ignoreCase = true)
+    return uri.takeIf { web && !it.host.isNullOrEmpty() }
+}
+
 /** A clipboard whose pasted text is cleaned by [pasteText]; copying is [clipboard]'s own. */
 internal class CleanPasteHandler(private val clipboard: () -> TerminalCopyPasteHandler) : TerminalCopyPasteHandler {
     override fun setContents(text: String, useSystemSelectionClipboardIfAvailable: Boolean) =
@@ -133,7 +144,7 @@ internal class CleanPasteHandler(private val clipboard: () -> TerminalCopyPasteH
 
 /**
  * JediTerm's panel, painting off screen, guarding its AWT-thread entry points and repaint timer,
- * sending window shortcuts to [onShortcut], and pasting safely (docs/desktop.md, "The terminal").
+ * sending window shortcuts to [onShortcut], pasting safely, and opening only web links (docs/desktop.md, "The terminal").
  */
 internal class HovelTerminalPanel(private val settings: SettingsProvider, buffer: TerminalTextBuffer, style: StyleState) :
     TerminalPanel(settings, buffer, style) {
@@ -151,6 +162,9 @@ internal class HovelTerminalPanel(private val settings: SettingsProvider, buffer
 
     /** Where pastes read from, raw: the system clipboard. Tests set their own. */
     @Volatile var clipboard: TerminalCopyPasteHandler = DefaultTerminalCopyPasteHandler()
+
+    /** Opens a web page. Tests set their own. */
+    @Volatile var browse: (URI) -> Unit = { Desktop.getDesktop().browse(it) }
 
     /** The program has turned on bracketed paste (`CSI ? 2004 h`). Set on the emulator thread. */
     @Volatile var bracketedPaste = false
@@ -199,6 +213,18 @@ internal class HovelTerminalPanel(private val settings: SettingsProvider, buffer
             if (action.name != pasteName) action
             else TerminalAction(action.presentation) { paste(); true }.withMnemonicKey(KeyEvent.VK_P).withEnabledSupplier { clipboard.getContents(false) != null }
         }
+    }
+
+    /** The context menu's Open as URL: the selection only as a web page ([webLink]), else nothing. */
+    override fun openSelectionAsURL(): Boolean {
+        guard("open link") { selectedText()?.let(::webLink)?.let(browse) }
+        return false
+    }
+
+    /** The selected text, as JediTerm reads it for its own actions. */
+    private fun selectedText(): String? {
+        val (start, end) = selection?.pointsForRun(terminalTextBuffer.width) ?: return null
+        return SelectionUtil.getSelectionText(start, end, terminalTextBuffer)
     }
 
     /** The clipboard's text through [pasteText], asked about first when it could run line by line (docs/desktop.md, "Pasting"). */

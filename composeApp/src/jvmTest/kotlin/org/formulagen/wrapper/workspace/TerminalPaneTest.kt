@@ -2,6 +2,7 @@ package org.formulagen.wrapper.workspace
 
 import androidx.compose.ui.input.key.nativeKeyCode
 import com.jediterm.terminal.CursorShape
+import com.jediterm.terminal.HyperlinkStyle
 import com.jediterm.terminal.ui.TerminalAction
 import java.awt.Component
 import java.awt.DefaultKeyboardFocusManager
@@ -15,6 +16,7 @@ import java.awt.event.InputEvent.SHIFT_DOWN_MASK
 import java.awt.event.InputMethodEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
+import java.net.URI
 import java.text.AttributedString
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -35,7 +37,7 @@ import kotlin.test.assertTrue
 import org.formulagen.wrapper.approvals.NativeDialog
 import org.formulagen.wrapper.conversations.eventually
 
-/** A tab's terminal as the player types and pastes into it: Option, the input method, window shortcuts, pasting, the font. */
+/** A tab's terminal as the player uses it: Option, the input method, window shortcuts, pasting, links, the font. */
 class TerminalPaneTest {
     private val session = FakeSession()
     private val shortcuts = CopyOnWriteArrayList<WorkspaceAction>()
@@ -169,6 +171,52 @@ class TerminalPaneTest {
         Thread.sleep(300)
         assertTrue(session.input.isEmpty())
         assertTrue(pasteQuestions.isEmpty())
+    }
+
+    /** Select row [row] as a triple click does. */
+    private fun selectRow(row: Int) = EventQueue.invokeAndWait {
+        val point = view.cellCenter(1, row)
+        panel.dispatchEvent(MouseEvent(panel, MouseEvent.MOUSE_CLICKED, System.currentTimeMillis(), 0, point.x, point.y, 3, false, MouseEvent.BUTTON1))
+    }
+
+    @Test fun openAsUrlOpensOnlyWebPages() {
+        val opened = CopyOnWriteArrayList<URI>()
+        panel.browse = { opened.add(it) }
+        val links = listOf(
+            "https://example.com/path?q=1", "HTTP://EXAMPLE.ORG",
+            "file:///Applications/Calculator.app", "x-apple.systempreferences:com.apple.preference.security",
+            "javascript:alert(1)", "smb://server/share", "https://exa mple.com", "http://[unparseable",
+        )
+        program(links.joinToString("\r\n", postfix = "\r\n"))
+        val open = onAwtNow { panel.actions.single { it.name == "Open as URL" } }
+        for (row in links.indices) {
+            selectRow(row)
+            onAwtNow { open.actionPerformed(null) }
+        }
+        assertEquals(listOf(URI("https://example.com/path?q=1"), URI("HTTP://EXAMPLE.ORG")), opened.toList())
+    }
+
+    @Test fun aWebLinkIsHttpOrHttpsWithAHost() {
+        assertEquals(URI("https://example.com/a"), webLink(" https://example.com/a \n"))
+        val others = listOf(
+            "file:///etc/passwd", "https:///no-host", "https:opaque", "mailto:a@example.com", "ftp://example.com",
+            "x-apple.systempreferences:", "javascript:alert(1)", "example.com", "", "http://exa mple.com",
+        )
+        for (other in others) assertNull(webLink(other), other)
+    }
+
+    @Test fun noLinkInAProgramsOutputIsClickable() {
+        // OSC 8 and bare URLs: no filter is installed.
+        program("\u001b]8;;file:///Applications/Calculator.app\u001b\\Calculator\u001b]8;;\u001b\\ https://example.com ")
+        Thread.sleep(300)
+        val styles = onAwtNow {
+            val buffer = panel.terminalTextBuffer
+            buffer.lock()
+            try { (0 until 40).mapNotNull { buffer.getLine(0).getStyleAt(it) } } finally { buffer.unlock() }
+        }
+        assertTrue(styles.isNotEmpty())
+        assertTrue(styles.none { it is HyperlinkStyle }, "$styles")
+        assertTrue(view.screenText().startsWith("Calculator https://example.com"))
     }
 
     @Test fun optionTypesCharactersAsInTerminal() {
