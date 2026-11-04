@@ -76,7 +76,9 @@ offer it, and do not ship its natives. A development package ships them signed, 
 Apple Silicon only ([release.md](release.md#desktop)).
 
 - **Develop → Open Workspace…** in the main window picks a folder.
-  `HOVEL_WORKSPACE_FOLDER=<folder>` opens one at launch instead.
+  `HOVEL_WORKSPACE_FOLDER=<folder>` opens one at launch instead. The first open of each
+  folder asks first, and **Develop → Forget Trusted Folders** makes every folder ask again.
+  See [Folder trust](#folder-trust).
 - **Shell → New Tab** (⌘T) and **Close Tab** (⌘W). The window's **Develop** menu, or
   **+**, opens Neovim, lazygit or yazi in a tab, started through the login shell.
 - **Window**: ⌘1 to ⌘8 select a tab and ⌘9 the last one; **Show Next Tab** (⌘⇧], also
@@ -101,7 +103,8 @@ Apple Silicon only ([release.md](release.md#desktop)).
 - `HOVEL_WORKSPACE_SHELL=<path>` tries another shell in place of the login shell.
 - `HOVEL_WORKSPACE_PROBE=<steps file>`, with `HOVEL_WORKSPACE_FOLDER`, drives the window
   from a script and writes screen text and images beside the file, for checks with no
-  one at the screen (`WorkspaceProbe` lists the steps).
+  one at the screen (`WorkspaceProbe` lists the steps). Start the file with `answer yes`
+  to answer the folder's trust question.
 
 Compose's `run` task is a development build only with `-Pgamero.developmentPackage=true`
 (without it the app starts with no workspaces):
@@ -117,6 +120,36 @@ own `fish-<version>.app.zip` release, unzipped anywhere, has one at
 `fish-<version>.app/Contents/Resources/base/usr/local/bin/fish`, with nothing installed. The
 Neovim tests use `HOVEL_TEST_NVIM`, `/opt/homebrew/bin/nvim` or `/usr/local/bin/nvim`, and skip
 without one.
+
+#### Folder trust
+
+Opening a workspace starts the player's login shell in the folder, and with it their
+startup files, prompt and git-aware tools, which can run settings stored in the folder, such
+as a cloned repository's `.git/config` `core.fsmonitor`. That is what `cd` does in Terminal,
+but here a click starts it, and later a page's `projectWorkspace.open`. So
+`WorkspaceWindows.open`, which every entry point goes through, asks the first time each
+folder opens, as VS Code's Workspace Trust does:
+
+- The question names the folder and its full path, as plain text
+  ([Confirmation sheets](#confirmation-sheets)), with Cancel the default. No workspace
+  window exists yet, so it is application-modal.
+- **Open Workspace** remembers the folder by its real path (`toRealPath()`), so a link to a
+  trusted folder is trusted, then opens it. Cancel opens nothing. Bringing forward a window
+  already open never asks, and a second open of a folder while its question is up is
+  ignored.
+- The answers are in `~/Library/Application Support/Gamero/workspace/folder-trust.json`,
+  `{"version":1,"folders":[…]}` oldest first, written with `writeDurably` in a private
+  folder. It is read afresh each time, since other copies of the app may share it. A file
+  that is missing, damaged, past `TRUSTED_FOLDERS_BYTES` or at another version trusts no
+  folder, is logged, and is replaced at the next Open Workspace. The oldest folders go when
+  the file would pass that guard.
+- The list is per Mac, not per account: it is about this Mac's folders and this user's
+  shell. Tests use an in-memory `FolderTrust`, never the file.
+- **Develop → Forget Trusted Folders** deletes the file. The profile's workspace settings
+  will own this.
+- **The probe** opens `HOVEL_WORKSPACE_FOLDER` at its first step other than `answer` and
+  `wait`, so an `answer yes` before it answers the question; otherwise the sheet asks. A
+  folder the probe opens is remembered like any other.
 
 #### Busy checks
 

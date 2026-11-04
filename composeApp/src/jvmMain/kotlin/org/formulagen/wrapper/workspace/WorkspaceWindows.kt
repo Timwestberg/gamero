@@ -65,14 +65,21 @@ internal class WorkspaceHost(private val build: () -> SessionHost) : AutoCloseab
 /**
  * The open workspace windows, one per folder, rendered by `main.kt` (project-workspace.ARCH.md,
  * "Window and tabs"). [host] is built on a worker when the first tab starts, so a launch that opens
- * no workspace pays nothing. Closing and quitting ask through [confirmer] when work would be lost.
+ * no workspace pays nothing. Opening a folder not in [trust], closing and quitting ask through [confirmer].
  */
-internal class WorkspaceWindows(private val confirmer: Confirmer = SheetConfirmer, host: () -> SessionHost) : AutoCloseable {
+internal class WorkspaceWindows(
+    private val trust: FolderTrust,
+    private val confirmer: Confirmer = SheetConfirmer,
+    host: () -> SessionHost,
+) : AutoCloseable {
     private val sessionHost = WorkspaceHost(host)
     private val workers: ExecutorService = Executors.newCachedThreadPool(loggingDaemonThreads("hovel-workspace-window"))
 
     /** Windows in opening order. AWT thread. */
     val windows = mutableStateListOf<WorkspaceWindowState>()
+
+    /** Folders whose trust question is up: opening one again meanwhile is ignored. AWT thread. */
+    private val askingTrust = HashSet<Path>()
 
     /** A quit is waiting for its busy checks or its question. AWT thread. */
     private var quitting = false
@@ -83,10 +90,20 @@ internal class WorkspaceWindows(private val confirmer: Confirmer = SheetConfirme
     /** The cancels of quit requests waiting on the question: the person's Cancel runs them all. AWT thread. */
     private val pendingCancels = mutableListOf<() -> Unit>()
 
-    /** Open a window on [folder] with a Shell tab, or bring forward the one already open there. AWT thread. */
-    fun open(folder: Path): WorkspaceWindowState {
+    /** Open [folder] with a Shell tab, or bring its window forward; an untrusted one asks first, null on Cancel (docs/desktop.md, "Folder trust"). AWT thread. */
+    fun open(folder: Path): WorkspaceWindowState? {
         val real = folder.toRealPath()
         require(Files.isDirectory(real)) { "Not a folder: $folder" }
+        windows.firstOrNull { it.folder == real }?.let { it.bringForward(); return it }
+        if (!trust.trusted(real)) {
+            if (!askingTrust.add(real)) return null
+            try {
+                // No window yet: application-modal.
+                if (!confirmer.confirm(null, Confirmations.openFolder(real))) return null
+            } finally { askingTrust.remove(real) }
+            trust.trust(real)
+        }
+        // One may have opened during the question.
         windows.firstOrNull { it.folder == real }?.let { it.bringForward(); return it }
         return WorkspaceWindowState("dev-${UUID.randomUUID()}", real, sessionHost, workers, confirmer).also { window ->
             windows.add(window)
@@ -158,6 +175,9 @@ internal class WorkspaceWindows(private val confirmer: Confirmer = SheetConfirme
             }
         }
     }
+
+    /** Develop → Forget Trusted Folders: every folder asks again when it next opens. AWT thread. */
+    fun forgetTrustedFolders() = trust.forget()
 
     /** The app's exit has started, by any path: later quit requests are ignored. Any thread. */
     fun exitStarted() { exiting = true }

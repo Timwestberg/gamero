@@ -27,7 +27,8 @@ import org.formulagen.wrapper.util.loggingDaemonThreads
  *
  * - [spikeSessionHost] builds the windows' session host.
  * - Develop → Open Workspace… in the main window picks a folder and opens a window with a Shell tab.
- * - HOVEL_WORKSPACE_FOLDER opens one at launch.
+ *   Develop → Forget Trusted Folders makes every folder ask again.
+ * - HOVEL_WORKSPACE_FOLDER opens one at launch. Both ask first for a folder not yet trusted.
  * - HOVEL_WORKSPACE_PROBE, with HOVEL_WORKSPACE_FOLDER, runs a steps file against that window and
  *   writes screen text and images beside it: the spike's rendering and signing checks when no one
  *   is at the screen. See [WorkspaceProbe].
@@ -60,10 +61,11 @@ private fun developmentShell(environment: Map<String, String>): String? {
     return null
 }
 
-/** Develop → Open Workspace…: the native folder picker, then a window on the chosen folder. AWT thread. */
+/** Develop → Open Workspace…: the native folder picker, then a window on the chosen folder, if trusted. AWT thread. */
 internal fun openWorkspaceFromPicker(workspaces: WorkspaceWindows, owner: Frame) {
     try {
-        NativeFolderPicker { owner }.choose("Open a workspace on a folder", null)?.let(workspaces::open)
+        val folder = NativeFolderPicker { owner }.choose("Open a workspace on a folder", null) ?: return
+        if (workspaces.open(folder) == null) log(LogLevel.Info, TAG, "The workspace was not opened: the folder was not trusted")
     } catch (error: Throwable) {
         rethrowIfFatal(error)
         log(LogLevel.Error, TAG, "Could not open a workspace", error)
@@ -71,7 +73,7 @@ internal fun openWorkspaceFromPicker(workspaces: WorkspaceWindows, owner: Frame)
 }
 
 /**
- * The probe's answers to the close and quit questions: the sheet until an `answer` step sets one.
+ * The probe's answers to the workspace's questions: the sheet until an `answer` step sets one.
  * Built before [WorkspaceWindows], which asks through it, so production code never swaps confirmers.
  */
 internal class ProbeConfirmer(private val sheet: Confirmer = SheetConfirmer) : Confirmer {
@@ -92,9 +94,9 @@ internal fun probeConfirmer(environment: Map<String, String>): ProbeConfirmer? =
     environment["HOVEL_WORKSPACE_PROBE"]?.takeIf { it.isNotBlank() }?.let { ProbeConfirmer() }
 
 /**
- * Opens HOVEL_WORKSPACE_FOLDER at launch and runs HOVEL_WORKSPACE_PROBE against it, answering
- * through [confirmer]. [exit] ends the app at once; [requestQuit] is ⌘Q's path, which asks first
- * when work would be lost.
+ * Opens HOVEL_WORKSPACE_FOLDER at launch, asking first when it is not trusted. With HOVEL_WORKSPACE_PROBE,
+ * the probe opens it and runs its steps, answering through [confirmer]. [exit] ends the app at once;
+ * [requestQuit] is ⌘Q's path, which asks first when work would be lost.
  */
 @Composable
 internal fun DevelopmentWorkspaceLaunch(
@@ -105,15 +107,19 @@ internal fun DevelopmentWorkspaceLaunch(
     requestQuit: () -> Unit,
 ) {
     LaunchedEffect(Unit) {
-        val folder = environment["HOVEL_WORKSPACE_FOLDER"]?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
-        val window = try { workspaces.open(Path.of(folder)) } catch (error: Throwable) {
-            rethrowIfFatal(error)
-            log(LogLevel.Error, TAG, "Could not open HOVEL_WORKSPACE_FOLDER", error)
+        val folder = environment["HOVEL_WORKSPACE_FOLDER"]?.takeIf { it.isNotBlank() }?.let(Path::of) ?: return@LaunchedEffect
+        val steps = environment["HOVEL_WORKSPACE_PROBE"]?.takeIf { it.isNotBlank() }
+        if (steps != null && confirmer != null) {
+            WorkspaceProbe(workspaces, folder, Path.of(steps), confirmer, exit, requestQuit).start()
             return@LaunchedEffect
         }
-        val steps = environment["HOVEL_WORKSPACE_PROBE"]?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
-        if (confirmer == null) { log(LogLevel.Warn, TAG, "HOVEL_WORKSPACE_PROBE is set but the windows have no probe confirmer"); return@LaunchedEffect }
-        WorkspaceProbe(workspaces, window, Path.of(steps), confirmer, exit, requestQuit).start()
+        if (steps != null) log(LogLevel.Warn, TAG, "HOVEL_WORKSPACE_PROBE is set but the windows have no probe confirmer")
+        try {
+            if (workspaces.open(folder) == null) log(LogLevel.Info, TAG, "HOVEL_WORKSPACE_FOLDER was not opened: the folder was not trusted")
+        } catch (error: Throwable) {
+            rethrowIfFatal(error)
+            log(LogLevel.Error, TAG, "Could not open HOVEL_WORKSPACE_FOLDER", error)
+        }
     }
 }
 
@@ -132,7 +138,9 @@ internal fun DevelopmentWorkspaceLaunch(
  *   painted at the screen's scale (2 on Retina) as `<name>.png`, beside the steps file.
  * - `tab <shell|tool id>`: open a tab (`shell`, or a catalog id such as `neovim`, `lazygit` or
  *   `yazi`) and select it. `select <index>`. `close`: close the selected tab at once.
- * - `answer <yes|no>`: from now on, answer the close and quit questions so, logging each one.
+ * - `answer <yes|no>`: from now on, answer the workspace's questions so, logging each one. The
+ *   folder opens at the first step other than `answer` and `wait`, so `answer yes` first answers
+ *   its trust question; without one, the sheet asks.
  * - `request-close`: ⌘W's path for the selected tab; `request-close-window`: the close button's;
  *   `request-quit`: ⌘Q's.
  * - `size <width>x<height>`: resize the window, in points.
@@ -150,7 +158,7 @@ internal fun DevelopmentWorkspaceLaunch(
  */
 internal class WorkspaceProbe(
     private val workspaces: WorkspaceWindows,
-    private val window: WorkspaceWindowState,
+    private val folder: Path,
     private val steps: Path,
     private val confirmer: ProbeConfirmer,
     private val exit: () -> Unit,
@@ -159,6 +167,9 @@ internal class WorkspaceProbe(
     private val out: Path = steps.toAbsolutePath().parent
     private val logFile: Path = out.resolve("probe.log")
     private var markers = 0
+    /** [folder]'s window, once [openFolder] has opened it. */
+    private var opened: WorkspaceWindowState? = null
+    private val window: WorkspaceWindowState get() = checkNotNull(opened) { "The workspace is not open" }
 
     fun start() {
         confirmer.record = ::record
@@ -167,7 +178,6 @@ internal class WorkspaceProbe(
 
     private fun run() {
         Files.writeString(logFile, "")
-        record("font ${TerminalFont.family} ${window.fontSize}pt")
         try {
             for (raw in Files.readAllLines(steps)) {
                 val line = raw.trim()
@@ -175,6 +185,7 @@ internal class WorkspaceProbe(
                 record("> $line")
                 step(line.substringBefore(' '), line.substringAfter(' ', ""))
             }
+            if (opened == null) openFolder()
             record("done")
         } catch (error: Exception) {
             record("failed: ${error.javaClass.simpleName}: ${error.message}")
@@ -182,7 +193,14 @@ internal class WorkspaceProbe(
         }
     }
 
+    /** Open [folder] through the windows, so its trust question goes to [confirmer]. */
+    private fun openFolder() {
+        opened = awtValue { workspaces.open(folder) } ?: error("The workspace was not opened: its folder was not trusted")
+        record("font ${TerminalFont.family} ${window.fontSize}pt")
+    }
+
     private fun step(command: String, argument: String) {
+        if (opened == null && command != "answer" && command != "wait") openFolder()
         when (command) {
             "send" -> awt { view().send(unescape(argument).toByteArray(Charsets.UTF_8)) }
             "key" -> awt { key(argument) }

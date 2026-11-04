@@ -37,6 +37,7 @@ import org.formulagen.wrapper.workspace.DevelopmentWorkspaceLaunch
 import org.formulagen.wrapper.workspace.SheetConfirmer
 import org.formulagen.wrapper.workspace.WorkspaceWindows
 import org.formulagen.wrapper.workspace.WorkspaceWindowsHost
+import org.formulagen.wrapper.workspace.folderTrustFile
 import org.formulagen.wrapper.workspace.openWorkspaceFromPicker
 import org.formulagen.wrapper.workspace.probeConfirmer
 import org.formulagen.wrapper.workspace.rethrowIfFatal
@@ -141,7 +142,7 @@ fun main(args: Array<String>) {
     val workspacesEnabled = projectWorkspaceEnabled(release = System.getProperty("gamero.release") == "true", development = System.getProperty("gamero.dev") == "true")
     val probe = if (workspacesEnabled) probeConfirmer(System.getenv()) else null
     val workspaces = if (workspacesEnabled) {
-        WorkspaceWindows(probe ?: SheetConfirmer) { spikeSessionHost(System.getenv(), desktopSupportFolder().toPath()) }
+        WorkspaceWindows(folderTrustFile(desktopSupportFolder().toPath()), probe ?: SheetConfirmer) { spikeSessionHost(System.getenv(), desktopSupportFolder().toPath()) }
     } else null
     resources.workspaces = workspaces
     val productName = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME
@@ -215,7 +216,11 @@ fun main(args: Array<String>) {
                                         println("echo self-test: finished exit=${runEchoSelfTest()}")
                                     }, "ember-echo-self-test").apply { isDaemon = true }.start()
                                 })
-                                if (workspaces != null) Item("Open Workspace…", onClick = { openWorkspaceFromPicker(workspaces, window) })
+                                if (workspaces != null) {
+                                    Item("Open Workspace…", onClick = { openWorkspaceFromPicker(workspaces, window) })
+                                    // The profile's settings will own this.
+                                    Item("Forget Trusted Folders", onClick = { workspaces.forgetTrustedFolders() })
+                                }
                             }
                             Menu("Edit") {
                                 Item("Undo", onClick = { editActions.perform(BrowserEditAction.UNDO) })

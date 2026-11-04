@@ -5,6 +5,7 @@ import java.io.ByteArrayOutputStream
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.createTempDirectory
@@ -92,6 +93,14 @@ internal class FakeSession(override val title: String = "Shell") : Session {
 
     /** Whether [close] has been called. */
     fun isClosed(): Boolean = closed.count == 0L
+}
+
+/** A [FolderTrust] in memory, never the real file: [all] trusts every folder, else only those in [folders]. */
+internal class MemoryFolderTrust(private val all: Boolean = false) : FolderTrust {
+    val folders = CopyOnWriteArraySet<Path>()
+    override fun trusted(folder: Path): Boolean = all || folder in folders
+    override fun trust(folder: Path) { folders.add(folder) }
+    override fun forget() { folders.clear() }
 }
 
 /** [read]'s value, computed on the AWT thread; what it throws is rethrown here. */

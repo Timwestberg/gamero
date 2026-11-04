@@ -35,6 +35,18 @@ class WorkspaceConfirmationsTest {
         assertTrue("• Shell (tab 3): $markup did not answer, so it may have unsaved work" in texts, "$texts")
     }
 
+    @Test fun aFoldersPathAndNameAreDrawnAsPlainText() {
+        // A name holds no "/", so this markup spans folders.
+        val path = java.nio.file.Path.of("/Users/player/<html><b>x</b></html>")
+        val named = java.nio.file.Path.of("/Users/player/<html><b>x")
+        val found = onAwtNow { labels(SheetConfirmer.pane(Confirmations.openFolder(path))) + labels(SheetConfirmer.pane(Confirmations.openFolder(named))) }
+        for (label in found) assertNull(label.getClientProperty(BasicHTML.propertyKey), "no HTML view for \"${label.text}\"")
+        val texts = found.map { it.text }
+        assertTrue("/Users/player/<html><b>x</b></html>" in texts, "$texts")
+        assertTrue("Open a workspace in “<html><b>x”?" in texts, "$texts")
+        assertEquals("Cancel", onAwtNow { SheetConfirmer.pane(Confirmations.openFolder(path)).initialValue })
+    }
+
     @Test fun theControlAStringMessageWithMarkupAnywhereIsDrawnAsHtml() {
         // Why the sheet never passes Swing a String: this is what it would draw.
         val found = onAwtNow { labels(javax.swing.JOptionPane(arrayOf<Any>("Quitting ends:", "• Shell: “rg <html><b>x</b></html>” is running"))) }

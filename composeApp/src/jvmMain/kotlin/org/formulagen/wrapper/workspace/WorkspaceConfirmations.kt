@@ -3,6 +3,7 @@ package org.formulagen.wrapper.workspace
 import java.awt.Dialog
 import java.awt.Font
 import java.awt.Window
+import java.nio.file.Path
 import javax.swing.JDialog
 import javax.swing.JLabel
 import javax.swing.JOptionPane
@@ -10,10 +11,16 @@ import javax.swing.WindowConstants
 import org.formulagen.wrapper.approvals.NativeDialog
 
 /*
- * The questions asked before work ends (project-workspace.SPEC.md, "Opening a workspace"): closing a
- * busy tab, closing a window with busy tabs, and quitting with any. Each is decided from the tabs'
- * [Busy] states alone, so the decisions are plain functions; [Confirmer] asks.
+ * The workspace's questions (project-workspace.SPEC.md, "Opening a workspace" and "Security"):
+ * opening a folder for the first time, closing a busy tab, closing a window with busy tabs, and
+ * quitting with any. Each is worded from plain data, so the decisions are plain functions; [Confirmer] asks.
  */
+
+/** The most of a folder's name a question shows. */
+private const val FOLDER_NAME_CHARS = 60
+
+/** The most of a folder's path a question shows. */
+private const val FOLDER_PATH_CHARS = 300
 
 /** A busy tab as a confirmation lists it: [name] is its label and position, such as "Shell (tab 2)". */
 internal data class BusyTab(val name: String, val busy: Busy)
@@ -24,6 +31,20 @@ internal data class BusyWindow(val title: String, val tabs: List<BusyTab>)
 /** Every confirmation's wording, from [Busy] data alone. Each answers true to end the work; Cancel is the default. */
 internal object Confirmations {
     private const val CANCEL = "Cancel"
+
+    /** Before the first workspace in [folder], a real path: what opening one runs there (docs/desktop.md, "Folder trust"). */
+    fun openFolder(folder: Path): NativeDialog<Boolean> = question(
+        "Open a workspace in “${clip((folder.fileName ?: folder).toString(), FOLDER_NAME_CHARS)}”?",
+        listOf(
+            clip(folder.toString(), FOLDER_PATH_CHARS),
+            "",
+            "Your login shell, its startup files and prompt, and the workspace's tools will run in this folder.",
+            "So can settings stored inside it, such as a repository's git config.",
+            "",
+            "Only open folders you trust.",
+        ),
+        "Open Workspace",
+    )
 
     /** Null closes the tab at once: nothing in it is busy. */
     fun closeTab(busy: Busy?): NativeDialog<Boolean>? = busy?.let {

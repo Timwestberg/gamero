@@ -1,6 +1,7 @@
 package org.formulagen.wrapper.workspace
 
 import java.awt.EventQueue
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -10,7 +11,9 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import org.formulagen.wrapper.approvals.NativeDialog
 
@@ -26,11 +29,17 @@ class WorkspaceWindowsTest {
     @Volatile private var answer = false
     /** Runs while a question is up, as the sheet's modal loop would deliver more requests. */
     @Volatile private var duringQuestion: () -> Unit = {}
-    private val workspaces = WorkspaceWindows(confirmer = { _, question -> asked.add(question); duringQuestion(); answer }) { host }
+    private val confirmer = Confirmer { _, question -> asked.add(question); duringQuestion(); answer }
+    /** Every folder is trusted here; the trust question's own tests use their own windows. */
+    private val workspaces = WorkspaceWindows(MemoryFolderTrust(all = true), confirmer) { host }
+
+    /** Windows a test made for itself, closed after it. */
+    private val made = CopyOnWriteArrayList<WorkspaceWindows>()
 
     @AfterTest fun cleanUp() {
         host.release.countDown()
         workspaces.close()
+        made.forEach { it.close() }
         folder.toFile().deleteRecursively()
         other.toFile().deleteRecursively()
     }
@@ -55,13 +64,100 @@ class WorkspaceWindowsTest {
         override fun close() {}
     }
 
-    private fun open(at: Path = folder): WorkspaceWindowState = onAwtNow { workspaces.open(at) }
+    private fun open(at: Path = folder): WorkspaceWindowState = onAwtNow { workspaces.open(at)!! }
 
     /** Wait until [condition] holds on the AWT thread, after the workers and posted updates have run. */
     private fun eventually(what: String, condition: () -> Boolean) = org.formulagen.wrapper.conversations.eventually(what) { onAwtNow(condition) }
 
     private fun running(window: WorkspaceWindowState, count: Int) =
         eventually("$count running tabs") { window.tabs.size == count && window.tabs.all { it.state == TabState.Running } }
+
+    /** Windows that ask before a folder [trust] does not hold, as in the app. */
+    private fun asking(trust: FolderTrust = MemoryFolderTrust()): WorkspaceWindows = WorkspaceWindows(trust, confirmer) { host }.also(made::add)
+
+    @Test fun theFirstOpenOfAFolderAsksAndCancelOpensNothing() {
+        val trust = MemoryFolderTrust()
+        val windows = asking(trust)
+        assertNull(onAwtNow { windows.open(folder) }, "Cancel opens nothing")
+        val real = folder.toRealPath()
+        assertEquals(
+            NativeDialog(
+                "Open a workspace in “${real.fileName}”?",
+                listOf(
+                    real.toString(),
+                    "",
+                    "Your login shell, its startup files and prompt, and the workspace's tools will run in this folder.",
+                    "So can settings stored inside it, such as a repository's git config.",
+                    "",
+                    "Only open folders you trust.",
+                ),
+                listOf("Open Workspace" to true, "Cancel" to false),
+                false,
+            ),
+            asked.single(),
+        )
+        settle()
+        assertTrue(onAwtNow { windows.windows.isEmpty() })
+        assertTrue(host.sessions.isEmpty(), "no shell started")
+        assertTrue(trust.folders.isEmpty(), "nothing remembered")
+    }
+
+    @Test fun openRemembersTheFolderSoItsNextOpenDoesNotAsk() {
+        val trust = MemoryFolderTrust()
+        val windows = asking(trust)
+        answer = true
+        val first = assertNotNull(onAwtNow { windows.open(folder) })
+        assertEquals(setOf(folder.toRealPath()), trust.folders, "remembered by its real path")
+        running(first, 1)
+        EventQueue.invokeAndWait { windows.close(first) }
+        answer = false
+        val second = assertNotNull(onAwtNow { windows.open(folder) }, "a trusted folder opens without asking")
+        assertEquals(1, asked.size)
+        running(second, 1)
+    }
+
+    @Test fun aWindowAlreadyOpenComesForwardWithoutAsking() {
+        val windows = asking()
+        answer = true
+        val window = assertNotNull(onAwtNow { windows.open(folder) })
+        onAwtNow { windows.forgetTrustedFolders() }
+        answer = false
+        assertSame(window, onAwtNow { windows.open(folder) }, "brought forward, even once forgotten")
+        assertEquals(1, asked.size)
+        assertEquals(1, window.frontRequests)
+    }
+
+    @Test fun aLinkToATrustedFolderIsTrustedAndAnotherFolderIsNot() {
+        val windows = asking()
+        answer = true
+        onAwtNow { windows.close(windows.open(folder)!!) }
+        val link = Files.createSymbolicLink(other.resolve("link"), folder)
+        answer = false
+        assertEquals(folder.toRealPath(), assertNotNull(onAwtNow { windows.open(link) }, "the link reaches a trusted folder").folder)
+        assertEquals(1, asked.size)
+        val sibling = Files.createDirectory(other.resolve("sibling"))
+        assertNull(onAwtNow { windows.open(sibling) }, "another folder asks, and Cancel keeps it closed")
+        assertEquals(2, asked.size)
+    }
+
+    @Test fun aRepeatOpenWhileTheQuestionIsUpIsIgnored() {
+        val windows = asking()
+        answer = true
+        var repeat: WorkspaceWindowState? = null
+        duringQuestion = { repeat = windows.open(folder) }
+        assertNotNull(onAwtNow { windows.open(folder) })
+        assertNull(repeat, "the repeat leaves it to the question")
+        assertEquals(1, asked.size)
+        assertEquals(1, onAwtNow { windows.windows.size })
+    }
+
+    @Test fun aDamagedTrustFileTrustsNoFolder() {
+        val file = other.resolve("folder-trust.json")
+        Files.writeString(file, "{\"version\":1,\"folders\":[\"${folder.toRealPath()}\"")
+        val windows = asking(FolderTrustFile(file))
+        assertNull(onAwtNow { windows.open(folder) })
+        assertEquals(1, asked.size, "a damaged file asks")
+    }
 
     @Test fun closingTheWindowWhileATabStartsEndsTheSessionWhenItArrives() {
         host.release = CountDownLatch(1)
@@ -248,7 +344,7 @@ class WorkspaceWindowsTest {
         eventually("quit") { quits == 1 }
         assertTrue(asked.isEmpty())
         // No window at all quits on the spot.
-        val empty = WorkspaceWindows { host }
+        val empty = WorkspaceWindows(MemoryFolderTrust(all = true)) { host }
         var quit = false
         EventQueue.invokeAndWait { empty.confirmQuit("Hovel") { quit = true } }
         assertTrue(quit)
@@ -339,9 +435,9 @@ class WorkspaceWindowsTest {
     }
 
     @Test fun aQuestionThatFailsCancelsTheSystemsQuit() {
-        val failing = WorkspaceWindows(confirmer = { _, _ -> error("sheet boom") }) { host }
+        val failing = WorkspaceWindows(MemoryFolderTrust(all = true), confirmer = { _, _ -> error("sheet boom") }) { host }
         try {
-            onAwtNow { failing.open(folder) }.also { running(it, 1) }
+            onAwtNow { failing.open(folder)!! }.also { running(it, 1) }
             host.sessions.last().busy = Busy.Running("make")
             var quits = 0
             var cancels = 0
@@ -376,8 +472,8 @@ class WorkspaceWindowsTest {
         settle()
         assertEquals(1, asked.size, "no second question")
         assertEquals(1, quits)
-        val other = WorkspaceWindows(confirmer = { _, question -> asked.add(question); true }) { host }
-        onAwtNow { other.open(folder) }.also { running(it, 1) }
+        val other = WorkspaceWindows(MemoryFolderTrust(all = true), confirmer = { _, question -> asked.add(question); true }) { host }
+        onAwtNow { other.open(folder)!! }.also { running(it, 1) }
         other.exitStarted()
         EventQueue.invokeAndWait { other.confirmQuit("Hovel") { quits++ } }
         settle()
