@@ -25,28 +25,31 @@ We do not know which release first shipped PKCE and the metadata document, or wh
 
 The script uses only the standard library and never prints or saves a token.
 
-1. Find the instance:
+The instance is the spike 1 VM (Tim's choice, 2026-11-05). Run spike 1 first and leave the VM running.
+
+1. Get the VM's address with `../vm/find-ip.sh`. Open `http://<address>:8123` and finish Home Assistant's first-run setup. That makes the owner account.
+2. Try discovery. With NAT we expect it to find nothing; record what it prints.
 
     ```sh
     python3 signin_spike.py discover
     ```
 
-2. Sign in with a loopback `client_id` (mode A). Use a test user.
+3. Sign in with a loopback `client_id` (mode A) as the owner.
 
     ```sh
-    python3 signin_spike.py sign-in --url http://homeassistant.local:8123
+    python3 signin_spike.py sign-in --url http://<address>:8123
     ```
 
-3. Do step 2 again as a non-administrator user (Settings → People → add a person, administrator off).
-4. Do step 2 again with `--no-pkce`, to see what an older client gets.
-5. Optional, mode B: host this page at an `https` URL that Home Assistant can reach, then pass that URL.
+4. Do step 3 again as a non-administrator user (Settings → People → add a person, administrator off).
+5. Do step 3 again with `--no-pkce`, to see what an older client gets.
+6. Optional, mode B: host this page at an `https` URL that Home Assistant can reach, then pass that URL. The VM reaches the internet through the NAT.
 
     ```html
     <link rel="redirect_uri" href="http://127.0.0.1/callback">
     ```
 
     ```sh
-    python3 signin_spike.py sign-in --url http://homeassistant.local:8123 \
+    python3 signin_spike.py sign-in --url http://<address>:8123 \
       --client-id https://<your host>/hovel-ha/ --redirect http://127.0.0.1/callback
     ```
 
