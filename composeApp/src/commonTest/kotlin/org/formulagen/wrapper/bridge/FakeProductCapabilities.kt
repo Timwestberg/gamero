@@ -43,6 +43,18 @@ class FakeProjectCapability : ProjectCapability {
     override suspend fun folderStatus(scope: ProjectScope) = ProjectFoldersStatus(listOf(working))
 }
 
+class FakeProjectWorkspaceCapability : ProjectWorkspaceCapability {
+    val opened = mutableListOf<String>()
+    override suspend fun open(scope: ProjectScope): ProjectWorkspaceResult {
+        opened += scope.projectId
+        return ProjectWorkspaceResult(ProjectWorkspaceStatus.OPENED)
+    }
+    override suspend fun viewChanges(args: ProjectWorkspaceViewChangesArgs): ProjectWorkspaceResult {
+        opened += "${args.projectId}/${args.threadId}"
+        return ProjectWorkspaceResult(ProjectWorkspaceStatus.OPENED)
+    }
+}
+
 class FakeConversationVoiceCapability : ConversationVoiceCapability {
     override suspend fun dictation(args: ConversationDictationArgs) =
         ConversationVoiceStatus(args.conversationId, dictation = ConversationDictation(DictationState.LISTENING))

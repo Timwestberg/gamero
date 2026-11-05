@@ -38,7 +38,7 @@ internal fun BrainRecord.recordStageConsent(attempt: BrainAttempt, approvalId: S
     val current = checkNotNull(run)
     val stored = current.attempts.single { it.id == attempt.id }
     if (approvalId == null) {
-        val step = current.configuration.workflow?.steps?.find { it.id == stored.stepId }
+        val step = current.configuration.step(stored.stepId)
         require(!asksBeforeStarting(current.configuration, stored.role, step))
     }
     val consent = current.stageConsent(stored, approvalId,

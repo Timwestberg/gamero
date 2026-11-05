@@ -78,6 +78,7 @@ class BridgeRouterTest {
         PetMethods.pack(supported(platform, "pet.status", FakePetCapability())),
         GameMethods.pack(supported(platform, "games.launch", fakes.games)),
         ProjectMethods.pack(supported(platform, "project.folderStatus", FakeProjectCapability())),
+        ProjectWorkspaceMethods.pack(supported(platform, "projectWorkspace.open", FakeProjectWorkspaceCapability())),
         ConversationVoiceMethods.pack(supported(platform, "conversationVoice.voiceStatus", FakeConversationVoiceCapability())),
         ApprovalMethods.pack(supported(platform, "approvals.present", FakeApprovalCapability())),
         ApprovalDeviceMethods.pack(supported(platform, "approvalDevice.status", FakeApprovalDeviceCapability())),

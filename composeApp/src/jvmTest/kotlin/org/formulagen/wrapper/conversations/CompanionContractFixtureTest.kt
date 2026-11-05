@@ -76,7 +76,8 @@ class CompanionContractFixtureTest {
         val answered = fromWire(AgentApproval.serializer(), fixtures.getValue("approval.answeredByPhone").getValue("value"))
         assertEquals(ApprovalSurface.PHONE, answered.answer?.by)
         val events = fixtures.filterKeys { it.startsWith("hostEvent.") }.values.map { HostEvents.decode(it.getValue("value").toString()) }
-        assertEquals(5, events.filterNotNull().size)
+        assertEquals(6, events.filterNotNull().size)
+        assertTrue(HostStreamEvent.WorkspaceProfileChanged(3) in events, "a profile change names only its revision")
         val heartbeat = fromWire(HostHeartbeat.serializer(), fixtures.getValue("heartbeat").getValue("value"))
         assertEquals("ready", heartbeat.providerState)
         assertEquals(MemoryJobLane.FEATURES, heartbeat.features)

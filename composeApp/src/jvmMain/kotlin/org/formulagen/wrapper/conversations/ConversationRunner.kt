@@ -215,6 +215,8 @@ internal class ConversationRunner(
             is HostStreamEvent.MessageCancelled -> sessions.values.forEach { it.cancel(event.messageId) }
             is HostStreamEvent.ApprovalAnswered -> later { approvals.answered(event.approvalId) }
             is HostStreamEvent.ProjectChanged -> later { publisher.refresh(event.projectId) }
+            // The workspace's profile sync reads it; conversations have nothing to do.
+            is HostStreamEvent.WorkspaceProfileChanged -> Unit
         }
     }
 

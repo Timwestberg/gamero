@@ -4,13 +4,18 @@ import java.nio.file.Path
 import kotlinx.serialization.json.*
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.runtimes.ActivityLog
+import org.formulagen.wrapper.runtimes.EditListener
 import org.formulagen.wrapper.runtimes.WorkPaths
+import org.formulagen.wrapper.runtimes.reportEdit
 import org.formulagen.wrapper.conversation.Activity
 import org.formulagen.wrapper.conversation.ActivityKind
 import org.formulagen.wrapper.conversation.ActivityStatus
 
-/** Bounded work-turn folding; only current-session text and completed tool steps reach the page. */
-internal class GrokWorkActivity(sessionId: String, folder: Path) {
+/**
+ * Bounded work-turn folding; only current-session text and completed tool steps reach the page. A completed `edit`
+ * call reports its `rawInput.file_path` to [edits], or null when it named none.
+ */
+internal class GrokWorkActivity(sessionId: String, folder: Path, private val edits: EditListener = EditListener.NONE) {
     var state = GrokTurnState(sessionId)
         private set
     private val paths = WorkPaths(folder)
@@ -57,6 +62,7 @@ internal class GrokWorkActivity(sessionId: String, folder: Path) {
             else -> return null
         }
         calls.remove(id); finished += id
+        if (status == ActivityStatus.DONE && toolKind == ActivityKind.EDIT) edits.reportEdit(path)
         // Commands/results can contain secrets; activity uses a category, while approvals show exact inputs.
         val label = path?.let(paths::label) ?: when (toolKind) {
             ActivityKind.COMMAND -> "Run command"

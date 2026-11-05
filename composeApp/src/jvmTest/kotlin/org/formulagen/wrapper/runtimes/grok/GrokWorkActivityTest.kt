@@ -7,6 +7,7 @@ import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.conversation.Activity
 import org.formulagen.wrapper.conversation.ActivityLimits
 import org.formulagen.wrapper.conversation.ActivityStatus
+import org.formulagen.wrapper.runtimes.EditListener
 
 class GrokWorkActivityTest {
     @Test fun aLongWorkTurnCanRunAnyNumberOfToolsWithBoundedMemoryAndActivity() {
@@ -31,6 +32,30 @@ class GrokWorkActivityTest {
         // A malformed id is still a protocol violation.
         activity.update(update(""))
         assertEquals(GrokTurnEnd.INVALID, activity.state.end)
+    }
+
+    @Test fun aCompletedEditReportsItsFileOrNullAndNothingElseIsAnEdit() {
+        val reported = mutableListOf<Path?>()
+        val activity = GrokWorkActivity("current", Path.of("/project"), EditListener { reported += it })
+        fun update(id: String, vararg fields: Pair<String, JsonElement>) = activity.update(buildJsonObject {
+            put("sessionId", "current"); put("update", JsonObject(mapOf("sessionUpdate" to JsonPrimitive("tool_call_update"),
+                "toolCallId" to JsonPrimitive(id)) + fields))
+        })
+        val edit = "kind" to JsonPrimitive("edit")
+        fun input(path: String) = "rawInput" to buildJsonObject { put("file_path", path); put("old_string", "a"); put("new_string", "b") }
+        val completed = "status" to JsonPrimitive("completed")
+        // Sparse: the kind and input first, the status later.
+        update("sparse", edit, input("/project/src/app.ts"))
+        update("sparse", completed)
+        update("whole", edit, input("notes.md"), completed)
+        update("unnamed", edit, completed)
+        update("failed", edit, input("/project/failed.ts"), "status" to JsonPrimitive("failed"))
+        update("running", edit, input("/project/running.ts"), "status" to JsonPrimitive("in_progress"))
+        update("read", "kind" to JsonPrimitive("read"), input("/project/README.md"), completed)
+        update("command", "kind" to JsonPrimitive("execute"), "rawInput" to buildJsonObject { put("command", "sed -i '' s/a/b/ x") }, completed)
+        // A repeated final update for a finished edit.
+        update("whole", edit, input("notes.md"), completed)
+        assertEquals(listOf(Path.of("/project/src/app.ts"), Path.of("notes.md"), null), reported)
     }
 
     @Test fun workActivityCorrelatesSparseUpdatesAndDoesNotLeakToolOutput() {

@@ -39,7 +39,7 @@ when it is closed. These calls never consume a reset or purchase credits.
 | Router | `commonMain/.../BridgeRouter.kt`, `BridgeCheck.kt` | Every protocol rule: frame and origin, size, envelope, context, method, arguments, error codes. No platform imports. |
 | Method types | `commonMain/.../BridgeMethods.kt` | `BridgeMethod`, `BridgeEvent`, and the router's own `host.*` methods. |
 | Platform set | `commonMain/.../HostCapabilities.kt` | One constructor parameter per platform capability: `Capability.Supported(impl)` or `Capability.Unsupported`. |
-| Capabilities | Platform: `commonMain/.../LinkOpener.kt`, `Haptics.kt`, `Lifecycle.kt`. Product: `CompanionCapability.kt`, `ProviderCapability.kt`, `PetCapability.kt`, `GameCapability.kt`, `ProjectCapability.kt`, `ConversationVoiceCapability.kt`, `HostContractCapability.kt`, `ApprovalCapability.kt`; `SharedRules.kt` holds rules several use, and `BrainTypes.kt` the brain types conversations read | One file each: the interface, its argument and result types, its methods and its `CapabilityBinder`. |
+| Capabilities | Platform: `commonMain/.../LinkOpener.kt`, `Haptics.kt`, `Lifecycle.kt`. Product: `CompanionCapability.kt`, `ProviderCapability.kt`, `PetCapability.kt`, `GameCapability.kt`, `ProjectCapability.kt`, `ProjectWorkspaceCapability.kt`, `ConversationVoiceCapability.kt`, `HostContractCapability.kt`, `ApprovalCapability.kt`; `SharedRules.kt` holds rules several use, and `BrainTypes.kt` the brain types conversations read | One file each: the interface, its argument and result types, its methods and its `CapabilityBinder`. |
 | Desktop product services | `jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt` | Builds the desktop implementations (`DesktopProviders`, `DesktopPetLauncher`, `DesktopGameLauncher`, `HovelCompanion`, `ConversationHost`, `DesktopConversationVoice`), registers their packs, ends them per page context and closes them in reverse order. |
 | Platform factories | `jvmMain/.../DesktopHostCapabilities.kt`, `androidMain/.../AndroidHostCapabilities.kt`, `iosMain/.../IosHostCapabilities.kt` | Each platform's choice for every capability. |
 | Shared transport half | `commonMain/.../HostBridge.kt` | What every transport shares: the router, the trusted origin, the document counter, the event channel and the failure log. A platform transport calls its `receive`, and `documentChanged` or `endContext` to end a context. |
@@ -165,6 +165,7 @@ event: `games.launch` opens a game and `games.closed` says the player is back.
        `jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt`. Every
        desktop product registers providers, pet and games (the catalog app is
        the Gamero product); Hovel adds its companion, `project`,
+       `projectWorkspace` (unsupported until project workspaces are built),
        `conversationVoice`, `host.contract` and the unsupported phone
        approvals. A method whose answer a contract changed goes behind
        `pageCheck` (`guardedBy`), as `companion.*`, `project.*` and

@@ -16,6 +16,7 @@ import org.formulagen.wrapper.storage.Artifacts
 import org.formulagen.wrapper.storage.sha256
 import org.formulagen.wrapper.conversation.Activity
 import org.formulagen.wrapper.conversation.MemberMode
+import org.formulagen.wrapper.workspace.ThreadEditStore
 
 /**
  * Runs one claimed message of a conversation through the companion's brain: the coordinator, its specialists
@@ -43,6 +44,8 @@ internal class CoordinatorEngine(
     private val startOfWork: StartOfWork,
     /** Reads a message input's whole text; the claim carries only its preview. */
     private val api: ConversationApi,
+    /** Each working thread's record of edited files; null keeps none. */
+    private val editStore: ThreadEditStore? = null,
     private val beforeTurn: () -> Unit = {},
 ) : MessageEngine {
     /** The runtimes this Mac lets read context folders: a project lists them as `readableBy`. */
@@ -282,7 +285,7 @@ internal class CoordinatorEngine(
             val current = currentRun()
             val coordinator = turns.resolved(call, coordinatorRole(), coordinator = true)
             val allowed = allowedDecisions(current)
-            val hint = advice?.takeIf { !adviceUsed && current.attempts.isEmpty() && current.configuration.workflow?.enabled != true &&
+            val hint = advice?.takeIf { !adviceUsed && current.attempts.isEmpty() && current.configuration.enabledWorkflows.isEmpty() &&
                 current.summary.configurationRevision == it.configurationRevision && it.expiresAt > System.currentTimeMillis() }
             if (hint != null) {
                 adviceUsed = true
@@ -328,7 +331,7 @@ internal class CoordinatorEngine(
             val role = turns.resolved(call, attempt.role)
             attempt = attempt.copy(role = role)
             change { it.copy(run = checkNotNull(it.run).withLast(attempt)) }
-            val step = current.configuration.workflow?.steps?.find { it.id == attempt.stepId }
+            val step = current.configuration.step(attempt.stepId)
             val threadId = checkNotNull(record.attemptThreads[attempt.id])
             if (asksBeforeStarting(current.configuration, role, step)) {
                 if (!approveStage(current, attempt, step, threadId)) return
@@ -532,8 +535,27 @@ internal class CoordinatorEngine(
             val stream = ReplyStream(headed = false) { out.delta(entryId, threadId, it) }
             val remember = { native: NativeConversation -> update { it.copy(threadContexts = it.threadContexts + (threadId to native)) } }
             return if (role.mode == MemberMode.WORK) {
-                turns.work(call, threadId, role, persona, input, conversation, scope(threadId), stream, remember)
+                turns.work(call, threadId, role, persona, input, conversation, scope(threadId), stream, remember, openEditRecord(threadId, role))
             } else turns.talk(call, role, persona, input, conversation, threadId, coordinator = false, stream = stream, opened = remember)
+        }
+
+        /**
+         * [threadId]'s edit record, opened before its working turn. Keeping the record never stops the work: without
+         * one, edits go nowhere. The thread had replies before the record existed when it has a provider conversation,
+         * or when it has outputs: every finished reply adds one (in a run and outside it, on any Mac), and they stay
+         * when a lost provider conversation is dropped.
+         */
+        fun openEditRecord(threadId: String, role: BrainRoleSnapshot): EditListener {
+            val store = editStore ?: return EditListener.NONE
+            val folder = call.folders.working ?: return EditListener.NONE
+            val thread = record.threads[threadId]
+            return try {
+                store.thread(projectId, threadId, thread?.title ?: role.name,
+                    earlierReplies = record.threadContexts.containsKey(threadId) || thread?.outputs.orEmpty().isNotEmpty(), folder)
+            } catch (error: Exception) {
+                log(LogLevel.Warn, "conversations", "A thread's edit record could not be opened", error)
+                EditListener.NONE
+            }
         }
 
         fun rememberCoordinator(key: String) = { native: NativeConversation ->

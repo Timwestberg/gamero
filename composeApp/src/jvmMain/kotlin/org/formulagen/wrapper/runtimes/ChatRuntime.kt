@@ -71,17 +71,33 @@ internal data class TurnRequest(
 /**
  * Where and for whom a role works: the project's [folders] (a working folder, and read-only context
  * folders the runtime was cleared to read), the [lease] a working process lives for (a conversation
- * thread's id), the [companion]'s name and the [member] the role is bound to.
+ * thread's id), the [companion]'s name and the [member] the role is bound to. The runtime reports each
+ * edit it finished to [edits], the thread's edit record.
  */
-internal data class WorkScope(val folders: ProjectFolders, val lease: String, val companion: String, val member: TeamMember) {
+internal data class WorkScope(val folders: ProjectFolders, val lease: String, val companion: String, val member: TeamMember,
+    val edits: EditListener = EditListener.NONE) {
     /** A scope for one working folder and no context folders. */
-    constructor(folder: Path, lease: String, companion: String, member: TeamMember) : this(ProjectFolders(folder), lease, companion, member)
+    constructor(folder: Path, lease: String, companion: String, member: TeamMember, edits: EditListener = EditListener.NONE) :
+        this(ProjectFolders(folder), lease, companion, member, edits)
 
     init { require(folders.working != null) { "A working turn needs a working folder" } }
 
     /** The working folder: where the member works and the only folder it may change. */
     val folder: Path get() = checkNotNull(folders.working)
 }
+
+/** Receives each file a working reply edits, as its runtime reports it. Null: no file named. */
+internal fun interface EditListener {
+    fun edited(path: Path?)
+
+    companion object {
+        /** Keeps nothing: a working turn without an edit record. */
+        val NONE = EditListener {}
+    }
+}
+
+/** Report the file a runtime named as text. Blank text, or text that is no path, is an edit without a file. */
+internal fun EditListener.reportEdit(raw: String?) = edited(raw?.takeIf { it.isNotBlank() }?.let { runCatching { Path.of(it) }.getOrNull() })
 
 /**
  * A project's folders on this Mac: the one [working] folder agents may edit (none for a talk-only

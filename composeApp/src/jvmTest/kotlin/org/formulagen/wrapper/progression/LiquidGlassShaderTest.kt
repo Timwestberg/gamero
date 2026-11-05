@@ -11,7 +11,10 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import kotlin.test.Test
 import kotlin.test.assertTrue
-import kotlin.math.pow
+import org.formulagen.wrapper.ui.fgBlue300
+import org.formulagen.wrapper.ui.fgGreen400
+import org.formulagen.wrapper.ui.fgInk300
+import org.formulagen.wrapper.ui.fgWhite
 
 class LiquidGlassShaderTest {
     /** Compile and execute the real material, checking sampling after a card moves. */
@@ -30,24 +33,21 @@ class LiquidGlassShaderTest {
         } finally { renderer.close() }
     }
 
-    /** Bright game artwork must not wash out the fixed light foreground text. */
+    /**
+     * Bright game artwork must not wash out the fixed light foreground text. fg-red-400 is left out on
+     * purpose: it measures about 4:1 here, so error text stays off glass.
+     */
     @Test fun brightArtworkRetainsTextContrast() {
         val scene = ImageBitmap(160, 160)
         CanvasDrawScope().draw(Density(1f), LayoutDirection.Ltr, Canvas(scene), Size(160f, 160f)) { drawRect(Color.White) }
         val renderer = LiquidGlassRenderer(scene)
         try {
             val background = render(renderer, Offset.Zero).toPixelMap()[80, 80]
-            for (foreground in listOf(CompanionGlass.text, CompanionGlass.muted, CompanionGlass.amber, CompanionGlass.mint, CompanionGlass.plum)) {
-                val contrast = (luminance(foreground) + .05) / (luminance(background) + .05)
-                assertTrue(contrast >= 4.5, "Glass body text contrast was $contrast for $foreground")
+            for (foreground in listOf(fgWhite, fgInk300, fgGreen400, fgBlue300)) {
+                val ratio = contrast(foreground, background)
+                assertTrue(ratio >= 4.5, "Glass body text contrast was $ratio for $foreground")
             }
         } finally { renderer.close() }
-    }
-
-    /** Convert rendered sRGB samples to relative luminance for contrast measurement. */
-    private fun luminance(color: Color): Double {
-        fun linear(channel: Float) = if (channel <= .04045f) channel / 12.92 else ((channel + .055) / 1.055).pow(2.4)
-        return .2126 * linear(color.red) + .7152 * linear(color.green) + .0722 * linear(color.blue)
     }
 
     /** Render pixels instead of only checking shader source or generated uniforms. */

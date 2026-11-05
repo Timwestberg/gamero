@@ -55,6 +55,12 @@ internal enum class NativeRoute(val method: String, val template: String) {
     /** `?cursor=` → `artifactTextPage`: a message input's whole text, page by page. */
     ARTIFACT_TEXT("GET", "artifacts/:artifactId/text"),
 
+    /** → `workspaceProfileDocument`: the account's workspace profile, the default at revision 0 until the first save. */
+    WORKSPACE_PROFILE("GET", "workspace-profile"),
+
+    /** `workspaceProfileSave` → `workspaceProfileDocument` at the next revision, or 409 when the revision is stale. */
+    WORKSPACE_PROFILE_SAVE("PUT", "workspace-profile"),
+
     /** Ephemeral project image relay metadata and bounded chunks. */
     IMAGE_RELAY_READ("GET", "image-relays/:requestId"),
     IMAGE_RELAY_CHUNK("POST", "image-relays/:requestId/chunks"),

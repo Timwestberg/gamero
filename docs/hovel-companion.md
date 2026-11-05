@@ -268,7 +268,9 @@ The memory lane rides its heartbeat.
   journal; one journaled only `claiming` never learned its message and is
   dropped. `approval.answered` closes the Mac's dialog when the phone answered
   first. `project.changed` reads the project and publishes its folders when the
-  account's differ.
+  account's differ. `workspaceProfile.changed` (the account's workspace profile
+  was saved at a revision) needs nothing from conversations; the workspace's
+  profile sync will follow it.
 - `mac-update-required`, a 409 `update-required` and a claim this build cannot
   read leave the message queued and set the status line to "Update Hovel on
   this Mac to run every message in its conversations".
@@ -567,6 +569,15 @@ Fixes to how a coordinator runs go in `CoordinatorEngine`. Its rules live in
   `COORDINATOR_DECISION_SHAPES`) and the handoff of run inputs
   (`RunRecord.handoffInputs`). `SharedCoordinatorRulesTest` checks that
   `CONVERSATION_PROTOCOL` carries every rule line.
+
+A brain holds several workflows from contract 11 (`brainLibraries`).
+`BrainConfiguration` reads version 1 and version 2 alike, and `workflows` is
+either version 1's single workflow or version 2's list. The coordinator sees the
+enabled workflows, default first (`coordinatorConfiguration`). Its
+`enter-workflow` step names the workflow it follows, recorded in the run's
+`workflowId`. From then on the run reads only that one (`workflowOf`). Skills
+arrive with contract 12, so this Mac still sends 11; it reads a version 2
+brain's skills but does not use them.
 
 ## Memory jobs
 

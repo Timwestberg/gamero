@@ -173,7 +173,7 @@ internal class GrokWorkRuntime(
             session = opened
             if (!active()) { opened.abort(); return }
             val binding = start.previous ?: bindings.create(opened.sessionId, start.scope)
-            synchronized(this) { activity = GrokWorkActivity(opened.sessionId, start.folder) }
+            synchronized(this) { activity = GrokWorkActivity(opened.sessionId, start.folder, work.edits) }
             approvals = GrokApprovals(opened.sessionId, work, events, broker)
             if (!active()) { approvals?.close(); opened.abort(); return }
             if (saved == null) deliver { events.opened(binding.handle) }
