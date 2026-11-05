@@ -309,7 +309,7 @@ Mobile first from here.""" }
 
     @Test fun stageConsentIsPersistedWithTheActualDialogAndSurvivesStoreReload() {
         val fixture = Fixture(brain("Implementer" to MemberMode.TALK, workflow = true, askBeforeStarting = true))
-        val step = fixture.document.configuration.workflow!!.steps.first()
+        val step = fixture.document.configuration.workflows.single().steps.first()
         fixture.decide = { turn ->
             when {
                 "enter-workflow" in fixture.allowed(turn) -> """{"kind":"enter-workflow","entryStepId":"${step.id}","inputIds":[],"skipped":[],"reason":"Start"}"""
@@ -349,9 +349,36 @@ Mobile first from here.""" }
             fixture.server.appended().last { it.author == MessageAuthor.SYSTEM }.text)
     }
 
+    /** The coordinator picks one of a version 2 brain's workflows by its step; the run and its thread follow that one. */
+    @Test fun theCoordinatorEntersTheWorkflowWhoseStepItNames() {
+        val fixture = Fixture(workflowsBrain())
+        val (review, draft) = fixture.document.configuration.workflows
+        fixture.decide = { turn ->
+            val allowed = fixture.allowed(turn)
+            when {
+                "enter-workflow" in allowed ->
+                    """{"kind":"enter-workflow","entryStepId":"${review.steps[0].id}","inputIds":[],"skipped":[],"reason":"Check it."}"""
+                "step-result" in allowed -> {
+                    val attempt = fixture.request(turn).getValue("attempts").jsonArray.last().jsonObject.getValue("id").jsonPrimitive.content
+                    """{"kind":"step-result","attemptId":"$attempt","outcome":"ready","explanation":"Checked."}"""
+                }
+                else -> "{\"kind\":\"answer\"}\nReviewed."
+            }
+        }
+        assertEquals(MessageState.ANSWERED, fixture.send("Review the release notes"))
+        val shown = fixture.request(fixture.coordinatorTurns().first()).getValue("configuration").jsonObject.getValue("workflows").jsonArray
+        assertEquals(listOf(draft.name, review.name), shown.map { it.jsonObject.getValue("name").jsonPrimitive.content }, "the default first")
+        val record = ConversationStore(fixture.root, fixture.account).read(fixture.talk.id)
+        val run = record.brain.run!!
+        assertEquals(listOf(review.id, BrainRunState.COMPLETED), listOf(run.summary.workflowId, run.summary.state))
+        assertEquals(2, run.configuration.version, "the stored run keeps its version 2 brain")
+        assertEquals(listOf(review.steps[0].id), run.attempts.map { it.stepId })
+        assertEquals("Reviewer · ${review.steps[0].name}", record.threads.values.single().title)
+    }
+
     @Test fun aWorkflowReturnRunsAgainInTheStepsThread() {
         val fixture = Fixture(brain("Writer" to MemberMode.TALK, "Reviewer" to MemberMode.TALK, workflow = true))
-        val steps = fixture.document.configuration.workflow!!.steps
+        val steps = fixture.document.configuration.workflows.single().steps
         var reviews = 0
         fixture.decide = { turn ->
             val request = fixture.request(turn)

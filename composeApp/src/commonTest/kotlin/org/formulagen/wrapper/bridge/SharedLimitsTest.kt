@@ -35,6 +35,7 @@ class SharedLimitsTest {
             "preview" to BrainLimits.PREVIEW, "returns" to BrainLimits.RETURNS, "stepInstructions" to BrainLimits.STEP_INSTRUCTIONS,
             "steps" to BrainLimits.STEPS)
         assertEquals(brain, numbers("BRAIN_LIMITS").filterKeys { it in brain })
+        assertEquals(BrainLimits.WORKFLOWS, numbers("LIBRARY_LIMITS").getValue("workflowsPerBrain"))
         assertEquals(SharedRules.MODEL_ID_PATTERN, limits.getValue("MODEL_ID_PATTERN").jsonPrimitive.content)
         assertEquals(BridgeUpdateRequiredException.MESSAGE, limits.getValue("UPDATE_REQUIRED_MESSAGE").jsonPrimitive.content)
         assertEquals(limits.getValue("RUNTIME_PROVIDERS").jsonObject.mapValues { it.value.jsonPrimitive.content },

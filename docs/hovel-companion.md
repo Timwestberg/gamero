@@ -543,6 +543,15 @@ Fixes to how a coordinator runs go in `CoordinatorEngine`. Its rules live in
   (`RunRecord.handoffInputs`). `SharedCoordinatorRulesTest` checks that
   `CONVERSATION_PROTOCOL` carries every rule line.
 
+A brain holds several workflows from contract 11 (`brainLibraries`).
+`BrainConfiguration` reads version 1 and version 2 alike, and `workflows` is
+either version 1's single workflow or version 2's list. The coordinator sees the
+enabled workflows, default first (`coordinatorConfiguration`). Its
+`enter-workflow` step names the workflow it follows, recorded in the run's
+`workflowId`. From then on the run reads only that one (`workflowOf`). Skills
+arrive with contract 12, so this Mac still sends 11; it reads a version 2
+brain's skills but does not use them.
+
 ## Memory jobs
 
 `MemoryJobLane` takes the heartbeat answer the runner hands it. Its

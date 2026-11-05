@@ -6,7 +6,7 @@ internal fun validSpecialistAdvice(claim: ClaimResult, now: Long = System.curren
     val config = claim.brain.configuration
     return advice.takeIf {
         config.specialistAdvice == true && config.decisionModel != org.formulagen.wrapper.bridge.DecisionModelSelection.LAYA &&
-            config.workflow?.enabled != true && claim.message.threadId == null &&
+            config.enabledWorkflows.isEmpty() && claim.message.threadId == null &&
             it.messageId == claim.message.id && it.configurationRevision == claim.brain.revision &&
             it.model == "jev-1.14.0" && it.confidence.isFinite() && it.confidence in 0.8..1.0 &&
             it.expiresAt > now && it.expiresAt - now <= 30_000 &&

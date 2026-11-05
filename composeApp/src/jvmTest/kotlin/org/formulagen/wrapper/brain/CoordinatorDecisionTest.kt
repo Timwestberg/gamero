@@ -49,6 +49,19 @@ class CoordinatorDecisionTest {
         assertFails { parseDecision("""{"kind":"answer","text":"Hi"}""", setOf(DecisionKind.ASK)) }
     }
 
+    /** A run may enter a workflow while it follows none and the brain has some workflow enabled. */
+    @Test fun aRunMayEnterAWorkflowWhileItFollowsNoneAndOneIsEnabled() {
+        val brain = testWorkflowsConfiguration()
+        fun enters(configuration: BrainConfiguration, workflowId: String? = null) = DecisionKind.ENTER_WORKFLOW in allowedDecisions(
+            RunRecord(BrainRun(brainId(), 1, 1, workflowId, BrainRunState.PLANNING, null), configuration, null, "Request", emptyList()))
+        assertTrue(enters(brain))
+        assertTrue(enters(brain.copy(workflows = brain.workflows.map { it.copy(enabled = it.name == "Archive") })), "any enabled workflow")
+        assertFalse(enters(brain.copy(workflows = brain.workflows.map { it.copy(enabled = false) })))
+        assertFalse(enters(brain, brain.workflows[1].id), "one workflow runs at a time")
+        assertTrue(enters(testConfiguration(workflow = true)))
+        assertFalse(enters(testConfiguration()))
+    }
+
     /** A conversation's thread reply offers only forward, answer and delegate; a run never takes a forward. */
     @Test fun aThreadReplyForwardsAnswersOrDelegatesAndNothingElse() {
         val run = RunRecord(BrainRun(brainId(), 1, 1, null, BrainRunState.PLANNING, null), testConfiguration(), null, "Request", emptyList(),
