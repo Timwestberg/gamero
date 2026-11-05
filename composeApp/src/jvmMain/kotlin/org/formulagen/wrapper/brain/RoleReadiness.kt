@@ -41,10 +41,10 @@ internal fun roleIssues(
 
 /**
  * The workflow steps whose stage approval [role]'s attempt at [step] honors: that step, or for ad hoc work, every
- * step of the enabled workflow the role runs, so the strictest of them applies.
+ * step the role runs in the enabled workflows, so the strictest of them applies.
  */
 internal fun stagesFor(configuration: BrainConfiguration, role: BrainRoleSnapshot, step: WorkflowStep?): List<WorkflowStep> =
-    step?.let(::listOf) ?: configuration.workflow?.takeIf { it.enabled }?.steps?.filter { it.specialistId == role.roleId }.orEmpty()
+    step?.let(::listOf) ?: configuration.enabledWorkflows.flatMap { it.steps }.filter { it.specialistId == role.roleId }
 
 /** Whether [role]'s attempt at [step] asks before it starts ([stagesFor]). */
 internal fun asksBeforeStarting(configuration: BrainConfiguration, role: BrainRoleSnapshot, step: WorkflowStep?): Boolean =

@@ -227,11 +227,15 @@ class ConversationWireTest {
         contract.invalidate()
         assertNull(contract.pageContract)
         val limits = Json.parseToJsonElement(HostBridgeFixtures.LIMITS).jsonObject
-        assertEquals(limits.getValue("HOVEL_CONTRACT").jsonPrimitive.int, HovelContract.CURRENT)
         assertEquals(limits.getValue("HOVEL_CONTRACT_HEADER").jsonPrimitive.content, HovelContract.HEADER)
         val features = limits.getValue("HOVEL_CONTRACT_FEATURES").jsonObject.mapValues { it.value.jsonPrimitive.int }
         assertEquals(features, HovelContract.FEATURES)
         assertEquals(features.getValue("companionsOnly"), HovelContract.COMPANIONS_ONLY)
+        // This Mac speaks version 2 brains but not skills yet: it claims the contract before them, never a newer one.
+        assertEquals(features.getValue("brainLibraries"), HovelContract.CURRENT)
+        assertTrue(HovelContract.CURRENT <= limits.getValue("HOVEL_CONTRACT").jsonPrimitive.int)
+        assertEquals(setOf("brainSkills"), features.filterValues { it > HovelContract.CURRENT }.keys,
+            "a feature newer than this Mac's contract is one it knowingly leaves out")
     }
 
     @Test fun aPageFromBeforeContractThreeIsAskedToUpdate() = kotlinx.coroutines.runBlocking<Unit> {

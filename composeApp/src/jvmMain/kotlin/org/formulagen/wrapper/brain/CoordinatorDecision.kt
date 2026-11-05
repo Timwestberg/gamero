@@ -116,14 +116,17 @@ internal fun parseDecision(text: String, allowed: Set<DecisionKind>): Coordinato
     return decision
 }
 
-/** The host decides what may happen next; the model can only select an offered decision. */
+/**
+ * The host decides what may happen next; the model can only select an offered decision. A run may enter a workflow
+ * while it follows none and the brain has one enabled; the entry step then names which ([decided]).
+ */
 internal fun allowedDecisions(run: RunRecord): Set<DecisionKind> = when (run.phase) {
     BrainPhase.EVALUATE -> setOf(DecisionKind.STEP_RESULT, DecisionKind.ASK)
     BrainPhase.ADVANCE -> setOf(DecisionKind.START_STEP, DecisionKind.SKIP_STEP, DecisionKind.ASK)
     // Every step is done, so only the closing answer or a question remains.
     BrainPhase.FINISH -> setOf(DecisionKind.ANSWER, DecisionKind.ASK)
     BrainPhase.PLAN, BrainPhase.EXECUTE -> {
-        val canEnter = run.configuration.workflow?.enabled == true && run.summary.workflowId == null
+        val canEnter = run.configuration.enabledWorkflows.isNotEmpty() && run.summary.workflowId == null
         val always = setOf(DecisionKind.ANSWER, DecisionKind.ASK, DecisionKind.DELEGATE)
         if (canEnter) always + DecisionKind.ENTER_WORKFLOW else always
     }

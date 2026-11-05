@@ -283,7 +283,7 @@ internal class CoordinatorEngine(
             val current = currentRun()
             val coordinator = turns.resolved(call, coordinatorRole(), coordinator = true)
             val allowed = allowedDecisions(current)
-            val hint = advice?.takeIf { !adviceUsed && current.attempts.isEmpty() && current.configuration.workflow?.enabled != true &&
+            val hint = advice?.takeIf { !adviceUsed && current.attempts.isEmpty() && current.configuration.enabledWorkflows.isEmpty() &&
                 current.summary.configurationRevision == it.configurationRevision && it.expiresAt > System.currentTimeMillis() }
             if (hint != null) {
                 adviceUsed = true
@@ -329,7 +329,7 @@ internal class CoordinatorEngine(
             val role = turns.resolved(call, attempt.role)
             attempt = attempt.copy(role = role)
             change { it.copy(run = checkNotNull(it.run).withLast(attempt)) }
-            val step = current.configuration.workflow?.steps?.find { it.id == attempt.stepId }
+            val step = current.configuration.step(attempt.stepId)
             val threadId = checkNotNull(record.attemptThreads[attempt.id])
             if (asksBeforeStarting(current.configuration, role, step)) {
                 if (!approveStage(current, attempt, step, threadId)) return

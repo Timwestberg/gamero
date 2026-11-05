@@ -2,8 +2,10 @@ package org.formulagen.wrapper.bridge
 
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.KeepGeneratedSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.SerializationStrategy
 import kotlinx.serialization.descriptors.PolymorphicKind
 import kotlinx.serialization.descriptors.SerialDescriptor
@@ -20,6 +22,10 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonTransformingSerializer
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.serializer
 import org.formulagen.wrapper.conversation.Activity
@@ -32,8 +38,8 @@ import org.formulagen.wrapper.conversation.TeamMember
  */
 
 /**
- * The BRAIN_LIMITS of event-contracts this Mac applies, checked against `fixtures/limits.json`; the rest are the page's
- * and the server's. [INPUTS] bounds the inputs one message attaches.
+ * The BRAIN_LIMITS of event-contracts this Mac applies, and [WORKFLOWS] of its LIBRARY_LIMITS, checked against
+ * `fixtures/limits.json`; the rest are the page's and the server's. [INPUTS] bounds the inputs one message attaches.
  */
 object BrainLimits {
     const val DESCRIPTION = 512
@@ -47,6 +53,8 @@ object BrainLimits {
     const val RETURNS = 3
     const val STEP_INSTRUCTIONS = 2048
     const val STEPS = 30
+    /** `LIBRARY_LIMITS.workflowsPerBrain`: the workflows one version 2 brain holds. */
+    const val WORKFLOWS = 10
 }
 
 /** Records keep every null; [brainWire] decides which nulls the contract sends. */
@@ -67,6 +75,7 @@ data class CoordinatorRole(val id: String, val binding: BrainBinding?, val instr
     }
 }
 
+/** A brain's specialist. [skills] are version 2's (`compiledSpecialist`): read and kept, not used before contract 12. */
 @Serializable
 data class SpecialistRole(
     val id: String,
@@ -75,7 +84,28 @@ data class SpecialistRole(
     val mode: MemberMode,
     val binding: BrainBinding?,
     val slot: Int,
+    val skills: List<SkillRef> = emptyList(),
 )
+
+/**
+ * `skillRef`: a skill a version 2 brain's specialist uses, one of the brain's own ([Hovel], in
+ * [BrainConfiguration.skills]) or one installed in [Provider.runtimeId] on a Mac. Skills arrive with contract 12; this
+ * Mac reads them and does not use them yet.
+ */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+@JsonClassDiscriminator("source")
+sealed interface SkillRef {
+    @Serializable @SerialName("hovel")
+    data class Hovel(val skillId: String) : SkillRef
+
+    @Serializable @SerialName("provider")
+    data class Provider(val runtimeId: RuntimeId, val name: String) : SkillRef
+}
+
+/** `brainSkill`: a Hovel skill a version 2 brain carries for its specialists ([SkillRef.Hovel]); not used yet. */
+@Serializable
+data class BrainSkill(val id: String, val name: String, val instructions: String, val useWhen: String)
 
 @Serializable
 data class BrainReturn(val stepId: String, val condition: String)
@@ -96,6 +126,11 @@ data class WorkflowStep(
 @Serializable
 data class BrainSection(val id: String, val name: String)
 
+/**
+ * One of a brain's workflows. [useFor] (what the coordinator follows it for) and [isDefault] (its first choice when a
+ * request fits several) are version 2's (`brainWorkflowV2`): empty and false in version 1, whose one workflow needs
+ * neither.
+ */
 @Serializable
 data class BrainWorkflow(
     val id: String,
@@ -103,6 +138,8 @@ data class BrainWorkflow(
     val enabled: Boolean,
     val steps: List<WorkflowStep>,
     val sections: List<BrainSection>,
+    val useFor: String = "",
+    @SerialName("default") val isDefault: Boolean = false,
 )
 
 /** Hosted decision selection does not replace any chat runtime binding. */
@@ -113,15 +150,78 @@ enum class DecisionModelSelection {
     @SerialName("laya") LAYA,
 }
 
-@Serializable
+/**
+ * `brainConfiguration`, either version, read the same way: [workflows] is version 1's one workflow (or none) or version
+ * 2's list, whose step ids are unique across them. Version 2 also carries [skills] and each specialist's
+ * [SpecialistRole.skills], which wait for contract 12. [BrainConfigurationSerializer] keeps each version's own shape.
+ */
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = BrainConfigurationSerializer::class)
 data class BrainConfiguration(
     val version: Int,
     val coordinator: CoordinatorRole,
     val specialists: List<SpecialistRole>,
-    val workflow: BrainWorkflow?,
+    val workflows: List<BrainWorkflow>,
     val decisionModel: DecisionModelSelection? = null,
     val specialistAdvice: Boolean? = null,
-)
+    val skills: List<BrainSkill> = emptyList(),
+) {
+    init {
+        require(version == 1 || version == 2) { "Unknown brain version $version" }
+        require(workflows.size <= if (version == 1) 1 else BrainLimits.WORKFLOWS)
+        // Version 1 holds nothing of version 2's, so writing it back loses nothing.
+        require(version == 2 || (skills.isEmpty() && specialists.all { it.skills.isEmpty() } &&
+            workflows.all { it.useFor.isEmpty() && !it.isDefault }))
+    }
+
+    /** The workflows the coordinator may follow, in the brain's order. */
+    val enabledWorkflows: List<BrainWorkflow> get() = workflows.filter { it.enabled }
+
+    /** The step [id] names, in whichever workflow holds it. */
+    fun step(id: String?): WorkflowStep? = id?.let { workflows.firstNotNullOfOrNull { workflow -> workflow.steps.find { it.id == id } } }
+}
+
+/**
+ * Reads and writes a [BrainConfiguration] in its version's shape. Version 1 holds `workflow`, one or `null`, and none
+ * of version 2's fields; version 2 holds `workflows`, `skills`, each workflow's `useFor` and `default`, and each
+ * specialist's `skills`. Reading refuses a field of the other version, as `z.strictObject` does.
+ */
+internal object BrainConfigurationSerializer : JsonTransformingSerializer<BrainConfiguration>(BrainConfiguration.generatedSerializer()) {
+    private val WORKFLOW_V2 = setOf("useFor", "default")
+    private const val SKILLS = "skills"
+
+    private fun isVersion1(value: JsonObject) = value["version"] == JsonPrimitive(1)
+
+    override fun transformDeserialize(element: JsonElement): JsonElement {
+        val value = element.jsonObject
+        if (!isVersion1(value)) return value
+        val workflow = value["workflow"] ?: throw SerializationException("A version 1 brain names its workflow or null")
+        val specialists = value["specialists"]?.jsonArray.orEmpty()
+        if ("workflows" in value || SKILLS in value || specialists.any { SKILLS in it.jsonObject } ||
+            (workflow as? JsonObject)?.keys.orEmpty().any { it in WORKFLOW_V2 }) {
+            throw SerializationException("Only a version 2 brain holds several workflows or skills")
+        }
+        return JsonObject(buildMap {
+            for ((key, item) in value) {
+                if (key == "workflow") put("workflows", JsonArray(listOfNotNull(item.takeIf { it != JsonNull }))) else put(key, item)
+            }
+        })
+    }
+
+    override fun transformSerialize(element: JsonElement): JsonElement {
+        val value = element.jsonObject
+        if (!isVersion1(value)) return value
+        return JsonObject(buildMap {
+            for ((key, item) in value) when (key) {
+                "workflows" -> put("workflow", item.jsonArray.singleOrNull()?.let { JsonObject(it.jsonObject - WORKFLOW_V2) } ?: JsonNull)
+                "specialists" -> put(key, JsonArray(item.jsonArray.map { JsonObject(it.jsonObject - SKILLS) }))
+                SKILLS -> Unit
+                else -> put(key, item)
+            }
+        })
+    }
+}
 
 @Serializable
 data class BrainDocument(val revision: Long, val configuration: BrainConfiguration)
