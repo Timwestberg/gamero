@@ -55,7 +55,7 @@ class CompanionContractFixtureTest {
             spelled(route.jsonObject.getValue("method").jsonPrimitive.content, route.jsonObject.getValue("path").jsonPrimitive.content)
         }
         // Memory jobs are hovel-service's own native routes, outside the companion table.
-        val outside = setOf(NativeRoute.MEMORY_CLAIM, NativeRoute.MEMORY_PROGRESS, NativeRoute.MEMORY_CONSOLIDATE)
+        val outside = setOf(NativeRoute.MEMORY_CLAIM, NativeRoute.MEMORY_PROGRESS, NativeRoute.MEMORY_CONSOLIDATE, NativeRoute.MEMORY_CONTEXT_CHECK, NativeRoute.MEMORY_CLEANUP_ACK)
         val mac = (NativeRoute.entries - outside).map { spelled(it.method, it.template) }.toSet()
         assertEquals(served.values.toSet(), mac)
         assertFalse(served.values.any { it.endsWith("/answer") }, "an answer travels only as approval.closed")

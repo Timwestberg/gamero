@@ -97,6 +97,7 @@ internal class ConversationRunner(
     /** Who hears each claimed message's replies on this Mac: voice, when it speaks them. */
     private val replies: ReplyListeners = ReplyListeners.NONE,
     private val imageRequested: (String) -> Unit = {},
+    private val contextReady: () -> Boolean = { true },
 ) : AutoCloseable {
     private val sessions = ConcurrentHashMap<String, Session>()
     private val slots = Semaphore(maxRunning, true)
@@ -390,6 +391,7 @@ internal class ConversationRunner(
             val replayed = journaled.firstOrNull { it.phase.unrun }
             if (replayed == null && journaled.isNotEmpty()) return false
             val entry = replayed ?: store.journal(ClaimEntry(UUID.randomUUID().toString(), conversationId, ClaimPhase.CLAIMING))
+            if (!contextReady()) return false
             claiming = true
             val response = try {
                 api.claim(ClaimRequest(entry.claimId, conversationId))

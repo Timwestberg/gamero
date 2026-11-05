@@ -38,6 +38,7 @@ class HostConnection(
     val transport: HovelHttpTransport,
     val status: (String) -> Unit,
     val features: List<String>,
+    val cleanup: MemoryCleanup? = null,
     val heartbeat: (JsonObject) -> Unit,
 )
 
@@ -151,6 +152,7 @@ class HovelCompanion(
     /** The registered Mac's session: the conversation runner, and with Codex the memory job lane. Called holding [lifecycle]. */
     private fun startSession(registered: HostRegistration, token: String): AutoCloseable {
         val transport = HovelHttpTransport(URI("$origin/api/hovel/v1/hovel"), registered.ownerId, registered.id, token)
+        val cleanup = MemoryCleanup(transport, directory.resolve("memory-cleanup-${registered.id}.txt"))
         var journal: ExecutionJournal? = null
         var lane: MemoryJobLane? = null
         try {
@@ -159,11 +161,19 @@ class HovelCompanion(
                 // Extraction reads only its input: an empty private folder, never the player's project and its AGENTS.md.
                 val memoryWorkspace = privateDirectory(directory.resolve("memory-workspace-${registered.id}"))
                 val provider = CodexCliProvider(executable, memoryWorkspace, directory.resolve("memory-output-${registered.id}"))
-                lane = MemoryJobLane(registered.id, memoryJobs, provider, provider::readiness, transport) { status = it }.also { it.start() }
+                cleanup.register {
+                    memoryJobs.eraseContent()
+                    val outputs = directory.resolve("memory-output-${registered.id}")
+                    if (Files.exists(outputs)) {
+                        Files.list(outputs).use { files -> files.filter { it.fileName.toString().endsWith(".txt") }.forEach { Files.delete(it) } }
+                        java.nio.channels.FileChannel.open(outputs, java.nio.file.StandardOpenOption.READ).use { it.force(true) }
+                    }
+                }
+                lane = MemoryJobLane(registered.id, memoryJobs, provider, provider::readiness, transport, cleanup = cleanup) { status = it }.also { it.start() }
             }
             val memory = lane
             val runner = conversations(HostConnection(registered, transport, { status = it },
-                if (memory != null) MemoryJobLane.FEATURES else emptyList()) { response -> memory?.heartbeat(response) })
+                (if (memory != null) MemoryJobLane.FEATURES else emptyList()) + MemoryCleanup.FEATURE, cleanup) { response -> memory?.heartbeat(response) })
             native = transport
             return AutoCloseable { closeInReverse(listOfNotNull(memory, runner)) }
         } catch (error: Exception) {
