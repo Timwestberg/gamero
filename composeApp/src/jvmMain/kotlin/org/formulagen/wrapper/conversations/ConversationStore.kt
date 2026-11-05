@@ -5,6 +5,7 @@ import java.nio.channels.FileLock
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption.READ
 import java.nio.file.StandardOpenOption.CREATE
 import java.nio.file.StandardOpenOption.WRITE
 import java.util.UUID
@@ -152,6 +153,17 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
         val bytes = brainJson.encodeToString(ConversationRecord.serializer(), record).toByteArray()
         require(bytes.size <= RECORD_BYTES) { "Conversation storage limit reached" }
         writeDurably(privateFolder(folder(conversationId)).resolve(RECORD), bytes)
+    }
+
+    /** The cleanup barrier has stopped every run. Keep content-free claim fences and user artifacts. */
+    fun eraseContext() {
+        Files.list(base).use { files -> files.filter { Files.isDirectory(it, NOFOLLOW_LINKS) &&
+            SharedRules.isRecordId(it.fileName.toString()) }.forEach { directory ->
+                write(directory.fileName.toString(), ConversationRecord())
+                Files.list(directory).use { copies -> copies.filter { it.fileName.toString().startsWith(".record-") &&
+                    it.fileName.toString().endsWith(".tmp") }.forEach { Files.delete(it) } }
+                FileChannel.open(directory, READ).use { it.force(true) }
+            } }
     }
 
     /** Every claim journaled and not yet settled, in every conversation. */

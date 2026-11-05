@@ -62,7 +62,9 @@ internal enum class NativeRoute(val method: String, val template: String) {
     /** Memory jobs. */
     MEMORY_CLAIM("POST", "memory/claim"),
     MEMORY_PROGRESS("POST", "memory/progress"),
-    MEMORY_CONSOLIDATE("POST", "memory/consolidate");
+    MEMORY_CONSOLIDATE("POST", "memory/consolidate"),
+    MEMORY_CONTEXT_CHECK("POST", "memory/context/check"),
+    MEMORY_CLEANUP_ACK("POST", "memory/cleanup/ack");
 
     private val segments: List<String> get() = template.split('/')
 

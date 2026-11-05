@@ -39,6 +39,7 @@ class ConversationRunnerTest {
         }
     }
 
+    @Volatile private var contextReady = true
     private val engine = Engine()
     private val publisher = ProjectFolderPublisher(folders, server, account, server.hostId) { emptyList() }
 
@@ -46,7 +47,7 @@ class ConversationRunnerTest {
     private fun runner(now: () -> Long = System::nanoTime, heartbeat: () -> HostHeartbeat = { beat },
         replies: ReplyListeners = ReplyListeners.NONE) = ConversationRunner(server, store, engine,
         RemoteApprovals(NativeDialogs(Screen()), server, server.hostId), folders, publisher, heartbeat, { heartbeats += it }, { statuses += it },
-        heartbeatEvery = 50.milliseconds, firstBackoff = 10.milliseconds, maxBackoff = 40.milliseconds, now = now, replies = replies)
+        heartbeatEvery = 50.milliseconds, firstBackoff = 10.milliseconds, maxBackoff = 40.milliseconds, now = now, replies = replies, contextReady = { contextReady })
 
     private val runner = runner()
 
@@ -58,6 +59,20 @@ class ConversationRunnerTest {
     }
 
     private fun waitConnected() = eventually("the stream connected") { runner.connected }
+
+    @Test fun pendingCleanupKeepsTheWakeJournaledUntilTheHostIsReady() {
+        contextReady = false
+        val talk = TestConversation()
+        val message = queue(talk, "Wait for memory cleanup")
+        runner.wake(talk.id)
+        eventually { store.pendingClaims().isNotEmpty() }
+        assertTrue(engine.runs.isEmpty())
+        contextReady = true
+        runner.beat()
+        eventually { server.settled(message) == MessageState.ANSWERED }
+        eventually { store.pendingClaims().isEmpty() }
+        assertEquals(1, engine.runs.size)
+    }
 
     @Test fun workAvailableClaimsRunsAndSettlesEachMessageInTurn() {
         runner.start(); waitConnected()

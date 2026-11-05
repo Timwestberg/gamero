@@ -34,6 +34,7 @@ internal class TurnCall(
     val companion: String,
     val folders: ProjectFolders,
     val cancel: CancelSignal,
+    val beforeTurn: () -> Unit = {},
 ) {
     /** Throws once the message was stopped. */
     fun live() { if (cancel.isCancelled) throw StoppedException() }
@@ -179,6 +180,8 @@ internal class ProviderTurns(
         val stopping = call.cancel.onCancel { future.completeExceptionally(InterruptedException()) }
         var handle: TurnHandle? = null
         try {
+            call.beforeTurn()
+            call.live()
             handle = start(request, events)
             return try { future.get(turnTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS) }
             catch (wrapped: ExecutionException) { throw wrapped.cause ?: wrapped }

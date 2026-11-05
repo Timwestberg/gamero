@@ -39,7 +39,8 @@ class CoordinatorEngineTest {
         val dialogs = NativeDialogs(screen)
         val approvals = RemoteApprovals(dialogs, server, server.hostId)
         val turns = ProviderTurns(listOf(chat), listOf(worker), ConnectedProviders(), approvals)
-        val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), server)
+        var beforeTurn: () -> Unit = {}
+        val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), server, { beforeTurn() })
 
         init {
             if (workingFolder) { picked = working; folders.choose(account, talk.projectId, FolderRole.WORKING) }
@@ -91,6 +92,21 @@ class CoordinatorEngineTest {
                 else -> "{\"kind\":\"answer\"}\nAll done: sign-in works."
             }
         }
+    }
+
+    @Test fun anOfflineContextCheckPausesForReconciliationWithoutSubmitting() {
+        val fixture = Fixture(brain("Reviewer" to MemberMode.TALK))
+        fixture.beforeTurn = { throw org.formulagen.wrapper.hovel.MemoryContextUnavailable(IllegalStateException("offline")) }
+        assertEquals(MessageState.RECONCILIATION_REQUIRED, fixture.send("Check context before this turn"))
+        assertTrue(fixture.chat.requests.isEmpty())
+    }
+
+    @Test fun anInvalidContextStartsNoProviderTurn() {
+        val fixture = Fixture(brain("Reviewer" to MemberMode.TALK))
+        fixture.beforeTurn = { throw StoppedException() }
+        assertEquals(MessageState.STOPPED, fixture.send("Use private context"))
+        assertTrue(fixture.chat.requests.isEmpty())
+        assertTrue(fixture.worker.requests.isEmpty())
     }
 
     @Test fun aQuestionKeepsItsChoicesInStorageAndTheCheckpoint() {

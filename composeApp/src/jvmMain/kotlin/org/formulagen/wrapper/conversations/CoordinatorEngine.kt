@@ -43,6 +43,7 @@ internal class CoordinatorEngine(
     private val startOfWork: StartOfWork,
     /** Reads a message input's whole text; the claim carries only its preview. */
     private val api: ConversationApi,
+    private val beforeTurn: () -> Unit = {},
 ) : MessageEngine {
     /** The runtimes this Mac lets read context folders: a project lists them as `readableBy`. */
     fun readableBy(): List<RuntimeId> = turns.readableBy()
@@ -57,7 +58,7 @@ internal class CoordinatorEngine(
         val companion = claim.companion.name
         val message = claim.message
         val local = folders.folders(store.accountId, projectId).filter { it.exists }
-        val call = TurnCall(store.accountId, claim.companion.id, companion, folders.projectFolders(store.accountId, projectId), cancel)
+        val call = TurnCall(store.accountId, claim.companion.id, companion, folders.projectFolders(store.accountId, projectId), cancel, beforeTurn)
 
         /** The conversation's record. Provider callbacks change it too ([update]), so every change holds this run's lock. */
         @Volatile var record = store.read(conversationId)
@@ -82,6 +83,7 @@ internal class CoordinatorEngine(
                 // `stop-requested` cancelled the message as it was refused: the run stops as the person's Stop does.
                 if (cancel.isCancelled) stopped() else throw refused
             }
+            catch (_: org.formulagen.wrapper.hovel.MemoryContextUnavailable) { MessageState.RECONCILIATION_REQUIRED }
             catch (failure: ProviderFailure) {
                 // The next message starts the coordinator's conversation fresh.
                 if (failure.coordinator && failure.failure == ChatFailure.ConversationLost) {

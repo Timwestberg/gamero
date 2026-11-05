@@ -27,6 +27,33 @@ The launcher controls `HOVEL_EMBEDDED`. When configured,
 Native HTTP contract acceptance passed against the real contract-4 service;
 that does not prove JCEF visuals, embedded Overclock or provider execution.
 
+## Memory cleanup
+
+The host advertises `memory-cleanup-v1`. `hovel/MemoryCleanup.kt` shares one barrier
+between `ConversationHost` and `MemoryJobLane`. After heartbeat registration it polls
+`memory/context/check`; before each provider submission it checks the generation again.
+An unavailable server or invalid generation prevents another submission. A deletion
+can still race a provider start after the check, so interruption remains best-effort.
+
+A changed account generation blocks new work and cancels active conversation/extraction
+runs. Cleanup waits until every registered writer has exited, resets conversation records,
+scrubs extraction journal prompts/results and deletes owned extraction output files.
+Content-free claim/launch fences remain, so crashes and lost acknowledgements never
+relaunch work. Local changes are flushed before `memory-cleanup-<hostId>.txt` is saved
+and `memory/cleanup/ack` is sent. A newer generation or failed cleanup retries on the
+next heartbeat; unchanged generations preserve fresh context across restart. Generation zero does not erase ordinary first-run context. A server generation lower than the local receipt fails closed until the server's deletion fences are restored.
+
+The server exposes owner-only `GET /memory/cleanup` for pending, completed, revoked
+and outdated hosts. Its `AddHovelMemoryCleanup1793750400000` migration fences existing
+memory accounts and clears historical server copies. Deploy compatible readers before
+resuming those accounts: old hosts cannot claim new work after cleanup is required.
+
+The barrier invalidates Hovel's resumable context. It does not delete original
+conversations, user artifacts/project files, provider-managed caches/history or backups.
+Tests run in cloud Linux with fake providers; no user Mac or live-provider erasure is
+needed or claimed. See `MemoryCleanupTest`, `ConversationStoreTest`,
+`ExecutionCoordinatorTest`, `ConversationRunnerTest` and `CoordinatorEngineTest`.
+
 ## The parts
 
 | Part | File | Job |
