@@ -47,13 +47,9 @@ Use an Apple silicon Mac. Xcode or the command line tools give `swift` and `code
 5. Sleep the Mac (`pmset sleepnow`), wake it, and check `:8123` and the Home Assistant uptime again.
 6. Plug in a USB radio. Look for it in Home Assistant (Settings → System → Hardware).
 7. Note the memory and CPU of "Virtualization Service" in Activity Monitor after 10 minutes at idle.
-8. Try bridged networking. List interfaces with `./run.sh interfaces`, then:
+8. Leave the VM running for spike 2, which signs in to it.
 
-    ```sh
-    ./run.sh --bridged en0
-    ```
-
-    Ad-hoc signing with `com.apple.vm.networking` is expected to fail. Record the exact error. With a Developer ID identity that holds the entitlement, set `SIGN_IDENTITY` and run it again.
+Tim chose NAT only for now (2026-11-05), so this run does not try bridged networking. When it is time, list interfaces with `./run.sh interfaces`, then run `./run.sh --bridged en0`. Ad-hoc signing with `com.apple.vm.networking` is expected to fail. With a Developer ID identity that holds the entitlement, set `SIGN_IDENTITY` and run it again.
 
 Ctrl-C asks the guest to shut down. A second Ctrl-C stops the VM at once. `work/` holds the image, the EFI variables and the MAC address, and git ignores it.
 
@@ -68,8 +64,7 @@ Ctrl-C asks the guest to shut down. A second Ctrl-C stops the VM at once. `work/
 | NAT: phone on the LAN reaches `:8123` | | |
 | NAT: Mac sees `_home-assistant._tcp` | | |
 | NAT: Home Assistant discovers LAN devices | | |
-| Bridged, ad hoc: error | | |
-| Bridged, with the entitlement | | |
+| Bridged | Not run: NAT only for now | |
 | USB radio in the guest | | |
 | Sleep and wake | | |
 | Memory and CPU at idle | | |
