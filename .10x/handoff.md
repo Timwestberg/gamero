@@ -9,3 +9,8 @@ Then phase B: the Android and iOS transports and the web client.
 
 **From:** Architect. **To:** SDE.
 Tim approved the plan on 2026-10-14; ADR-002 is Accepted. Work the tasks in `decisions/engineering-manager/bridge-kit.md`, one stacked PR each. Mobile test commands need `-Pgamero.mobileTargets=true`, `ANDROID_HOME=~/Library/Android/sdk` and `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`.
+
+## meetings
+
+**From:** SDE (Meetings 3a). **To:** whoever runs Meetings 3b and 3c.
+Meetings v1 is FOR-232. Gamero only lets its webviews give the camera and microphone to the trusted Hovel page; the call itself runs in the web page. 3a (FOR-237) adds `MediaGrant` in `commonMain` and the Android adapter. 3b (iOS, FOR-238) and 3c (Mac, FOR-239) ask the same `MediaGrant`. The rule and the platform table are in `docs/host-bridge.md`, "Camera and microphone". Never use `--enable-media-stream` on the Mac. Real phones and a real meeting are not tested yet.
