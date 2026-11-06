@@ -5,6 +5,10 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.webkit.WebView
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -13,10 +17,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import com.multiplatform.webview.web.PlatformWebViewParams
 import java.net.URI
 import org.formulagen.wrapper.App
 import org.formulagen.wrapper.R
 import org.formulagen.wrapper.bridge.AndroidHostBridge
+import org.formulagen.wrapper.bridge.AndroidMediaRequests
 import org.formulagen.wrapper.bridge.ApprovalCapability
 import org.formulagen.wrapper.bridge.ApprovalDeviceCapability
 import org.formulagen.wrapper.bridge.ApprovalDeviceMethods
@@ -25,6 +31,8 @@ import org.formulagen.wrapper.bridge.Capability
 import org.formulagen.wrapper.bridge.CapabilityPack
 import org.formulagen.wrapper.bridge.CompanionMethods
 import org.formulagen.wrapper.bridge.HostBridge
+import org.formulagen.wrapper.bridge.MediaChromeClient
+import org.formulagen.wrapper.bridge.TrustedOrigin
 import org.formulagen.wrapper.bridge.androidHostCapabilities
 import org.formulagen.wrapper.phone.androidPhoneApprovals
 
@@ -89,8 +97,19 @@ fun HovelAndroidApp(url: String, onPageLoaded: (url: String, title: String?) -> 
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "dev"
     }
     val attached = remember { arrayOfNulls<AndroidHostBridge>(1) }
+    val webViews = remember { arrayOfNulls<WebView>(1) }
     // One approval device for the activity's lifetime, so a dialog outlives a page reload.
     val approvals = remember(context) { context.activity()?.let { androidPhoneApprovals(it, url) } }
+    // Camera and microphone go only to the trusted page's main frame (MediaGrant), after Android's own prompt.
+    val media = remember(context, url) {
+        AndroidMediaRequests(TrustedOrigin(url), isGranted = { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED })
+    }
+    val prompt = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { media.answered() }
+    DisposableEffect(media, prompt) {
+        media.ask = { permissions -> prompt.launch(permissions) }
+        onDispose { media.close() }
+    }
+    val webViewParams = remember(media) { PlatformWebViewParams(chromeClient = MediaChromeClient(media) { webViews[0]?.url }) }
     DisposableEffect(Unit) {
         onDispose {
             attached[0]?.close()
@@ -98,7 +117,8 @@ fun HovelAndroidApp(url: String, onPageLoaded: (url: String, title: String?) -> 
         }
     }
     // Like the desktop host, Hovel talks to the host bridge, not the legacy native bridge.
-    App(url, enableLegacyBridge = false, onPageLoaded = onPageLoaded, onWebViewCreated = { webView ->
+    App(url, enableLegacyBridge = false, onPageLoaded = onPageLoaded, platformWebViewParams = webViewParams, onWebViewCreated = { webView ->
+        webViews[0] = webView
         attached[0]?.close()
         // a registration an earlier page prepared is never finished by this one
         approvals?.invalidatePending()
