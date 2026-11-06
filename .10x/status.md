@@ -35,5 +35,5 @@ Spec `specs/2026-10-14-bridge-kit-design.md`, ADR-002 (Accepted). G5: product se
 Tim approved the ARCH on 2026-11-05. Gamero's part: the camera and microphone grant, through `MediaGrant`. **Phase:** Implementation.
 
 - [x] 3a `MediaGrant` and the Android adapter (FOR-237; Mac: JVM 892, Android 132, 0 failures; Android debug APK builds. Real devices not run)
-- [ ] 3b iOS: usage strings, WKWebView factory, capture-permission delegate (FOR-238)
+- [x] 3b iOS: usage strings, WKWebView factory, capture-permission delegate (FOR-238; Mac: iOS 139, 0 failures; `tools/ios-smoke.sh` passes on a stub page, where the delegate denies the product that is not Hovel. Check 6 fails: WKWebView blocks `ws://127.0.0.1` from an HTTPS page, so the simulator uses the cloud dev project)
 - [x] 3c Mac: JCEF media access handler and bundle usage strings (FOR-239; Mac: JVM 898, 0 failures; check 3 passes on JBR 21.0.9 with a live probe; `createDistributable` bundle has both usage strings. The app itself not launched with a meeting page)

@@ -86,14 +86,6 @@ class IosHostBridge(private val webView: WKWebView, private val bridge: HostBrid
 
     private fun onMain(block: () -> Unit) = dispatch_async(dispatch_get_main_queue(), block)
 
-    private fun originOf(frame: platform.WebKit.WKFrameInfo): String {
-        val origin = frame.securityOrigin
-        val port = origin.port.toInt().takeIf { it != 0 }?.let { ":$it" } ?: ""
-        // An IPv6 host needs brackets; add them only if WebKit left them out.
-        val host = origin.host.let { if (':' in it && !it.startsWith("[")) "[$it]" else it }
-        return "${origin.protocol}://$host$port"
-    }
-
     /** Exactly `{documentStart: true}`, as [DOCUMENT_START_SCRIPT] sends it. */
     private fun isDocumentStart(body: Any?): Boolean =
         body is Map<*, *> && body.size == 1 && (body["documentStart"] as? NSNumber)?.boolValue == true
@@ -107,4 +99,14 @@ class IosHostBridge(private val webView: WKWebView, private val bridge: HostBrid
         private const val EVENT_SCRIPT =
             "if (typeof window.gameroHostEvent === 'function') window.gameroHostEvent(event);"
     }
+}
+
+/** The frame's origin as `scheme://host[:port]`, for [TrustedOrigin]. The media grant uses it too. */
+@OptIn(ExperimentalForeignApi::class)
+internal fun originOf(frame: platform.WebKit.WKFrameInfo): String {
+    val origin = frame.securityOrigin
+    val port = origin.port.toInt().takeIf { it != 0 }?.let { ":$it" } ?: ""
+    // An IPv6 host needs brackets; add them only if WebKit left them out.
+    val host = origin.host.let { if (':' in it && !it.startsWith("[")) "[$it]" else it }
+    return "${origin.protocol}://$host$port"
 }
