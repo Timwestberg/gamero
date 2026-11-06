@@ -13,8 +13,11 @@ import androidx.compose.ui.window.ComposeUIViewController
 import com.multiplatform.webview.web.NativeWebView
 import org.formulagen.wrapper.bridge.HostBridge
 import org.formulagen.wrapper.bridge.IosHostBridge
+import org.formulagen.wrapper.bridge.MediaUIDelegate
+import org.formulagen.wrapper.bridge.TrustedOrigin
 import org.formulagen.wrapper.bridge.iosHostCapabilities
 import org.formulagen.wrapper.bridge.iosHovelBridgePacks
+import org.formulagen.wrapper.bridge.mediaWebViewFactory
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.hovel.HovelIosApp
 import org.formulagen.wrapper.logger.LogLevel
@@ -51,8 +54,11 @@ fun MainViewController() = ComposeUIViewController {
             val products = approvals?.let { iosHovelBridgePacks(it, it) } ?: emptyList()
             attached[0] = IosHostBridge(webView, HostBridge(if (hovel) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME, url, iosHostCapabilities(appVersion()), products))
         }
-        if (hovel) HovelIosApp(url, onPageLoaded = ::logPageLoaded, onWebViewCreated = attach)
-        else App(url, onWebViewCreated = attach, onPageLoaded = ::logPageLoaded)
+        // Only Hovel's page gets the camera and microphone. WKWebView keeps its UI delegate weakly, so it lives here.
+        val media = remember { MediaUIDelegate(if (hovel) TrustedOrigin(url) else null) }
+        val webViewFactory = remember(media) { mediaWebViewFactory(media) }
+        if (hovel) HovelIosApp(url, onPageLoaded = ::logPageLoaded, onWebViewCreated = attach, webViewFactory = webViewFactory)
+        else App(url, onWebViewCreated = attach, webViewFactory = webViewFactory, onPageLoaded = ::logPageLoaded)
     }
 }
 
