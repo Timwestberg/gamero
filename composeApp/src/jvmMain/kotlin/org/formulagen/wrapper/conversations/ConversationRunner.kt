@@ -97,6 +97,8 @@ internal class ConversationRunner(
     /** Who hears each claimed message's replies on this Mac: voice, when it speaks them. */
     private val replies: ReplyListeners = ReplyListeners.NONE,
     private val imageRequested: (String) -> Unit = {},
+    /** `list.suggestions.requested`: handed on to the suggestion lane, which never blocks the stream. */
+    private val listSuggestionsRequested: (String) -> Unit = {},
     private val contextReady: () -> Boolean = { true },
 ) : AutoCloseable {
     private val sessions = ConcurrentHashMap<String, Session>()
@@ -210,6 +212,7 @@ internal class ConversationRunner(
         if (closed.get()) return
         when (event) {
             is HostStreamEvent.ImageRequested -> imageRequested(event.requestId)
+            is HostStreamEvent.ListSuggestionsRequested -> listSuggestionsRequested(event.requestId)
             is HostStreamEvent.WorkAvailable -> session(event.conversationId).poke()
             is HostStreamEvent.StopRequested -> session(event.conversationId).stop()
             is HostStreamEvent.MessageCancelled -> sessions.values.forEach { it.cancel(event.messageId) }
