@@ -38,6 +38,10 @@ internal fun BrainRecord.withEntry(
 private fun BrainRecord.withRun(run: RunRecord) = copy(run = run)
 private fun BrainRecord.requireRun() = checkNotNull(run)
 
+/** The workflow [run] follows, the one its summary names, or null while it runs ad hoc work. */
+internal fun workflowOf(run: RunRecord): BrainWorkflow? =
+    run.summary.workflowId?.let { id -> run.configuration.workflows.find { it.id == id } }
+
 /** Replace the run's last attempt, the one in flight. */
 internal fun RunRecord.withLast(attempt: BrainAttempt) = copy(attempts = attempts.dropLast(1) + attempt)
 
@@ -144,7 +148,8 @@ internal val BrainRecord.failingRole
 
 /**
  * The record after the coordinator's [decision], which [coordinator] wrote. Throws when it does not fit the run,
- * such as a step that is not next, an unknown specialist or input, or an early answer in a workflow.
+ * such as a step that is not next or in no enabled workflow, an unknown specialist or input, or an early answer in a
+ * workflow.
  */
 internal fun BrainRecord.decided(decision: CoordinatorDecision, coordinator: BrainRoleSnapshot, newId: () -> String): BrainRecord {
     val run = requireRun()
@@ -163,9 +168,10 @@ internal fun BrainRecord.decided(decision: CoordinatorDecision, coordinator: Bra
             queued(null, decision.specialistId, decision.task, decision.inputIds, newId)
         }
         is CoordinatorDecision.EnterWorkflow -> {
-            val workflow = checkNotNull(run.configuration.workflow).also { require(it.enabled) }
+            require(run.summary.workflowId == null)
+            // The entry step names the workflow: step ids are unique across a brain's workflows.
+            val workflow = requireNotNull(run.configuration.enabledWorkflows.find { flow -> flow.steps.any { it.id == decision.entryStepId } })
             val index = workflow.steps.indexOfFirst { it.id == decision.entryStepId }
-            require(index >= 0)
             // Every earlier step is skipped exactly once, with its reason.
             val earlier = workflow.steps.take(index).map { it.id }
             require(decision.skipped.map { it.stepId }.toSet() == earlier.toSet() && decision.skipped.size == index)
@@ -176,12 +182,12 @@ internal fun BrainRecord.decided(decision: CoordinatorDecision, coordinator: Bra
                 .queued(step, checkNotNull(step.specialistId), step.instructions, decision.inputIds, newId)
         }
         is CoordinatorDecision.StartStep -> {
-            val step = checkNotNull(run.configuration.workflow).steps[run.nextStep]
+            val step = checkNotNull(workflowOf(run)).steps[run.nextStep]
             require(step.id == decision.stepId)
             queued(step, checkNotNull(step.specialistId), step.instructions, decision.inputIds, newId)
         }
         is CoordinatorDecision.SkipStep -> {
-            val workflow = checkNotNull(run.configuration.workflow)
+            val workflow = checkNotNull(workflowOf(run))
             val step = workflow.steps[run.nextStep]
             require(step.id == decision.stepId)
             val skipped = run.summary.skipped.filter { it.stepId != step.id } + BrainSkip(step.id, decision.reason)
@@ -235,7 +241,7 @@ private fun BrainRecord.graded(decision: CoordinatorDecision.StepResult, coordin
     val graded = run.withAttempt(attempt.id) { it.copy(outcome = outcome) }
     val planning = graded.summary.copy(state = BrainRunState.PLANNING)
     if (attempt.stepId == null) return explained.withRun(graded.copy(phase = BrainPhase.PLAN, summary = planning))
-    val workflow = checkNotNull(run.configuration.workflow)
+    val workflow = checkNotNull(workflowOf(run))
     if (outcome == BrainAttemptOutcome.READY) return explained.withRun(graded.copy(summary = planning).advanced(workflow))
     val target = workflow.steps[run.nextStep].returnTo
         ?: return explained.withRun(graded).paused("Changes are needed, but this step has no return path.", BrainWaitingKind.INPUT)
@@ -315,7 +321,7 @@ internal fun RunRecord.resumed(rerun: Boolean, target: BrainDocument?, revision:
         if (last.state.notStarted) attempts.dropLast(1) + next else attempts + next.copy(id = newId())
     } else attempts
     // A rerun step takes that step's instructions from the configuration it now runs with.
-    val step = last?.stepId?.takeIf { phase == BrainPhase.EXECUTE }?.let { id -> configuration.workflow?.steps?.find { it.id == id } }
+    val step = last?.stepId?.takeIf { phase == BrainPhase.EXECUTE }?.let(configuration::step)
     val task = step?.instructions ?: task
     return copy(
         configuration = configuration,
@@ -333,13 +339,16 @@ internal fun RunRecord.resumed(rerun: Boolean, target: BrainDocument?, revision:
     )
 }
 
-/** Paused runs may adopt settings, never silently change their workflow structure. */
+/**
+ * Paused runs may adopt settings (bindings, instructions, stage approvals and a workflow's Use it for), never silently
+ * change their workflows' structure.
+ */
 internal fun adoptable(before: BrainConfiguration, after: BrainConfiguration): Boolean {
     fun structure(value: BrainConfiguration) = value.copy(
         coordinator = value.coordinator.copy(binding = null, instructions = ""),
         specialists = value.specialists.map { it.copy(binding = null, instructions = "") },
-        workflow = value.workflow?.let { workflow ->
-            workflow.copy(steps = workflow.steps.map { it.copy(instructions = "", askBeforeStarting = false) })
+        workflows = value.workflows.map { workflow ->
+            workflow.copy(useFor = "", steps = workflow.steps.map { it.copy(instructions = "", askBeforeStarting = false) })
         },
     )
     return structure(before) == structure(after)

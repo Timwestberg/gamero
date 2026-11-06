@@ -19,6 +19,7 @@ import org.formulagen.wrapper.bridge.ApprovalMethods
 import org.formulagen.wrapper.bridge.ConversationVoiceMethods
 import org.formulagen.wrapper.bridge.HostContractMethods
 import org.formulagen.wrapper.bridge.ProjectMethods
+import org.formulagen.wrapper.bridge.ProjectWorkspaceMethods
 import org.formulagen.wrapper.bridge.DesktopHostContract
 import org.formulagen.wrapper.bridge.HostContractCapability
 import org.formulagen.wrapper.bridge.ProjectCapability
@@ -78,6 +79,7 @@ import org.formulagen.wrapper.providers.grokWorkEnabled
 import org.formulagen.wrapper.providers.DesktopProviders
 import org.formulagen.wrapper.providers.ProviderInstallation
 import org.formulagen.wrapper.providers.claudeProviderEnabled
+import org.formulagen.wrapper.providers.claudeSkillsRoot
 import org.formulagen.wrapper.providers.codexWorkEnabled
 import org.formulagen.wrapper.providers.findClaudeExecutable
 import org.formulagen.wrapper.providers.findCodexExecutable
@@ -181,7 +183,8 @@ internal class DesktopServices private constructor(
                 val hostContract = DesktopHostContract()
                 // Every runtime signs in outside Hovel, on the player's own install, so a status check never signs anything out.
                 val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),
-                    claudeSignIn?.let(::ClaudeProvider), grokConnection?.let(::GrokProvider)), working, ProviderInstallation(providerRoot, environment),
+                    claudeSignIn?.let { ClaudeProvider(it, claudeSkillsRoot(environment)) }, grokConnection?.let(::GrokProvider)), working,
+                    ProviderInstallation(providerRoot, environment),
                     pageContract = { hostContract.pageContract }))
                 val pet = own(DesktopPetLauncher(environment, support.resolve("ember-pet.log")))
                 // Conversations get their runtime instances from the runner, and every work approval races the phone
@@ -229,11 +232,12 @@ internal class DesktopServices private constructor(
 
 /**
  * The product packs a desktop host registers. Every desktop product has providers, pet and games; Hovel adds its
- * companion and the companion projects capabilities: `project` (a project's folders on this Mac), the `host.contract`
- * handshake, `conversationVoice` (voice in conversations, on a Mac with them) and phone `approvals`, which desktop never
- * supports. A missing implementation registers as `Unsupported`, so its methods answer `unsupported` instead of
- * `unknown-method`. [pageCheck] runs before every `companion.*`, `project.*` and `providers.*` call, the methods whose
- * answers changed in contract 3 ([DesktopHostContract.requireCurrentPage]).
+ * companion and the companion projects capabilities: `project` (a project's folders on this Mac), `projectWorkspace`
+ * (a project's workspace window, unsupported until it is built), the `host.contract` handshake, `conversationVoice`
+ * (voice in conversations, on a Mac with them) and phone `approvals`, which desktop never supports. A missing
+ * implementation registers as `Unsupported`, so its methods answer `unsupported` instead of `unknown-method`.
+ * [pageCheck] runs before every `companion.*`, `project.*` and `providers.*` call, the methods whose answers changed
+ * in contract 3 ([DesktopHostContract.requireCurrentPage]).
  */
 internal fun desktopProductPacks(
     product: String,
@@ -249,6 +253,8 @@ internal fun desktopProductPacks(
     if (product == HOVEL_PRODUCT) {
         add(CompanionMethods.pack(supportedIfPresent(companion)).guardedBy(pageCheck))
         add(ProjectMethods.pack(supportedIfPresent(projects)).guardedBy(pageCheck))
+        // Project workspaces have no implementation yet, so their methods stay out of host.capabilities.
+        add(ProjectWorkspaceMethods.pack(Capability.Unsupported))
         add(ConversationVoiceMethods.pack(supportedIfPresent(conversationVoice)))
         add(ApprovalMethods.pack(Capability.Unsupported))
         add(ApprovalDeviceMethods.pack(Capability.Unsupported))

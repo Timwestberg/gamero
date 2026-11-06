@@ -9,12 +9,14 @@ import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.bridge.ProviderCapability
 import org.formulagen.wrapper.bridge.RuntimeId
+import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.runtimes.ChatRuntime
 import org.formulagen.wrapper.runtimes.WorkRuntime
 import org.formulagen.wrapper.util.loggingDaemonThreads
 import org.formulagen.wrapper.closeInReverse
 import org.formulagen.wrapper.hovel.HostConnection
 import org.formulagen.wrapper.hovel.HovelStatusException
+import org.formulagen.wrapper.workspace.ThreadEditStore
 
 /**
  * What this Mac's voice needs from the running account: where heard turns go ([connected], null once the
@@ -77,19 +79,33 @@ internal class ConversationHost(
         val store = ConversationStore(providerRoot, registration.ownerId).open()
         val owned = mutableListOf<AutoCloseable>(store)
         try {
+            // Closed after the runtimes, so their last edits are written.
+            val editStore = ThreadEditStore(providerRoot, registration.ownerId).also { owned += it }
             val approvals = RemoteApprovals(dialogs, api, registration.id)
             // The account's live bindings: the runtimes prune only what no conversation can resume.
             val retained = { store.bindingHandles() }
             val talkRuntimes = talk(retained).also { owned += it }
             val workRuntimes = work(approvals, retained).also { owned += it }
-            val turns = ProviderTurns(talkRuntimes, workRuntimes, providers, approvals)
-            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), api)
+            val turns = ProviderTurns(talkRuntimes, workRuntimes, providers, approvals,
+                mac = SharedRules.dialogName(registration.name, THIS_MAC))
+            val cleanup = connection.cleanup
+            cleanup?.register(store::eraseContext)
+            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), api, editStore, { cleanup?.check() })
+            val guarded = MessageEngine { claim, output, cancel, closing ->
+                if (cleanup == null) engine.run(claim, output, cancel, closing)
+                else cleanup.run(cancel::cancel) { engine.run(claim, output, cancel, closing) }
+            }
             val publisher = ProjectFolderPublisher(folders, api, registration.ownerId, registration.id, engine::readableBy)
             val directory = HostDirectory(providers, registration.id, offered,
                 working.intersect(workRuntimes.map { it.id }.toSet()), connection.features)
             val images = ProjectImageRelay(api, folders, registration.ownerId, registration.id).also { owned += it }
-            val runner = ConversationRunner(api, store, engine, approvals, folders, publisher, directory::heartbeat, connection.heartbeat,
-                connection.status, replies = voice ?: ReplyListeners.NONE, imageRequested = images::request)
+            val runner = ConversationRunner(api, store, guarded, approvals, folders, publisher, directory::heartbeat,
+                { response ->
+                    if (cleanup == null || cleanup.poll()) connection.heartbeat(response)
+                    else connection.status("Connected · Memory cleanup pending; work is paused")
+                },
+                connection.status, replies = voice ?: ReplyListeners.NONE, imageRequested = images::request,
+                listSuggestionsRequested = connection.listSuggestions, contextReady = { cleanup?.ready ?: true })
             owned += runner
             val onThisMac = ProjectsOnThisMac(api, folders, registration.ownerId, registration.id, publishing)
             running = Running(registration.ownerId, store, publisher, engine::readableBy, onThisMac::isOnThisMac)

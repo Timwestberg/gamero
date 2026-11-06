@@ -18,6 +18,22 @@ class ExecutionCoordinatorTest {
         override fun publish(record: ExecutionRecord, preview: String) { if (failPublish) error("offline"); receipts += record }
     }
 
+    @Test fun cleanupScrubsJournalContentAndCannotRelaunchTheOldRequest() {
+        val directory = Files.createTempDirectory("memory-cleanup-journal")
+        val task = request()
+        ExecutionJournal(directory, host).use { journal ->
+            val receipt = ExecutionCoordinator(journal, { ProviderResult(true, "Private result") }, Remote()).accept(task)
+            journal.eraseContent()
+            val erased = checkNotNull(journal.read(task.id))
+            assertEquals(receipt.claimId, erased.claimId)
+            assertEquals(ExecutionPhase.RECONCILIATION_REQUIRED, erased.phase)
+            assertFalse(Files.readString(directory.resolve("${task.id}.json")).contains("Private result"))
+            assertFails { ExecutionCoordinator(journal, { fail("Never relaunch") }, Remote()).accept(task) }
+            journal.eraseContent()
+            assertEquals(erased, journal.read(task.id))
+        }
+    }
+
     @Test fun reconnectRepublishesWithoutExecutingAgain() {
         val dir = Files.createTempDirectory("journal")
         val task = request()

@@ -11,6 +11,8 @@ import org.formulagen.wrapper.bridge.ProviderCapability
 import org.formulagen.wrapper.bridge.ProviderList
 import org.formulagen.wrapper.bridge.ProviderModels
 import org.formulagen.wrapper.bridge.ProviderScope
+import org.formulagen.wrapper.bridge.ProviderSkill
+import org.formulagen.wrapper.bridge.ProviderSkillText
 import org.formulagen.wrapper.bridge.ProviderStatus
 import org.formulagen.wrapper.bridge.ProviderUsage
 import org.formulagen.wrapper.bridge.RuntimeId
@@ -70,6 +72,22 @@ internal class DesktopProviders(runtimes: List<RuntimeProvider>, private val wor
             catch (error: Exception) { if (error is InterruptedException || error is kotlinx.coroutines.CancellationException) throw error; emptyList() }
         }
         return ProviderModels(models, scope.runtimeId)
+    }
+
+    /** Files only, so no runtime lock: a runtime that is not offered, or skills that cannot be read, are none. */
+    override suspend fun skills(scope: ProviderScope): List<ProviderSkill> =
+        fromSkills(scope, emptyList()) { it.skills() }
+
+    /** Files only, as [skills]: a runtime that is not offered, or a skill that cannot be read, has no text. */
+    override suspend fun skillText(scope: ProviderScope, name: String): ProviderSkillText? =
+        fromSkills(scope, null) { it.skillText(name) }
+
+    /** [read] of [scope]'s runtime, off the caller's thread; [none] when it is not offered or the read fails. */
+    private suspend fun <T> fromSkills(scope: ProviderScope, none: T, read: (RuntimeProvider) -> T): T {
+        val runtime = runtimes[scope.runtimeId] ?: return none
+        check(!closed)
+        return try { runInterruptible { read(runtime) } }
+        catch (error: Exception) { if (error is InterruptedException || error is kotlinx.coroutines.CancellationException) throw error; none }
     }
 
     /** Close the owned account processes after the native bridge has stopped taking requests. */

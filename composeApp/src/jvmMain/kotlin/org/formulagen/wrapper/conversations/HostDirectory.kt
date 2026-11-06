@@ -16,6 +16,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import org.formulagen.wrapper.bridge.BrainLimits
 import org.formulagen.wrapper.bridge.ProviderAction
 import org.formulagen.wrapper.bridge.ProviderCapability
 import org.formulagen.wrapper.bridge.ProviderDetail
@@ -29,9 +30,9 @@ import org.formulagen.wrapper.bridge.RuntimeProviderId
 
 /**
  * What this computer's heartbeat reports: hovel-service's heartbeat ([features], and `providerState` from the
- * directory) and `computerHeartbeat` (each runtime's readiness and models, for Codex, Claude Code and Grok Build alike,
- * and their usage). Provider checks can start processes, so the directory is refreshed every [directoryEvery] and
- * usage every [usageEvery]; heartbeats in between send the last reading.
+ * directory) and `computerHeartbeat` (each runtime's readiness, models and installed skills, for Codex, Claude Code and
+ * Grok Build alike, and their usage). Provider checks can start processes, so the directory is refreshed every
+ * [directoryEvery] and usage every [usageEvery]; heartbeats in between send the last reading.
  */
 internal class HostDirectory(
     private val providers: ProviderCapability,
@@ -68,9 +69,13 @@ internal class HostDirectory(
             status?.detail == ProviderDetail.NOT_INSTALLED -> ProviderReadiness.NOT_INSTALLED
             else -> ProviderReadiness.UNAVAILABLE
         }
-        val models = if (readiness != ProviderReadiness.READY) emptyList()
+        val ready = readiness == ProviderReadiness.READY
+        val models = if (!ready) emptyList()
             else runCatching { runBlocking { providers.models(scope) }.models }.getOrDefault(emptyList()).take(ProviderLimits.MODELS)
-        ProviderRuntime(readiness == ProviderReadiness.READY && runtime in working, models, readiness, runtime)
+        // Like models, only a ready runtime's; a runtime with none leaves `skills` out.
+        val skills = if (!ready) emptyList()
+            else runCatching { runBlocking { providers.skills(scope) } }.getOrDefault(emptyList()).take(BrainLimits.PROVIDER_SKILLS)
+        ProviderRuntime(ready && runtime in working, models, readiness, runtime, skills.takeIf { it.isNotEmpty() })
     })
 
     private fun usage(directory: ProviderDirectory): List<RuntimeAllowance> = directory.runtimes

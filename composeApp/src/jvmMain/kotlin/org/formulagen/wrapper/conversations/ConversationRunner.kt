@@ -97,6 +97,9 @@ internal class ConversationRunner(
     /** Who hears each claimed message's replies on this Mac: voice, when it speaks them. */
     private val replies: ReplyListeners = ReplyListeners.NONE,
     private val imageRequested: (String) -> Unit = {},
+    /** `list.suggestions.requested`: handed on to the suggestion lane, which never blocks the stream. */
+    private val listSuggestionsRequested: (String) -> Unit = {},
+    private val contextReady: () -> Boolean = { true },
 ) : AutoCloseable {
     private val sessions = ConcurrentHashMap<String, Session>()
     private val slots = Semaphore(maxRunning, true)
@@ -209,11 +212,14 @@ internal class ConversationRunner(
         if (closed.get()) return
         when (event) {
             is HostStreamEvent.ImageRequested -> imageRequested(event.requestId)
+            is HostStreamEvent.ListSuggestionsRequested -> listSuggestionsRequested(event.requestId)
             is HostStreamEvent.WorkAvailable -> session(event.conversationId).poke()
             is HostStreamEvent.StopRequested -> session(event.conversationId).stop()
             is HostStreamEvent.MessageCancelled -> sessions.values.forEach { it.cancel(event.messageId) }
             is HostStreamEvent.ApprovalAnswered -> later { approvals.answered(event.approvalId) }
             is HostStreamEvent.ProjectChanged -> later { publisher.refresh(event.projectId) }
+            // The workspace's profile sync reads it; conversations have nothing to do.
+            is HostStreamEvent.WorkspaceProfileChanged -> Unit
         }
     }
 
@@ -388,6 +394,7 @@ internal class ConversationRunner(
             val replayed = journaled.firstOrNull { it.phase.unrun }
             if (replayed == null && journaled.isNotEmpty()) return false
             val entry = replayed ?: store.journal(ClaimEntry(UUID.randomUUID().toString(), conversationId, ClaimPhase.CLAIMING))
+            if (!contextReady()) return false
             claiming = true
             val response = try {
                 api.claim(ClaimRequest(entry.claimId, conversationId))

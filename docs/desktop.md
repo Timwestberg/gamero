@@ -65,6 +65,48 @@ The app never signs in to Codex or any other runtime. Do not use native launch
 alone as Hovel conversation or reconnect acceptance; follow
 [hovel-native-validation.md](hovel-native-validation.md).
 
+## Camera and microphone
+
+Hovel meetings use the camera and the microphone in the web page. The Mac app
+gives them only to the trusted Hovel page, with the rule in
+[host-bridge.md](host-bridge.md#camera-and-microphone).
+
+- `JcefMediaGrant` (`jvmMain/.../bridge/JcefMediaGrant.kt`) is the JCEF
+  permission handler. `persistentDesktopBrowser` adds it to the WebView's own
+  client before the first page loads.
+- CEF names the requesting frame and that frame's own origin. A grant continues
+  with the requested bits. Any other answer cancels the request.
+- Do not pass `--enable-media-stream`. That switch grants every permission to
+  every page, frames of other origins included.
+- Another product (`GAMERO_PRODUCT` is not `hovel`) gets a handler with no
+  trusted page, so every request is cancelled.
+
+**Check 3 (2026-11-05).** JBR `21.0.9+10-b1163.94` with JCEF calls
+`CefPermissionHandler.onRequestMediaAccessPermission` in Java. A probe page on
+`http://127.0.0.1` asked for both devices, and a frame on `http://localhost`
+asked for the microphone. CEF reported each frame with its own origin, its
+`isMain` value and its bits (3 and 1). The compile-time API (`dev.datlag:jcef`
+2024.04.20.4) has the same handler. Check the release runtime
+(`jbr-release-25.0.4.1b635.72`) the same way before a release.
+
+### Usage strings
+
+macOS asks the person before the app first uses the camera or the
+microphone, and shows the bundle's usage string. Without the string, macOS
+does not allow the capture.
+
+| Launch | Where the strings come from |
+| --- | --- |
+| Release app and DMG (`tools/build-release.sh desktop`, `:composeApp:createDistributable`) | `nativeDistributions.macOS.infoPlist.extraKeysRawXml` in `composeApp/build.gradle.kts`: `NSMicrophoneUsageDescription` and `NSCameraUsageDescription`. |
+| Gamero Adventures prototype (`scripts/package-catalog-macos.sh`) | The script adds each string with PlistBuddy when it is missing, also after a jar refresh. |
+| `./gradlew :composeApp:run` | There is no app bundle. macOS asks for the app that started Gradle, usually Terminal or the IDE, with that app's strings. |
+
+**Signed builds.** A signed release uses the hardened runtime. Then it also
+needs the `com.apple.security.device.audio-input` and
+`com.apple.security.device.camera` entitlements. Compose's default
+entitlements have neither, and this build does not add them yet. Mac voice has
+the same gap.
+
 ## Build boundaries
 
 Desktop is the default target. `-Pgamero.iosTargets=true` adds only the iOS

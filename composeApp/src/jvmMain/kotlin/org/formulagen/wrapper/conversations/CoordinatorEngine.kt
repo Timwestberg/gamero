@@ -16,6 +16,7 @@ import org.formulagen.wrapper.storage.Artifacts
 import org.formulagen.wrapper.storage.sha256
 import org.formulagen.wrapper.conversation.Activity
 import org.formulagen.wrapper.conversation.MemberMode
+import org.formulagen.wrapper.workspace.ThreadEditStore
 
 /**
  * Runs one claimed message of a conversation through the companion's brain: the coordinator, its specialists
@@ -43,6 +44,9 @@ internal class CoordinatorEngine(
     private val startOfWork: StartOfWork,
     /** Reads a message input's whole text; the claim carries only its preview. */
     private val api: ConversationApi,
+    /** Each working thread's record of edited files; null keeps none. */
+    private val editStore: ThreadEditStore? = null,
+    private val beforeTurn: () -> Unit = {},
 ) : MessageEngine {
     /** The runtimes this Mac lets read context folders: a project lists them as `readableBy`. */
     fun readableBy(): List<RuntimeId> = turns.readableBy()
@@ -57,7 +61,7 @@ internal class CoordinatorEngine(
         val companion = claim.companion.name
         val message = claim.message
         val local = folders.folders(store.accountId, projectId).filter { it.exists }
-        val call = TurnCall(store.accountId, claim.companion.id, companion, folders.projectFolders(store.accountId, projectId), cancel)
+        val call = TurnCall(store.accountId, claim.companion.id, companion, folders.projectFolders(store.accountId, projectId), cancel, beforeTurn)
 
         /** The conversation's record. Provider callbacks change it too ([update]), so every change holds this run's lock. */
         @Volatile var record = store.read(conversationId)
@@ -82,6 +86,7 @@ internal class CoordinatorEngine(
                 // `stop-requested` cancelled the message as it was refused: the run stops as the person's Stop does.
                 if (cancel.isCancelled) stopped() else throw refused
             }
+            catch (_: org.formulagen.wrapper.hovel.MemoryContextUnavailable) { MessageState.RECONCILIATION_REQUIRED }
             catch (failure: ProviderFailure) {
                 // The next message starts the coordinator's conversation fresh.
                 if (failure.coordinator && failure.failure == ChatFailure.ConversationLost) {
@@ -213,7 +218,9 @@ internal class CoordinatorEngine(
                 .maxByOrNull { it.revision } ?: error("Unknown thread")
             val coordinator = turns.resolved(call, coordinatorRole(), coordinator = true)
             val (decision, replyId) = decide(coordinator, THREAD_REPLY_DECISIONS, threadId) { allowed ->
-                threadReplyRequest(uuid(), allowed, threadId, thread, message.text, claim.brain.configuration.specialists,
+                val brain = claim.brain.configuration
+                threadReplyRequest(uuid(), allowed, threadId, thread, message.text,
+                    coordinatorSpecialists(brain.specialists, brain.skills, described(brain)),
                     record.brain.messages.takeLast(10), claim.recalledMemory)
             } ?: run {
                 system("The coordinator could not decide what to do with this reply. Send it again.", threadId)
@@ -228,7 +235,7 @@ internal class CoordinatorEngine(
                     val note = decision.note?.trimEcma()?.takeIf { it.isNotEmpty() }
                     val said = "Forwarded to ${thread.role.name}" + (note?.let { ": $it" } ?: ".")
                     append(MessageAuthor.COORDINATOR, uuid(), said, threadId, CoordinatorNote(NoteKind.FORWARDED, threadId))
-                    threadTurn(threadId, thread, forwardedTurn(message.text, note))
+                    threadTurn(threadId, thread) { forwardedTurn(message.text, note) }
                 }
                 is CoordinatorDecision.Delegate -> {
                     val role = specialistSnapshot(decision.specialistId)
@@ -240,7 +247,7 @@ internal class CoordinatorEngine(
                     putThread(newThread, opened)
                     val started = CoordinatorNote(NoteKind.STARTED, newThread)
                     append(MessageAuthor.COORDINATOR, uuid(), "Started a new task: $title", threadId, started)
-                    threadTurn(newThread, opened, delegatedTurn(role, decision.task, message.text))
+                    threadTurn(newThread, opened) { skills -> delegatedTurn(role, decision.task, message.text, skills) }
                 }
                 else -> error("Not a thread reply decision")
             }
@@ -280,7 +287,7 @@ internal class CoordinatorEngine(
             val current = currentRun()
             val coordinator = turns.resolved(call, coordinatorRole(), coordinator = true)
             val allowed = allowedDecisions(current)
-            val hint = advice?.takeIf { !adviceUsed && current.attempts.isEmpty() && current.configuration.workflow?.enabled != true &&
+            val hint = advice?.takeIf { !adviceUsed && current.attempts.isEmpty() && current.configuration.enabledWorkflows.isEmpty() &&
                 current.summary.configurationRevision == it.configurationRevision && it.expiresAt > System.currentTimeMillis() }
             if (hint != null) {
                 adviceUsed = true
@@ -291,7 +298,8 @@ internal class CoordinatorEngine(
             val (decision, replyId) = decide(coordinator, allowed, null) { kinds ->
                 val input = handoff(current.artifacts.filter { it.id in current.inputs }.map { it.id }, files = false)
                 val latest = current.attempts.lastOrNull()?.outputIds?.let { handoff(it, files = false) } ?: ""
-                val request = coordinatorRequest(uuid(), current, kinds, input, latest, record.brain.messages.takeLast(10))
+                val request = coordinatorRequest(uuid(), current, kinds, input, latest, record.brain.messages.takeLast(10),
+                    described(current.configuration))
                 conversationRequest(request, claim.recalledMemory, hint)
             } ?: run {
                 change { it.paused(INVALID_DECISION, BrainWaitingKind.INPUT) }
@@ -321,12 +329,13 @@ internal class CoordinatorEngine(
                 change { it.paused(OVER_ALLOWANCE, BrainWaitingKind.LIMIT) }
                 return
             }
-            val issues = turns.issues(call, attempt.role)
-            if (issues.isNotEmpty()) { change { it.paused(notReadyPause(attempt.role, issues)) }; return }
+            val skills = skillsFor(current.configuration, attempt.role)
+            val issues = turns.issues(call, attempt.role, skills.refs, skills.provided.keys)
+            if (issues.isNotEmpty()) { change { it.paused(notReadyPause(attempt.role, issues, turns.mac)) }; return }
             val role = turns.resolved(call, attempt.role)
             attempt = attempt.copy(role = role)
             change { it.copy(run = checkNotNull(it.run).withLast(attempt)) }
-            val step = current.configuration.workflow?.steps?.find { it.id == attempt.stepId }
+            val step = current.configuration.step(attempt.stepId)
             val threadId = checkNotNull(record.attemptThreads[attempt.id])
             if (asksBeforeStarting(current.configuration, role, step)) {
                 if (!approveStage(current, attempt, step, threadId)) return
@@ -336,8 +345,9 @@ internal class CoordinatorEngine(
             if (role.mode == MemberMode.WORK && !startWork(role, threadId) { change { it.declined(attempt, notApproved(role)) } }) return
             change { it.dispatched(attempt) }
             val entryId = uuid()
-            val input = specialistTurn(role, current, step, handoff(attempt.inputIds, files = role.mode == MemberMode.WORK))
-            val (output, activity) = specialist(threadId, role, input, entryId)
+            val input = specialistTurn(role, current, step, handoff(attempt.inputIds, files = role.mode == MemberMode.WORK),
+                skills.block(role.mode == MemberMode.WORK))
+            val (output, activity) = specialist(threadId, role, input, entryId, skills.folders)
             val source = BrainSource(BrainSourceKind.ATTEMPT, attemptId = attempt.id)
             val artifact = store.artifact(conversationId, step?.name ?: role.name, source, output.toByteArray(), "text/markdown")
             update { saved ->
@@ -442,11 +452,12 @@ internal class CoordinatorEngine(
         // ---- Threads outside a run: forwarded replies and delegated thread tasks ---------------------
 
         /** Run [thread]'s specialist on [input] in its own thread, outside any run. */
-        fun threadTurn(threadId: String, thread: ThreadState, input: String): MessageState {
-            val issues = turns.issues(call, thread.role)
+        fun threadTurn(threadId: String, thread: ThreadState, input: (skills: String) -> String): MessageState {
+            val skills = skillsFor(claim.brain.configuration, thread.role)
+            val issues = turns.issues(call, thread.role, skills.refs, skills.provided.keys)
             if (issues.isNotEmpty()) {
                 putThread(threadId, thread.copy(state = BrainAttemptState.BLOCKED, revision = thread.revision + 1))
-                system(notReadyPause(thread.role, issues), threadId)
+                system(notReadyPause(thread.role, issues, turns.mac), threadId)
                 return MessageState.FAILED
             }
             val role = turns.resolved(call, thread.role)
@@ -458,7 +469,9 @@ internal class CoordinatorEngine(
             putThread(threadId, running)
             val entryId = uuid()
             val ended = { state: BrainAttemptState -> putThread(threadId, running.copy(state = state, revision = running.revision + 1)) }
-            val (output, activity) = try { specialist(threadId, role, input, entryId) } catch (failure: ProviderFailure) {
+            val (output, activity) = try {
+                specialist(threadId, role, input(skills.block(role.mode == MemberMode.WORK)), entryId, skills.folders)
+            } catch (failure: ProviderFailure) {
                 if (failure.failure == ChatFailure.ConversationLost) update { it.copy(threadContexts = it.threadContexts - threadId) }
                 ended(if (uncertain(role, failure.failure)) BrainAttemptState.INTERRUPTED else BrainAttemptState.FAILED)
                 system(failurePause(failure, role.name), threadId)
@@ -524,14 +537,35 @@ internal class CoordinatorEngine(
         }
 
         /** [role]'s specialist turn in [threadId], streamed as reply [entryId] into the thread, with its activity. */
-        fun specialist(threadId: String, role: BrainRoleSnapshot, input: String, entryId: String): Pair<String, Activity?> {
+        fun specialist(threadId: String, role: BrainRoleSnapshot, input: String, entryId: String,
+            skillFolders: List<java.nio.file.Path> = emptyList()): Pair<String, Activity?> {
             val persona = Persona.role(companion, role.name, roleInstructions(role), role.mode == MemberMode.WORK)
             val conversation = record.threadContexts[threadId]?.takeIf { it.personaHash == persona.hash }
             val stream = ReplyStream(headed = false) { out.delta(entryId, threadId, it) }
             val remember = { native: NativeConversation -> update { it.copy(threadContexts = it.threadContexts + (threadId to native)) } }
             return if (role.mode == MemberMode.WORK) {
-                turns.work(call, threadId, role, persona, input, conversation, scope(threadId), stream, remember)
+                turns.work(call, threadId, role, persona, input, conversation, scope(threadId), stream, remember, openEditRecord(threadId, role),
+                    skillFolders)
             } else turns.talk(call, role, persona, input, conversation, threadId, coordinator = false, stream = stream, opened = remember)
+        }
+
+        /**
+         * [threadId]'s edit record, opened before its working turn. Keeping the record never stops the work: without
+         * one, edits go nowhere. The thread had replies before the record existed when it has a provider conversation,
+         * or when it has outputs: every finished reply adds one (in a run and outside it, on any Mac), and they stay
+         * when a lost provider conversation is dropped.
+         */
+        fun openEditRecord(threadId: String, role: BrainRoleSnapshot): EditListener {
+            val store = editStore ?: return EditListener.NONE
+            val folder = call.folders.working ?: return EditListener.NONE
+            val thread = record.threads[threadId]
+            return try {
+                store.thread(projectId, threadId, thread?.title ?: role.name,
+                    earlierReplies = record.threadContexts.containsKey(threadId) || thread?.outputs.orEmpty().isNotEmpty(), folder)
+            } catch (error: Exception) {
+                log(LogLevel.Warn, "conversations", "A thread's edit record could not be opened", error)
+                EditListener.NONE
+            }
         }
 
         fun rememberCoordinator(key: String) = { native: NativeConversation ->
@@ -706,6 +740,23 @@ internal class CoordinatorEngine(
             return BrainRoleSnapshot(role.id, role.name, binding, role.instructions, role.mode)
         }
 
+        /**
+         * The skills [role]'s specialist uses in [configuration] (the run's pinned brain, or for a thread the claim's), as
+         * this Mac gives them now: read once, for its readiness, its task and the folders a working turn may read.
+         */
+        fun skillsFor(configuration: BrainConfiguration, role: BrainRoleSnapshot): SpecialistSkills {
+            val specialist = configuration.specialists.find { it.id == role.roleId }
+            val refs = specialist?.skills.orEmpty()
+            return SpecialistSkills(refs, configuration.skills, turns.providedSkills(role, refs), specialist?.skillGroups.orEmpty())
+        }
+
+        /** A provider skill's description as this Mac reports it, for the coordinator ([coordinatorSpecialists]); null when it has none. */
+        fun described(configuration: BrainConfiguration): (SkillRef.Provider) -> String? {
+            val runtimes = configuration.specialists.flatMap { it.skills }.filterIsInstance<SkillRef.Provider>().mapTo(HashSet()) { it.runtimeId }
+            val installed = runtimes.associateWith { turns.installedSkills(it) }
+            return { ref -> installed[ref.runtimeId]?.find { it.name == ref.name }?.description }
+        }
+
         fun contextKey(role: BrainRoleSnapshot) = "${role.roleId}:${role.binding.runtimeId.wireName}"
 
         /**
@@ -774,4 +825,18 @@ internal class CoordinatorEngine(
 internal fun sharedArtifactText(text: String): String {
     val notice = "\n\n[Output shortened for sync. The complete output remains on the project Mac.]"
     return if (text.length <= BrainLimits.OUTPUT) text else text.take(BrainLimits.OUTPUT - notice.length) + notice
+}
+
+/**
+ * A specialist's skills as this Mac gives them to one turn: its [refs], the brain's Hovel skills ([brainSkills]), the
+ * text of its provider skills installed here ([provided], by name), which no provider loads itself, and the [groups]
+ * its skills sit in.
+ */
+internal class SpecialistSkills(val refs: List<SkillRef>, val brainSkills: List<BrainSkill>, val provided: Map<String, ProviderSkillText>,
+    val groups: List<SkillGroup> = emptyList()) {
+    /** The Skills block of its task ([skillsBlock]), sorted by group; a [working] turn is also told each provider skill's folder. */
+    fun block(working: Boolean): String = skillsBlock(refs, brainSkills, provided, working, groups)
+
+    /** The folders of its provider skills, which a working turn may read and never change. */
+    val folders: List<java.nio.file.Path> get() = provided.values.map { java.nio.file.Path.of(it.file).parent }
 }

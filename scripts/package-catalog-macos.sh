@@ -27,9 +27,14 @@ if [[ ! -d "$APP/Contents/runtime/Contents/Frameworks" ]]; then
   ditto "$GAMERO_BROWSER_JAVA_HOME/../Frameworks" "$APP/Contents/runtime/Contents/Frameworks"
 fi
 PLIST="$APP/Contents/Info.plist"
-if [[ -f "$PLIST" ]] && ! /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$PLIST" >/dev/null 2>&1; then
-  /usr/libexec/PlistBuddy -c 'Add :NSMicrophoneUsageDescription string Ember hears you on this Mac to turn what you say into a chat message. The recording is not saved.' "$PLIST"
-fi
+# jpackage writes the plist, and a jar refresh keeps it, so add each usage string only when it is missing.
+add_usage_string() {
+  if [[ -f "$PLIST" ]] && ! /usr/libexec/PlistBuddy -c "Print :$1" "$PLIST" >/dev/null 2>&1; then
+    /usr/libexec/PlistBuddy -c "Add :$1 string $2" "$PLIST"
+  fi
+}
+add_usage_string NSMicrophoneUsageDescription 'Ember hears you on this Mac to turn what you say into a chat message. The recording is not saved.'
+add_usage_string NSCameraUsageDescription 'Hovel uses the camera when you turn on your video in a meeting.'
 AUDIO="$ROOT/spikes/ember-voice/mac/deps/ember-audio/libember_audio.dylib"
 if [[ -f "$AUDIO" ]]; then
   mkdir -p "$APP/Contents/Frameworks"

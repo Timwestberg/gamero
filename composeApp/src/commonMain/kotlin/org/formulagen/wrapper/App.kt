@@ -5,6 +5,7 @@ import androidx.compose.runtime.*
 import org.formulagen.wrapper.managers.WebViewManager
 import com.multiplatform.webview.web.WebViewFactoryParam
 import com.multiplatform.webview.web.NativeWebView
+import com.multiplatform.webview.web.PlatformWebViewParams
 import com.multiplatform.webview.web.defaultWebViewFactory
 import org.jetbrains.compose.ui.tooling.preview.Preview
 
@@ -12,8 +13,8 @@ import org.jetbrains.compose.ui.tooling.preview.Preview
 
 @Composable
 @Preview
-fun App(url: String = "https://web.worldwinner.com", enableLegacyBridge: Boolean = true, onWebViewCreated: (NativeWebView) -> Unit = {}, webViewFactory: (WebViewFactoryParam) -> NativeWebView = ::defaultWebViewFactory, onPageLoaded: (url: String, title: String?) -> Unit = { _, _ -> }) {
+fun App(url: String = "https://web.worldwinner.com", enableLegacyBridge: Boolean = true, onWebViewCreated: (NativeWebView) -> Unit = {}, webViewFactory: (WebViewFactoryParam) -> NativeWebView = ::defaultWebViewFactory, onPageLoaded: (url: String, title: String?) -> Unit = { _, _ -> }, platformWebViewParams: PlatformWebViewParams? = null) {
     MaterialTheme {
-        WebViewManager(url = url, enableLegacyBridge = enableLegacyBridge, onWebViewCreated = onWebViewCreated, webViewFactory = webViewFactory, onPageLoaded = onPageLoaded)
+        WebViewManager(url = url, enableLegacyBridge = enableLegacyBridge, onWebViewCreated = onWebViewCreated, webViewFactory = webViewFactory, onPageLoaded = onPageLoaded, platformWebViewParams = platformWebViewParams)
     }
 }

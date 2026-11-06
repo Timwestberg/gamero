@@ -39,7 +39,7 @@ when it is closed. These calls never consume a reset or purchase credits.
 | Router | `commonMain/.../BridgeRouter.kt`, `BridgeCheck.kt` | Every protocol rule: frame and origin, size, envelope, context, method, arguments, error codes. No platform imports. |
 | Method types | `commonMain/.../BridgeMethods.kt` | `BridgeMethod`, `BridgeEvent`, and the router's own `host.*` methods. |
 | Platform set | `commonMain/.../HostCapabilities.kt` | One constructor parameter per platform capability: `Capability.Supported(impl)` or `Capability.Unsupported`. |
-| Capabilities | Platform: `commonMain/.../LinkOpener.kt`, `Haptics.kt`, `Lifecycle.kt`. Product: `CompanionCapability.kt`, `ProviderCapability.kt`, `PetCapability.kt`, `GameCapability.kt`, `ProjectCapability.kt`, `ConversationVoiceCapability.kt`, `HostContractCapability.kt`, `ApprovalCapability.kt`; `SharedRules.kt` holds rules several use, and `BrainTypes.kt` the brain types conversations read | One file each: the interface, its argument and result types, its methods and its `CapabilityBinder`. |
+| Capabilities | Platform: `commonMain/.../LinkOpener.kt`, `Haptics.kt`, `Lifecycle.kt`. Product: `CompanionCapability.kt`, `ProviderCapability.kt`, `PetCapability.kt`, `GameCapability.kt`, `ProjectCapability.kt`, `ProjectWorkspaceCapability.kt`, `ConversationVoiceCapability.kt`, `HostContractCapability.kt`, `ApprovalCapability.kt`; `SharedRules.kt` holds rules several use, and `BrainTypes.kt` the brain types conversations read | One file each: the interface, its argument and result types, its methods and its `CapabilityBinder`. |
 | Desktop product services | `jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt` | Builds the desktop implementations (`DesktopProviders`, `DesktopPetLauncher`, `DesktopGameLauncher`, `HovelCompanion`, `ConversationHost`, `DesktopConversationVoice`), registers their packs, ends them per page context and closes them in reverse order. |
 | Platform factories | `jvmMain/.../DesktopHostCapabilities.kt`, `androidMain/.../AndroidHostCapabilities.kt`, `iosMain/.../IosHostCapabilities.kt` | Each platform's choice for every capability. |
 | Shared transport half | `commonMain/.../HostBridge.kt` | What every transport shares: the router, the trusted origin, the document counter, the event channel and the failure log. A platform transport calls its `receive`, and `documentChanged` or `endContext` to end a context. |
@@ -165,6 +165,7 @@ event: `games.launch` opens a game and `games.closed` says the player is back.
        `jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt`. Every
        desktop product registers providers, pet and games (the catalog app is
        the Gamero product); Hovel adds its companion, `project`,
+       `projectWorkspace` (unsupported until project workspaces are built),
        `conversationVoice`, `host.contract` and the unsupported phone
        approvals. A method whose answer a contract changed goes behind
        `pageCheck` (`guardedBy`), as `companion.*`, `project.*` and
@@ -253,6 +254,47 @@ rest. The full table is in the spec under "Consistency rules".
   supported" at call time.
 - **One call at a time.** A capability that cannot run two calls at once throws
   `BridgeBusyException`. It does not queue.
+
+## Camera and microphone
+
+The camera and the microphone are not bridge calls. The page asks for them
+with `getUserMedia`, and the WebView asks the app. Each platform adapter asks
+`MediaGrant.decide` (`commonMain/.../MediaGrant.kt`) first. It grants a request
+only when all of these are true:
+
+1. The request origin matches the trusted origin. `TrustedOrigin` makes this
+   check, as it does for the bridge.
+2. The request comes from the main frame.
+3. The request asks only for the camera, the microphone, or both. A request
+   that also asks for another resource, such as screen capture, is denied in
+   full.
+
+The adapter then grants only what both `MediaGrant` and the operating system
+allow, and denies the rest. A page that is not Hovel gets no camera and no
+microphone.
+
+| Platform | Hook | Adapter |
+| --- | --- | --- |
+| Android | `WebChromeClient.onPermissionRequest` | `androidMain/.../AndroidMediaGrant.kt`. `MediaChromeClient` changes only `onPermissionRequest` in the library's chrome client, and keeps the other callbacks. `AndroidMediaRequests` asks Android for `RECORD_AUDIO` and `CAMERA` at runtime, one prompt at a time. The manifest declares both, and `MODIFY_AUDIO_SETTINGS`. |
+| iOS | `WKUIDelegate` `requestMediaCapturePermissionFor` | `iosMain/.../IosMediaGrant.kt`. `MediaUIDelegate` reads the requesting frame's origin and main-frame flag, as the bridge does, and answers grant or deny. `mediaWebViewFactory` makes the WKWebView with this delegate and inline playback. The page that is not Hovel gets a delegate that denies every request. See [ios.md](ios.md#camera-and-microphone). |
+| Mac (JCEF) | CEF `OnRequestMediaAccessPermission` (`CefPermissionHandler`) | `jvmMain/.../JcefMediaGrant.kt`. It reads CEF's requesting origin and `frame.isMain()`. A grant continues with the requested device bits, and anything else cancels. A request for screen capture is denied in full. Never `--enable-media-stream`. See [desktop.md](desktop.md#camera-and-microphone). |
+
+**The library default on Android.** compose-webview-multiplatform 2.0.3 has
+its own `onPermissionRequest`. It grants the camera and the microphone to any
+page and any frame when the app holds the Android permission. So every Android
+WebView in the app uses `MediaChromeClient`. The page that is not Hovel gets
+one with no media requests, which denies every request.
+
+**Frames on Android.** Android does not say which frame asks. A request counts
+as the main frame's when the WebView's main document is on the trusted origin.
+A frame of another origin fails the origin check. A frame of the same origin
+can already run script in the main document, so this gives it nothing new.
+
+Tests: `MediaGrantTest` (commonTest) covers origins, frames and kinds.
+`AndroidMediaGrantTest` (androidUnitTest) covers the prompt, the order of
+requests, a cancel and a close. `IosMediaGrantTest` (iosTest) covers the
+capture types and the page that is not Hovel. `JcefMediaGrantTest` (jvmTest)
+covers the permission bits, screen capture and the handler's answers.
 
 ## Recipe: add a platform target
 

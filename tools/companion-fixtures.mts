@@ -12,6 +12,7 @@
  * checked against the schema; `CompanionContractFixtureTest` checks the Mac builds exactly it.
  */
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 const server = process.argv[2];
 if (!server) throw new Error('Name the server-platform checkout');
@@ -20,6 +21,8 @@ const c = await import(`${source}/companions/index.ts`);
 const s = await import(`${source}/companions/samples.test-support.ts`);
 const { hovelHostFeature, hovelProviderState } = await import(`${source}/hovel.schemas.ts`);
 const { allowanceSnapshot } = await import(`${source}/allowance/index.ts`);
+/** List suggestions (`hovel/lists`), which the Mac's suggestion lane reads and answers. */
+const lists = await import(`${source}/lists/index.ts`);
 /** hovel-service's own heartbeat body, which the Mac's heartbeat must also satisfy. */
 const service = await import(`${server}/apps/hovel-service/src/hovel.schemas.ts`);
 
@@ -158,7 +161,9 @@ for (const event of [
   { messageId: ids.message, type: 'message.cancelled' },
   { conversationId: ids.conversation, type: 'stop.requested' },
   { approvalId: ids.approval, type: 'approval.answered' },
-  { projectId: ids.project, type: 'project.changed' }
+  { projectId: ids.project, type: 'project.changed' },
+  { revision: 3, type: 'workspaceProfile.changed' },
+  { requestId: nameUuid('hovel-list-suggestions:request'), type: 'list.suggestions.requested' }
 ]) {
   add(`hostEvent.${event.type}`, 'hostStreamEvent', c.hostStreamEvent, event);
 }
@@ -206,14 +211,21 @@ const heartbeat = {
         readiness: 'ready',
         runtimeId: 'codex'
       },
-      { canWork: true, models: [], readiness: 'ready', runtimeId: 'claude-code' },
+      // Contract 12 (`brainSkills`): a runtime's installed skills; one with none leaves `skills` out.
+      {
+        canWork: true,
+        models: [],
+        readiness: 'ready',
+        runtimeId: 'claude-code',
+        skills: [{ description: 'Review a change before merge.', name: 'code-review' }]
+      },
       { canWork: false, models: [], readiness: 'unavailable', runtimeId: 'grok-build' }
     ]
   }
 };
 c.computerHeartbeat.parse(heartbeat);
-// A Mac that runs memory jobs declares only that; conversations need no feature.
-const features = ['memory-extraction'];
+// A Mac with Codex declares memory jobs and list suggestions; conversations need no feature.
+const features = ['memory-extraction', lists.LIST_SUGGESTIONS_FEATURE];
 for (const feature of features) hovelHostFeature.parse(feature);
 const beat = { ...heartbeat, features, providerState: hovelProviderState.parse('ready') };
 if ('directory' in service.heartbeatInput.shape) {
@@ -275,6 +287,19 @@ if (c.deviceApproval) {
 } else {
   process.stderr.write('This server-platform predates approval devices; the phone fixtures are left out.\n');
 }
+
+// List suggestions: the contract's own fixtures, each checked against its schema, its native routes and its bounds.
+const listFixtures = `${source}/lists/fixtures`;
+const listFixture = (file: string) => JSON.parse(readFileSync(`${listFixtures}/${file}`, 'utf8'));
+add('lists.suggestionWork', 'suggestionWork', lists.suggestionWork, listFixture('suggestion-work.json'));
+add('lists.reply.ready', 'suggestionReply', lists.suggestionReply, listFixture('suggestion-reply-ready.json'));
+add('lists.reply.unavailable', 'suggestionReply', lists.suggestionReply, listFixture('suggestion-reply-unavailable.json'));
+add('lists.reply.busy', 'suggestionReply', lists.suggestionReply, { status: 'busy' });
+fixtures['lists.limits'] = {
+  schema: 'LIST_LIMITS',
+  value: JSON.parse(canonical({ ...lists.LIST_LIMITS, durations: lists.DURATION_MINUTES }))
+};
+fixtures['routes.lists'] = { schema: 'routeTable', value: JSON.parse(canonical(lists.HOVEL_LIST_ROUTES.native)) };
 
 // The native route table, so the Mac's own table is checked against the routes the server serves.
 if (!c.HOVEL_COMPANION_ROUTES) throw new Error('This server-platform predates HOVEL_COMPANION_ROUTES; update it first');

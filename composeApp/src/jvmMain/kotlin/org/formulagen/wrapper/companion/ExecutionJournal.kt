@@ -140,6 +140,23 @@ class ExecutionJournal(private val directory: Path, private val hostId: String) 
         return text.take(limit - suffix.length) + suffix
     }
 
+    /** Called only after the shared cleanup barrier has drained every extraction writer. */
+    @Synchronized
+    fun eraseContent() {
+        checkOpen()
+        Files.list(directory).use { files ->
+            files.filter { it.fileName.toString().endsWith(".json") }.forEach { file ->
+                val record = checkNotNull(read(file.fileName.toString().removeSuffix(".json")))
+                write(record.copy(request = record.request.copy(prompt = "Memory content removed."),
+                    phase = ExecutionPhase.RECONCILIATION_REQUIRED, result = "Memory content removed."))
+            }
+        }
+        // An interrupted atomic write may have left a private temporary copy.
+        Files.list(directory).use { files -> files.filter { it.fileName.toString().startsWith(".receipt-") &&
+            it.fileName.toString().endsWith(".tmp") }.forEach { Files.delete(it) } }
+        FileChannel.open(directory, READ).use { it.force(true) }
+    }
+
     private fun path(id: String): Path {
         require(UUID.fromString(id).toString() == id) { "Task ID must be a canonical UUID" }
         return directory.resolve("$id.json")

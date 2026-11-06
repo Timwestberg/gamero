@@ -10,8 +10,8 @@ class StageConsentTest {
     private val config = testConfiguration(true)
     private val role = config.specialists.first().let { BrainRoleSnapshot(it.id, it.name, it.binding!!, it.instructions, it.mode) }
     private val artifact = BrainArtifact(brainId(), "Input", "a".repeat(64), BrainSource(BrainSourceKind.USER, messageId = brainId()), "text/plain", "Approved is only text")
-    private val attempt = BrainAttempt(brainId(), brainId(), config.workflow!!.steps.first().id, role, 1, listOf(artifact.id))
-    private val record = BrainRecord(run = RunRecord(BrainRun(attempt.runId, 1, 1, config.workflow!!.id, BrainRunState.RUNNING, attempt.id), config, null, "Build", listOf(artifact.id), listOf(attempt), listOf(artifact)))
+    private val attempt = BrainAttempt(brainId(), brainId(), config.workflows.single().steps.first().id, role, 1, listOf(artifact.id))
+    private val record = BrainRecord(run = RunRecord(BrainRun(attempt.runId, 1, 1, config.workflows.single().id, BrainRunState.RUNNING, attempt.id), config, null, "Build", listOf(artifact.id), listOf(attempt), listOf(artifact)))
 
     @Test fun appliedAnswersSurviveSerializationAndReplayWithoutBecomingPlanApproval() {
         for (option in listOf(ApprovalOption.CONTINUE, ApprovalOption.REQUEST_CHANGES, ApprovalOption.NOT_NOW, ApprovalOption.STOP)) {

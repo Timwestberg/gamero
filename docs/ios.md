@@ -248,6 +248,28 @@ where the Keychain answers `errSecNotAvailable`, so
 `IosPhoneApprovalsTest` checks CommonCrypto and ids there and marks the
 Keychain test `@Ignore` with that reason.
 
+## Camera and microphone
+
+Hovel meetings use the camera and the microphone in the web page. The app
+gives them only to the trusted Hovel page, with the rule in
+[host-bridge.md](host-bridge.md#camera-and-microphone).
+
+- `MediaUIDelegate` (`iosMain/.../bridge/IosMediaGrant.kt`) is the WKWebView's
+  UI delegate. It answers `requestMediaCapturePermissionFor` with grant only
+  when `MediaGrant` grants for the requesting frame. It denies all other
+  requests.
+- After a grant, iOS shows its own prompt once, with the usage strings in
+  `iosApp/iosApp/Info.plist` (`NSCameraUsageDescription` and
+  `NSMicrophoneUsageDescription`).
+- `mediaWebViewFactory` makes the WKWebView, through the `webViewFactory` that
+  `App` takes. It sets `allowsInlineMediaPlayback`. Without it, the camera
+  video shows black ([WebKit bug 220184](https://bugs.webkit.org/show_bug.cgi?id=220184)).
+- WKWebView keeps its UI delegate weakly. `MainViewController` keeps the
+  delegate for the life of the screen.
+- Another product (`GAMERO_PRODUCT` is not `hovel`) gets a delegate with no
+  trusted page, so every request is denied. `tools/ios-smoke.sh` runs that
+  product.
+
 ## Known limitations
 
 - **Connect computer is unavailable on iOS.** The Mac-only Codex companion
@@ -260,6 +282,11 @@ Keychain test `@Ignore` with that reason.
   `Secure` cookies. See [Sign in (HTTPS)](#sign-in-https).
 - `iosApp/iosApp/GoogleService-Info.plist` must stay in place, because
   `FirebaseApp.configure()` runs at launch.
+- **Local LiveKit does not reach the simulator's HTTPS page.** WKWebView blocks
+  `ws://127.0.0.1:7880` from an `https` page as mixed content (iOS 26.2
+  simulator, 2026-11-05). The same socket connects from an `http://127.0.0.1`
+  page, but sign-in needs HTTPS. So meetings in the simulator use the LiveKit
+  Cloud dev project.
 - **Approvals need the page open.** There are no push notifications yet, so
   the phone shows an approval only while a Hovel page runs.
 
