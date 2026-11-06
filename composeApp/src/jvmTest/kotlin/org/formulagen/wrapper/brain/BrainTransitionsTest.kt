@@ -14,12 +14,13 @@ import org.formulagen.wrapper.conversation.MemberMode
 class BrainTransitionsTest {
     private val configuration = testConfiguration(workflow = true).let { config ->
         // The Editor's step returns to the Writer's when changes are needed.
-        val steps = config.workflow!!.steps
-        config.copy(workflow = config.workflow.copy(steps = listOf(steps[0], steps[1].copy(returnTo = BrainReturn(steps[0].id, "Changes needed")))))
+        val workflow = config.workflows.single()
+        val steps = workflow.steps
+        config.copy(workflows = listOf(workflow.copy(steps = listOf(steps[0], steps[1].copy(returnTo = BrainReturn(steps[0].id, "Changes needed"))))))
     }
     private val writer = configuration.specialists[0]
     private val editor = configuration.specialists[1]
-    private val steps = configuration.workflow!!.steps
+    private val steps = configuration.workflows.single().steps
     private val coordinator = checkNotNull(configuration.coordinator.snapshot())
     private var ids = 0
     private fun newId() = "20000000-0000-4000-8000-" + (++ids).toString().padStart(12, '0')
@@ -34,13 +35,23 @@ class BrainTransitionsTest {
         inWorkflow: Boolean = false,
         state: BrainRunState = BrainRunState.PLANNING,
         config: BrainConfiguration = configuration,
+        workflow: BrainWorkflow? = if (inWorkflow) config.workflows.first() else null,
     ): BrainRecord {
-        val summary = BrainRun(RUN, 5, 1, if (inWorkflow) config.workflow!!.id else null, state, attempts.lastOrNull()?.id)
+        val summary = BrainRun(RUN, 5, 1, workflow?.id, state, attempts.lastOrNull()?.id)
         return BrainRecord(run = RunRecord(summary, config, null, "Write it", emptyList(), attempts, nextStep = nextStep, phase = phase))
     }
     private val BrainRecord.r get() = checkNotNull(run)
 
     private class Case(val name: String, val before: BrainRecord, val decision: CoordinatorDecision, val expect: ((BrainRecord) -> Unit)?)
+
+    /** Apply each case's decision: a case without an expectation must be refused. */
+    private fun List<Case>.check() {
+        for (case in this) {
+            val expect = case.expect
+            if (expect == null) assertFails(case.name) { case.before.decided(case.decision, coordinator, ::newId) }
+            else expect(runCatching { case.before.decided(case.decision, coordinator, ::newId) }.getOrElse { throw AssertionError(case.name, it) })
+        }
+    }
 
     @Test fun eachCoordinatorDecisionMovesTheRunAsTheWorkflowAllows() {
         val draft = attempt(writer, steps[0], BrainAttemptState.COMPLETED, listOf(newId()))
@@ -77,7 +88,7 @@ class BrainTransitionsTest {
                 assertEquals(it.waiting?.summary, it.notice)
             },
             Case("enter-workflow at the first step queues it", record(), CoordinatorDecision.EnterWorkflow(steps[0].id, emptyList(), emptyList(), "Start writing.")) {
-                assertEquals(configuration.workflow!!.id, it.r.summary.workflowId)
+                assertEquals(configuration.workflows.single().id, it.r.summary.workflowId)
                 assertEquals(listOf(steps[0].id), it.r.attempts.map { attempt -> attempt.stepId })
                 assertEquals(listOf(0, BrainPhase.EXECUTE, steps[0].instructions), listOf(it.r.nextStep, it.r.phase, it.r.task))
                 assertEquals(BrainAuthor.SYSTEM to "Start writing.", it.messages.single().let { entry -> entry.author to entry.text })
@@ -89,6 +100,8 @@ class BrainTransitionsTest {
             },
             Case("enter-workflow refuses an unexplained skip", record(), CoordinatorDecision.EnterWorkflow(steps[1].id, emptyList(), emptyList(), "Edit it."), null),
             Case("enter-workflow refuses an unknown step", record(), CoordinatorDecision.EnterWorkflow(newId(), emptyList(), emptyList(), "Go."), null),
+            Case("enter-workflow refuses while a workflow runs", record(inWorkflow = true),
+                CoordinatorDecision.EnterWorkflow(steps[0].id, emptyList(), emptyList(), "Again."), null),
             Case("start-step launches only the next step", record(BrainPhase.ADVANCE, 1, listOf(draft), true), CoordinatorDecision.StartStep(steps[1].id, emptyList())) {
                 val queued = it.r.attempts.last()
                 assertEquals(listOf(editor.id, steps[1].id), listOf(queued.role.roleId, queued.stepId))
@@ -146,11 +159,36 @@ class BrainTransitionsTest {
             Case("a result grades only the last attempt", record(BrainPhase.EVALUATE, 1, listOf(draft, edit), true),
                 CoordinatorDecision.StepResult(draft.id, StepOutcome.READY, "Good."), null),
         )
-        for (case in cases) {
-            val expect = case.expect
-            if (expect == null) assertFails(case.name) { case.before.decided(case.decision, coordinator, ::newId) }
-            else expect(runCatching { case.before.decided(case.decision, coordinator, ::newId) }.getOrElse { throw AssertionError(case.name, it) })
-        }
+        cases.check()
+    }
+
+    /** A version 2 brain's entry step names its workflow; the run then follows that one alone. */
+    @Test fun aBrainWithSeveralWorkflowsEntersTheEnabledOneThatHoldsTheStep() {
+        val brain = testWorkflowsConfiguration()
+        val (writing, editing, archive) = brain.workflows
+        val edit = attempt(editor, editing.steps[0], BrainAttemptState.COMPLETED, listOf(newId()))
+        listOf(
+            Case("enter-workflow enters the second workflow by its step", record(config = brain),
+                CoordinatorDecision.EnterWorkflow(editing.steps[0].id, emptyList(), emptyList(), "Tighten it.")) {
+                assertEquals(editing.id, it.r.summary.workflowId)
+                assertEquals(listOf(editing.steps[0].id), it.r.attempts.map { attempt -> attempt.stepId })
+                assertEquals(listOf(0, BrainPhase.EXECUTE, "Do Editing"), listOf(it.r.nextStep, it.r.phase, it.r.task))
+            },
+            Case("enter-workflow skips only earlier steps of its own workflow", record(config = brain),
+                CoordinatorDecision.EnterWorkflow(editing.steps[0].id, emptyList(), listOf(BrainSkip(writing.steps[0].id, "Drafted.")), "Edit."), null),
+            Case("enter-workflow refuses a step of a disabled workflow", record(config = brain),
+                CoordinatorDecision.EnterWorkflow(archive.steps[0].id, emptyList(), emptyList(), "Archive it."), null),
+            Case("start-step follows the run's own workflow", record(BrainPhase.ADVANCE, config = brain, workflow = editing),
+                CoordinatorDecision.StartStep(editing.steps[0].id, emptyList())) {
+                assertEquals(editing.steps[0].id, it.r.attempts.single().stepId)
+            },
+            Case("start-step refuses another workflow's next step", record(BrainPhase.ADVANCE, config = brain, workflow = editing),
+                CoordinatorDecision.StartStep(writing.steps[0].id, emptyList()), null),
+            Case("ready on the followed workflow's last step finishes", record(BrainPhase.EVALUATE, 0, listOf(edit), config = brain, workflow = editing),
+                CoordinatorDecision.StepResult(edit.id, StepOutcome.READY, "Tight.")) {
+                assertEquals(listOf(1, BrainPhase.FINISH), listOf(it.r.nextStep, it.r.phase))
+            },
+        ).check()
     }
 
     @Test fun aPauseInterruptsRunningWorkAndSaysWhy() {
@@ -300,21 +338,24 @@ class BrainTransitionsTest {
     }
 
     @Test fun aPausedRunAdoptsSettingsButNeverAStructuralChange() {
-        val workflow = configuration.workflow!!
+        val workflow = configuration.workflows.single()
         // A newer revision to whether a paused run may adopt it.
         val rows = listOf(
             "new instructions and models" to configuration.copy(specialists = configuration.specialists.map {
                 it.copy(instructions = "New", binding = it.binding?.copy(modelId = "other"))
             }) to true,
-            "a changed stage approval" to configuration.copy(workflow = workflow.copy(steps = steps.map { it.copy(askBeforeStarting = true) })) to true,
+            "a changed stage approval" to configuration.copy(workflows = listOf(workflow.copy(steps = steps.map { it.copy(askBeforeStarting = true) }))) to true,
             "a new coordinator binding" to configuration.copy(coordinator = configuration.coordinator.copy(binding = null)) to true,
             "reordered specialists" to configuration.copy(specialists = configuration.specialists.reversed()) to false,
-            "reordered steps" to configuration.copy(workflow = workflow.copy(steps = steps.reversed())) to false,
-            "a renamed step" to configuration.copy(workflow = workflow.copy(steps = steps.map { it.copy(name = "${it.name} 2") })) to false,
-            "a removed return" to configuration.copy(workflow = workflow.copy(steps = steps.map { it.copy(returnTo = null) })) to false,
+            "reordered steps" to configuration.copy(workflows = listOf(workflow.copy(steps = steps.reversed()))) to false,
+            "a renamed step" to configuration.copy(workflows = listOf(workflow.copy(steps = steps.map { it.copy(name = "${it.name} 2") }))) to false,
+            "a removed return" to configuration.copy(workflows = listOf(workflow.copy(steps = steps.map { it.copy(returnTo = null) }))) to false,
             "a talk role made a project role" to configuration.copy(specialists = configuration.specialists.map { it.copy(mode = MemberMode.WORK) }) to false,
         )
         for ((change, expected) in rows) assertEquals(expected, adoptable(configuration, change.second), change.first)
+        val brain = testWorkflowsConfiguration()
+        assertTrue(adoptable(brain, brain.copy(workflows = brain.workflows.map { it.copy(useFor = "Changed") })), "Use it for is a setting")
+        assertFalse(adoptable(brain, brain.copy(workflows = brain.workflows.dropLast(1))), "a removed workflow")
     }
 
     @Test fun receiptsKeepTheNewestRequests() {

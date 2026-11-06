@@ -52,7 +52,7 @@ internal fun ConversationRecord.withThreads(rerunOf: String?, newId: () -> Strin
 
 /** A new thread for [attempt], under a coordinator message [announcementId] that names it. */
 private fun ConversationRecord.opened(attempt: BrainAttempt, run: RunRecord, announcementId: String): ConversationRecord {
-    val step = run.configuration.workflow?.steps?.find { it.id == attempt.stepId }
+    val step = run.configuration.step(attempt.stepId)
     val title = threadTitle(attempt.role.name, step?.name ?: run.task)
     val thread = ThreadState(title, announcementId, 0, attempt.role, attempt.stepId, attempt.state, attempt.outcome)
     return copy(

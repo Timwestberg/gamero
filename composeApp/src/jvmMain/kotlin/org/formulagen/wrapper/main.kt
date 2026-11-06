@@ -24,6 +24,9 @@ import java.net.URI
 import kotlin.system.exitProcess
 import org.formulagen.wrapper.approvals.NativeDialogHost
 import org.formulagen.wrapper.conversation.voice.KokoroVoicePicker
+import com.multiplatform.webview.web.WebViewFactoryParam
+import org.formulagen.wrapper.bridge.JcefMediaGrant
+import org.formulagen.wrapper.bridge.TrustedOrigin
 import org.formulagen.wrapper.bridge.desktopHostCapabilities
 import org.formulagen.wrapper.companion.NativeBridge
 import org.formulagen.wrapper.hovel.PhonePairing
@@ -199,6 +202,9 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
         else File(home, ".local/share/gamero")
     }
     val product = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME
+    // Only Hovel's trusted page gets the camera and microphone (MediaGrant). Never --enable-media-stream.
+    val media = remember(url) { JcefMediaGrant(if (isHovelProduct()) runCatching { TrustedOrigin(url) }.getOrNull() else null) }
+    val webViewFactory = remember(media) { { param: WebViewFactoryParam -> persistentDesktopBrowser(param, media) } }
     val services = remember {
         DesktopServices.create(url, support.toPath(), System.getenv(), product, window).also { resources.services = it }
     }
@@ -267,7 +273,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                     onEscape = conversationVoice::escape,
                 )
             }
-            App(url, enableLegacyBridge = false, webViewFactory = ::persistentDesktopBrowser, onWebViewCreated = { browser ->
+            App(url, enableLegacyBridge = false, webViewFactory = webViewFactory, onWebViewCreated = { browser ->
                 resources.attachBrowser(browser)
                 resources.bridge?.close()
                 resources.bridge = NativeBridge(

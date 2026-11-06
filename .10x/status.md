@@ -29,3 +29,11 @@ Spec `specs/2026-10-14-bridge-kit-design.md`, ADR-002 (Accepted). G5: product se
 - [x] B2 iOS transport on the kit, no kit change (no commonMain change; Mac: JVM 102, Android 29, iOS 39, 0 failures; simulator app builds and starts with the bridge attached. Bridge round trip on iOS waits for the web client, B3)
 - [x] K6 FOR-117 comment: an `unsupported` error names the product, the platform and the capability; a `declined` code for a person who says no; threading rule on `Capability` (Mac: JVM 104, Android 31, iOS 41, 0 failures; desktop jar, Android debug APK and iOS simulator framework build)
 - [ ] C3+ haptic.play on mobile, legacy haptic path deleted
+
+## meetings (FOR-232)
+
+Tim approved the ARCH on 2026-11-05. Gamero's part: the camera and microphone grant, through `MediaGrant`. **Phase:** Implementation.
+
+- [x] 3a `MediaGrant` and the Android adapter (FOR-237; Mac: JVM 892, Android 132, 0 failures; Android debug APK builds. Real devices not run)
+- [x] 3b iOS: usage strings, WKWebView factory, capture-permission delegate (FOR-238; Mac: iOS 139, 0 failures; `tools/ios-smoke.sh` passes on a stub page, where the delegate denies the product that is not Hovel. Check 6 fails: WKWebView blocks `ws://127.0.0.1` from an HTTPS page, so the simulator uses the cloud dev project)
+- [x] 3c Mac: JCEF media access handler and bundle usage strings (FOR-239; Mac: JVM 898, 0 failures; check 3 passes on JBR 21.0.9 with a live probe; `createDistributable` bundle has both usage strings. The app itself not launched with a meeting page)

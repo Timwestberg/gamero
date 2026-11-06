@@ -6,7 +6,8 @@ import org.formulagen.wrapper.bridge.SharedRules
  * Every route a registered Mac calls, relative to `/v1/hovel/native/:ownerId/:hostId`
  * ([HovelHttpTransport] adds that base and the `x-hovel-host-token`): one table of method, path template
  * and builder, which also decides what the transport allows. Conversation routes mirror event-contracts
- * `HOVEL_COMPANION_ROUTES.native`; each payload is named by its `hovel/companions` schema.
+ * `HOVEL_COMPANION_ROUTES.native`, and list suggestions `HOVEL_LIST_ROUTES.native`; each payload is named by its
+ * schema.
  */
 internal enum class NativeRoute(val method: String, val template: String) {
     /** The hovel heartbeat body (`providerState`, `features`) plus `computerHeartbeat`'s directory and usage; answers `{ host }` and, for a memory-extraction computer, `memoryJobs`. */
@@ -65,10 +66,16 @@ internal enum class NativeRoute(val method: String, val template: String) {
     IMAGE_RELAY_READ("GET", "image-relays/:requestId"),
     IMAGE_RELAY_CHUNK("POST", "image-relays/:requestId/chunks"),
 
+    /** A list's suggestion request: → `suggestionWork`, then `suggestionReply` → 204 (`hovel/lists`). */
+    LIST_SUGGESTIONS_READ("GET", "list-suggestions/:requestId"),
+    LIST_SUGGESTIONS_REPLY("POST", "list-suggestions/:requestId"),
+
     /** Memory jobs. */
     MEMORY_CLAIM("POST", "memory/claim"),
     MEMORY_PROGRESS("POST", "memory/progress"),
-    MEMORY_CONSOLIDATE("POST", "memory/consolidate");
+    MEMORY_CONSOLIDATE("POST", "memory/consolidate"),
+    MEMORY_CONTEXT_CHECK("POST", "memory/context/check"),
+    MEMORY_CLEANUP_ACK("POST", "memory/cleanup/ack");
 
     private val segments: List<String> get() = template.split('/')
 

@@ -197,6 +197,15 @@ compose.desktop {
             includeAllModules = true
             macOS {
                 bundleID = "org.formulagen.wrapper"
+                // macOS shows these before the first capture: Mac voice and Hovel meetings (docs/desktop.md).
+                infoPlist {
+                    extraKeysRawXml = """
+                        <key>NSMicrophoneUsageDescription</key>
+                        <string>Hovel uses the microphone when you talk to Ember and when you talk in a meeting.</string>
+                        <key>NSCameraUsageDescription</key>
+                        <string>Hovel uses the camera when you turn on your video in a meeting.</string>
+                    """.trimIndent()
+                }
                 signingSetting("GAMERO_MAC_SIGN_IDENTITY")?.let { identity ->
                     signing {
                         sign.set(true)

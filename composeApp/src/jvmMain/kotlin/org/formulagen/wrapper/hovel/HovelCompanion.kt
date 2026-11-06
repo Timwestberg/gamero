@@ -38,6 +38,9 @@ class HostConnection(
     val transport: HovelHttpTransport,
     val status: (String) -> Unit,
     val features: List<String>,
+    val cleanup: MemoryCleanup? = null,
+    /** A `list.suggestions.requested` request id, for the suggestion lane. */
+    val listSuggestions: (String) -> Unit = {},
     val heartbeat: (JsonObject) -> Unit,
 )
 
@@ -148,25 +151,48 @@ class HovelCompanion(
         }
     }
 
-    /** The registered Mac's session: the conversation runner, and with Codex the memory job lane. Called holding [lifecycle]. */
+    /**
+     * The registered Mac's session: the conversation runner, and with Codex the memory job lane and the list suggestion
+     * lane. Called holding [lifecycle].
+     */
     private fun startSession(registered: HostRegistration, token: String): AutoCloseable {
         val transport = HovelHttpTransport(URI("$origin/api/hovel/v1/hovel"), registered.ownerId, registered.id, token)
+        val cleanup = MemoryCleanup(transport, directory.resolve("memory-cleanup-${registered.id}.txt"))
         var journal: ExecutionJournal? = null
         var lane: MemoryJobLane? = null
+        var suggestions: ListSuggestionLane? = null
         try {
             if (executable != null) {
                 val memoryJobs = ExecutionJournal(directory.resolve("memory-journal-${registered.id}"), registered.id).also { journal = it }
                 // Extraction reads only its input: an empty private folder, never the player's project and its AGENTS.md.
                 val memoryWorkspace = privateDirectory(directory.resolve("memory-workspace-${registered.id}"))
                 val provider = CodexCliProvider(executable, memoryWorkspace, directory.resolve("memory-output-${registered.id}"))
-                lane = MemoryJobLane(registered.id, memoryJobs, provider, provider::readiness, transport) { status = it }.also { it.start() }
+                cleanup.register {
+                    memoryJobs.eraseContent()
+                    val outputs = directory.resolve("memory-output-${registered.id}")
+                    if (Files.exists(outputs)) {
+                        Files.list(outputs).use { files -> files.filter { it.fileName.toString().endsWith(".txt") }.forEach { Files.delete(it) } }
+                        java.nio.channels.FileChannel.open(outputs, java.nio.file.StandardOpenOption.READ).use { it.force(true) }
+                    }
+                }
+                lane = MemoryJobLane(registered.id, memoryJobs, provider, provider::readiness, transport, cleanup = cleanup) { status = it }.also { it.start() }
+                // Suggestions get their own empty folder.
+                val suggestionWorkspace = privateDirectory(directory.resolve("list-suggestions-workspace-${registered.id}"))
+                val suggestionOutputs = directory.resolve("list-suggestions-output-${registered.id}")
+                val suggestionCodex = CodexCliProvider(executable, suggestionWorkspace, suggestionOutputs)
+                suggestions = ListSuggestionLane(registered.id, suggestionCodex, suggestionCodex::readiness, transport, suggestionOutputs)
+                    .also { it.start() }
             }
             val memory = lane
-            val runner = conversations(HostConnection(registered, transport, { status = it },
-                if (memory != null) MemoryJobLane.FEATURES else emptyList()) { response -> memory?.heartbeat(response) })
+            val suggester = suggestions
+            val features = (if (memory != null) MemoryJobLane.FEATURES else emptyList()) +
+                (if (suggester != null) ListSuggestionLane.FEATURES else emptyList()) + MemoryCleanup.FEATURE
+            val runner = conversations(HostConnection(registered, transport, { status = it }, features, cleanup,
+                listSuggestions = { suggester?.request(it) }) { response -> memory?.heartbeat(response) })
             native = transport
-            return AutoCloseable { closeInReverse(listOfNotNull(memory, runner)) }
+            return AutoCloseable { closeInReverse(listOfNotNull(memory, suggester, runner)) }
         } catch (error: Exception) {
+            suggestions?.close()
             lane?.close() ?: journal?.let { runCatching { it.close() } }
             throw error
         }

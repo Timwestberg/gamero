@@ -6,25 +6,40 @@ package org.formulagen.wrapper.bridge
  * in `host.contract`, so neither side shows what the other cannot render.
  */
 object HovelContract {
-    /** Contract 10 adds direction instructions and acknowledgements. */
-    const val CURRENT = 10
+    /**
+     * Contract 11 (`brainLibraries`) adds version 2 brains, with several workflows. Contract 12 (`brainSkills`) adds
+     * the skills a version 2 brain's specialists use, and the installed skills this Mac reports for each provider.
+     * Contract 13 (`skillGroups`) lets a specialist learn up to 12 skills and sort them into groups, and
+     * (`workflowSkills`) gives a specialist the skills its workflow steps need, up to 24 skills in all.
+     */
+    const val CURRENT = 13
 
     /** `HOVEL_FIRST_CONTRACT`: what a document naming nothing newer needs. */
     const val FIRST = 1
 
     /**
-     * `HOVEL_CONTRACT_FEATURES`: the contract each answer change arrived in. Contract 2 added the claim's
-     * `stop-requested` answer and a message page's threads.
+     * `HOVEL_CONTRACT_FEATURES`: the contract each answer change arrived in, including those newer than [CURRENT].
+     * Contract 2 added the claim's `stop-requested` answer and a message page's threads. `lists` is the pages' own.
+     * `listSuggestions` needs no contract from a Mac: the server picks the Mac whose heartbeat declares
+     * `list-suggestions`, whatever contract it speaks.
      */
     val FEATURES: Map<String, Int> = mapOf(
+        "brainLibraries" to 11,
+        "brainSkills" to 12,
         "companionsOnly" to 3,
         "conversationQuestions" to 7,
         "sharedUnderstanding" to 8,
+        "skillGroups" to 13,
         "communicationReports" to 9,
+        "community" to 13,
         "conversationDirection" to 10,
+        "lists" to 13,
+        "listSuggestions" to 13,
         "specialistAdvice" to 5,
         "workflowEvidence" to 6,
+        "workflowSkills" to 13,
         "messagePageThreads" to 2,
+        "partOrigins" to 13,
         "robotLook" to 4,
         "stopRequestedClaim" to 2,
     )

@@ -67,8 +67,8 @@ class ConversationThreadsTest {
     }
 
     @Test fun aWorkflowReturnStaysInTheStepsThreadAndAnotherTaskOpensAnother() {
-        val step1 = configuration.workflow!!.steps[0]
-        val step2 = configuration.workflow!!.steps[1]
+        val step1 = configuration.workflows.single().steps[0]
+        val step2 = configuration.workflows.single().steps[1]
         val a = attempt(implementer, step1.id, BrainAttemptState.COMPLETED)
         val b = attempt(reviewer, step2.id, BrainAttemptState.COMPLETED)
         val opened = record(a, b).withThreads(null, ::id)

@@ -29,6 +29,22 @@ class ConversationStoreTest {
         assertFails { store.read("../escape") }
     }
 
+    @Test fun cleanupErasesContextButKeepsCrashFencesAndOtherAccounts() {
+        val record = ConversationRecord(brain = BrainRecord(notice = "private recalled text",
+            coordinatorContexts = mapOf("role" to NativeConversation(id(), "hash"))),
+            threadContexts = mapOf(id() to NativeConversation(id(), "hash")))
+        store.write(conversation, record)
+        val entry = store.journal(ClaimEntry(id(), conversation, ClaimPhase.LAUNCHING, id(), 2))
+        val other = ConversationStore(root, id())
+        other.write(conversation, record)
+        store.eraseContext()
+        assertEquals(ConversationRecord(), store.read(conversation))
+        assertEquals(listOf(entry), store.pendingClaims())
+        assertEquals(record, other.read(conversation))
+        store.eraseContext()
+        assertEquals(emptySet(), store.bindingHandles())
+    }
+
     @Test fun readingCreatesNothing() {
         assertEquals(ConversationRecord(), store.read(conversation))
         assertEquals(emptyList(), store.claims(conversation))

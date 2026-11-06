@@ -18,6 +18,7 @@ import org.formulagen.wrapper.bridge.BrainRunState
 import org.formulagen.wrapper.bridge.BrainSkip
 import org.formulagen.wrapper.bridge.FolderRole
 import org.formulagen.wrapper.bridge.ProviderModel
+import org.formulagen.wrapper.bridge.ProviderSkill
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.bridge.brainJson
 import org.formulagen.wrapper.bridge.brainWire
@@ -332,6 +333,10 @@ internal sealed interface HostStreamEvent {
     @Serializable @SerialName("project.changed")
     data class ProjectChanged(val projectId: String) : HostStreamEvent
 
+    /** A list's companion is asked for suggestions; only a Mac declaring `list-suggestions` is sent it (`hovel/lists`). */
+    @Serializable @SerialName("list.suggestions.requested")
+    data class ListSuggestionsRequested(val requestId: String) : HostStreamEvent
+
     /** The account's workspace profile is saved at [revision]; a Mac holding an older one reads it again. */
     @Serializable @SerialName("workspaceProfile.changed")
     data class WorkspaceProfileChanged(val revision: Long) : HostStreamEvent
@@ -346,9 +351,15 @@ internal enum class ProviderReadiness {
     @SerialName("unavailable") UNAVAILABLE,
 }
 
-/** `providerRuntime`: one runtime on this computer. */
+/** `providerRuntime`: one runtime on this computer, with the [skills] it has installed here; absent when it has none. */
 @Serializable
-internal data class ProviderRuntime(val canWork: Boolean, val models: List<ProviderModel>, val readiness: ProviderReadiness, val runtimeId: RuntimeId)
+internal data class ProviderRuntime(
+    val canWork: Boolean,
+    val models: List<ProviderModel>,
+    val readiness: ProviderReadiness,
+    val runtimeId: RuntimeId,
+    val skills: List<ProviderSkill>? = null,
+)
 
 /** `providerDirectory`: what this computer publishes about its runtimes. */
 @Serializable

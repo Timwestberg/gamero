@@ -365,7 +365,7 @@ internal fun chatCodex(runtime: CodexRuntime, receive: (String, JsonObject) -> U
 internal fun chatProcessArguments(): List<String> = flattened(TALK_ONLY_LOCKDOWN).flatMap { (key, value) -> listOf("-c", "$key=$value") }
 
 /** Dotted keys and TOML values for every leaf of [table]. */
-private fun flattened(table: JsonObject, prefix: String = ""): List<Pair<String, String>> = table.flatMap { (key, value) ->
+internal fun flattened(table: JsonObject, prefix: String = ""): List<Pair<String, String>> = table.flatMap { (key, value) ->
     when (value) {
         is JsonObject -> flattened(value, "$prefix$key.")
         is JsonArray -> listOf("$prefix$key" to "[${value.joinToString(",")}]")

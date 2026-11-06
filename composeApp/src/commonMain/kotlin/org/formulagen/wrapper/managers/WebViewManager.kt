@@ -13,6 +13,7 @@ import androidx.compose.ui.draw.alpha
 import com.multiplatform.webview.jsbridge.WebViewJsBridge
 import com.multiplatform.webview.web.LoadingState
 import com.multiplatform.webview.web.NativeWebView
+import com.multiplatform.webview.web.PlatformWebViewParams
 import com.multiplatform.webview.web.WebViewFactoryParam
 import com.multiplatform.webview.web.defaultWebViewFactory
 import com.multiplatform.webview.web.WebView
@@ -48,6 +49,8 @@ fun WebViewManager(
     webViewFactory: (WebViewFactoryParam) -> NativeWebView = ::defaultWebViewFactory,
     /** Called when a page finishes loading, and again if its title changes. The title can be null on the first call. */
     onPageLoaded: (url: String, title: String?) -> Unit = { _, _ -> },
+    /** The platform's own WebView clients. Android passes its chrome client here; null keeps the library's. */
+    platformWebViewParams: PlatformWebViewParams? = null,
 ) {
     val tag = "WebViewManager"
     val webViewNavigator = rememberWebViewNavigator()
@@ -88,6 +91,7 @@ fun WebViewManager(
                 webViewRef = ref
                 onWebViewCreated(ref)
             },
+            platformWebViewParams = platformWebViewParams,
             factory = webViewFactory
         )
     }

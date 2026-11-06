@@ -44,7 +44,22 @@ internal fun brain(vararg specialists: Pair<String, MemberMode>, workflow: Boole
     }.let { steps -> steps.mapIndexed { index, step -> if (index > 0) step.copy(returnTo = BrainReturn(steps[index - 1].id, "Needs changes")) else step } }
     val flow = if (workflow) BrainWorkflow(id(), "Ship", true, steps, emptyList()) else null
     val coordinator = CoordinatorRole(id(), BrainBinding(RuntimeId.CODEX, SharedRules.RUNTIME_DEFAULT_MODEL), "Be kind.")
-    return BrainDocument(4, BrainConfiguration(1, coordinator, roles, flow))
+    return BrainDocument(4, BrainConfiguration(1, coordinator, roles, listOfNotNull(flow)))
+}
+
+/**
+ * A version 2 brain with a Writer and a Reviewer, both talk-only, and three one-step workflows in this order: Review
+ * (the Reviewer), Draft (the Writer, the default) and Archive (the Writer, disabled).
+ */
+internal fun workflowsBrain(): BrainDocument {
+    val base = brain("Writer" to MemberMode.TALK, "Reviewer" to MemberMode.TALK).configuration
+    val (writer, reviewer) = base.specialists
+    fun workflow(name: String, role: SpecialistRole, useFor: String, enabled: Boolean = true, isDefault: Boolean = false) = BrainWorkflow(
+        id(), name, enabled, listOf(WorkflowStep(id(), "$name step", role.id, "Do the $name step.", "", "$name result", false, null, null)),
+        emptyList(), useFor, isDefault)
+    val workflows = listOf(workflow("Review", reviewer, "Checking finished writing"), workflow("Draft", writer, "New writing", isDefault = true),
+        workflow("Archive", writer, "Old writing", enabled = false))
+    return BrainDocument(5, base.copy(version = 2, workflows = workflows))
 }
 
 /** One conversation's fixed parts: its project, companion and account records as a claim carries them. */
@@ -390,6 +405,12 @@ internal open class ScriptedRuntime(override val id: RuntimeId, val chunk: Int =
 /** Providers that are all connected, each with one default model that takes high effort. */
 internal class ConnectedProviders(private val offered: Set<RuntimeId> = RuntimeId.entries.toSet()) : ProviderCapability {
     @Volatile var connected = true
+    /** Each runtime's installed skills; none by default. */
+    @Volatile var installed: Map<RuntimeId, List<ProviderSkill>> = emptyMap()
+    /** The text of each installed skill that can be read, by runtime and name. */
+    @Volatile var texts: Map<Pair<RuntimeId, String>, ProviderSkillText> = emptyMap()
+    override suspend fun skills(scope: ProviderScope) = installed[scope.runtimeId].orEmpty()
+    override suspend fun skillText(scope: ProviderScope, name: String) = texts[scope.runtimeId to name]
     override suspend fun perform(action: ProviderAction, scope: ProviderScope) =
         ProviderStatus(scope.runtimeId, if (connected && scope.runtimeId in offered) ProviderState.CONNECTED else ProviderState.DISCONNECTED)
     override suspend fun list() = ProviderList(offered.toList(), emptyList())

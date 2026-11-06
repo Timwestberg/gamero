@@ -330,6 +330,29 @@ class ClaudeWorkRuntimeTest {
             assertTrue(events.seen.none { "/private/tmp" in it })
         }
     }
+    @Test fun aWorkingTurnLoadsNoSkillsAndReadsOnlyItsAttachedSkillsFolders() {
+        fake.turns(listOf(emit(init), emit(success)), listOf(emit(init), emit(success)))
+        val skill = Files.createDirectories(fake.dir.resolve("skills").resolve("code-review")).toRealPath()
+        val patterned = Files.createDirectories(fake.dir.resolve("skills").resolve("odd[name]")).toRealPath()
+        runtime(Broker()).use { claude ->
+            val first = Events()
+            claude.startTurn(request().let { it.copy(work = it.work!!.copy(skills = listOf(skill, patterned))) }, first)
+            assertEquals("completed", first.outcome())
+            val session = first.seen.first().removePrefix("opened ")
+            val second = Events()
+            claude.startTurn(request(NativeConversation(session, persona.hash, true)), second)
+            assertEquals("completed", second.outcome())
+            val args = fake.calls().map { call -> call.getValue("argv").jsonArray.map { it.jsonPrimitive.content } }
+            assertEquals(2, args.size, "other skill folders replace the process")
+            assertTrue(args.all { "--disable-slash-commands" in it }, "no personal, project, plugin or built-in skill loads")
+            val rule = "//" + skill.toString().removePrefix("/") + "/**"
+            assertEquals(listOf("--add-dir", skill.toString(), "--disallowedTools", "Edit($rule)", "--disallowedTools", "Write($rule)"),
+                args[0].subList(args[0].indexOf("--add-dir"), args[0].indexOf("--add-dir") + 6), "readable, never changed")
+            assertFalse(patterned.toString() in args[0], "a folder no permission rule can name is not added")
+            assertFalse("--add-dir" in args[1])
+        }
+    }
+
     @Test fun changingEffortReplacesTheProcessAndResumesTheSameConversation() {
         fake.turns(listOf(emit(init), emit(success)), listOf(emit(init), emit(success)))
         runtime(Broker()).use { claude ->

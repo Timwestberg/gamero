@@ -154,13 +154,19 @@ internal fun verifyGrokWorkInspection(report: JsonObject, config: Path) {
     check(permissions["enforced"] == null || (permissions["enforced"] as? JsonArray)?.isEmpty() == true)
 }
 
-/** A nonempty tools allowlist without Agent directives forces background execution off in 1.0.70. */
-private const val GROK_WORK_PROFILE = """---
+/**
+ * A nonempty tools allowlist without Agent directives forces background execution off in 1.0.70. Skills are off, as in
+ * talk (`discoverSkills`, `inheritSkills`): a companion turn uses only the skills its brain attaches, which its task
+ * carries. `[skills] ignore` cannot be added here: work reads only the player's own configuration, and `grok inspect`
+ * takes no profile, so its `skills` still lists what that configuration discovers.
+ */
+internal const val GROK_WORK_PROFILE = """---
 name: hovel-work
 description: Hovel project work with native approvals
 promptMode: extend
 agentsMd: true
-discoverSkills: true
+discoverSkills: false
+inheritSkills: false
 injectDefaultTools: false
 tools: [read_file, list_dir, grep, search_replace, run_terminal_cmd]
 toolConfig:

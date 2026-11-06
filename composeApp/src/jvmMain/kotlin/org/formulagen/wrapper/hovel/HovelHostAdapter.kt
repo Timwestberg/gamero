@@ -79,6 +79,8 @@ class HovelHttpTransport(base: URI, ownerId: String, hostId: String, private val
             val response = future.get(timeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
             if (response.statusCode() == 409) throw HovelRejectedException(refusalCode(response.body()))
             if (response.statusCode() !in 200..299) throw HovelStatusException(response.statusCode(), refusalCode(response.body()))
+            // A 204 carries no body to read.
+            if (response.statusCode() == 204) return JsonObject(emptyMap())
             return Json.parseToJsonElement(response.body().toString(Charsets.UTF_8)).jsonObject.getValue("data").jsonObject
         } finally { if (!future.isDone) future.cancel(true) }
     }

@@ -111,9 +111,11 @@ class CodexWorkRuntimeTest {
             assertEquals("completed", events.end.get(10, TimeUnit.SECONDS))
             assertEquals(listOf(folder.resolve("tests/date.test.ts")), edits, "the completed file change reaches the thread's record")
             val server = servers.single()
-            // The player's own Codex decides what to ask: no sandbox or approval override, the persona as developer instructions.
+            // The player's own Codex decides what to ask: no sandbox or approval override, the persona as developer instructions,
+            // and Codex's own skills off.
             val start = server.calls.first { it.first == "thread/start" }.second
-            assertEquals(setOf("cwd", "approvalsReviewer", "developerInstructions"), start.keys)
+            assertEquals(setOf("cwd", "approvalsReviewer", "developerInstructions", "config"), start.keys)
+            assertEquals(CODEX_WORK_SKILLS_OFF, start["config"])
             assertEquals(JsonPrimitive("user"), start["approvalsReviewer"])
             assertEquals(Persona.working("Ember").instructions, start["developerInstructions"]?.jsonPrimitive?.content)
             assertEquals(listOf(
@@ -191,6 +193,24 @@ class CodexWorkRuntimeTest {
         assertEquals("ls -la", unwrapShell("ls -la"))
         assertEquals(setOf("account/read", "thread/start", "thread/resume", "turn/start", "turn/interrupt"), WORK_CODEX_METHODS)
     }
+    @Test fun aWorkingTurnTurnsOffCodexsOwnSkillsAsTalkDoesAndNothingElse() {
+        // The same switches as talk's lockdown, which is verified live.
+        val talk = TALK_ONLY_LOCKDOWN
+        assertEquals(JsonPrimitive(false), talk.getValue("features").jsonObject["skill_search"])
+        assertEquals(talk.getValue("skills"), CODEX_WORK_SKILLS_OFF.getValue("skills"))
+        assertEquals(mapOf<String, JsonElement>("skill_search" to JsonPrimitive(false)), CODEX_WORK_SKILLS_OFF.getValue("features").jsonObject.toMap(),
+            "no other feature")
+        assertEquals(listOf("-c", "features.skill_search=false", "-c", "skills.bundled.enabled=false", "-c", "skills.include_instructions=false"),
+            codexWorkProcessArguments())
+        // With context folders, the read-only sandbox's own config sits beside the skill switches.
+        val working = Path.of("/work/notes")
+        val settings = codexWorkThreadSettings(working, listOf(Path.of("/work/docs")))
+        assertEquals(JsonPrimitive("workspace-write"), settings["sandbox"])
+        assertEquals(JsonObject(CODEX_WORK_SKILLS_OFF + ("sandbox_workspace_write.writable_roots" to buildJsonArray { add(working.toString()) })),
+            settings["config"])
+        assertEquals(buildJsonObject { put("config", CODEX_WORK_SKILLS_OFF) }, codexWorkThreadSettings(working, emptyList()))
+    }
+
     @Test fun workingTurnsPassEffortToCodex() {
         val servers = CopyOnWriteArrayList<Server>()
         CodexWorkRuntime(root, Path.of("/usr/bin/true"), Broker()) { _, notify, req -> Server(notify, req).also { servers += it } }.use { codex ->

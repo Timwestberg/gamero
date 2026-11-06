@@ -1,5 +1,6 @@
 package org.formulagen.wrapper.conversations
 
+import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Semaphore
@@ -34,6 +35,7 @@ internal class TurnCall(
     val companion: String,
     val folders: ProjectFolders,
     val cancel: CancelSignal,
+    val beforeTurn: () -> Unit = {},
 ) {
     /** Throws once the message was stopped. */
     fun live() { if (cancel.isCancelled) throw StoppedException() }
@@ -44,6 +46,7 @@ internal class TurnCall(
  * and working specialists' on [work] runtimes, each on its thread's lease. A talk runtime takes [talkPermits]
  * turns at a time, across every conversation (Codex holds one turn per process). Readiness and model checks use
  * the brain's own rules ([roleIssues], `BrainBinding.model`), and a problem fails as the provider's refusal would.
+ * [mac] is this Mac's name as a readiness pause names it.
  */
 internal class ProviderTurns(
     talk: List<ChatRuntime>,
@@ -52,6 +55,7 @@ internal class ProviderTurns(
     private val approvals: RemoteApprovals,
     talkPermits: (RuntimeId) -> Int = { if (it == RuntimeId.CODEX) 1 else 4 },
     private val turnTimeout: Duration = 2.hours,
+    val mac: String = THIS_MAC,
 ) {
     private val talk = talk.associateBy { it.id }
     private val work = work.associateBy { it.id }
@@ -75,13 +79,14 @@ internal class ProviderTurns(
 
     /**
      * A working specialist's turn in [threadId], on that thread's lease: the project's folders as its runtime may
-     * be given them, its permission requests relayed through [scope], its finished edits reported to [edits], and
-     * only its own processes ended after it.
+     * be given them, the folders of its provider [skills] to read, its permission requests relayed through [scope],
+     * its finished edits reported to [edits], and only its own processes ended after it.
      */
     fun work(call: TurnCall, threadId: String, role: BrainRoleSnapshot, persona: Persona, input: String, conversation: NativeConversation?,
-        scope: ApprovalScope, stream: ReplyStream, opened: (NativeConversation) -> Unit, edits: EditListener): Pair<String, Activity?> {
+        scope: ApprovalScope, stream: ReplyStream, opened: (NativeConversation) -> Unit, edits: EditListener,
+        skills: List<Path> = emptyList()): Pair<String, Activity?> {
         val worker = ready(call, work[role.binding.runtimeId], role, threadId, coordinator = false)
-        val folders = WorkScope(call.folders.forRuntime(worker.contextFolders), threadId, call.companion, role.binding.member(), edits)
+        val folders = WorkScope(call.folders.forRuntime(worker.contextFolders), threadId, call.companion, role.binding.member(), edits, skills)
         val request = TurnRequest(call.accountId, call.companionId, persona, role.binding.modelId, conversation, input, folders,
             role.binding.effort)
         val relay = approvals.register(threadId, scope)
@@ -110,8 +115,12 @@ internal class ProviderTurns(
         return role.copy(binding = role.binding.copy(modelId = model.modelId))
     }
 
-    /** Why [role] cannot run on this Mac now ([roleIssues]): a talk role also needs its talk runtime here. */
-    fun issues(call: TurnCall, role: BrainRoleSnapshot): List<BrainIssue> {
+    /**
+     * Why [role] cannot run on this Mac now ([roleIssues]): a talk role also needs its talk runtime here, and each
+     * provider skill of its [skills] must be one this Mac [provided] the text of ([providedSkills]).
+     */
+    fun issues(call: TurnCall, role: BrainRoleSnapshot, skills: List<SkillRef> = emptyList(),
+        provided: Set<String> = emptySet()): List<BrainIssue> {
         val binding = role.binding
         val scope = ProviderScope(binding.runtimeId)
         val status = runCatching { runBlocking { providers.perform(ProviderAction.STATUS, scope) }.state }.getOrNull()
@@ -119,8 +128,24 @@ internal class ProviderTurns(
         val offered = role.mode == MemberMode.WORK || binding.runtimeId in talk
         val models = runCatching { runBlocking { providers.models(scope).models } }.getOrNull()
         val canWork = binding.runtimeId in work
-        return roleIssues(role.roleId, binding, role.mode, signedIn && offered, models, canWork, call.folders.working != null)
+        return roleIssues(role.roleId, binding, role.mode, signedIn && offered, models, canWork, call.folders.working != null,
+            skills, provided)
     }
+
+    /**
+     * The text of each provider skill of [skills] on [role]'s runtime that is installed here and readable now, by name:
+     * what its task carries, and what readiness counts as installed. Another runtime's skills are never read.
+     */
+    fun providedSkills(role: BrainRoleSnapshot, skills: List<SkillRef>): Map<String, ProviderSkillText> {
+        val scope = ProviderScope(role.binding.runtimeId)
+        return skills.filterIsInstance<SkillRef.Provider>().filter { it.runtimeId == scope.runtimeId }.mapNotNull { skill ->
+            runCatching { runBlocking { providers.skillText(scope, skill.name) } }.getOrNull()?.let { skill.name to it }
+        }.toMap()
+    }
+
+    /** The skills [runtime] has installed on this Mac, as the provider directory lists them; none when they cannot be read. */
+    fun installedSkills(runtime: RuntimeId): List<ProviderSkill> =
+        runCatching { runBlocking { providers.skills(ProviderScope(runtime)) } }.getOrDefault(emptyList())
 
     /** [action] holding one of [runtime]'s talk turns; Stop ends the wait. */
     private fun <T> gated(call: TurnCall, runtime: RuntimeId, action: () -> T): T {
@@ -180,6 +205,8 @@ internal class ProviderTurns(
         val stopping = call.cancel.onCancel { future.completeExceptionally(InterruptedException()) }
         var handle: TurnHandle? = null
         try {
+            call.beforeTurn()
+            call.live()
             handle = start(request, events)
             return try { future.get(turnTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS) }
             catch (wrapped: ExecutionException) { throw wrapped.cause ?: wrapped }
@@ -189,3 +216,6 @@ internal class ProviderTurns(
         }
     }
 }
+
+/** How a readiness pause names a Mac whose registered name is unknown or empty. */
+internal const val THIS_MAC = "this Mac"

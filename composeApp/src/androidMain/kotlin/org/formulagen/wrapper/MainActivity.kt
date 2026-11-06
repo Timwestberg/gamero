@@ -5,7 +5,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.tooling.preview.Preview
+import com.multiplatform.webview.web.PlatformWebViewParams
+import org.formulagen.wrapper.bridge.MediaChromeClient
 import org.formulagen.wrapper.hovel.HovelAndroidApp
 import org.formulagen.wrapper.hovel.hovelWebUrl
 
@@ -16,7 +19,8 @@ class MainActivity : ComponentActivity() {
 
         val hovelUrl = hovelWebUrl(intent, this)
         setContent {
-            if (hovelUrl != null) HovelAndroidApp(hovelUrl) else App()
+            // Only Hovel's trusted page may get the camera and microphone, so the other page is denied both.
+            if (hovelUrl != null) HovelAndroidApp(hovelUrl) else App(platformWebViewParams = remember { PlatformWebViewParams(chromeClient = MediaChromeClient(null) { null }) })
         }
     }
 }

@@ -8,6 +8,10 @@
 	<string>$(GAMERO_PRODUCT)</string>
 	<key>GameroWebURL</key>
 	<string>$(GAMERO_WEB_URL)</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Hovel uses the camera when you turn on your video in a meeting.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Hovel uses the microphone so people in a meeting can hear you.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
