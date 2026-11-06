@@ -1,5 +1,9 @@
 package org.formulagen.wrapper
 
+import kotlin.experimental.ExperimentalNativeApi
+import kotlin.native.Platform
+import org.formulagen.wrapper.hovel.AUTO_ENTER_KEY
+import org.formulagen.wrapper.hovel.autoEnterRequested
 import platform.Foundation.NSBundle
 import platform.Foundation.NSProcessInfo
 import platform.Foundation.NSURLComponents
@@ -44,6 +48,14 @@ internal fun resolveIosProduct(): String? = iosProduct(
     environment = NSProcessInfo.processInfo.environment[PRODUCT_ENVIRONMENT_KEY] as? String,
     infoPlist = NSBundle.mainBundle.objectForInfoDictionaryKey(PRODUCT_INFO_PLIST_KEY) as? String,
 )
+
+/**
+ * [AUTO_ENTER_KEY] from the launch environment, honored only in a debug binary, so a Release
+ * build never skips the start screen. It is never read from Info.plist.
+ */
+@OptIn(ExperimentalNativeApi::class)
+internal fun resolveIosAutoEnter(): Boolean =
+    Platform.isDebugBinary && autoEnterRequested(NSProcessInfo.processInfo.environment[AUTO_ENTER_KEY] as? String)
 
 /** The `scheme://host[:port]` origin of [url], or [url] itself when it cannot be parsed. */
 internal fun originOf(url: String): String {

@@ -151,7 +151,12 @@ if (mobileTargets) extensions.configure<com.android.build.gradle.AppExtension> {
         keyPassword = signingSetting("GAMERO_ANDROID_KEY_PASSWORD")
     }
     buildTypes {
+        // Cleartext stays off everywhere except loopback in debug builds (HovelAndroid.kt).
+        getByName("debug") {
+            manifestPlaceholders["networkSecurityConfig"] = "@xml/network_security_debug"
+        }
         getByName("release") {
+            manifestPlaceholders["networkSecurityConfig"] = "@xml/network_security_release"
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

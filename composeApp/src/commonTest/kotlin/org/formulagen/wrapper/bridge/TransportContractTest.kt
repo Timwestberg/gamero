@@ -79,6 +79,8 @@ abstract class TransportContractTest {
             capabilities = capabilities,
             products = listOf(CompanionMethods.pack(Capability.Supported(companion))),
             context = backgroundScope.coroutineContext,
+            // The default logs through the platform logger, which Android's JVM unit tests can't call.
+            onFirstAnswer = { _, _ -> },
         )
         return open(bridge)
     }

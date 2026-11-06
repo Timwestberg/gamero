@@ -30,6 +30,7 @@ private const val TAG = "MainViewController"
 fun MainViewController() = ComposeUIViewController {
     val url = remember { resolveIosWebUrl() }
     val product = remember { resolveIosProduct() }
+    val autoEnter = remember { resolveIosAutoEnter() }
     if (url == null) {
         LaunchedEffect(Unit) { log(LogLevel.Error, TAG, "GAMERO_WEB_URL is missing or invalid") }
         MaterialTheme {
@@ -57,14 +58,14 @@ fun MainViewController() = ComposeUIViewController {
         // Only Hovel's page gets the camera and microphone. WKWebView keeps its UI delegate weakly, so it lives here.
         val media = remember { MediaUIDelegate(if (hovel) TrustedOrigin(url) else null) }
         val webViewFactory = remember(media) { mediaWebViewFactory(media) }
-        if (hovel) HovelIosApp(url, onPageLoaded = ::logPageLoaded, onWebViewCreated = attach, webViewFactory = webViewFactory)
+        if (hovel) HovelIosApp(url, onPageLoaded = ::logPageLoaded, onWebViewCreated = attach, webViewFactory = webViewFactory, autoEnter = autoEnter)
         else App(url, onWebViewCreated = attach, webViewFactory = webViewFactory, onPageLoaded = ::logPageLoaded)
     }
 }
 
-/** Smoke-test marker; mirrors desktop's GAMERO_JCEF_INITIALIZED. */
+/** Smoke-test marker, the same on every platform. */
 private fun logPageLoaded(loadedUrl: String, title: String?) {
-    log(LogLevel.Info, TAG, "GAMERO_PAGE_LOADED origin=${originOf(loadedUrl)} title=$title")
+    log(LogLevel.Info, TAG, SmokeMarkers.pageLoaded(loadedUrl, title))
 }
 
 private fun appVersion(): String =
