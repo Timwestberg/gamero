@@ -333,6 +333,10 @@ internal sealed interface HostStreamEvent {
     @Serializable @SerialName("project.changed")
     data class ProjectChanged(val projectId: String) : HostStreamEvent
 
+    /** A list's companion is asked for suggestions; only a Mac declaring `list-suggestions` is sent it (`hovel/lists`). */
+    @Serializable @SerialName("list.suggestions.requested")
+    data class ListSuggestionsRequested(val requestId: String) : HostStreamEvent
+
     /** The account's workspace profile is saved at [revision]; a Mac holding an older one reads it again. */
     @Serializable @SerialName("workspaceProfile.changed")
     data class WorkspaceProfileChanged(val revision: Long) : HostStreamEvent

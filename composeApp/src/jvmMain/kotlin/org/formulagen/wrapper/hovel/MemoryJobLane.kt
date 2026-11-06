@@ -18,6 +18,7 @@ class MemoryJobLane(
     private val provider: TaskProvider,
     private val checkReadiness: () -> CodexCliProvider.Readiness,
     private val transport: HovelTransport,
+    private val cleanup: MemoryCleanup? = null,
     private val status: (String) -> Unit,
 ) : AutoCloseable {
     private val consolidation = Executors.newSingleThreadScheduledExecutor()
@@ -51,7 +52,10 @@ class MemoryJobLane(
         executor.execute {
             try {
                 val delivered = try {
-                    ExecutionCoordinator(journal, provider, HovelMemoryJobRemote(transport, job)).accept(request)
+                    val thread = Thread.currentThread()
+                    val guarded = TaskProvider { input -> cleanup?.check(); provider.execute(input) }
+                    val execute = { ExecutionCoordinator(journal, guarded, HovelMemoryJobRemote(transport, job)).accept(request) }
+                    if (cleanup == null) execute() else cleanup.run({ thread.interrupt() }, execute)
                     true
                 } catch (_: Exception) { false }
                 // A delivered result lets the server apply it and plan the next day now, not at the next timer.

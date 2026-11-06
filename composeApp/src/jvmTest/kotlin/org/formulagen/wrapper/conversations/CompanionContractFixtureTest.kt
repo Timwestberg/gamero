@@ -9,7 +9,10 @@ import org.formulagen.wrapper.bridge.ProviderUsageWindow
 import org.formulagen.wrapper.bridge.HovelContract
 import org.formulagen.wrapper.bridge.RuntimeId
 import org.formulagen.wrapper.hovel.NativeRoute
+import org.formulagen.wrapper.hovel.ListSuggestionLane
 import org.formulagen.wrapper.hovel.MemoryJobLane
+import org.formulagen.wrapper.hovel.SuggestionReply
+import org.formulagen.wrapper.hovel.SuggestionWork
 
 /**
  * Parity with server-platform: every payload in [CompanionContractFixtures] was built from the
@@ -33,6 +36,8 @@ class CompanionContractFixtureTest {
         "heartbeatInput" to HostHeartbeat.serializer(),
         "messageSend" to MessageSend.serializer(),
         "conversationMessage" to ConversationMessage.serializer(),
+        "suggestionWork" to SuggestionWork.serializer(),
+        "suggestionReply" to SuggestionReply.serializer(),
     )
 
     @Suppress("UNCHECKED_CAST")
@@ -47,7 +52,8 @@ class CompanionContractFixtureTest {
             assertEquals(numbers(value), numbers(roundTrip(serializer, value)), name)
             checked += name
         }
-        assertEquals(fixtures.keys - "usage" - "routes.native" - "contractRuntimes", checked.toSet(), "every payload has a Mac type")
+        assertEquals(fixtures.keys - "usage" - "routes.native" - "routes.lists" - "contractRuntimes" - "lists.limits", checked.toSet(),
+            "every payload has a Mac type")
     }
 
     @Test fun everyConversationRouteIsOneTheServerServes() {
@@ -56,9 +62,15 @@ class CompanionContractFixtureTest {
             spelled(route.jsonObject.getValue("method").jsonPrimitive.content, route.jsonObject.getValue("path").jsonPrimitive.content)
         }
         // Memory jobs are hovel-service's own native routes, outside the companion table.
-        val outside = setOf(NativeRoute.MEMORY_CLAIM, NativeRoute.MEMORY_PROGRESS, NativeRoute.MEMORY_CONSOLIDATE)
-        val mac = (NativeRoute.entries - outside).map { spelled(it.method, it.template) }.toSet()
+        val outside = setOf(NativeRoute.MEMORY_CLAIM, NativeRoute.MEMORY_PROGRESS, NativeRoute.MEMORY_CONSOLIDATE, NativeRoute.MEMORY_CONTEXT_CHECK, NativeRoute.MEMORY_CLEANUP_ACK)
+        // `HOVEL_LIST_ROUTES.native`, checked on their own.
+        val lists = setOf(NativeRoute.LIST_SUGGESTIONS_READ, NativeRoute.LIST_SUGGESTIONS_REPLY)
+        val mac = (NativeRoute.entries - outside - lists).map { spelled(it.method, it.template) }.toSet()
         assertEquals(served.values.toSet(), mac)
+        val listRoutes = fixtures.getValue("routes.lists").getValue("value").jsonObject.values.map { route ->
+            spelled(route.jsonObject.getValue("method").jsonPrimitive.content, route.jsonObject.getValue("path").jsonPrimitive.content)
+        }
+        assertEquals(listRoutes.toSet(), lists.map { spelled(it.method, it.template) }.toSet())
         assertFalse(served.values.any { it.endsWith("/answer") }, "an answer travels only as approval.closed")
     }
 
@@ -77,11 +89,12 @@ class CompanionContractFixtureTest {
         val answered = fromWire(AgentApproval.serializer(), fixtures.getValue("approval.answeredByPhone").getValue("value"))
         assertEquals(ApprovalSurface.PHONE, answered.answer?.by)
         val events = fixtures.filterKeys { it.startsWith("hostEvent.") }.values.map { HostEvents.decode(it.getValue("value").toString()) }
-        assertEquals(6, events.filterNotNull().size)
+        assertEquals(7, events.filterNotNull().size)
+        assertTrue(events.any { it is HostStreamEvent.ListSuggestionsRequested }, "a suggestion request names only its id")
         assertTrue(HostStreamEvent.WorkspaceProfileChanged(3) in events, "a profile change names only its revision")
         val heartbeat = fromWire(HostHeartbeat.serializer(), fixtures.getValue("heartbeat").getValue("value"))
         assertEquals("ready", heartbeat.providerState)
-        assertEquals(MemoryJobLane.FEATURES, heartbeat.features)
+        assertEquals(MemoryJobLane.FEATURES + ListSuggestionLane.FEATURES, heartbeat.features)
         assertEquals(mapOf(RuntimeId.CLAUDE_CODE to listOf(ProviderSkill("code-review", "Review a change before merge."))),
             heartbeat.directory.runtimes.filter { it.skills != null }.associate { it.runtimeId to it.skills }, "contract 12's installed skills")
         val heard = fromWire(MessageSend.serializer(), fixtures.getValue("messageSend.heard").getValue("value"))

@@ -88,13 +88,24 @@ internal class ConversationHost(
             val workRuntimes = work(approvals, retained).also { owned += it }
             val turns = ProviderTurns(talkRuntimes, workRuntimes, providers, approvals,
                 mac = SharedRules.dialogName(registration.name, THIS_MAC))
-            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), api, editStore)
+            val cleanup = connection.cleanup
+            cleanup?.register(store::eraseContext)
+            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), api, editStore, { cleanup?.check() })
+            val guarded = MessageEngine { claim, output, cancel, closing ->
+                if (cleanup == null) engine.run(claim, output, cancel, closing)
+                else cleanup.run(cancel::cancel) { engine.run(claim, output, cancel, closing) }
+            }
             val publisher = ProjectFolderPublisher(folders, api, registration.ownerId, registration.id, engine::readableBy)
             val directory = HostDirectory(providers, registration.id, offered,
                 working.intersect(workRuntimes.map { it.id }.toSet()), connection.features)
             val images = ProjectImageRelay(api, folders, registration.ownerId, registration.id).also { owned += it }
-            val runner = ConversationRunner(api, store, engine, approvals, folders, publisher, directory::heartbeat, connection.heartbeat,
-                connection.status, replies = voice ?: ReplyListeners.NONE, imageRequested = images::request)
+            val runner = ConversationRunner(api, store, guarded, approvals, folders, publisher, directory::heartbeat,
+                { response ->
+                    if (cleanup == null || cleanup.poll()) connection.heartbeat(response)
+                    else connection.status("Connected · Memory cleanup pending; work is paused")
+                },
+                connection.status, replies = voice ?: ReplyListeners.NONE, imageRequested = images::request,
+                listSuggestionsRequested = connection.listSuggestions, contextReady = { cleanup?.ready ?: true })
             owned += runner
             val onThisMac = ProjectsOnThisMac(api, folders, registration.ownerId, registration.id, publishing)
             running = Running(registration.ownerId, store, publisher, engine::readableBy, onThisMac::isOnThisMac)

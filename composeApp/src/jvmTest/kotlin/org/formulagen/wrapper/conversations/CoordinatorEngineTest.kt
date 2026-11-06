@@ -42,7 +42,8 @@ class CoordinatorEngineTest {
         val approvals = RemoteApprovals(dialogs, server, server.hostId)
         val providers = ConnectedProviders()
         val turns = ProviderTurns(listOf(chat), listOf(worker), providers, approvals, mac = "Studio Mac")
-        val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), server)
+        var beforeTurn: () -> Unit = {}
+        val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), server, beforeTurn = { beforeTurn() })
 
         /** An engine on this fixture's account that keeps thread edit records in [editStore]. */
         fun engine(editStore: ThreadEditStore) = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), server, editStore)
@@ -99,6 +100,21 @@ class CoordinatorEngineTest {
                 else -> "{\"kind\":\"answer\"}\nAll done: sign-in works."
             }
         }
+    }
+
+    @Test fun anOfflineContextCheckPausesForReconciliationWithoutSubmitting() {
+        val fixture = Fixture(brain("Reviewer" to MemberMode.TALK))
+        fixture.beforeTurn = { throw org.formulagen.wrapper.hovel.MemoryContextUnavailable(IllegalStateException("offline")) }
+        assertEquals(MessageState.RECONCILIATION_REQUIRED, fixture.send("Check context before this turn"))
+        assertTrue(fixture.chat.requests.isEmpty())
+    }
+
+    @Test fun anInvalidContextStartsNoProviderTurn() {
+        val fixture = Fixture(brain("Reviewer" to MemberMode.TALK))
+        fixture.beforeTurn = { throw StoppedException() }
+        assertEquals(MessageState.STOPPED, fixture.send("Use private context"))
+        assertTrue(fixture.chat.requests.isEmpty())
+        assertTrue(fixture.worker.requests.isEmpty())
     }
 
     @Test fun aQuestionKeepsItsChoicesInStorageAndTheCheckpoint() {
