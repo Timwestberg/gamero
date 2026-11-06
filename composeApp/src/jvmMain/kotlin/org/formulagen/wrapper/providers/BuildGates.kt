@@ -25,3 +25,9 @@ internal fun grokProviderEnabled(env: Map<String, String>, release: Boolean, dev
 /** Project work is a separate opt-in; a release or hidden provider can never advertise it. */
 internal fun grokWorkEnabled(env: Map<String, String>, release: Boolean, development: Boolean): Boolean =
     grokProviderEnabled(env, release, development) && env["HOVEL_GROK_WORK"] == "1"
+
+/**
+ * Project workspace windows (the native terminal) open only in a development build until the feature
+ * is done. A release never offers them; an unmarked build fails closed.
+ */
+internal fun projectWorkspaceEnabled(release: Boolean, development: Boolean): Boolean = development && !release

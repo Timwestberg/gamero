@@ -1,0 +1,13 @@
+# Hovel workspace, zsh step 4 of 4 (.zlogin). See .zshenv.
+
+# Hand ZDOTDIR back for good: the player's own, or unset when they never set one, as in their
+# terminal. Their .zlogin runs with it, and whatever it leaves stays.
+if (( ${+__hovel_user_zdotdir} )); then ZDOTDIR=$__hovel_user_zdotdir; else unset ZDOTDIR; fi
+if [[ ${ZDOTDIR:-$HOME} != "$__hovel_zdotdir" && -r ${ZDOTDIR:-$HOME}/.zlogin ]]; then
+  builtin source "${ZDOTDIR:-$HOME}/.zlogin"
+fi
+
+# The last startup file: a tool tab (zsh -l -i -c) runs its command next, with no prompt.
+__hovel_prepend_path
+
+unset __hovel_zdotdir __hovel_user_zdotdir

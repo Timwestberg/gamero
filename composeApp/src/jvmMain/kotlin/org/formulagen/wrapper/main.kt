@@ -32,7 +32,14 @@ import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.voice.runEchoSelfTest
 import org.formulagen.wrapper.hovel.HovelLaunchScreen
 import org.formulagen.wrapper.hovel.HovelStartState
+import org.formulagen.wrapper.providers.projectWorkspaceEnabled
+import org.formulagen.wrapper.workspace.DesktopWorkspaces
+import org.formulagen.wrapper.workspace.desktopWorkspaces
+import org.formulagen.wrapper.workspace.rethrowIfFatal
+import java.awt.Desktop
 import java.awt.EventQueue
+import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.logger.log
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicBoolean
 import java.awt.event.WindowAdapter
@@ -62,14 +69,23 @@ private class DesktopResources : AutoCloseable {
     }
 
     var bridge: NativeBridge? = null
+    /** Open project workspaces; null unless a development build ([projectWorkspaceEnabled]). */
+    var workspaces: DesktopWorkspaces? = null
     override fun close() {
         windowActive.set(false)
         browser.set(null)
         keyboardClient?.removeKeyboardHandler()
         keyboardClient = null
-        // The bridge stops taking requests before the services it calls go away.
-        try { bridge?.close() } finally { services?.close() }
+        // Bridge first: it calls the services.
+        closeInReverse(listOfNotNull<AutoCloseable>(workspaces, services, bridge))
     }
+}
+
+/** Hovel's support folder: `~/Library/Application Support/Gamero` on a Mac. */
+private fun desktopSupportFolder(): File {
+    val home = File(System.getProperty("user.home"))
+    return if (System.getProperty("os.name").contains("Mac")) File(home, "Library/Application Support/Gamero")
+    else File(home, ".local/share/gamero")
 }
 
 /**
@@ -90,12 +106,49 @@ internal fun desktopWebUrl(args: Array<String>, environment: String?): String? {
     return uri.toASCIIString()
 }
 
+/**
+ * Route macOS's Quit (⌘Q, the Dock, a logout) through [onQuit], holding the system's request open
+ * until the app exits or [onQuit] calls its cancel (docs/desktop.md, "Quitting"). Development builds only.
+ */
+private fun installQuitHandler(onQuit: (cancel: () -> Unit) -> Unit) {
+    try {
+        if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.APP_QUIT_HANDLER)) return
+        Desktop.getDesktop().setQuitHandler { _, response ->
+            val cancel = { response.cancelQuit() }
+            try { onQuit(cancel) } catch (error: Throwable) {
+                rethrowIfFatal(error)
+                log(LogLevel.Error, "desktop-quit", "The quit request failed", error)
+                cancel()
+            }
+        }
+    } catch (error: Throwable) {
+        rethrowIfFatal(error)
+        log(LogLevel.Error, "desktop-quit", "Could not install the quit handler", error)
+    }
+}
+
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 fun main(args: Array<String>) {
     val exitAction = AtomicReference<(() -> Unit)?>(null)
     val failure = DesktopFailure { EventQueue.invokeLater { exitAction.get()?.invoke() } }
     Thread.setDefaultUncaughtExceptionHandler(failure)
     val resources = DesktopResources()
+    val workspacesEnabled = projectWorkspaceEnabled(release = System.getProperty("gamero.release") == "true", development = System.getProperty("gamero.dev") == "true")
+    // A release build compiles none of it.
+    val workspaces = if (workspacesEnabled) desktopWorkspaces(System.getenv(), desktopSupportFolder().toPath()) else null
+    resources.workspaces = workspaces
+    val productName = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME
+    // Ask first when work would be lost.
+    val requestQuit: (onCancel: () -> Unit) -> Unit = { onCancel ->
+        val exit = exitAction.get()
+        when {
+            exit == null -> onCancel()
+            workspaces != null -> workspaces.confirmQuit(productName, onCancel, exit)
+            else -> exit()
+        }
+    }
+    // A release keeps the JDK's quit.
+    if (workspaces != null) installQuitHandler(requestQuit)
     val editActions = BrowserEditActions(resources.browser::get)
     val lifecycle = BrowserLifecycle(
         dispose = { CefApp.getInstanceIfAny()?.dispose(); KCEF.dispose() },
@@ -105,14 +158,18 @@ fun main(args: Array<String>) {
     )
     try {
         application(exitProcessOnExit = false) {
-            exitAction.set { resources.services?.closeGame(); exitApplication() }
+            exitAction.set {
+                workspaces?.exitStarted()
+                // Exit even when closing the game fails.
+                try { resources.services?.closeGame() } finally { exitApplication() }
+            }
             val url = remember { desktopWebUrl(args, desktopSetting(System.getenv("GAMERO_WEB_URL"), System.getProperty("gamero.webUrl"))) }
             CompositionLocalProvider(LocalWindowExceptionHandlerFactory provides object : WindowExceptionHandlerFactory {
                 override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler = failure
             }) {
                 Window(
-                    onCloseRequest = { resources.services?.closeGame(); exitApplication() },
-                    title = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME,
+                    onCloseRequest = { requestQuit {} },
+                    title = productName,
                 ) {
                     DisposableEffect(window) {
                         // Read AWT state on its event thread, never from the CEF callback thread.
@@ -151,6 +208,7 @@ fun main(args: Array<String>) {
                                         println("echo self-test: finished exit=${runEchoSelfTest()}")
                                     }, "ember-echo-self-test").apply { isDaemon = true }.start()
                                 })
+                                workspaces?.DevelopItems(this, window)
                             }
                             Menu("Edit") {
                                 Item("Undo", onClick = { editActions.perform(BrowserEditAction.UNDO) })
@@ -176,6 +234,8 @@ fun main(args: Array<String>) {
                         }
                     }
                 }
+                // Workspace windows, in this one application.
+                workspaces?.Windows(exit = { EventQueue.invokeLater { exitAction.get()?.invoke() } }, requestQuit = { requestQuit {} })
             }
         }
     } catch (error: Throwable) { failure.onException(error) }
@@ -193,11 +253,7 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
     var start by remember { mutableStateOf(false) }
     var initialized by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
-    val support = remember {
-        val home = File(System.getProperty("user.home"))
-        if (System.getProperty("os.name").contains("Mac")) File(home, "Library/Application Support/Gamero")
-        else File(home, ".local/share/gamero")
-    }
+    val support = remember { desktopSupportFolder() }
     val product = if (isHovelProduct()) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME
     val services = remember {
         DesktopServices.create(url, support.toPath(), System.getenv(), product, window).also { resources.services = it }

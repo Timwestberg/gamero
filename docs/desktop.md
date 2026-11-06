@@ -65,6 +65,301 @@ The app never signs in to Codex or any other runtime. Do not use native launch
 alone as Hovel conversation or reconnect acceptance; follow
 [hovel-native-validation.md](hovel-native-validation.md).
 
+### Project workspace (development builds)
+
+A development build (`-Dgamero.dev=true`: the local jpackage launchers, the plain
+`JavaExec` entry points such as `runCompanions`, and Compose's `run` or a package only with
+`-Pgamero.developmentPackage=true`; see below) can open a project workspace window: a
+native terminal with a Shell tab in a folder (`src/jvmDev/.../workspace/`; spec and
+architecture in game-platform `docs/launcher/project-workspace.*`). A release build does not
+contain it, its terminal libraries or the probe at all ([Development-only code](#development-only-code)).
+A development package ships the terminal's natives signed, for Apple Silicon only
+([release.md](release.md#desktop)).
+
+- **Develop → Open Workspace…** in the main window picks a folder.
+  `HOVEL_WORKSPACE_FOLDER=<folder>` opens one at launch instead. The first open of each
+  folder asks first, and **Develop → Forget Trusted Folders** makes every folder ask again.
+  See [Folder trust](#folder-trust).
+- **Shell → New Tab** (⌘T) and **Close Tab** (⌘W). The window's **Develop** menu, or
+  **+**, opens Neovim, lazygit or yazi in a tab, started through the login shell.
+- **Window**: ⌘1 to ⌘8 select a tab and ⌘9 the last one; **Show Next Tab** (⌘⇧], also
+  ⌃Tab) and **Show Previous Tab** (⌘⇧[, also ⌃⇧Tab) wrap around. A tab's name follows the
+  title its program sets, and falls back to its kind (Shell, Neovim). See
+  [Shortcuts](#shortcuts).
+- **View → Bigger** (⌘+ or ⌘=), **Smaller** (⌘−) and **Default Font Size** (⌘0) zoom
+  every tab of that window, from 9 to 36 points. The font is SF Mono 13 pt when AWT can see
+  it by name, else Menlo 13 pt. On macOS 26, neither JDK 21 nor the JBR 21 sees SF Mono, so
+  it is Menlo; the probe log names the font in use.
+- **As in Terminal**, Option types characters (⌥e then e is é; ⌥← and ⌥→ still move by
+  word), and the cursor does not blink. See [The terminal](#the-terminal).
+- **Nothing is lost without asking.** Closing a tab (⌘W or ×), closing the window, and
+  quitting (⌘Q, or closing the main window) ask first, in a sheet on the workspace window,
+  when a tab is busy ([Busy checks](#busy-checks)), and name what runs. With nothing busy
+  they close, or quit, at once. Quitting asks once for every window, then runs the app's
+  normal shutdown. See [Confirmation sheets](#confirmation-sheets) and [Quitting](#quitting).
+- `HOVEL_WORKSPACE_BIN=<folder>` is the folder kept first in each tab's `PATH`
+  (default `~/Library/Application Support/Gamero/workspace/bin`, where the tool
+  manager will put its wrappers). A tool tab runs that folder's wrapper when it has
+  one, otherwise the player's installed tool.
+- `HOVEL_WORKSPACE_SHELL=<path>` tries another shell in place of the login shell.
+- `HOVEL_WORKSPACE_PROBE=<steps file>`, with `HOVEL_WORKSPACE_FOLDER`, drives the window
+  from a script and writes screen text and images beside the file, for checks with no
+  one at the screen (`WorkspaceProbe` lists the steps). Start the file with `answer yes`
+  to answer the folder's trust question. The probe is a lasting development tool, in its
+  own file (`WorkspaceProbe.kt`), and never reaches a release.
+
+Compose's `run` task is a development build only with `-Pgamero.developmentPackage=true`
+(without it the app starts with no workspaces):
+
+```sh
+HOVEL_WORKSPACE_FOLDER=<folder> HOVEL_WORKSPACE_PROBE=<steps file> \
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :composeApp:run -Pgamero.developmentPackage=true
+```
+
+Hovel's shell startup files go to `~/Library/Caches/org.formulagen.wrapper/workspace/shell/`.
+The fish integration test runs only when `HOVEL_TEST_FISH` names a fish executable: fish's
+own `fish-<version>.app.zip` release, unzipped anywhere, has one at
+`fish-<version>.app/Contents/Resources/base/usr/local/bin/fish`, with nothing installed. The
+Neovim tests use `HOVEL_TEST_NVIM`, `/opt/homebrew/bin/nvim` or `/usr/local/bin/nvim`, and skip
+without one.
+
+#### Folder trust
+
+Opening a workspace starts the player's login shell in the folder, and with it their
+startup files, prompt and git-aware tools, which can run settings stored in the folder, such
+as a cloned repository's `.git/config` `core.fsmonitor`. That is what `cd` does in Terminal,
+but here a click starts it, and later a page's `projectWorkspace.open`. So
+`WorkspaceWindows.open`, which every entry point goes through, asks the first time each
+folder opens, as VS Code's Workspace Trust does:
+
+- The question names the folder and its full path, as plain text
+  ([Confirmation sheets](#confirmation-sheets)), with Cancel the default. No workspace
+  window exists yet, so it is application-modal.
+- **Open Workspace** remembers the folder by its real path (`toRealPath()`), so a link to a
+  trusted folder is trusted, then opens it. Cancel opens nothing. Bringing forward a window
+  already open never asks, and a second open of a folder while its question is up is
+  ignored.
+- The answers are in `~/Library/Application Support/Gamero/workspace/folder-trust.json`,
+  `{"version":1,"folders":[…]}` oldest first, written with `writeDurably` in a private
+  folder. It is read afresh each time, since other copies of the app may share it. A file
+  that is missing, damaged, past `TRUSTED_FOLDERS_BYTES` or at another version trusts no
+  folder, is logged, and is replaced at the next Open Workspace. The oldest folders go when
+  the file would pass that guard.
+- The list is per Mac, not per account: it is about this Mac's folders and this user's
+  shell. Tests use an in-memory `FolderTrust`, never the file.
+- **Develop → Forget Trusted Folders** deletes the file. The profile's workspace settings
+  will own this.
+- **The probe** opens `HOVEL_WORKSPACE_FOLDER` at its first step other than `answer` and
+  `wait`, so an `answer yes` before it answers the question; otherwise the sheet asks. A
+  folder the probe opens is remembered like any other.
+
+#### Busy checks
+
+`Session.busy()` answers what closing a tab would end, as `Busy` data, or null. By tab kind:
+
+- **Shell**: busy while the terminal's foreground process group (`tcgetpgrp` on the
+  pseudo-terminal) is not the shell's own: a foreground job (`npm run dev`). Also busy while
+  any descendant is stopped (`proc_pidinfo` with `PROC_PIDT_SHORTBSDINFO`, `pbsi_status` is
+  `SSTOP`): a job suspended with ⌃Z (“vim notes.txt” is suspended). That flavor also reads
+  another user's process, such as a backgrounded `sudo`. A descendant that is gone or a
+  zombie (`ESRCH`, though the JDK still calls a zombie alive) is not stopped. Running
+  background jobs and prompt helpers (powerlevel10k's `gitstatusd`, zsh-async workers) are
+  never stopped and never count. A shell replaced by `exec` with a program that is not a
+  shell is that program, by name (`/bin/sh` re-executes another shell on a Mac); one whose
+  command line cannot be read, such as a setuid `exec sudo -s`, is "a program". When the
+  terminal cannot be asked, any live descendant counts.
+- **Neovim**: busy while a buffer is modified (as `:qa` would refuse) or its `:terminal` runs
+  a job. Each Neovim tab listens on a socket in
+  `~/Library/Caches/org.formulagen.wrapper/workspace/nvim/`, and Hovel asks with a fixed
+  `nvim --clean --headless --server … --remote-expr …`, using the running Neovim's own
+  executable (by real path) and an environment of only `HOME` and the system `PATH`
+  (`/usr/bin:/bin:/usr/sbin:/sbin`), nothing of Hovel's own or the tab's. The tab's process
+  is asked when it is Neovim; otherwise a Neovim descendant (a wrapper that does not `exec`).
+  With no Neovim in the tab, a tab whose process is still a shell (by name) is not busy: the
+  login shell's startup helpers (`path_helper`, `fnm env`, `rbenv init - zsh`) run before it
+  `exec`s Neovim, and nothing can be unsaved yet. Any other process with no Neovim gets the
+  tool rule. No answer within a second counts as busy. Neovim's LSP servers and its
+  `nvim --embed` server are descendants, so the tool rule cannot be used for it.
+- **Other tools** (lazygit, yazi): busy while a live descendant runs something other than
+  the tool's own executable (by real path), such as `git push`.
+
+Any check that fails, or cannot be read, counts as busy. A check takes about 3 seconds at
+most, when Neovim does not answer. The tab bar marks a busy tab with ●: it asks each tab
+every second, and a Neovim tab only after input or output, or every fifth second, since
+each ask starts a Neovim client. Closing and quitting always ask afresh.
+
+#### Shortcuts
+
+A key press in a terminal that is a window shortcut goes to the window, not the terminal:
+⌘T, ⌘W, ⌘1 to ⌘9, ⌘⇧] and ⌘⇧[ (also ⌃Tab and ⌃⇧Tab, as in Terminal), ⌘+ (⌘= too), ⌘− and
+⌘0, and the `}`, `{` and `+` a ⌘ key types on other layouts. Only key presses count; their
+typed events are dropped. The menu items carry the same shortcuts (`menuKey`). macOS also
+hands a ⌘ key to the menu bar after the terminal has seen it, so a menu item that repeats
+the action a key press performed within 500 ms is taken as that echo and ignored.
+
+#### The terminal
+
+`HovelTerminalPanel` is JediTerm's panel with these changes:
+
+- **Off-screen painting.** JediTerm paints while holding its text buffer's lock, and a paint
+  straight to the screen can wait on the Metal pipeline: the JDK presents each frame on the
+  AppKit thread under the AWT lock, and waits up to a second for a drawable while the window
+  is not on screen (the Mac is locked, say). The emulator, and through back-pressure the
+  tab's own process, would wait with it. So JediTerm paints into an image in memory at the
+  screen's scale, which never waits on the screen, and the image goes to the screen after the
+  lock is released. A tab that is not showing drops its image.
+- **Guards.** Its AWT-thread entry points (event handlers, paint) catch and log: an exception
+  escaping to the event thread reaches the app's default handler, which ends Hovel.
+  JediTerm's own repaint timer (`TerminalPanel.myRepaintTimer`: cursor, scrolling, repaint)
+  catches only the repaint call, and no override reaches it, so its listeners are
+  re-registered wrapped. The listener stays JediTerm's weak one, so the panel can still be
+  collected. A failure on every tick is logged once in full, then as one count a minute. If a
+  JediTerm update renames the field, the guard logs and leaves the timer as it is, and
+  `TerminalTimerGuardTest` fails.
+- **Shortcuts and a steady cursor.** Window shortcuts go to the window ([Shortcuts](#shortcuts)).
+  The cursor's period stays JediTerm's 505 ms, and every shape is drawn steady
+  (`steadyCursor`): JediTerm reads `CSI 0 q` as a blinking block, and a period of 0 would
+  repaint a focused idle tab on every timer tick.
+- **Safe pasting.** See [Pasting](#pasting).
+- **Web links only.** See [Links](#links).
+
+#### Pasting
+
+JediTerm 3.76's paste (`TerminalPanel.pasteFromClipboard`, private) takes the clipboard's
+text from `TerminalCopyPasteHandler.getContents`, turns `\r\n` into `\n` and `\n` into `\r`,
+and wraps it in bracketed-paste markers when the program turned that mode on. It strips
+nothing. So pasted text holding `ESC[201~` ends bracketed paste early and the rest runs as if
+typed ("pastejacking"), and without bracketed paste any multi-line paste runs line by line.
+`HovelTerminalPanel` changes that:
+
+- **Strip.** Pasted text loses ESC and every other C0 control except tab, newline and carriage
+  return, plus DEL and the C1 controls (`pasteText`). `createCopyPasteHandler()` returns a
+  `CleanPasteHandler` over the clipboard, so JediTerm's own reads are cleaned too. Copying is
+  unchanged.
+- **Ask.** The panel follows bracketed-paste mode (`setBracketedPasteMode`). When the cleaned
+  text has a line break and the mode is off, it asks first, in a sheet on the workspace
+  window: "Paste 2 lines into Shell?", naming the tab by its kind, never by the title its
+  program set. Cancel, the default, pastes nothing. With the mode on, the paste is wrapped
+  and sent at once, as the program asked.
+- **Every path.** ⌘V and the context menu's Paste are one JediTerm action, which
+  `getActions()` replaces with Hovel's paste. The question cannot live in `getContents`:
+  JediTerm also reads the clipboard there to enable the action, on every ⌘V and whenever the
+  menu opens. A middle click pastes only with `pasteOnMiddleMouseClick()`, which Hovel's
+  settings keep false. The workspace window has no Edit menu, and the main window's Edit →
+  Paste acts on the page, never on a tab. Committed input-method text (a dead key's é, dictation) is
+  typing, not a paste, and is not asked about.
+
+#### Links
+
+JediTerm's `TerminalPanel.openSelectionAsURL()`, the context menu's **Open as URL**, passes
+the selected text to `Desktop.browse` whatever its scheme: `file:` (which can open an app), an
+app's own scheme such as `x-apple.systempreferences:`, `smb:`. `HovelTerminalPanel`
+overrides it to open only an `http` or `https` URI with a host that parses (`webLink`);
+anything else does nothing. In JediTerm 3.76 that is the only way a click in a terminal opens
+anything:
+
+- **OSC 8 hyperlinks.** `JediTerminal.setLinkUriStarted` makes a link only through its URL
+  filter, and nothing calls `setUrlHyperlinkFilter`, so OSC 8 text draws as plain text.
+- **URLs in output.** JediTerm finds links only through filters added with
+  `JediTermWidget.addHyperlinkFilter`. It installs none, and neither does Hovel. A click
+  follows a link only over one (the hand cursor), so there is none to follow.
+- `Desktop` appears in JediTerm only in `openSelectionAsURL`.
+
+A test pins that OSC 8 and a bare URL make no `HyperlinkStyle`, so a JediTerm update that adds
+link detection is noticed. Any link support added later goes through `webLink`.
+
+#### The changes view
+
+Diff tabs are not built yet (`ShellLaunch.command` throws for `Launch.Diff`), but their
+filter is. git passes a file's own bytes through untouched, so an agent-edited file can carry
+escape sequences to the terminal. JediTerm honours SGR, including hidden text (`ESC[8m`) and a
+foreground set to the background, and cursor moves (`ESC[1A`, `ESC[2K`) that overwrite lines.
+Carriage return and backspace overwrite text too, and C1 controls (U+0080 to U+009F, where
+U+009B is a one-character CSI) act as well. A reviewer could then miss lines in exactly the
+view meant for reviewing agent edits. So a diff tab runs a fixed `/bin/sh` script, given git,
+the `:(literal)` pathspec, the filter and the delta wrapper as arguments:
+
+```text
+git -c core.fsmonitor=false --no-optional-locks diff --no-color --no-ext-diff --no-textconv HEAD -- <file> | <filter> | <delta> --paging=always
+```
+
+History is `git log -p --follow --no-color …`, and an untracked or added file
+`git diff --no-index --no-color /dev/null <file>`, through the same filter. It is
+`--no-color`, not `-c color.ui=never`: a repository's `color.diff=always` overrides
+`color.ui`. Delta does its own colouring. No byte of the file reaches delta or the terminal
+but through the filter; if the filter cannot start, delta gets nothing, never the raw diff.
+
+The filter is `visible-controls.pl` (resources `workspace/shell/`, installed beside the
+shell startup files), run as `/usr/bin/perl -T -C0 <file>` (`ShellLaunch.controlFilter()`):
+
+- Tab and newline pass. ESC shows as `^[`, CR as `^M`, BS as `^H`, and other C0 controls and
+  DEL in caret form (`^@`, `^?`).
+- C1 controls show as `<U+0080>` to `<U+009F>`.
+- The characters that hide or reorder text, as GitHub warns about hidden or bidirectional
+  text (Trojan Source), show by code point: the bidi embeddings and overrides U+202A to
+  U+202E, the isolates U+2066 to U+2069, and the zero widths U+200B, U+2060 and U+FEFF, as
+  `<U+202E>` and so on. ZWNJ (U+200C), ZWJ (U+200D), LRM and RLM (U+200E, U+200F) pass:
+  emoji sequences and real Persian, Arabic and Indic text use them.
+- A byte that is not part of valid UTF-8 (a stray byte, a cut sequence, an overlong form, a
+  surrogate, a code point past U+10FFFF) shows as `<XX>`, as `less` shows it.
+- Other valid UTF-8 passes unchanged: emoji, accents, Hebrew and Arabic included.
+
+Perl works on bytes, so it needs no decoding and invalid UTF-8 cannot confuse it. It streams
+a line at a time, and macOS ships it (5.34 on macOS 26), so nothing new is downloaded or
+signed. `cat -v` writes every non-ASCII byte in `M-` form, which breaks UTF-8 text, and `sed`
+and `tr` cannot tell valid UTF-8 from invalid. `-T` makes perl ignore `PERL5OPT` and
+`PERL5LIB`, and `-C0` with the script's raw layers ignores `PERL_UNICODE` and `PERLIO`, so
+the player's environment cannot change the filter. If a later macOS drops `/usr/bin/perl`, the
+diff tab must say so and not start, never fall back to an unfiltered diff.
+
+#### Quitting
+
+In a development build the app handles macOS's Quit itself (`Desktop.setQuitHandler`):
+⌘Q, the Dock's Quit, and the quit a logout, restart or Software Update sends. The handler
+keeps the system's `QuitResponse` open while the app decides. With nothing busy, or once the
+person chooses Quit, the app's own shutdown ends the process, and a pending logout or restart
+goes on. Cancel calls `cancelQuit()`, which cancels that logout or restart, as any Mac app
+that asks does. A quit that arrives while the question is up joins it; one that arrives once
+the exit has started is ignored, and the exit ends it. The exit calls `exitApplication()`
+even when closing an open game fails, so a started exit always ends the app. The JDK lets
+the response be answered later from any thread, and nothing waits on it at exit. A release
+build installs no handler and keeps the JDK's quit.
+
+#### Confirmation sheets
+
+`Confirmations` words every question from plain data (`Busy`, a folder, a paste's line
+count), as a `NativeDialog<Boolean>`, and `SheetConfirmer` shows it through the injected
+`Confirmer`, so the probe and tests can answer. The sheet is owned by the workspace window,
+never by `NativeDialogs`, which always raises the main window. Cancel is the default button,
+so a stray Return keeps the work. macOS makes a sheet only of a document-modal dialog whose
+root pane says so before it is first shown, so the dialog is built by hand rather than by
+`JOptionPane.createDialog`, which makes an application-modal one; with no window to attach
+to, such as the folder question, it is application-modal.
+
+Every line is its own `JLabel`, created empty, with `html.disable` set before its text. The
+sheet never hands Swing a `String` message: JBR 21's `BasicOptionPaneUI` draws any string
+that contains `<html>`…`</html>` as HTML, wherever it starts, and `html.disable` on the pane
+does not reach that label. A command line or file name could then make the sheet load a
+remote image. Names in a question, and the titles programs set for their tabs, are cleaned
+first (`clip`): no control or format characters (bidi overrides, zero widths) and no lone
+surrogates, cut without splitting a surrogate pair.
+
+#### Probe measurements
+
+The probe's `run`, `typing` and `cpu` steps measure responsiveness: the time to finish a
+command with the terminal drawing its output, key-to-paint latency, and the app's CPU use and
+AWT-thread lateness. Measure with the screen unlocked and the window in front: while the Mac
+is locked, macOS presents no frames, and paint-bound numbers mean nothing. For example:
+
+```text
+run 180000 cat big.txt
+run 180000 cat big.txt > /dev/null
+typing 40
+send yes\r
+cpu 5000 yes flood
+send \x03
+```
+
 ## Build boundaries
 
 Desktop is the default target. `-Pgamero.iosTargets=true` adds only the iOS
@@ -87,6 +382,50 @@ AGP 9 rejects `com.android.application` inside a Kotlin Multiplatform module.
 `gradle.properties` sets `android.builtInKotlin=false` and `android.newDsl=false`
 to opt out temporarily. Remove both once the Android app moves to its own module
 that depends on `composeApp`.
+
+### Development-only code
+
+The project workspace, its terminal, the probe and their development entry points are in
+`composeApp/src/jvmDev/` (Kotlin, and the shell files in `resources/`), with their tests in
+`src/jvmDevTest/`. Only a development build compiles them: unless `-Pgamero.release=true`,
+`build.gradle.kts` adds those folders to `jvmMain` and `jvmTest`, with pty4j, JNA and
+JediTerm. A release compiles `src/jvmRelease/` instead, whose `desktopWorkspaces` is null, so
+`main.kt` builds either way and reaches the workspace only through `DesktopWorkspaces`.
+`jvmMain` keeps what ships: the thread edit record, the limits, the profile's wire types and
+the tool catalog. Nothing else in the app uses JNA, so a release has none of the three.
+`annotations` and `slf4j-api` are named at the versions pty4j and JediTerm raised them to,
+so a release resolves the same versions as before.
+
+A release build checks what it made. After `createDistributable` or
+`createReleaseDistributable`, every jar in the app is scanned for the entry prefixes in
+`composeApp/release-excluded.txt` (the probe's and the terminal's classes, the shell files,
+`com/pty4j/`, `com/jediterm/`, `com/sun/jna/`), and the build fails, naming each one found.
+An app with no jars fails too. `WorkspaceProbeTest` checks that every Hovel class listed there
+exists in a development build, so a rename cannot leave the check looking for nothing.
+
+Switching between a development and a release build in the same `build/` folder recompiles.
+If Kotlin's incremental compile then reports workspace classes as unresolved, run
+`:composeApp:compileKotlinJvm --rerun` once.
+
+### Terminal library checksums
+
+`gradle/verification-metadata.xml` pins the SHA-256 of every pty4j, JNA and
+JediTerm artifact the build resolves. pty4j and JNA ship natives that development
+packages re-sign with our identity, and JediTerm runs in the app. That includes
+JNA 5.6.0, which Gradle's own tools resolve. Every other group is trusted, as are
+IDE source and javadoc downloads. If an artifact from those three groups is
+changed or not listed, the build fails with "Dependency verification failed" and
+names the artifact.
+
+After bumping one of them, check the new release, then regenerate the entries:
+
+```bash
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew --write-verification-metadata sha256 -Pgamero.mobileTargets=true :composeApp:jvmTest :composeApp:prepareAppResources :composeApp:testDebugUnitTest --continue
+```
+
+Review the diff: only the bumped components should change. Compare each new jar's
+checksum with the `.sha256` or `.sha1` file next to it in its repository, and
+delete entries for versions nothing resolves any more.
 
 Sources: [Kotlin compatibility](https://kotlinlang.org/docs/multiplatform/multiplatform-compatibility-guide.html),
 [Compose compatibility](https://kotlinlang.org/docs/multiplatform/compose-compatibility-and-versioning.html),

@@ -48,3 +48,13 @@
 -dontwarn org.bouncycastle.jsse.**
 -dontwarn org.openjsse.**
 
+
+# The workspace terminal, in development builds only (a release has no pty4j, JNA or JediTerm, and
+# these rules then match nothing): JNA maps pty4j's native interfaces and structures by
+# reflection, and JediTerm's emulator is built from classes that the shrinker cannot see used.
+-keep class com.sun.jna.** { *; }
+-keep class * implements com.sun.jna.** { *; }
+-keep class com.pty4j.** { *; }
+-keep class com.jediterm.** { *; }
+-dontwarn com.sun.jna.**
+-dontwarn com.pty4j.**

@@ -1,6 +1,7 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.zip.ZipFile
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -23,6 +24,10 @@ val releaseProduct = releaseSetting("gamero.product")
 val releaseWebUrl = releaseSetting("gamero.webUrl")
 // Release builds keep gated features off whatever the environment says (Claude: claudeProviderEnabled).
 val releaseBuild = releaseSetting("gamero.release") == "true"
+// A packaged app marked as a development build (-Dgamero.dev=true), so development-gated features
+// such as project workspaces can be checked signed. Never a release.
+val developmentPackage = releaseSetting("gamero.developmentPackage") == "true"
+check(!(developmentPackage && releaseBuild)) { "gamero.developmentPackage and gamero.release cannot be combined" }
 val releaseVersion = releaseSetting("gamero.version") ?: "1.0.0"
 val releaseBuildNumber = releaseSetting("gamero.buildNumber")?.toInt() ?: 1
 fun signingSetting(name: String): String? = providers.environmentVariable(name).orNull?.takeIf { it.isNotBlank() }
@@ -118,7 +123,31 @@ kotlin {
             implementation("org.jogamp.jogl:jogl-all:2.6.0")
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutinesSwing)
+            // The versions pty4j and JediTerm raised these to, named so a release, which has neither,
+            // still resolves them.
+            implementation("org.jetbrains:annotations:26.1.0")
+            implementation("org.slf4j:slf4j-api:2.0.19")
+            if (!releaseBuild) {
+                // Project workspace terminal, development builds only (src/jvmDev). pty4j (EPL-1.0,
+                // Maven Central) runs each tab's process on a pseudo-terminal; JediTerm (dual
+                // LGPLv3/Apache-2.0, used under Apache-2.0; JetBrains' repository, see
+                // settings.gradle.kts) draws it in Swing.
+                implementation("org.jetbrains.pty4j:pty4j:0.14.0")
+                // pty4j's own JNA (runtime scope in its POM), named here to call tcgetpgrp for a Shell
+                // tab's busy check. Keep it at the version pty4j brings.
+                implementation("net.java.dev.jna:jna:5.19.1")
+                implementation("org.jetbrains.jediterm:jediterm-core:3.76")
+                implementation("org.jetbrains.jediterm:jediterm-ui:3.76")
+            }
         }
+        // Development builds also compile src/jvmDev: the project workspace, its terminal, the probe
+        // and their entry points. A release compiles src/jvmRelease instead, so none of it, and none of
+        // the terminal libraries above, can reach a release (docs/desktop.md, "Build boundaries").
+        getByName("jvmMain") {
+            kotlin.srcDir(if (releaseBuild) "src/jvmRelease/kotlin" else "src/jvmDev/kotlin")
+            if (!releaseBuild) resources.srcDir("src/jvmDev/resources")
+        }
+        if (!releaseBuild) getByName("jvmTest").kotlin.srcDir("src/jvmDevTest/kotlin")
     }
 }
 
@@ -168,6 +197,68 @@ if (mobileTargets) dependencies {
     add("debugImplementation", compose.uiTooling)
 }
 
+/**
+ * pty4j and JNA unpack their macOS natives from their jars to a temporary folder at run time, where
+ * the hardened runtime can refuse them. A packaged development build ships them as app resources
+ * instead (macos-arm64/ becomes Contents/app/resources/), signed with the app, and
+ * `usePackagedNatives` points both libraries there. pty4j's spawn helper must stay executable.
+ * Apple Silicon only: Compose packages macos-arm64/ only on an arm64 build machine, and JNA's copy is
+ * its darwin-aarch64 library. A release build (gamero.release) has none of them: it does not depend
+ * on pty4j, JNA or JediTerm at all (see the source split above, and docs/release.md).
+ */
+if (!releaseBuild) {
+    val workspaceNatives = tasks.register<Sync>("workspaceNatives") {
+        val runtime = configurations.named("jvmRuntimeClasspath").flatMap { it.elements }
+        fun jar(prefix: String) = runtime.map { files -> files.map { it.asFile }.single { it.name.startsWith(prefix) && it.extension == "jar" } }
+        from(zipTree(jar("pty4j-"))) {
+            include("resources/com/pty4j/native/darwin/**")
+            eachFile { path = "macos-arm64/pty4j/darwin/$name" }
+            filesMatching("**/pty4j-unix-spawn-helper") { permissions { unix("rwxr-xr-x") } }
+        }
+        from(zipTree(jar("jna-5."))) {
+            include("com/sun/jna/darwin-aarch64/libjnidispatch.jnilib")
+            eachFile { path = "macos-arm64/jna/$name" }
+        }
+        includeEmptyDirs = false
+        into(layout.buildDirectory.dir("workspace-natives"))
+    }
+    afterEvaluate { tasks.named("prepareAppResources") { dependsOn(workspaceNatives) } }
+    // Compose copies app resources into the image without their file modes (Kotlin's File.copyTo), so
+    // the spawn helper arrives as a plain file and pty4j cannot start it. A mode is not part of the seal.
+    tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDistributable" }.configureEach {
+        val apps = layout.buildDirectory.dir("compose/binaries")
+        doLast {
+            apps.get().asFileTree.matching { include("**/Contents/app/resources/pty4j/darwin/pty4j-unix-spawn-helper") }
+                .forEach { check(it.setExecutable(true, false)) { "Could not make $it executable" } }
+        }
+    }
+}
+
+/*
+ * A release app must hold no entry listed in release-excluded.txt: the probe and the development entry
+ * points, the workspace terminal, pty4j, JNA, JediTerm and their natives. Each distributable a release
+ * build makes is scanned when it is made, and the build fails on the first one found (docs/release.md, "Desktop").
+ */
+if (releaseBuild) {
+    val excluded = layout.projectDirectory.file("release-excluded.txt")
+    tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDistributable" }.configureEach {
+        val app = layout.buildDirectory.dir(if (name == "createReleaseDistributable") "compose/binaries/main-release/app" else "compose/binaries/main/app")
+        inputs.file(excluded)
+        doLast {
+            val prefixes = excluded.asFile.readLines().map(String::trim).filter { it.isNotEmpty() && !it.startsWith("#") }
+            val jars = app.get().asFileTree.matching { include("**/*.jar") }.files
+            check(jars.isNotEmpty()) { "No jars under ${app.get().asFile}, so the release check would pass by finding nothing" }
+            val found = jars.flatMap { jar ->
+                ZipFile(jar).use { zip ->
+                    zip.entries().asSequence().map { it.name }.filter { entry -> prefixes.any(entry::startsWith) }.map { "${jar.name}!$it" }.toList()
+                }
+            }
+            check(found.isEmpty()) { "This release app holds development-only code (release-excluded.txt):\n" + found.take(20).joinToString("\n") }
+            logger.lifecycle("Release check: ${jars.size} jars, none holds an entry from release-excluded.txt")
+        }
+    }
+}
+
 compose.desktop {
     application {
         mainClass = "org.formulagen.wrapper.MainKt"
@@ -178,6 +269,7 @@ compose.desktop {
         releaseProduct?.let { jvmArgs += "-Dgamero.product=$it" }
         releaseWebUrl?.let { jvmArgs += "-Dgamero.webUrl=$it" }
         if (releaseBuild) jvmArgs += "-Dgamero.release=true"
+        if (developmentPackage) jvmArgs += "-Dgamero.dev=true"
 
         buildTypes.release.proguard {
             // Shrink only, and keep names: KCEF, JCEF and the WebView bridge use reflection.
@@ -190,6 +282,9 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+            // The workspace terminal's natives, in Contents/app/resources so they are signed with the
+            // app. Development packages only (workspaceNatives).
+            if (!releaseBuild) appResourcesRootDir.set(layout.buildDirectory.dir("workspace-natives"))
             packageName = "org.formulagen.wrapper"
             packageVersion = releaseVersion
             // The bundled runtime is GAMERO_BROWSER_JAVA_HOME's JetBrains Runtime, whose jcef module
@@ -215,8 +310,10 @@ compose.desktop {
     }
 }
 
-// Development launches (Gradle run tasks and the local jpackage prototypes) are marked, so features gated to
-// development builds may turn on; release packaging uses compose.desktop's jvmArgs and is never marked.
+// The plain JavaExec entry points (registerJvmMain) and the local jpackage prototypes are marked as development
+// launches, so features gated to development builds may turn on. Compose's own run task takes compose.desktop's
+// jvmArgs instead, as packaging does: they carry the marker only with -Pgamero.developmentPackage=true (never with
+// gamero.release), so a plain ./gradlew run is not a development build.
 val developmentJvmOptions = listOf("-Dgamero.dev=true")
 
 // Required by the existing KCEF desktop WebView implementation.

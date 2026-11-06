@@ -39,4 +39,5 @@ internal object WorkspaceGuards {
     const val GIT_OUTPUT_BYTES = 4 * 1024 * 1024     // one git status for the changes view
     const val EDIT_RECORD_BYTES = 1024 * 1024        // one thread's record, read back
     const val SCROLLBACK_LINES = 10_000              // per terminal tab
+    const val TRUSTED_FOLDERS_BYTES = 256 * 1024     // the trusted-folders file, read back
 }

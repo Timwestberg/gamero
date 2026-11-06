@@ -64,8 +64,11 @@ fails closed:
 - **Development marker.** `-Dgamero.dev=true` marks a local or development
   launch. Gradle's `JavaExec` run tasks and the local jpackage prototypes
   (`scripts/package-catalog-macos.sh`, `scripts/package-embedded-macos.sh`, via
-  the `desktopJvmOptions` list) pass it. Release packaging goes through
-  `compose.desktop`'s own JVM options and never does.
+  the `desktopJvmOptions` list) pass it. Packaging goes through
+  `compose.desktop`'s own JVM options, which pass it only with
+  `-Pgamero.developmentPackage=true` (a development package for signed checks,
+  below). That property cannot be combined with `-Pgamero.release=true`, so a
+  release package never carries the marker.
 - **Release veto.** `-Pgamero.release=true` bakes `-Dgamero.release=true` into
   the packaged app, which turns gated features off whatever the environment says.
 
@@ -146,6 +149,71 @@ Optional signing and notarization for distribution outside the App Store:
 
 These are macOS-only. The script refuses them on other systems, and refuses
 notarization unless the signing identity and all three notarization variables are set.
+
+Compose accepts only "Developer ID Application" (and Mac App Store) identities here:
+it prefixes any other name with `Developer ID Application: `. To check a build under
+the hardened runtime with an Apple Development identity, package without signing and
+sign by hand. Notarization is not attempted:
+
+```sh
+GAMERO_BROWSER_JAVA_HOME=<JBR SDK> ./gradlew :composeApp:createDistributable -Pgamero.developmentPackage=true
+GAMERO_MAC_DEV_IDENTITY="Apple Development: <name> (<id>)" \
+  tools/sign-dev-mac-app.sh composeApp/build/compose/binaries/main/app/org.formulagen.wrapper.app
+```
+
+`-Pgamero.developmentPackage=true` marks the package as a development build
+(`-Dgamero.dev=true`) so development-gated features open in it; it cannot be combined
+with `gamero.release`. The script re-signs the native libraries inside the jars, signs
+every Mach-O file with the hardened runtime, then the runtime and the app. The app path
+may be relative.
+
+It takes an optional entitlements file. Without one it uses the JVM's two, and leaves
+out Compose's `disable-library-validation`, so a library that loads only unsigned fails
+the check instead of passing it. This is the default, passed explicitly:
+
+```sh
+cat >dev-entitlements.plist <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key><true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+</dict>
+</plist>
+PLIST
+GAMERO_MAC_DEV_IDENTITY="Apple Development: <name> (<id>)" \
+  tools/sign-dev-mac-app.sh composeApp/build/compose/binaries/main/app/org.formulagen.wrapper.app dev-entitlements.plist
+```
+
+The workspace terminal's natives (pty4j's `libpty.dylib` and spawn helper, JNA's
+`libjnidispatch`) ship as app resources (`Contents/app/resources/`) in a development
+package, and are signed with the app, so they load without
+`disable-library-validation`. They are Apple Silicon only: Compose packages the
+`macos-arm64` resources only on an arm64 build machine, and JNA's copy is its
+`darwin-aarch64` library. A package built on an Intel Mac has none, and pty4j and JNA
+unpack their own copies from their jars at run time, as in a Gradle run. Compose copies
+app resources without their file modes, so `createDistributable` and
+`createReleaseDistributable` set the spawn helper executable again afterwards.
+
+**A release build (`-Pgamero.release=true`) carries none of the workspace's code or
+natives.** Project workspaces are development-only, so a release neither compiles them nor
+depends on pty4j, JNA or JediTerm ([desktop.md](desktop.md#development-only-code)). Its
+runtime jars therefore hold no `pty4j-unix-spawn-helper`, no `libpty` and no
+`libjnidispatch`, which JetBrains signed without the hardened runtime and which notarization
+would reject inside a jar. Nothing else in the app uses JNA. Every distributable a release
+build makes is scanned for them, and for the probe, and the build fails if any is found.
+
+Checked on 2026-11-03 with `createReleaseDistributable` and the script's flags: 104 jars,
+14,424 entries, none from the workspace. The one Mach-O file left inside a jar is skiko's
+`libskiko-macos-x64.dylib`, a `.dylib`, which Compose's signer re-signs. The app started with
+a throwaway home and showed its main window.
+
+When the workspace ships to players, its terminal libraries come back into the release, and
+the helper problem with them: strip `resources/com/pty4j/native/**` from the release jar and
+ship the natives as app resources, as development packages already do, or re-sign the helper
+inside the jar with the hardened runtime. Neither Compose's signer nor
+`tools/sign-dev-mac-app.sh` does the second today.
 
 ## iOS
 

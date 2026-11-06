@@ -1,0 +1,161 @@
+package org.formulagen.wrapper.workspace
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.MenuBar
+import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.rememberWindowState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import org.formulagen.wrapper.ui.fgInk300
+import org.formulagen.wrapper.ui.fgInk700
+import org.formulagen.wrapper.ui.fgInk900
+import org.formulagen.wrapper.ui.fgInk950
+import org.formulagen.wrapper.ui.fgRed400
+import org.formulagen.wrapper.ui.fgWhite
+
+/** How often the window asks each running tab whether it is busy. */
+private const val BUSY_POLL_MS = 1_000L
+
+/** Every open workspace window, as windows of the app's one Compose application (`main.kt`). */
+@Composable
+internal fun WorkspaceWindowsHost(workspaces: WorkspaceWindows) {
+    for (window in workspaces.windows) key(window.projectId) {
+        WorkspaceWindow(window, onClose = { workspaces.requestClose(window) })
+    }
+}
+
+/** One workspace window: its menus, tab bar, banner and terminals; [onClose] for its close button. */
+@Composable
+private fun WorkspaceWindow(state: WorkspaceWindowState, onClose: () -> Unit) {
+    val windowState = rememberWindowState(width = 1100.dp, height = 720.dp)
+    Window(onCloseRequest = onClose, state = windowState, title = state.title) {
+        DisposableEffect(window) {
+            state.awtWindow = window
+            onDispose { state.awtWindow = null }
+        }
+        LaunchedEffect(state.frontRequests) { if (state.frontRequests > 0) window.toFront() }
+        LaunchedEffect(state) {
+            while (true) {
+                withContext(Dispatchers.IO) { state.pollBusy() }
+                delay(BUSY_POLL_MS)
+            }
+        }
+        // No tabs left: close, as Terminal does.
+        LaunchedEffect(state.tabs.size) { if (state.tabs.isEmpty()) onClose() }
+        // The terminal's key echoes here too.
+        MenuBar {
+            Menu("Shell") {
+                Item("New Tab", shortcut = menuKey(WorkspaceAction.NewTab)?.shortcut, enabled = state.canAddTab, onClick = { state.performFromMenu(WorkspaceAction.NewTab) })
+                Item("Close Tab", shortcut = menuKey(WorkspaceAction.CloseTab)?.shortcut, onClick = { state.performFromMenu(WorkspaceAction.CloseTab) })
+            }
+            Menu("View") {
+                Item("Bigger", shortcut = menuKey(WorkspaceAction.ZoomIn)?.shortcut, enabled = state.fontSize < TerminalFont.MAX_SIZE,
+                    onClick = { state.performFromMenu(WorkspaceAction.ZoomIn) })
+                Item("Smaller", shortcut = menuKey(WorkspaceAction.ZoomOut)?.shortcut, enabled = state.fontSize > TerminalFont.MIN_SIZE,
+                    onClick = { state.performFromMenu(WorkspaceAction.ZoomOut) })
+                Item("Default Font Size", shortcut = menuKey(WorkspaceAction.ZoomReset)?.shortcut, enabled = state.fontSize != TerminalFont.DEFAULT_SIZE,
+                    onClick = { state.performFromMenu(WorkspaceAction.ZoomReset) })
+            }
+            Menu("Window") {
+                Item("Show Previous Tab", shortcut = menuKey(WorkspaceAction.PreviousTab)?.shortcut, enabled = state.tabs.size > 1,
+                    onClick = { state.performFromMenu(WorkspaceAction.PreviousTab) })
+                Item("Show Next Tab", shortcut = menuKey(WorkspaceAction.NextTab)?.shortcut, enabled = state.tabs.size > 1,
+                    onClick = { state.performFromMenu(WorkspaceAction.NextTab) })
+                Separator()
+                state.tabs.forEachIndexed { index, tab ->
+                    Item(tab.title, shortcut = menuKey(WorkspaceAction.SelectTab(index))?.shortcut, onClick = { state.performFromMenu(WorkspaceAction.SelectTab(index)) })
+                }
+                Item("Show Last Tab", shortcut = menuKey(WorkspaceAction.SelectLastTab)?.shortcut, onClick = { state.performFromMenu(WorkspaceAction.SelectLastTab) })
+            }
+            // The spike's catalog tools.
+            Menu("Develop") {
+                for (tool in DEV_TOOLS) Item("Open ${tool.label}", enabled = state.canAddTab, onClick = { state.addTab(Launch.Tool(tool)) })
+            }
+        }
+        Column(Modifier.fillMaxSize().background(fgInk950)) {
+            TabBar(state)
+            state.selectedTab()?.let { TabBanner(state, it) }
+            TerminalPane(state.deck, state.selected, Modifier.weight(1f).fillMaxWidth())
+        }
+    }
+}
+
+private val DEV_TOOLS = listOf(WorkspaceTool.NEOVIM, WorkspaceTool.LAZYGIT, WorkspaceTool.YAZI)
+
+/** The tabs, each with its busy dot and close button, then the new-tab menu. */
+@Composable
+private fun TabBar(state: WorkspaceWindowState) {
+    Row(Modifier.fillMaxWidth().height(34.dp).background(fgInk900).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        for (tab in state.tabs) {
+            val selected = tab.id == state.selected
+            Row(
+                Modifier.padding(end = 4.dp).background(if (selected) fgInk700 else fgInk900).clickable { state.select(tab) }.padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(tab.title + if (tab.busy != null) "  ●" else "", color = if (selected) fgWhite else fgInk300, fontSize = 13.sp, maxLines = 1)
+                Spacer(Modifier.width(8.dp))
+                Text("×", color = fgInk300, fontSize = 13.sp, modifier = Modifier.clickable { state.requestCloseTab(tab) })
+            }
+        }
+        NewTabMenu(state)
+    }
+}
+
+/** "+": a Shell tab or one of the spike's tools. */
+@Composable
+private fun NewTabMenu(state: WorkspaceWindowState) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Text("+", color = if (state.canAddTab) fgWhite else fgInk700, fontSize = 16.sp,
+            modifier = Modifier.clickable(enabled = state.canAddTab) { open = true }.padding(horizontal = 10.dp, vertical = 4.dp))
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text("Shell") }, onClick = { open = false; state.addTab(Launch.Shell) })
+            for (tool in DEV_TOOLS) DropdownMenuItem(text = { Text(tool.label) }, onClick = { open = false; state.addTab(Launch.Tool(tool)) })
+        }
+    }
+}
+
+/** What the selected tab needs to say above its terminal: starting, a failed start, or an exit. */
+@Composable
+private fun TabBanner(state: WorkspaceWindowState, tab: WorkspaceTab) {
+    val (message, action) = when (val current = tab.state) {
+        TabState.Running -> return
+        TabState.Starting -> "Starting…" to null
+        is TabState.Failed -> "Could not start: ${current.message}" to "Retry"
+        is TabState.Exited -> "Process exited (${current.code})" to "Restart"
+    }
+    Row(Modifier.fillMaxWidth().background(fgInk900).padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(message, color = if (tab.state is TabState.Failed) fgRed400 else fgInk300, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        if (action != null) {
+            TextButton(onClick = { state.restart(tab) }) { Text(action, color = fgWhite) }
+            TextButton(onClick = { state.requestCloseTab(tab) }) { Text("Close", color = fgWhite) }
+        }
+    }
+}

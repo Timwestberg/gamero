@@ -1,0 +1,9 @@
+# Hovel workspace, zsh step 2 of 4 (.zprofile). See .zshenv. zsh has just read /etc/zprofile,
+# whose path_helper moved Hovel's entries to the end of PATH; step 3 puts them first again.
+
+if (( ${+__hovel_user_zdotdir} )); then ZDOTDIR=$__hovel_user_zdotdir; else unset ZDOTDIR; fi
+if [[ ${ZDOTDIR:-$HOME} != "$__hovel_zdotdir" && -r ${ZDOTDIR:-$HOME}/.zprofile ]]; then
+  builtin source "${ZDOTDIR:-$HOME}/.zprofile"
+fi
+if (( ${+ZDOTDIR} )); then __hovel_user_zdotdir=$ZDOTDIR; else unset __hovel_user_zdotdir; fi
+ZDOTDIR=$__hovel_zdotdir
