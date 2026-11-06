@@ -48,12 +48,25 @@ class HostDirectoryTest {
     }
 
     @Test fun aSignedOutRuntimeHasNoModelsAndNoUsage() {
-        val providers = ConnectedProviders().apply { connected = false }
+        val providers = ConnectedProviders().apply { connected = false; installed = mapOf(RuntimeId.CODEX to listOf(ProviderSkill("lint", ""))) }
         val beat = HostDirectory(providers, id(), setOf(RuntimeId.CODEX), setOf(RuntimeId.CODEX), emptyList()).heartbeat()
         val codex = beat.directory.runtimes.first()
-        assertEquals(ProviderRuntime(false, emptyList(), ProviderReadiness.SIGNED_OUT, RuntimeId.CODEX), codex)
+        assertEquals(ProviderRuntime(false, emptyList(), ProviderReadiness.SIGNED_OUT, RuntimeId.CODEX), codex, "nor skills")
         assertEquals(emptyList(), beat.allowances)
         assertEquals("auth-required", beat.providerState, "none is ready and one is signed out")
+    }
+
+    @Test fun aReadyRuntimeReportsItsInstalledSkillsAndOneWithNoneLeavesThemOut() {
+        val review = ProviderSkill("code-review", "Review a change before merge.")
+        val providers = ConnectedProviders(setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE)).apply {
+            installed = mapOf(RuntimeId.CLAUDE_CODE to listOf(review), RuntimeId.GROK_BUILD to listOf(ProviderSkill("not-offered", "")))
+        }
+        val beat = HostDirectory(providers, id(), setOf(RuntimeId.CODEX, RuntimeId.CLAUDE_CODE), emptySet(), emptyList()).heartbeat()
+        assertEquals(listOf(null, listOf(review), null), beat.directory.runtimes.map { it.skills })
+        val runtimes = wire(HostHeartbeat.serializer(), beat).getValue("directory").jsonObject.getValue("runtimes").jsonArray.map { it.jsonObject }
+        assertEquals(listOf(false, true, false), runtimes.map { "skills" in it }, "absent, never empty, as contract 12 sends it")
+        assertEquals(JsonObject(mapOf("description" to JsonPrimitive(review.description), "name" to JsonPrimitive(review.name))),
+            runtimes[1].getValue("skills").jsonArray.single())
     }
 
     @Test fun providerStateIsReadyWhenARuntimeIsElseAuthRequiredWhenOneIsSignedOut() {

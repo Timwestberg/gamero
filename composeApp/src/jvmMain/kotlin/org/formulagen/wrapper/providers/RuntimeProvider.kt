@@ -5,6 +5,8 @@ import java.time.Clock
 import org.formulagen.wrapper.bridge.ProviderAction
 import org.formulagen.wrapper.bridge.ProviderDetail
 import org.formulagen.wrapper.bridge.ProviderModel
+import org.formulagen.wrapper.bridge.ProviderSkill
+import org.formulagen.wrapper.bridge.ProviderSkillText
 import org.formulagen.wrapper.bridge.ProviderState
 import org.formulagen.wrapper.bridge.ProviderStatus
 import org.formulagen.wrapper.bridge.ProviderUsage
@@ -20,6 +22,13 @@ internal interface RuntimeProvider : AutoCloseable {
     fun status(action: ProviderAction): ProviderStatus
     /** The models a role on this runtime may use. */
     fun models(): List<ProviderModel>
+    /**
+     * The skills this runtime has installed on this Mac. None until a runtime's skill location is confirmed: Codex and
+     * Grok Build report none.
+     */
+    fun skills(): List<ProviderSkill> = emptyList()
+    /** The text of installed skill [name] ([skills]), for a specialist's task; null when it is not there or unreadable. */
+    fun skillText(name: String): ProviderSkillText? = null
     /** Read subscription limits without a prompt, tool execution or a paid turn. */
     fun usage(): ProviderUsage
 }
@@ -76,8 +85,11 @@ internal class CodexProvider(
     override fun close() = drop()
 }
 
-/** Claude Code: its one sign-in, read through the [connection] chat readiness shares; Hovel never signs in or out. */
-internal class ClaudeProvider(private val connection: ClaudeConnection) : RuntimeProvider {
+/**
+ * Claude Code: its one sign-in, read through the [connection] chat readiness shares; Hovel never signs in or out. Its
+ * installed skills are the player's personal ones, in [skills] ([claudeSkillsRoot]); null reads none.
+ */
+internal class ClaudeProvider(private val connection: ClaudeConnection, private val skills: Path? = null) : RuntimeProvider {
     override val id = RuntimeId.CLAUDE_CODE
 
     /** Sign-in and sign-out happen in Claude Code, so the other actions answer the status with where to do them. */
@@ -86,6 +98,11 @@ internal class ClaudeProvider(private val connection: ClaudeConnection) : Runtim
 
     /** The installed Claude Code's catalog, including models added after Hovel was built. */
     override fun models(): List<ProviderModel> = connection.models()
+
+    /** The player's personal skills ([readInstalledSkills]); plugin and synced skills live elsewhere and are not read. */
+    override fun skills(): List<ProviderSkill> = skills?.let(::readInstalledSkills).orEmpty()
+
+    override fun skillText(name: String): ProviderSkillText? = skills?.let { readSkillText(it, name) }
 
     override fun usage(): ProviderUsage = connection.usage()
 

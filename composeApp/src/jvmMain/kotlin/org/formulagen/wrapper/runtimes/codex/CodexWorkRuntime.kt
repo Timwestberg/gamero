@@ -33,6 +33,7 @@ import org.formulagen.wrapper.runtimes.WorkPaths
 import org.formulagen.wrapper.runtimes.WorkRuntime
 import org.formulagen.wrapper.runtimes.claude.WORK_LINE_LIMIT
 import org.formulagen.wrapper.runtimes.codexFailure
+import org.formulagen.wrapper.runtimes.flattened
 import org.formulagen.wrapper.runtimes.reportEdit
 import org.formulagen.wrapper.util.loggingDaemonThreads
 import org.formulagen.wrapper.providers.CodexAppServer
@@ -44,9 +45,10 @@ import org.formulagen.wrapper.util.text
 
 /**
  * Codex working in a companion's project folder with the player's own Codex (default home, their
- * configuration, MCP servers and `AGENTS.md`): `codex app-server` with no lockdown, a thread with
- * `{cwd, approvalsReviewer: "user", developerInstructions: <working persona>}` and no sandbox or
- * approval-policy override, so the player's own settings decide what is asked. Approval requests go
+ * configuration, MCP servers and `AGENTS.md`): `codex app-server` with no lockdown but Codex's own skills
+ * off ([CODEX_WORK_SKILLS_OFF]), a thread with `{cwd, approvalsReviewer: "user", developerInstructions:
+ * <working persona>, config}` and no sandbox or approval-policy override, so the player's own settings
+ * decide what is asked. Its sandbox reads outside the project, so a skill folder its task names needs no grant. Approval requests go
  * to [broker]; a file change's paths come from its `fileChange` item. MCP elicitations, permission
  * escalations and user-input requests are declined with a note in the activity.
  *
@@ -133,7 +135,7 @@ internal class CodexWorkRuntime(
                 val params = buildJsonObject {
                     saved?.let { put("threadId", it); put("excludeTurns", true) }
                     put("cwd", folder.toString()); put("approvalsReviewer", "user"); put("developerInstructions", request.persona.instructions)
-                    codexContextSandbox(folder, context)?.forEach { (key, value) -> put(key, value) }
+                    codexWorkThreadSettings(folder, context).forEach { (key, value) -> put(key, value) }
                 }
                 val result = if (saved == null) rpc.call("thread/start", params)
                     else try { rpc.call("thread/resume", params) } catch (_: CodexRequestRejected) { events.failed(ChatFailure.ConversationLost); return TurnHandle {} }
@@ -386,10 +388,39 @@ internal fun codexContextSandbox(working: Path, context: List<Path>): JsonObject
     }
 }
 
-/** A working app-server: the player's own Codex, unrestricted, answering server requests through [onRequest]. */
+/**
+ * What turns Codex's own skills off for a companion's working turn, the same switches as talk's lockdown
+ * (`TALK_ONLY_LOCKDOWN`): no skill search, no bundled skills, and no skill list in its instructions. The turn uses
+ * only the skills its brain attaches, which its task carries; nothing else about work changes.
+ */
+internal val CODEX_WORK_SKILLS_OFF: JsonObject = buildJsonObject {
+    putJsonObject("features") { put("skill_search", false) }
+    putJsonObject("skills") { putJsonObject("bundled") { put("enabled", false) }; put("include_instructions", false) }
+}
+
+/**
+ * A working thread's settings beyond its folder and persona: [CODEX_WORK_SKILLS_OFF] as its own `config` (process-level
+ * `-c` settings do not reach everything a thread loads), and with [context] folders the read-only sandbox
+ * ([codexContextSandbox]) beside it.
+ */
+internal fun codexWorkThreadSettings(working: Path, context: List<Path>): JsonObject {
+    val sandbox = codexContextSandbox(working, context)
+    return buildJsonObject {
+        sandbox?.forEach { (key, value) -> if (key != "config") put(key, value) }
+        put("config", JsonObject(CODEX_WORK_SKILLS_OFF + sandbox?.get("config")?.jsonObject.orEmpty()))
+    }
+}
+
+/**
+ * A working app-server: the player's own Codex, unrestricted but for its skills ([CODEX_WORK_SKILLS_OFF], also as
+ * `-c` arguments), answering server requests through [onRequest].
+ */
 internal fun workCodex(runtime: CodexRuntime, receive: (String, JsonObject) -> Unit, onRequest: (String, JsonObject, (JsonObject?) -> Unit) -> Unit) =
-    StdioCodexAppServer(runtime, allowedMethods = WORK_CODEX_METHODS, onNotification = receive, timeoutSeconds = 30, onRequest = onRequest,
-        lineLimit = WORK_LINE_LIMIT)
+    StdioCodexAppServer(runtime, allowedMethods = WORK_CODEX_METHODS, arguments = codexWorkProcessArguments(), onNotification = receive,
+        timeoutSeconds = 30, onRequest = onRequest, lineLimit = WORK_LINE_LIMIT)
+
+/** [CODEX_WORK_SKILLS_OFF] as `-c` arguments, applied when the working app-server starts. */
+internal fun codexWorkProcessArguments(): List<String> = flattened(CODEX_WORK_SKILLS_OFF).flatMap { (key, value) -> listOf("-c", "$key=$value") }
 
 /** What a working app-server may be asked: the account and its conversation. */
 internal val WORK_CODEX_METHODS = setOf("account/read", "thread/start", "thread/resume", "turn/start", "turn/interrupt")

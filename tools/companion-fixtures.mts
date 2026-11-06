@@ -207,7 +207,14 @@ const heartbeat = {
         readiness: 'ready',
         runtimeId: 'codex'
       },
-      { canWork: true, models: [], readiness: 'ready', runtimeId: 'claude-code' },
+      // Contract 12 (`brainSkills`): a runtime's installed skills; one with none leaves `skills` out.
+      {
+        canWork: true,
+        models: [],
+        readiness: 'ready',
+        runtimeId: 'claude-code',
+        skills: [{ description: 'Review a change before merge.', name: 'code-review' }]
+      },
       { canWork: false, models: [], readiness: 'unavailable', runtimeId: 'grok-build' }
     ]
   }

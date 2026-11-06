@@ -38,8 +38,9 @@ import org.formulagen.wrapper.conversation.TeamMember
  */
 
 /**
- * The BRAIN_LIMITS of event-contracts this Mac applies, and [WORKFLOWS] of its LIBRARY_LIMITS, checked against
- * `fixtures/limits.json`; the rest are the page's and the server's. [INPUTS] bounds the inputs one message attaches.
+ * The BRAIN_LIMITS of event-contracts this Mac applies, and those of its LIBRARY_LIMITS it needs ([WORKFLOWS] and the
+ * provider skills it reports), checked against `fixtures/limits.json`; the rest are the page's and the server's.
+ * [INPUTS] bounds the inputs one message attaches.
  */
 object BrainLimits {
     const val DESCRIPTION = 512
@@ -55,6 +56,19 @@ object BrainLimits {
     const val STEPS = 30
     /** `LIBRARY_LIMITS.workflowsPerBrain`: the workflows one version 2 brain holds. */
     const val WORKFLOWS = 10
+    /** `LIBRARY_LIMITS.providerSkills`: the installed skills this Mac reports for one provider. */
+    const val PROVIDER_SKILLS = 64
+    /** `LIBRARY_LIMITS.providerSkillName`: the longest provider skill name. */
+    const val PROVIDER_SKILL_NAME = 64
+    /** `LIBRARY_LIMITS.useText`: a provider skill's description, a Hovel skill's Use it when and a skill group's. */
+    const val USE_TEXT = 512
+    /**
+     * `LIBRARY_LIMITS.skillsPerSpecialistInBrain`: the most skills one specialist uses in a brain, those it learned
+     * (at most 12) and those the brain's workflows bring for its steps.
+     */
+    const val SKILLS_PER_SPECIALIST = 24
+    /** `LIBRARY_LIMITS.skillGroups`: the groups one specialist sorts its skills into. */
+    const val SKILL_GROUPS = 4
 }
 
 /** Records keep every null; [brainWire] decides which nulls the contract sends. */
@@ -75,7 +89,12 @@ data class CoordinatorRole(val id: String, val binding: BrainBinding?, val instr
     }
 }
 
-/** A brain's specialist. [skills] are version 2's (`compiledSpecialist`): read and kept, not used before contract 12. */
+/**
+ * A brain's specialist. [skills] and [skillGroups] are version 2's (`compiledSpecialist`): its task carries its skills,
+ * sorted by group, and a provider skill this Mac cannot use pauses it before it starts (`RoleReadiness.kt`). A group
+ * only sorts skills (contract 13, `skillGroups`); the brain sends only groups that hold one of [skills], and none as
+ * an absent field ([BrainConfigurationSerializer]).
+ */
 @Serializable
 data class SpecialistRole(
     val id: String,
@@ -85,27 +104,62 @@ data class SpecialistRole(
     val binding: BrainBinding?,
     val slot: Int,
     val skills: List<SkillRef> = emptyList(),
-)
+    val skillGroups: List<SkillGroup> = emptyList(),
+) {
+    init {
+        require(skills.size <= BrainLimits.SKILLS_PER_SPECIALIST && skillGroups.size <= BrainLimits.SKILL_GROUPS)
+        require(skills.all { skill -> skill.group == null || skillGroups.any { it.id == skill.group } }) { "A skill sits in one of its specialist's groups" }
+    }
+
+    /** The group [skill] sits in, if any. */
+    fun groupOf(skill: SkillRef): SkillGroup? = skill.group?.let { id -> skillGroups.find { it.id == id } }
+}
+
+/** `skillGroup`: a group a specialist sorts some of its skills into, such as "Game skills", and when to use them together. */
+@Serializable
+data class SkillGroup(val id: String, val name: String, val useWhen: String)
 
 /**
- * `skillRef`: a skill a version 2 brain's specialist uses, one of the brain's own ([Hovel], in
- * [BrainConfiguration.skills]) or one installed in [Provider.runtimeId] on a Mac. Skills arrive with contract 12; this
- * Mac reads them and does not use them yet.
+ * `skillRef`: a skill a version 2 brain's specialist uses (contract 12), one of the brain's own ([Hovel], in
+ * [BrainConfiguration.skills]), which works on every provider, or one installed in [Provider.runtimeId] on a Mac, named
+ * as that provider names it, which works only when the specialist runs on that provider on a Mac that has it. [group]
+ * names the specialist's [SkillGroup] it sits in, if any (contract 13); it is still its own skill.
  */
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 @JsonClassDiscriminator("source")
 sealed interface SkillRef {
+    val group: String?
+
     @Serializable @SerialName("hovel")
-    data class Hovel(val skillId: String) : SkillRef
+    data class Hovel(val skillId: String, override val group: String? = null) : SkillRef
 
     @Serializable @SerialName("provider")
-    data class Provider(val runtimeId: RuntimeId, val name: String) : SkillRef
+    data class Provider(val runtimeId: RuntimeId, val name: String, override val group: String? = null) : SkillRef
 }
 
-/** `brainSkill`: a Hovel skill a version 2 brain carries for its specialists ([SkillRef.Hovel]); not used yet. */
+/** `brainSkill`: a Hovel skill a version 2 brain carries for its specialists ([SkillRef.Hovel]), sent with each task. */
 @Serializable
 data class BrainSkill(val id: String, val name: String, val instructions: String, val useWhen: String)
+
+/**
+ * `providerSkill`: a skill a provider has installed on this Mac, as the provider names ([name]) and describes it. The
+ * Mac reports them in its provider directory; Hovel never holds a provider skill's contents.
+ */
+@Serializable
+data class ProviderSkill(val name: String, val description: String) {
+    init {
+        require(isName(name)) { "A provider skill name is one lower-case token" }
+        require(description.length <= BrainLimits.USE_TEXT)
+    }
+
+    companion object {
+        /** `providerSkillName`: 1–64 characters, a lower-case letter or digit, then letters, digits and `.`, `_`, `:`, `-`. */
+        private val NAME = Regex("^[a-z0-9][a-z0-9._:-]*$")
+
+        fun isName(value: String) = value.length <= BrainLimits.PROVIDER_SKILL_NAME && NAME.matches(value)
+    }
+}
 
 @Serializable
 data class BrainReturn(val stepId: String, val condition: String)
@@ -152,8 +206,8 @@ enum class DecisionModelSelection {
 
 /**
  * `brainConfiguration`, either version, read the same way: [workflows] is version 1's one workflow (or none) or version
- * 2's list, whose step ids are unique across them. Version 2 also carries [skills] and each specialist's
- * [SpecialistRole.skills], which wait for contract 12. [BrainConfigurationSerializer] keeps each version's own shape.
+ * 2's list, whose step ids are unique across them. Version 2 also carries [skills], the Hovel skills its specialists'
+ * [SpecialistRole.skills] name. [BrainConfigurationSerializer] keeps each version's own shape.
  */
 @OptIn(ExperimentalSerializationApi::class)
 @KeepGeneratedSerializer
@@ -171,7 +225,7 @@ data class BrainConfiguration(
         require(version == 1 || version == 2) { "Unknown brain version $version" }
         require(workflows.size <= if (version == 1) 1 else BrainLimits.WORKFLOWS)
         // Version 1 holds nothing of version 2's, so writing it back loses nothing.
-        require(version == 2 || (skills.isEmpty() && specialists.all { it.skills.isEmpty() } &&
+        require(version == 2 || (skills.isEmpty() && specialists.all { it.skills.isEmpty() && it.skillGroups.isEmpty() } &&
             workflows.all { it.useFor.isEmpty() && !it.isDefault }))
     }
 
@@ -185,11 +239,13 @@ data class BrainConfiguration(
 /**
  * Reads and writes a [BrainConfiguration] in its version's shape. Version 1 holds `workflow`, one or `null`, and none
  * of version 2's fields; version 2 holds `workflows`, `skills`, each workflow's `useFor` and `default`, and each
- * specialist's `skills`. Reading refuses a field of the other version, as `z.strictObject` does.
+ * specialist's `skills` and, when it has any, `skillGroups`. Reading refuses a field of the other version, as
+ * `z.strictObject` does.
  */
 internal object BrainConfigurationSerializer : JsonTransformingSerializer<BrainConfiguration>(BrainConfiguration.generatedSerializer()) {
     private val WORKFLOW_V2 = setOf("useFor", "default")
     private const val SKILLS = "skills"
+    private const val GROUPS = "skillGroups"
 
     private fun isVersion1(value: JsonObject) = value["version"] == JsonPrimitive(1)
 
@@ -198,7 +254,7 @@ internal object BrainConfigurationSerializer : JsonTransformingSerializer<BrainC
         if (!isVersion1(value)) return value
         val workflow = value["workflow"] ?: throw SerializationException("A version 1 brain names its workflow or null")
         val specialists = value["specialists"]?.jsonArray.orEmpty()
-        if ("workflows" in value || SKILLS in value || specialists.any { SKILLS in it.jsonObject } ||
+        if ("workflows" in value || SKILLS in value || specialists.any { SKILLS in it.jsonObject || GROUPS in it.jsonObject } ||
             (workflow as? JsonObject)?.keys.orEmpty().any { it in WORKFLOW_V2 }) {
             throw SerializationException("Only a version 2 brain holds several workflows or skills")
         }
@@ -211,11 +267,18 @@ internal object BrainConfigurationSerializer : JsonTransformingSerializer<BrainC
 
     override fun transformSerialize(element: JsonElement): JsonElement {
         val value = element.jsonObject
-        if (!isVersion1(value)) return value
+        if (!isVersion1(value)) {
+            // A version 2 specialist with no groups sends none, as the contract's optional `skillGroups`.
+            val specialists = value["specialists"]?.jsonArray ?: return value
+            return JsonObject(value + ("specialists" to JsonArray(specialists.map { specialist ->
+                val groups = specialist.jsonObject[GROUPS]
+                if (groups is JsonArray && groups.isEmpty()) JsonObject(specialist.jsonObject - GROUPS) else specialist
+            })))
+        }
         return JsonObject(buildMap {
             for ((key, item) in value) when (key) {
                 "workflows" -> put("workflow", item.jsonArray.singleOrNull()?.let { JsonObject(it.jsonObject - WORKFLOW_V2) } ?: JsonNull)
-                "specialists" -> put(key, JsonArray(item.jsonArray.map { JsonObject(it.jsonObject - SKILLS) }))
+                "specialists" -> put(key, JsonArray(item.jsonArray.map { JsonObject(it.jsonObject - SKILLS - GROUPS) }))
                 SKILLS -> Unit
                 else -> put(key, item)
             }
@@ -226,7 +289,10 @@ internal object BrainConfigurationSerializer : JsonTransformingSerializer<BrainC
 @Serializable
 data class BrainDocument(val revision: Long, val configuration: BrainConfiguration)
 
-/** `brainReadinessIssue.reason`. */
+/**
+ * `brainReadinessIssue.reason`. `missing-skill`: a provider skill the specialist uses cannot be used for it on this Mac
+ * (`RoleReadiness.kt`).
+ */
 @Serializable
 enum class BrainIssueReason {
     @SerialName("missing-binding") MISSING_BINDING,
@@ -237,10 +303,17 @@ enum class BrainIssueReason {
     @SerialName("missing-project") MISSING_PROJECT,
     @SerialName("unsupported-project-work") UNSUPPORTED_PROJECT_WORK,
     @SerialName("empty-workflow") EMPTY_WORKFLOW,
+    @SerialName("missing-skill") MISSING_SKILL,
 }
 
+/** Why a role cannot run. A `missing-skill` issue names its [skill]. */
 @Serializable
-data class BrainIssue(val reason: BrainIssueReason, val roleId: String? = null, val stepId: String? = null)
+data class BrainIssue(
+    val reason: BrainIssueReason,
+    val roleId: String? = null,
+    val stepId: String? = null,
+    val skill: SkillRef.Provider? = null,
+)
 
 @Serializable
 data class BrainRoleSnapshot(

@@ -57,7 +57,8 @@ import org.formulagen.wrapper.util.text
  * long-lived `claude -p … --permission-prompt-tool stdio --append-system-prompt <working persona>`
  * per lease (a conversation thread; its working conversation is the runtime's, whichever Claude role sends),
  * in the folder, with no `--safe-mode`, `--tools`, `--strict-mcp-config` or `--permission-mode`, so
- * the player's settings, `CLAUDE.md`, skills, plugins and MCP servers apply as in their terminal.
+ * the player's settings, `CLAUDE.md`, plugins and MCP servers apply as in their terminal. Skills do not:
+ * the turn uses only those its brain attaches, which its task carries ([claudeWorkArguments]).
  * Everything Claude Code would ask the player goes through one [ApprovalRelay] per process to
  * [broker] (the native dialog). A grant for the conversation lives in the process, which is why the
  * process lives as long as the conversation; another model or folder replaces it, resuming the
@@ -107,7 +108,8 @@ internal class ClaudeWorkRuntime(
         check(!closed) { "Chat closed" }
         val started = epoch.get()
         val current = processes[work.lease]
-        val context = work.folders.context
+        // Skill folders are read-only like context folders; one a permission rule cannot name is left to Claude Code's prompt.
+        val context = (work.folders.context + work.skills.filter(::claudeRuleNames)).distinct()
         val process = current?.takeIf { it.fits(work.folder, context, model, turn.persona, saved?.id, turn.effort) && it.ready(settle) } ?: run {
             // Changed settings or an unsettled turn replace the process.
             current?.let { processes.remove(work.lease, it); it.closeAndWait() }
@@ -151,7 +153,7 @@ internal class ClaudeWorkRuntime(
         /** The lease this process works for; its approvals name it, so a conversation can relay them. */
         private val lease: String,
         val folder: Path,
-        /** Read-only context folders: readable through `--add-dir`, with Edit and Write denied under each. */
+        /** Read-only folders, context and skill: readable through `--add-dir`, with Edit and Write denied under each. */
         val context: List<Path>,
         val model: String,
         val persona: Persona,
@@ -416,11 +418,14 @@ private fun CompletableFuture<Unit>.awaitQuietly(wait: Duration): Boolean =
 /**
  * A working turn's arguments: the player's own Claude Code, streaming, with every permission prompt
  * routed to Hovel (`--permission-prompt-tool stdio`; without it Claude Code denies silently) and the
- * working persona added to its own system prompt. Nothing narrows the player's setup. The caller adds
- * how the session is chosen.
+ * working persona added to its own system prompt. Only skills are narrowed: `--disable-slash-commands`
+ * loads none (personal, project, plugin or built-in), since a companion turn uses exactly the skills its
+ * brain attaches, which its task carries. Plugins, MCP servers, settings and `CLAUDE.md` stay the
+ * player's. The caller adds how the session is chosen.
  */
 internal fun claudeWorkArguments(model: String, persona: Persona): List<String> = listOf(
     "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+    "--disable-slash-commands",
     "--permission-prompt-tool", "stdio", "--append-system-prompt", persona.instructions, "--model", model,
 )
 
@@ -435,10 +440,14 @@ internal fun claudeWorkArguments(model: String, persona: Persona): List<String> 
 internal fun claudeContextArguments(context: List<Path>): List<String> = context.flatMap { folder ->
     require(folder.isAbsolute && folder.normalize() == folder && folder.nameCount > 0) { "A context folder must be an absolute, normalized folder" }
     val path = folder.toString()
-    require(path.none { it in CLAUDE_RULE_SPECIALS || it.code < 0x20 || it.code == 0x7F }) { "A permission rule cannot name this folder exactly" }
+    require(claudeRuleNames(folder)) { "A permission rule cannot name this folder exactly" }
     val rule = "//" + path.removePrefix("/") + "/**"
     listOf("--add-dir", path, "--disallowedTools", "Edit($rule)", "--disallowedTools", "Write($rule)")
 }
+
+/** Whether a permission rule can name [folder] exactly: an absolute, normalized folder with no pattern or control character. */
+internal fun claudeRuleNames(folder: Path): Boolean = folder.isAbsolute && folder.normalize() == folder && folder.nameCount > 0 &&
+    folder.toString().none { it in CLAUDE_RULE_SPECIALS || it.code < 0x20 || it.code == 0x7F }
 
 /** Characters with a meaning in a permission rule's path pattern or its tool syntax. */
 private const val CLAUDE_RULE_SPECIALS = "()*?[]{}\\!,"

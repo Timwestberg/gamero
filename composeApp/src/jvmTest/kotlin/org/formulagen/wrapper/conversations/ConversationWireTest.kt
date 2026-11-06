@@ -231,10 +231,10 @@ class ConversationWireTest {
         val features = limits.getValue("HOVEL_CONTRACT_FEATURES").jsonObject.mapValues { it.value.jsonPrimitive.int }
         assertEquals(features, HovelContract.FEATURES)
         assertEquals(features.getValue("companionsOnly"), HovelContract.COMPANIONS_ONLY)
-        // This Mac speaks version 2 brains but not skills yet: it claims the contract before them, never a newer one.
-        assertEquals(features.getValue("brainLibraries"), HovelContract.CURRENT)
+        // This Mac speaks skill groups, the newest feature, and never claims a contract newer than the server's.
+        assertEquals(features.getValue("skillGroups"), HovelContract.CURRENT)
         assertTrue(HovelContract.CURRENT <= limits.getValue("HOVEL_CONTRACT").jsonPrimitive.int)
-        assertEquals(setOf("brainSkills"), features.filterValues { it > HovelContract.CURRENT }.keys,
+        assertEquals(emptySet(), features.filterValues { it > HovelContract.CURRENT }.keys,
             "a feature newer than this Mac's contract is one it knowingly leaves out")
     }
 

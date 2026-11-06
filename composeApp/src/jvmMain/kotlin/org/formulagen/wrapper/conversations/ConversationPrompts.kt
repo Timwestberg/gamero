@@ -8,12 +8,12 @@ import org.formulagen.wrapper.bridge.BrainEntry
 import org.formulagen.wrapper.bridge.BrainLimits
 import org.formulagen.wrapper.bridge.BrainRoleSnapshot
 import org.formulagen.wrapper.bridge.CompanionLimits
-import org.formulagen.wrapper.bridge.SpecialistRole
 import org.formulagen.wrapper.bridge.WorkflowStep
 import org.formulagen.wrapper.bridge.brainJson
 import org.formulagen.wrapper.bridge.brainWire
 import org.formulagen.wrapper.brain.COORDINATOR_DECISION_SHAPES
 import org.formulagen.wrapper.brain.COORDINATOR_EVIDENCE_RULES
+import org.formulagen.wrapper.brain.COORDINATOR_SKILL_RULES
 import org.formulagen.wrapper.brain.COORDINATOR_WORKFLOW_RULES
 import org.formulagen.wrapper.brain.DecisionKind
 
@@ -36,7 +36,7 @@ internal val CONVERSATION_PROTOCOL = (listOf(
         "Tasks must be 1–${BrainLimits.STEP_INSTRUCTIONS} characters.",
 ) + COORDINATOR_EVIDENCE_RULES +
     "Only delegate tasks the user requested. Ordinary conversation uses answer. Never invent role, thread or artifact IDs." +
-    COORDINATOR_WORKFLOW_RULES +
+    COORDINATOR_WORKFLOW_RULES + COORDINATOR_SKILL_RULES +
     ("A reply in a thread offers only forward, answer and delegate: forward hands it to that thread's specialist, with a short note of " +
         "context when useful; answer replies in the thread yourself; delegate starts a new task in a new thread.") +
     "Do not claim work has run merely because it was configured. Never show the header's JSON to the user." +
@@ -66,17 +66,17 @@ internal fun conversationRequest(request: String, recalledMemory: String?, advic
 }.toString()
 
 /**
- * The coordinator's view of a reply in [threadId]: the thread, the [reply], the [specialists] it may delegate to,
- * and recent conversation.
+ * The coordinator's view of a reply in [threadId]: the thread, the [reply], the [specialists] it may delegate to (as
+ * `coordinatorSpecialists` shows them, with their skills by name), and recent conversation.
  */
 internal fun threadReplyRequest(decisionId: String, allowed: Set<DecisionKind>, threadId: String, thread: ThreadState, reply: String,
-    specialists: List<SpecialistRole>, conversation: List<BrainEntry>, recalledMemory: String?): String = buildJsonObject {
+    specialists: JsonArray, conversation: List<BrainEntry>, recalledMemory: String?): String = buildJsonObject {
     put("decisionId", decisionId)
     put("allowed", JsonArray(allowed.map { brainWire(it) }))
     put("threadId", threadId)
     put("thread", brainWire(ThreadState.serializer(), thread))
     put("reply", reply)
-    put("specialists", brainWire(specialists))
+    put("specialists", specialists)
     put("conversation", brainWire(conversation))
     recalledMemory?.let { put("recalledMemory", it) }
 }.toString()
@@ -99,10 +99,10 @@ internal fun forwardedTurn(reply: String, note: String?): String =
     "The person replied in this task's thread. Continue the task with it.\nTheir reply:\n$reply" +
         (note?.let { "\nThe coordinator's note (context):\n$it" } ?: "")
 
-/** A task the coordinator delegated from a thread reply, with that reply as context. */
-internal fun delegatedTurn(role: BrainRoleSnapshot, task: String, reply: String): String =
+/** A task the coordinator delegated from a thread reply, with that reply as context, and the specialist's [skills] (`skillsBlock`). */
+internal fun delegatedTurn(role: BrainRoleSnapshot, task: String, reply: String, skills: String = ""): String =
     "The native controller has delegated this task to you as ${role.name}. You are that specialist. Complete it yourself.\n" +
-        "Assigned task:\n$task\nThe person's reply that asked for it (context):\n$reply\n" +
+        "Assigned task:\n$task\nThe person's reply that asked for it (context):\n$reply\n" + skills +
         "Report actual evidence, missing skills, denied operations and remaining issues."
 
 /** The coordinator message a new thread hangs under. */

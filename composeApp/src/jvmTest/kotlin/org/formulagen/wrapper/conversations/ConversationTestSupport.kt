@@ -405,6 +405,12 @@ internal open class ScriptedRuntime(override val id: RuntimeId, val chunk: Int =
 /** Providers that are all connected, each with one default model that takes high effort. */
 internal class ConnectedProviders(private val offered: Set<RuntimeId> = RuntimeId.entries.toSet()) : ProviderCapability {
     @Volatile var connected = true
+    /** Each runtime's installed skills; none by default. */
+    @Volatile var installed: Map<RuntimeId, List<ProviderSkill>> = emptyMap()
+    /** The text of each installed skill that can be read, by runtime and name. */
+    @Volatile var texts: Map<Pair<RuntimeId, String>, ProviderSkillText> = emptyMap()
+    override suspend fun skills(scope: ProviderScope) = installed[scope.runtimeId].orEmpty()
+    override suspend fun skillText(scope: ProviderScope, name: String) = texts[scope.runtimeId to name]
     override suspend fun perform(action: ProviderAction, scope: ProviderScope) =
         ProviderStatus(scope.runtimeId, if (connected && scope.runtimeId in offered) ProviderState.CONNECTED else ProviderState.DISCONNECTED)
     override suspend fun list() = ProviderList(offered.toList(), emptyList())

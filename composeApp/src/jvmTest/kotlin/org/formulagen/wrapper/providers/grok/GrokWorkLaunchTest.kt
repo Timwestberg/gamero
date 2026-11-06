@@ -36,6 +36,13 @@ class GrokWorkLaunchTest {
         assertFails { verifyGrokWorkInspection(report, Path.of("/different/config.toml")) }
     }
 
+    @Test fun aWorkingAgentDiscoversAndInheritsNoSkills() {
+        val header = GROK_WORK_PROFILE.substringAfter("---\n").substringBefore("\n---").lines()
+        assertTrue("discoverSkills: false" in header, header.toString())
+        assertTrue("inheritSkills: false" in header, header.toString())
+        assertFalse(header.any { it.startsWith("discoverSkills: true") })
+    }
+
     @Test fun theWorkingEnvironmentIsThePlayersWithTheirLoginPathAndOnlyHovelsGrokSettings() {
         val finder = mapOf("HOME" to "/Users/player", "USER" to "player", "LOGNAME" to "player", "SHELL" to "/bin/zsh",
             "TMPDIR" to "/var/folders/xy/T/", "LANG" to "en_US.UTF-8", "PATH" to "/usr/bin:/bin:/usr/sbin:/sbin",
