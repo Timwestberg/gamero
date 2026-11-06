@@ -60,6 +60,19 @@ class ConversationRunnerTest {
 
     private fun waitConnected() = eventually("the stream connected") { runner.connected }
 
+    @Test fun aSuggestionRequestGoesToTheSuggestionLaneAndNothingElse() {
+        val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val suggesting = ConversationRunner(server, store, engine, RemoteApprovals(NativeDialogs(Screen()), server, server.hostId), folders,
+            publisher, { beat }, listSuggestionsRequested = { requests += it })
+        try {
+            val request = id()
+            suggesting.dispatch(HostStreamEvent.ListSuggestionsRequested(request))
+            assertEquals(listOf(request), requests)
+            assertTrue(engine.runs.isEmpty())
+            assertTrue(suggesting.lanes.isEmpty(), "no conversation lane opens for it")
+        } finally { suggesting.close() }
+    }
+
     @Test fun pendingCleanupKeepsTheWakeJournaledUntilTheHostIsReady() {
         contextReady = false
         val talk = TestConversation()

@@ -17,7 +17,9 @@ object HovelContract {
 
     /**
      * `HOVEL_CONTRACT_FEATURES`: the contract each answer change arrived in, including those newer than [CURRENT].
-     * Contract 2 added the claim's `stop-requested` answer and a message page's threads.
+     * Contract 2 added the claim's `stop-requested` answer and a message page's threads. `lists` is the pages' own.
+     * `listSuggestions` needs no contract from a Mac: the server picks the Mac whose heartbeat declares
+     * `list-suggestions`, whatever contract it speaks.
      */
     val FEATURES: Map<String, Int> = mapOf(
         "brainLibraries" to 11,
@@ -27,6 +29,8 @@ object HovelContract {
         "sharedUnderstanding" to 8,
         "communicationReports" to 9,
         "conversationDirection" to 10,
+        "lists" to 13,
+        "listSuggestions" to 13,
         "specialistAdvice" to 5,
         "workflowEvidence" to 6,
         "messagePageThreads" to 2,

@@ -234,7 +234,8 @@ class ConversationWireTest {
         // This Mac speaks version 2 brains but not skills yet: it claims the contract before them, never a newer one.
         assertEquals(features.getValue("brainLibraries"), HovelContract.CURRENT)
         assertTrue(HovelContract.CURRENT <= limits.getValue("HOVEL_CONTRACT").jsonPrimitive.int)
-        assertEquals(setOf("brainSkills"), features.filterValues { it > HovelContract.CURRENT }.keys,
+        // Suggestions ride the heartbeat; `lists` is pages'.
+        assertEquals(setOf("brainSkills", "lists", "listSuggestions"), features.filterValues { it > HovelContract.CURRENT }.keys,
             "a feature newer than this Mac's contract is one it knowingly leaves out")
     }
 

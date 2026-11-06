@@ -102,7 +102,8 @@ internal class ConversationHost(
                     if (cleanup == null || cleanup.poll()) connection.heartbeat(response)
                     else connection.status("Connected · Memory cleanup pending; work is paused")
                 },
-                connection.status, replies = voice ?: ReplyListeners.NONE, imageRequested = images::request, contextReady = { cleanup?.ready ?: true })
+                connection.status, replies = voice ?: ReplyListeners.NONE, imageRequested = images::request,
+                listSuggestionsRequested = connection.listSuggestions, contextReady = { cleanup?.ready ?: true })
             owned += runner
             val onThisMac = ProjectsOnThisMac(api, folders, registration.ownerId, registration.id, publishing)
             running = Running(registration.ownerId, store, publisher, engine::readableBy, onThisMac::isOnThisMac)
