@@ -72,10 +72,11 @@ internal data class TurnRequest(
  * Where and for whom a role works: the project's [folders] (a working folder, and read-only context
  * folders the runtime was cleared to read), the [lease] a working process lives for (a conversation
  * thread's id), the [companion]'s name and the [member] the role is bound to. The runtime reports each
- * edit it finished to [edits], the thread's edit record.
+ * edit it finished to [edits], the thread's edit record. [skills] are the folders of the provider skills the
+ * specialist uses, which its task names and the runtime lets it read, never change.
  */
 internal data class WorkScope(val folders: ProjectFolders, val lease: String, val companion: String, val member: TeamMember,
-    val edits: EditListener = EditListener.NONE) {
+    val edits: EditListener = EditListener.NONE, val skills: List<Path> = emptyList()) {
     /** A scope for one working folder and no context folders. */
     constructor(folder: Path, lease: String, companion: String, member: TeamMember, edits: EditListener = EditListener.NONE) :
         this(ProjectFolders(folder), lease, companion, member, edits)

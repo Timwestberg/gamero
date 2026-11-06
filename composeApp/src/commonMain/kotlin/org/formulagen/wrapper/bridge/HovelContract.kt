@@ -7,10 +7,12 @@ package org.formulagen.wrapper.bridge
  */
 object HovelContract {
     /**
-     * Contract 11 (`brainLibraries`) adds version 2 brains, with several workflows. Skills arrive with contract 12
-     * (`brainSkills`), which this Mac does not speak yet, so it is never sent a brain whose specialists use them.
+     * Contract 11 (`brainLibraries`) adds version 2 brains, with several workflows. Contract 12 (`brainSkills`) adds
+     * the skills a version 2 brain's specialists use, and the installed skills this Mac reports for each provider.
+     * Contract 13 (`skillGroups`) lets a specialist learn up to 12 skills and sort them into groups, and
+     * (`workflowSkills`) gives a specialist the skills its workflow steps need, up to 24 skills in all.
      */
-    const val CURRENT = 11
+    const val CURRENT = 13
 
     /** `HOVEL_FIRST_CONTRACT`: what a document naming nothing newer needs. */
     const val FIRST = 1
@@ -27,13 +29,17 @@ object HovelContract {
         "companionsOnly" to 3,
         "conversationQuestions" to 7,
         "sharedUnderstanding" to 8,
+        "skillGroups" to 13,
         "communicationReports" to 9,
+        "community" to 13,
         "conversationDirection" to 10,
         "lists" to 13,
         "listSuggestions" to 13,
         "specialistAdvice" to 5,
         "workflowEvidence" to 6,
+        "workflowSkills" to 13,
         "messagePageThreads" to 2,
+        "partOrigins" to 13,
         "robotLook" to 4,
         "stopRequestedClaim" to 2,
     )

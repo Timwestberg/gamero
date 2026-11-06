@@ -3,6 +3,7 @@ package org.formulagen.wrapper.conversations
 import kotlin.test.*
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.*
+import org.formulagen.wrapper.bridge.ProviderSkill
 import org.formulagen.wrapper.bridge.ProviderUsage
 import org.formulagen.wrapper.bridge.ProviderUsageWindow
 import org.formulagen.wrapper.bridge.HovelContract
@@ -94,6 +95,8 @@ class CompanionContractFixtureTest {
         val heartbeat = fromWire(HostHeartbeat.serializer(), fixtures.getValue("heartbeat").getValue("value"))
         assertEquals("ready", heartbeat.providerState)
         assertEquals(MemoryJobLane.FEATURES + ListSuggestionLane.FEATURES, heartbeat.features)
+        assertEquals(mapOf(RuntimeId.CLAUDE_CODE to listOf(ProviderSkill("code-review", "Review a change before merge."))),
+            heartbeat.directory.runtimes.filter { it.skills != null }.associate { it.runtimeId to it.skills }, "contract 12's installed skills")
         val heard = fromWire(MessageSend.serializer(), fixtures.getValue("messageSend.heard").getValue("value"))
         assertEquals(MessageSend(heard.id, emptyList(), "What time is it?", null), heard,
             "a heard turn attaches nothing, in the main conversation")

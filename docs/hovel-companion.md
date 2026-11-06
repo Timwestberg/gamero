@@ -69,6 +69,7 @@ needed or claimed. See `MemoryCleanupTest`, `ConversationStoreTest`,
 | `ConversationRunner` | [conversations/ConversationRunner.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/ConversationRunner.kt) | The host stream and its watchdog, the heartbeat, claims, the claim journal and one serial lane per conversation. Also defines `MessageEngine`. |
 | `CoordinatorEngine` | [conversations/CoordinatorEngine.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/CoordinatorEngine.kt) | Runs one claimed message through the companion brain: coordinator, threads, workflow, and the outbox of checkpoints. |
 | `ProviderTurns` | [conversations/ProviderTurns.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/ProviderTurns.kt) | The engine's provider turns: readiness, model resolution, talk permits, work leases and Stop. |
+| `readInstalledSkills` | [providers/ProviderSkills.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/providers/ProviderSkills.kt) | A provider's installed skills, from each `SKILL.md`'s front matter, for the directory and a specialist's readiness, and a skill's text (`readSkillText`), which the Mac gives the specialist that uses it. |
 | `ConversationPrompts` | [conversations/ConversationPrompts.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/conversations/ConversationPrompts.kt) | `CONVERSATION_PROTOCOL` and the coordinator's and specialists' inputs. |
 | `NativeRoute` | [hovel/NativeRoutes.kt](../composeApp/src/jvmMain/kotlin/org/formulagen/wrapper/hovel/NativeRoutes.kt) | Every route a registered Mac calls: one table of method, path template and builder, which is also what the transport allows. |
 
@@ -241,7 +242,9 @@ The memory lane rides its heartbeat.
     out, else `unavailable`; conversation routing reads `directory`;
   - `features`: `memory-extraction` with the memory lane
     (`MemoryJobLane.FEATURES`), and none without it;
-  - `directory`: the readiness and models of Codex, Claude Code and Grok Build;
+  - `directory`: the readiness and models of Codex, Claude Code and Grok Build,
+    and a ready runtime's installed `skills` (left out when it has none; see
+    [Skills](#skills));
   - `allowances`: each ready runtime's usage as an `allowanceSnapshot`.
 
   `HostDirectory` refreshes the directory every minute and usage every 5
@@ -543,7 +546,7 @@ token. The log lines are `latency endpoint_to_posted_ms` and
 ### `host.contract`
 
 `DesktopHostContract` answers the page's contract with `HovelContract.CURRENT`
-(4) and keeps the page's for its context. A page below contract 3
+(13) and keeps the page's for its context. A page below contract 3
 (`HovelContract.COMPANIONS_ONLY`, the contract's
 `HOVEL_CONTRACT_FEATURES.companionsOnly`) is from before step E: the handshake
 answers it `failed` with the update message (`BridgeUpdateRequiredException`),
@@ -575,9 +578,99 @@ A brain holds several workflows from contract 11 (`brainLibraries`).
 either version 1's single workflow or version 2's list. The coordinator sees the
 enabled workflows, default first (`coordinatorConfiguration`). Its
 `enter-workflow` step names the workflow it follows, recorded in the run's
-`workflowId`. From then on the run reads only that one (`workflowOf`). Skills
-arrive with contract 12, so this Mac still sends 11; it reads a version 2
-brain's skills but does not use them.
+`workflowId`. From then on the run reads only that one (`workflowOf`).
+
+### Skills
+
+From contract 12 (`brainSkills`), a version 2 brain's specialist uses skills
+(`SkillRef`): a Hovel skill, whose text the brain carries in `skills`, or a
+provider skill, named as its provider names it. The libraries are shared, but
+in a companion's conversations the only skills there are the ones the brain's
+specialists use.
+
+From contract 13 (`skillGroups`), a specialist learns up to 12 skills (from 8).
+From the same contract (`workflowSkills`), a library workflow's step can need up
+to 4 skills: the server compiles them onto whoever does the step in that brain,
+beside the skills it learned, each once, for as long as the workflow is in the
+brain. A compiled step carries no skills, and the Mac reads a compiled
+specialist's skills the same way whichever way they came; it only holds the
+ceiling of 24 (`BrainLimits.SKILLS_PER_SPECIALIST`, from
+`LIBRARY_LIMITS.skillsPerSpecialistInBrain`). A specialist can also sort the
+skills it learned into up to 4 groups (`SkillGroup`: name, and when to use them together),
+and each `SkillRef` may name its `group`. A group only sorts skills: each one is
+still its own skill, used and checked as before. A compiled specialist carries
+only the groups that hold one of its skills, and leaves `skillGroups` out when
+it has none. Version 1 brains have no groups.
+
+- **Provider skill systems are off in every companion turn,** talk and work.
+  Only skills change; work keeps the player's own settings, plugins, MCP
+  servers and project instructions.
+  - Claude Code: talk runs locked down as before. Work adds
+    `--disable-slash-commands`, which loads no skill: personal, project, plugin
+    or built-in.
+  - Codex: talk's lockdown already turns skills off. Work turns off the same
+    three switches (`CODEX_WORK_SKILLS_OFF`): `features.skill_search`,
+    `skills.bundled.enabled` and `skills.include_instructions`. They go on the
+    app-server as `-c` arguments and on every thread's `config`.
+  - Grok Build: the work profile has `discoverSkills: false` and
+    `inheritSkills: false`, as talk's does. Talk's `[skills] ignore = ["/"]`
+    cannot be added to work: work reads only the player's own configuration.
+    `grok inspect` takes no profile, so the work inspection still lists the
+    skills that configuration discovers, and it does not have to be empty.
+- **Reporting:** each ready runtime's installed skills go in the heartbeat's
+  directory (`RuntimeProvider.skills`, at most 64, each description at most 512
+  characters). Claude Code reads the player's personal skills,
+  `~/.claude/skills/*/SKILL.md` (`$CLAUDE_CONFIG_DIR/skills` when that is set),
+  with `readInstalledSkills`:
+  - A skill is named by its folder, which is what Claude Code invokes it by.
+    A front matter `name` is only the label Claude Code shows beside it.
+  - Its `description` comes from the front matter.
+  - Left out: a folder whose name is not a provider skill name, a `SKILL.md`
+    without front matter closed by `---`, and a skill the model may not start
+    (`disable-model-invocation: true`).
+  - Plugin and synced skills live elsewhere and are not read.
+  - Codex and Grok Build report none, so only Claude Code specialists can use
+    provider skills.
+- **The Mac delivers provider skills.** Before each specialist turn,
+  `ProviderTurns.providedSkills` reads the `SKILL.md` text of each provider
+  skill the specialist uses on its own runtime (`readSkillText`): the text after
+  the front matter, at most 16,384 characters.
+- **Readiness:** before a specialist starts, a run attempt or a thread turn,
+  `roleIssues` checks each provider skill. One it cannot use is `missing-skill`,
+  and the specialist pauses as for a missing model. That is the case when:
+  - the skill is another provider's;
+  - its runtime has no skill of that name here;
+  - the skill's `SKILL.md` cannot be read now.
+
+  Talk-only specialists use provider skills too, as text. The pause names the
+  skill, the program and the Mac (`skillsPause`): "Reviewer uses code-review,
+  which isn't installed in Claude Code on Studio Mac. Update the brain or
+  provider and resume." Hovel skills never block.
+- **Prompts:** a specialist's task (`specialistTurn`, `delegatedTurn`) carries a
+  Skills block (`skillsBlock`), in the order the specialist lists its skills.
+  Each skill reads "Skill: <name>", "Use it when: <when>", then
+  "Instructions:" and its text.
+  - A Hovel skill's text comes from the brain.
+  - A provider skill's text is the one this Mac read, with this Mac's
+    description. A cut one adds "Only the first 16384 characters are shown; the
+    rest is in <SKILL.md>."
+  - A working turn also gets "Its files are in <folder>." Claude Code may read
+    that folder, never change it (`--add-dir` and Edit and Write denied, as for
+    context folders). Codex's sandbox reads outside the project already.
+  - With groups, each group comes first, in the order of its first skill:
+    "Skill group: <name>", then "Use these together when: <when>" (left out
+    when blank), then its skills. The skills in no group follow under "Other
+    skills:". With no groups, the block has no group lines.
+  - Skills travel with the task, not the persona, so a skill edit never starts
+    a new provider conversation. A forwarded reply continues its task and
+    carries no block.
+- **The coordinator** sees each specialist's skills by name with when to use
+  them (`coordinatorSpecialists`). For a provider skill, that is this Mac's
+  description, or the name alone. A grouped skill also names its group, and
+  the specialist lists its `skillGroups` by name and when to use them together.
+  The coordinator sees neither the skills' text nor any ids, and uses no skill
+  itself (`COORDINATOR_SKILL_RULES`). Asked for a skill no specialist has, it
+  says this brain doesn't have it.
 
 ## Memory jobs
 
@@ -635,6 +728,7 @@ person can retry it.
 | Status line "Update Hovel on this Mac to run every message in its conversations" | A claim answered `mac-update-required`: a message needs a newer contract. It stays queued until this Mac updates or it expires. |
 | System note "Assign a provider to the coordinator in Configure brain." (or to a named role) | The companion's brain has a role with no provider (`BrainConfigurationException`); the message settles `failed`. Assign one in Configure brain, then send the message again. |
 | System note "Claude doesn't run on this Mac. Choose another provider for the coordinator in Configure brain." (or "can't work in projects on this Mac" for a working role) | The role is bound to a runtime this Mac does not offer for it, so retrying cannot help. Choose another provider in Configure brain. |
+| Run paused "Reviewer uses code-review, which isn't installed in Claude Code on Studio Mac. Update the brain or provider and resume." (or "from Codex, but runs on Claude Code") | A specialist's provider skill cannot be used on this Mac (`missing-skill`): it is not installed there, its `SKILL.md` cannot be read, or it belongs to another provider. Install it there or change the specialist's skills in the brain, then resume. |
 | System note "Hovel could not finish this message on this Mac. Try sending it again." | An unexpected error on this Mac; the log has it as "A message could not run". |
 | A message settled `reconciliation-required` | Its turn may have started before a crash or an error the runner could not classify. It never runs again unless the person retries it. |
 
@@ -675,8 +769,12 @@ phone's answer, and the conflict note across a restart in the Mac's own words),
 `PhonePairingTest` (lookup before pairing, one pairing per code, the attempt
 limit, unpairing), `PresentApprovalTest`, `ProjectFoldersTest`,
 `ContextFoldersTest`, `ConversationStoreTest` and the wire tests.
-`SharedCoordinatorRulesTest` pins the coordinator's protocol lines and the
-readiness and stage rules.
+`SharedCoordinatorRulesTest` pins the coordinator's protocol lines, the
+readiness and stage rules, the `missing-skill` pause and the Skills block.
+`ProviderSkillsTest` reads skills folders: names, every YAML form of a
+description, malformed and left-out entries, the limits and links, and a
+skill's text and its cut.
+`HostDirectoryTest` checks that only a ready runtime with skills sends them.
 `CompanionContractFixtureTest` reads and writes back every payload in
 `CompanionContractFixtures.kt`, which `tools/sync-server-fixtures.py` builds
 from the server's samples with `tools/companion-fixtures.mts` and checks against

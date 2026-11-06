@@ -13,9 +13,10 @@ internal fun BrainBinding.model(models: List<ProviderModel>) =
 
 /**
  * Why a role cannot run now, by the brain's readiness reasons: no binding; its provider not signed in ([connected]);
- * its model or effort not in the provider's [models] (null when they could not be read); and for a working role,
- * a runtime that may not work here ([canWork]) or no project folder ([hasProject]). Catalog checks never
- * substitute a model.
+ * its model or effort not in the provider's [models] (null when they could not be read); for a working role, a
+ * runtime that may not work here ([canWork]) or no project folder ([hasProject]); and each of its provider [skills]
+ * it cannot use ([unusableSkill]), given the skills its runtime has [installed] here and readable now. Hovel skills
+ * never block. Catalog checks never substitute a model or a skill.
  */
 internal fun roleIssues(
     roleId: String,
@@ -25,6 +26,8 @@ internal fun roleIssues(
     models: List<ProviderModel>?,
     canWork: Boolean,
     hasProject: Boolean,
+    skills: List<SkillRef> = emptyList(),
+    installed: Set<String> = emptySet(),
 ): List<BrainIssue> {
     if (binding == null) return listOf(BrainIssue(BrainIssueReason.MISSING_BINDING, roleId))
     if (!connected) return listOf(BrainIssue(BrainIssueReason.UNAVAILABLE_PROVIDER, roleId))
@@ -36,7 +39,28 @@ internal fun roleIssues(
         if (!canWork) issues += BrainIssue(BrainIssueReason.UNSUPPORTED_PROJECT_WORK, roleId)
         if (!hasProject) issues += BrainIssue(BrainIssueReason.MISSING_PROJECT, roleId)
     }
+    for (skill in skills.filterIsInstance<SkillRef.Provider>()) {
+        if (unusableSkill(skill, binding, installed) != null) issues += BrainIssue(BrainIssueReason.MISSING_SKILL, roleId, skill = skill)
+    }
     return issues
+}
+
+/**
+ * Why a role cannot use a provider skill ([unusableSkill]). The Mac gives a specialist its provider skills' text, so
+ * a talk-only one can use them too.
+ */
+internal enum class SkillProblem {
+    /** The skill is another provider's than the one the role runs on. */
+    OTHER_PROVIDER,
+    /** Its runtime has no skill of that name on this Mac, or its `SKILL.md` cannot be read now. */
+    NOT_INSTALLED,
+}
+
+/** Why a role on [binding] cannot use provider [skill], given its runtime's [installed] skills; null when it can. */
+internal fun unusableSkill(skill: SkillRef.Provider, binding: BrainBinding, installed: Set<String>): SkillProblem? = when {
+    skill.runtimeId != binding.runtimeId -> SkillProblem.OTHER_PROVIDER
+    skill.name !in installed -> SkillProblem.NOT_INSTALLED
+    else -> null
 }
 
 /**

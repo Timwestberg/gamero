@@ -18,6 +18,19 @@ interface ProviderCapability {
     /** The models a role bound to [ProviderScope.runtimeId] may use. */
     suspend fun models(scope: ProviderScope): ProviderModels
 
+    /**
+     * The skills [ProviderScope.runtimeId] has installed on this Mac, for the provider directory and a specialist's
+     * readiness. Not a bridge method: the page reads them from the account's computers. None unless a runtime reads them.
+     */
+    suspend fun skills(scope: ProviderScope): List<ProviderSkill> = emptyList()
+
+    /**
+     * The text of installed skill [name] of [ProviderScope.runtimeId], which the Mac gives a specialist that uses it:
+     * companion turns never let a provider load skills itself. Null when the runtime has no such skill, or its
+     * `SKILL.md` cannot be read now.
+     */
+    suspend fun skillText(scope: ProviderScope, name: String): ProviderSkillText? = null
+
     /** Shared subscription limits, without starting a model turn. Missing windows mean unknown. */
     suspend fun usage(scope: ProviderScope): ProviderUsage
     suspend fun setup(scope: ProviderScope): ProviderSetup
@@ -110,6 +123,20 @@ data class ProviderModel(val displayName: String, val isDefault: Boolean, val mo
 
 @Serializable
 data class ProviderModels(val models: List<ProviderModel>, val runtimeId: RuntimeId)
+
+/**
+ * An installed skill as a specialist's task carries it: its [description], its [instructions] (the `SKILL.md` text
+ * after the front matter, at most [INSTRUCTIONS] characters; [truncated] when there is more), and the absolute path of
+ * its `SKILL.md` [file], whose folder holds the skill's other files. Native only: it never crosses the bridge.
+ */
+data class ProviderSkillText(val description: String, val instructions: String, val truncated: Boolean, val file: String) {
+    init { require(instructions.length <= INSTRUCTIONS) }
+
+    companion object {
+        /** The most of a skill's instructions one task carries. */
+        const val INSTRUCTIONS = 16_384
+    }
+}
 
 /** Subscription percentage used, with an optional reset time in Unix seconds. */
 @Serializable

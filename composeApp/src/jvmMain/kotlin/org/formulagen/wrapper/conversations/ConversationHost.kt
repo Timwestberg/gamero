@@ -9,6 +9,7 @@ import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.bridge.ProviderCapability
 import org.formulagen.wrapper.bridge.RuntimeId
+import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.runtimes.ChatRuntime
 import org.formulagen.wrapper.runtimes.WorkRuntime
 import org.formulagen.wrapper.util.loggingDaemonThreads
@@ -85,7 +86,8 @@ internal class ConversationHost(
             val retained = { store.bindingHandles() }
             val talkRuntimes = talk(retained).also { owned += it }
             val workRuntimes = work(approvals, retained).also { owned += it }
-            val turns = ProviderTurns(talkRuntimes, workRuntimes, providers, approvals)
+            val turns = ProviderTurns(talkRuntimes, workRuntimes, providers, approvals,
+                mac = SharedRules.dialogName(registration.name, THIS_MAC))
             val cleanup = connection.cleanup
             cleanup?.register(store::eraseContext)
             val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), api, editStore, { cleanup?.check() })

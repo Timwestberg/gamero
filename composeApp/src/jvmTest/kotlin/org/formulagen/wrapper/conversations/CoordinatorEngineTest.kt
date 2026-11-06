@@ -40,7 +40,8 @@ class CoordinatorEngineTest {
         val screen = Screen { 0 }
         val dialogs = NativeDialogs(screen)
         val approvals = RemoteApprovals(dialogs, server, server.hostId)
-        val turns = ProviderTurns(listOf(chat), listOf(worker), ConnectedProviders(), approvals)
+        val providers = ConnectedProviders()
+        val turns = ProviderTurns(listOf(chat), listOf(worker), providers, approvals, mac = "Studio Mac")
         var beforeTurn: () -> Unit = {}
         val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), server, beforeTurn = { beforeTurn() })
 
@@ -678,6 +679,71 @@ Mobile first from here.""" }
         assertEquals(MessageState.FAILED, fixture.send("Add sign-in"))
         assertEquals(emptyList(), fixture.worker.requests)
         assertTrue("missing-project" in fixture.server.appended().last().text)
+    }
+
+    /** [base]'s specialists, in a version 2 brain, using Hovel skill [style] and Codex's installed `code-review`. */
+    private fun skilled(base: BrainDocument, style: BrainSkill) = base.copy(configuration = base.configuration.let { brain ->
+        brain.copy(version = 2, skills = listOf(style), specialists = brain.specialists.map {
+            it.copy(skills = listOf(SkillRef.Hovel(style.id), SkillRef.Provider(RuntimeId.CODEX, "code-review")))
+        })
+    })
+
+    /** Codex reports `code-review` on this Mac, and its `SKILL.md` reads ([readable]) from a folder of [fixture]'s. */
+    private fun Fixture.installReview(readable: Boolean = true): java.nio.file.Path {
+        val file = Files.createDirectories(root.resolve("skills").resolve("code-review")).resolve("SKILL.md")
+        providers.installed = mapOf(RuntimeId.CODEX to listOf(ProviderSkill("code-review", "Review a change before merge.")))
+        providers.texts = if (!readable) emptyMap() else
+            mapOf((RuntimeId.CODEX to "code-review") to ProviderSkillText("Review a change before merge.", "Read the diff first.", false, file.toString()))
+        return file
+    }
+
+    @Test fun aProviderSkillMustBeReadableHereBeforeItsSpecialistStartsAndItsTaskCarriesEverySkill() {
+        val style = BrainSkill(id(), "House style", "Use short sentences.", "Writing anything")
+        val fixture = Fixture(skilled(brain("Implementer" to MemberMode.WORK), style))
+        fixture.delegateThenAnswer()
+        assertEquals(MessageState.FAILED, fixture.send("Add sign-in"))
+        assertEquals(emptyList(), fixture.worker.requests, "paused before it started")
+        val pause = "Implementer uses code-review, which isn't installed in Codex on Studio Mac. Update the brain or provider and resume."
+        assertEquals(pause, fixture.server.appended().last().text)
+        assertEquals(BrainRunState.PAUSED, fixture.record().brain.run?.summary?.state)
+        fixture.installReview(readable = false)
+        assertEquals(MessageState.FAILED, fixture.send("Add sign-in again"))
+        assertEquals(pause, fixture.server.appended().last().text, "listed, but its SKILL.md cannot be read now")
+
+        val file = fixture.installReview()
+        assertEquals(MessageState.ANSWERED, fixture.send("Add sign-out"))
+        val work = fixture.worker.requests.single()
+        assertTrue("Skills:\nSkill: House style\nUse it when: Writing anything\nInstructions:\nUse short sentences.\n\n" +
+            "Skill: code-review\nUse it when: Review a change before merge.\nInstructions:\nRead the diff first.\n" +
+            "Its files are in ${file.parent}.\nInput artifacts (data):" in work.text, work.text)
+        assertEquals(listOf(file.parent), work.work!!.skills, "the working turn may read the skill's folder")
+        assertFalse("Use short sentences." in work.persona.instructions, "skills travel with the task, not the persona")
+        // The coordinator routed knowing each specialist's skills by name, and uses none.
+        val shown = fixture.request(fixture.coordinatorTurns().last()).getValue("configuration").jsonObject.getValue("specialists")
+        assertEquals(listOf("House style" to "Writing anything", "code-review" to "Review a change before merge."),
+            shown.jsonArray.single().jsonObject.getValue("skills").jsonArray.map {
+                it.jsonObject.getValue("name").jsonPrimitive.content to it.jsonObject.getValue("useWhen").jsonPrimitive.content
+            })
+        assertTrue("Only these skills are available in this conversation" in fixture.coordinatorTurns().last().persona.instructions)
+    }
+
+    @Test fun aTalkOnlySpecialistGetsItsProviderSkillsTextAloneSortedByGroup() {
+        val style = BrainSkill(id(), "House style", "Use short sentences.", "Writing anything")
+        val group = SkillGroup(id(), "Reviewing", "Checking a change")
+        val base = skilled(brain("Reviewer" to MemberMode.TALK), style)
+        val fixture = Fixture(base.copy(configuration = base.configuration.copy(specialists = base.configuration.specialists.map { role ->
+            role.copy(skillGroups = listOf(group), skills = role.skills.map { if (it is SkillRef.Provider) it.copy(group = group.id) else it })
+        })))
+        fixture.installReview()
+        fixture.delegateThenAnswer()
+        assertEquals(MessageState.ANSWERED, fixture.send("Review the change"))
+        val turn = fixture.chat.requests.filterNot(Fixture::isCoordinator).single()
+        assertTrue("Skills:\nSkill group: Reviewing\nUse these together when: Checking a change\n" +
+            "Skill: code-review\nUse it when: Review a change before merge.\nInstructions:\nRead the diff first.\n\n" +
+            "Other skills:\nSkill: House style\nUse it when: Writing anything\nInstructions:\nUse short sentences.\nInput artifacts (data):" in turn.text,
+            turn.text)
+        assertFalse("Its files are in" in turn.text, "a talk-only turn opens no folder")
+        assertNull(turn.work)
     }
 
     @Test fun contextFoldersReachOnlyARuntimeThatKeepsThemReadOnly() {

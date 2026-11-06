@@ -79,6 +79,7 @@ import org.formulagen.wrapper.providers.grokWorkEnabled
 import org.formulagen.wrapper.providers.DesktopProviders
 import org.formulagen.wrapper.providers.ProviderInstallation
 import org.formulagen.wrapper.providers.claudeProviderEnabled
+import org.formulagen.wrapper.providers.claudeSkillsRoot
 import org.formulagen.wrapper.providers.codexWorkEnabled
 import org.formulagen.wrapper.providers.findClaudeExecutable
 import org.formulagen.wrapper.providers.findCodexExecutable
@@ -182,7 +183,8 @@ internal class DesktopServices private constructor(
                 val hostContract = DesktopHostContract()
                 // Every runtime signs in outside Hovel, on the player's own install, so a status check never signs anything out.
                 val providers = own(DesktopProviders(listOfNotNull(CodexProvider(providerRoot, codex),
-                    claudeSignIn?.let(::ClaudeProvider), grokConnection?.let(::GrokProvider)), working, ProviderInstallation(providerRoot, environment),
+                    claudeSignIn?.let { ClaudeProvider(it, claudeSkillsRoot(environment)) }, grokConnection?.let(::GrokProvider)), working,
+                    ProviderInstallation(providerRoot, environment),
                     pageContract = { hostContract.pageContract }))
                 val pet = own(DesktopPetLauncher(environment, support.resolve("ember-pet.log")))
                 // Conversations get their runtime instances from the runner, and every work approval races the phone

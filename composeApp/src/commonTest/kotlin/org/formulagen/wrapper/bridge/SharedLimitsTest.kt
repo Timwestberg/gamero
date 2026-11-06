@@ -35,7 +35,10 @@ class SharedLimitsTest {
             "preview" to BrainLimits.PREVIEW, "returns" to BrainLimits.RETURNS, "stepInstructions" to BrainLimits.STEP_INSTRUCTIONS,
             "steps" to BrainLimits.STEPS)
         assertEquals(brain, numbers("BRAIN_LIMITS").filterKeys { it in brain })
-        assertEquals(BrainLimits.WORKFLOWS, numbers("LIBRARY_LIMITS").getValue("workflowsPerBrain"))
+        val library = mapOf("workflowsPerBrain" to BrainLimits.WORKFLOWS, "providerSkills" to BrainLimits.PROVIDER_SKILLS,
+            "providerSkillName" to BrainLimits.PROVIDER_SKILL_NAME, "useText" to BrainLimits.USE_TEXT,
+            "skillsPerSpecialistInBrain" to BrainLimits.SKILLS_PER_SPECIALIST, "skillGroups" to BrainLimits.SKILL_GROUPS)
+        assertEquals(library, numbers("LIBRARY_LIMITS").filterKeys { it in library })
         assertEquals(SharedRules.MODEL_ID_PATTERN, limits.getValue("MODEL_ID_PATTERN").jsonPrimitive.content)
         assertEquals(BridgeUpdateRequiredException.MESSAGE, limits.getValue("UPDATE_REQUIRED_MESSAGE").jsonPrimitive.content)
         assertEquals(limits.getValue("RUNTIME_PROVIDERS").jsonObject.mapValues { it.value.jsonPrimitive.content },

@@ -17,8 +17,8 @@ internal fun testConfiguration(workflow: Boolean = false): BrainConfiguration {
 
 /**
  * [testConfiguration]'s Writer and Editor in a version 2 brain of three workflows: Writing (both, in order), Editing
- * (the Editor alone, the default) and Archive (the Writer alone, disabled). Every specialist names a Hovel skill, which
- * runs keep and do not use.
+ * (the Editor alone, the default) and Archive (the Writer alone, disabled). Every specialist uses the brain's one Hovel
+ * skill, House style.
  */
 internal fun testWorkflowsConfiguration(): BrainConfiguration {
     val base = testConfiguration(workflow = true)
