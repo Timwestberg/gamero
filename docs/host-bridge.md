@@ -276,6 +276,7 @@ microphone.
 | Platform | Hook | Adapter |
 | --- | --- | --- |
 | Android | `WebChromeClient.onPermissionRequest` | `androidMain/.../AndroidMediaGrant.kt`. `MediaChromeClient` changes only `onPermissionRequest` in the library's chrome client, and keeps the other callbacks. `AndroidMediaRequests` asks Android for `RECORD_AUDIO` and `CAMERA` at runtime, one prompt at a time. The manifest declares both, and `MODIFY_AUDIO_SETTINGS`. |
+| Mac (JCEF) | CEF `OnRequestMediaAccessPermission` (`CefPermissionHandler`) | `jvmMain/.../JcefMediaGrant.kt`. It reads CEF's requesting origin and `frame.isMain()`. A grant continues with the requested device bits, and anything else cancels. A request for screen capture is denied in full. Never `--enable-media-stream`. See [desktop.md](desktop.md#camera-and-microphone). |
 
 **The library default on Android.** compose-webview-multiplatform 2.0.3 has
 its own `onPermissionRequest`. It grants the camera and the microphone to any
@@ -290,7 +291,8 @@ can already run script in the main document, so this gives it nothing new.
 
 Tests: `MediaGrantTest` (commonTest) covers origins, frames and kinds.
 `AndroidMediaGrantTest` (androidUnitTest) covers the prompt, the order of
-requests, a cancel and a close.
+requests, a cancel and a close. `JcefMediaGrantTest` (jvmTest) covers the
+permission bits, screen capture and the handler's answers.
 
 ## Recipe: add a platform target
 
