@@ -276,6 +276,7 @@ microphone.
 | Platform | Hook | Adapter |
 | --- | --- | --- |
 | Android | `WebChromeClient.onPermissionRequest` | `androidMain/.../AndroidMediaGrant.kt`. `MediaChromeClient` changes only `onPermissionRequest` in the library's chrome client, and keeps the other callbacks. `AndroidMediaRequests` asks Android for `RECORD_AUDIO` and `CAMERA` at runtime, one prompt at a time. The manifest declares both, and `MODIFY_AUDIO_SETTINGS`. |
+| iOS | `WKUIDelegate` `requestMediaCapturePermissionFor` | `iosMain/.../IosMediaGrant.kt`. `MediaUIDelegate` reads the requesting frame's origin and main-frame flag, as the bridge does, and answers grant or deny. `mediaWebViewFactory` makes the WKWebView with this delegate and inline playback. The page that is not Hovel gets a delegate that denies every request. See [ios.md](ios.md#camera-and-microphone). |
 
 **The library default on Android.** compose-webview-multiplatform 2.0.3 has
 its own `onPermissionRequest`. It grants the camera and the microphone to any
@@ -290,7 +291,8 @@ can already run script in the main document, so this gives it nothing new.
 
 Tests: `MediaGrantTest` (commonTest) covers origins, frames and kinds.
 `AndroidMediaGrantTest` (androidUnitTest) covers the prompt, the order of
-requests, a cancel and a close.
+requests, a cancel and a close. `IosMediaGrantTest` (iosTest) covers the
+capture types and the page that is not Hovel.
 
 ## Recipe: add a platform target
 
