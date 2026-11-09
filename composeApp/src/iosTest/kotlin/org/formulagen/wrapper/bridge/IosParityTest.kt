@@ -18,7 +18,7 @@ class IosParityTest {
             override suspend fun append(args: ListsLocalAppend) = Unit
             override suspend fun commit(transferId: String) = Unit
         }
-        val bridge = HostBridge(HOVEL_PRODUCT, "https://hovel.example/hovel.html", iosHostCapabilities("test"), iosHovelBridgePacks(FakeApprovalCapability(), FakeApprovalDeviceCapability(), lists))
+        val bridge = HostBridge(HOVEL_PRODUCT, "https://hovel.example/hovel.html", iosHostCapabilities("test"), iosHovelBridgePacks(FakeApprovalCapability(), FakeApprovalDeviceCapability(), lists, FakeVoiceInputCapability(), FakeVoicePlaybackCapability()))
         try {
             assertMatchesParity(HostPlatform.IOS, bridge.router, pending)
         } finally {

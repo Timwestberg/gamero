@@ -22,7 +22,7 @@ import platform.darwin.dispatch_get_main_queue
  * script only runs in documents that load after it is added.
  */
 @OptIn(ExperimentalForeignApi::class)
-class IosHostBridge(private val webView: WKWebView, private val bridge: HostBridge) : AutoCloseable {
+class IosHostBridge(private val webView: WKWebView, private val bridge: HostBridge, private val onDocumentEnded: () -> Unit = {}) : AutoCloseable {
     private val controller: WKUserContentController = webView.configuration.userContentController
     private val transport = WebKitHostTransport(bridge) { json -> onMain { postEvent(json) } }
 
@@ -38,7 +38,7 @@ class IosHostBridge(private val webView: WKWebView, private val bridge: HostBrid
                 is String -> transport.receive(body, PageFrame(frame.mainFrame, originOf(frame)), { json -> onMain { replyHandler(json, null) } })
                 else -> if (isDocumentStart(body)) {
                     // The document-start script. A page can send the same thing, which only ends its own context.
-                    if (frame.mainFrame) transport.documentStarted()
+                    if (frame.mainFrame) { onDocumentEnded(); transport.documentStarted() }
                     replyHandler(null, null)
                 } else {
                     // Anything else is a client bug; it must not end the context silently.
@@ -63,6 +63,7 @@ class IosHostBridge(private val webView: WKWebView, private val bridge: HostBrid
     }
 
     override fun close() {
+        onDocumentEnded()
         controller.removeScriptMessageHandlerForName(OBJECT_NAME, WKContentWorld.pageWorld)
         bridge.close()
     }
