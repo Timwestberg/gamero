@@ -58,6 +58,8 @@ kotlin {
         iosArm64(),
         iosSimulatorArm64()
     ).forEach { iosTarget ->
+        // Native SQLite is needed by standalone tests as well as the Xcode app.
+        iosTarget.binaries.all { linkerOpts("-lsqlite3") }
         iosTarget.binaries.framework {
             baseName = "ComposeApp"
             isStatic = true
@@ -99,6 +101,7 @@ kotlin {
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.koin.core)
             implementation(libs.multiplatform.settings)
+            implementation("app.cash.sqldelight:runtime:2.1.0")
 
 
         }
@@ -106,7 +109,11 @@ kotlin {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutinesTest)
         }
+        if (iosTargets) getByName("iosMain").dependencies {
+            implementation("app.cash.sqldelight:native-driver:2.1.0")
+        }
         jvmTest.dependencies {
+            implementation("app.cash.sqldelight:sqlite-driver:2.1.0")
             implementation(libs.kotlin.testJunit)
             implementation("org.jetbrains.compose.ui:ui-test:${libs.versions.composeMultiplatform.get()}")
         }

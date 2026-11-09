@@ -258,6 +258,7 @@ internal fun desktopProductPacks(
         add(ConversationVoiceMethods.pack(supportedIfPresent(conversationVoice)))
         add(ApprovalMethods.pack(Capability.Unsupported))
         add(ApprovalDeviceMethods.pack(Capability.Unsupported))
+        add(org.formulagen.wrapper.bridge.ListsLocalMethods.pack(Capability.Unsupported))
         add(HostContractMethods.pack(supportedIfPresent(hostContract)))
     }
     add(ProviderMethods.pack(supportedIfPresent(providers)).guardedBy(pageCheck))

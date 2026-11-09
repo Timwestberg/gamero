@@ -94,6 +94,7 @@ internal fun hovelBridgePacks(approvals: ApprovalCapability? = null, devices: Ap
     org.formulagen.wrapper.bridge.ConversationVoiceMethods.pack(Capability.Unsupported),
     ApprovalMethods.pack(approvals?.let { Capability.Supported(it) } ?: Capability.Unsupported),
     ApprovalDeviceMethods.pack(devices?.let { Capability.Supported(it) } ?: Capability.Unsupported),
+    org.formulagen.wrapper.bridge.ListsLocalMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.HostContractMethods.pack(Capability.Unsupported),
 )
 
