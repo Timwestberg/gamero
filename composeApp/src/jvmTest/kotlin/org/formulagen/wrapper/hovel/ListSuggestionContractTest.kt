@@ -25,10 +25,10 @@ class ListSuggestionContractTest {
         assertEquals(ListLimits.SUGGESTIONS_MAX, number("suggestionsMax"))
         assertEquals(ListLimits.ITEMS_PER_LIST_MAX, number("itemsPerListMax"))
         assertEquals(ListLimits.AVOID_MAX, number("avoidMax"))
-        assertEquals(ListLimits.DURATIONS, limits.getValue("durations").jsonArray.map { it.jsonPrimitive.int })
+        assertEquals(ListLimits.DURATION_MAX * 60, number("durationSecondsMax"))
         // The server's schema keeps this name.
         val heartbeat = fromWire(HostHeartbeat.serializer(), value("heartbeat"))
-        assertTrue(ListSuggestionLane.FEATURES.single() in heartbeat.features)
+        assertTrue(ListSuggestionLane.FEATURES.all { it in heartbeat.features })
     }
 
     @Test fun theContractsOwnPayloadsAreOnesTheMacReadsAndWrites() {

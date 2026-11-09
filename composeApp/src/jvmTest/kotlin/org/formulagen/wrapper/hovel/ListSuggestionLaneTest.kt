@@ -92,6 +92,27 @@ class ListSuggestionLaneTest {
         }
     }
 
+    @Test fun draftAssistanceReturnsAProposalWithoutWritingAnItem() {
+        val input = buildJsonObject {
+            put("draftId", id()); put("turnId", id()); put("expectedRevision", 3)
+            put("utterance", "Add three sets of squats"); putJsonObject("draft") { put("title", "") }
+        }
+        val server = Server(JsonObject(work + ("draftAssistance" to input)))
+        val codex = Codex("""{"reply":"Review these squats before adding.","proposal":{"title":"Squats"},"expectedRevision":3}""")
+        lane(server, codex).use { worker ->
+            val request = id()
+            worker.request(request)
+            eventually { server.replies.isNotEmpty() }
+            val reply = assertIs<SuggestionReply.Draft>(server.reply(request))
+            assertEquals(3, reply.expectedRevision)
+            assertEquals("Squats", reply.proposal.getValue("title").jsonPrimitive.content)
+            assertEquals(1, codex.requests.size)
+            assertTrue("Never claim anything was saved" in codex.requests.single().prompt)
+        }
+        assertNull(parseDraftAnswer(codex.text, 4), "stale revisions are rejected")
+        assertNull(parseDraftAnswer("""{"reply":"","proposal":{},"expectedRevision":3}""", 3))
+    }
+
     @Test fun aCodexThatIsNotReadyAnswersUnavailableWithoutRunning() {
         val server = Server(work)
         val codex = Codex(answer)
@@ -202,7 +223,7 @@ class ListSuggestionLaneTest {
             Thread.sleep(100)
             assertTrue(server.replies.isEmpty())
         }
-        assertEquals(listOf("list-suggestions"), ListSuggestionLane.FEATURES)
+        assertEquals(listOf("list-suggestions", "list-draft-assistance"), ListSuggestionLane.FEATURES)
     }
 
     @Test fun aRequestTheServerHasFinishedGetsNoReplyAndNoCodex() {

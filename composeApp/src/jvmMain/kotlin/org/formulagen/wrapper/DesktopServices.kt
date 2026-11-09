@@ -16,6 +16,9 @@ import org.formulagen.wrapper.bridge.ProviderMethods
 import org.formulagen.wrapper.bridge.guardedBy
 import org.formulagen.wrapper.bridge.ApprovalDeviceMethods
 import org.formulagen.wrapper.bridge.ApprovalMethods
+import org.formulagen.wrapper.bridge.VoicePlaybackMethods
+import org.formulagen.wrapper.bridge.VoiceInputMethods
+import org.formulagen.wrapper.conversation.voice.DesktopVoiceInput
 import org.formulagen.wrapper.bridge.ConversationVoiceMethods
 import org.formulagen.wrapper.bridge.HostContractMethods
 import org.formulagen.wrapper.bridge.ProjectMethods
@@ -104,6 +107,7 @@ internal class DesktopServices private constructor(
     val games: DesktopGameLauncher?,
     /** `conversationVoice.*`: voice in project conversations; null without conversations on this Mac. */
     val conversationVoice: DesktopConversationVoice?,
+    val voiceInput: DesktopVoiceInput?,
     /** The voice row of the conversation the voice serves. */
     val conversationPicker: VoicePickerModel,
     private val owned: List<AutoCloseable>,
@@ -111,7 +115,7 @@ internal class DesktopServices private constructor(
     /** The product capability packs [product] registers with the bridge. */
     fun packs(product: String): List<CapabilityPack> =
         desktopProductPacks(product, companion?.let(::HovelCompanionCapability), providers, pet, games, conversations?.projects,
-            hostContract, conversationVoice, pageCheck = hostContract::requireCurrentPage)
+            hostContract, conversationVoice, pageCheck = hostContract::requireCurrentPage, voiceInput = voiceInput, playback = voiceInput)
 
     /**
      * The page's document context ended: forget its contract, close its game, void a pending approval and let go of
@@ -120,6 +124,7 @@ internal class DesktopServices private constructor(
     fun invalidate() {
         hostContract.invalidate()
         companion?.invalidatePending()
+        voiceInput?.invalidate()
         conversationVoice?.pageEnded()
         games?.let { EventQueue.invokeLater(it::close) }
     }
@@ -192,9 +197,11 @@ internal class DesktopServices private constructor(
                 val grokRoot = ConversationHost.grokRoot(providerRoot)
                 val conversationsHere = product == HOVEL_PRODUCT && System.getProperty("os.name").contains("Mac")
                 val conversationPicker = VoicePickerModel()
+                val localSpeech = DesktopSpeech(desktopVoiceConfig(environment), route::openLine)
                 val conversationVoice = if (conversationsHere) own(DesktopConversationVoice(
-                    DesktopSpeech(desktopVoiceConfig(environment), route::openLine), hearing, talkSettings, conversationPicker,
+                    localSpeech, hearing, talkSettings, conversationPicker,
                 )) else null
+                val voiceInput = if (conversationsHere) own(DesktopVoiceInput(hearing.user(), localSpeech)) else null
                 val conversations = if (conversationsHere) own(ConversationHost(
                     providerRoot, ProjectFolderStore(providerRoot, NativeFolderPicker { window }), providers, nativeDialogs, offered, working,
                     talk = { retained ->
@@ -221,7 +228,7 @@ internal class DesktopServices private constructor(
                     DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }
                 } else null
                 return DesktopServices(providers, pet, dialogs, companion, conversations, hostContract, games, conversationVoice,
-                    conversationPicker, owned.toList())
+                    voiceInput, conversationPicker, owned.toList())
             } catch (error: Throwable) {
                 runCatching { closeInReverse(owned) }.exceptionOrNull()?.let(error::addSuppressed)
                 throw error
@@ -249,12 +256,16 @@ internal fun desktopProductPacks(
     hostContract: HostContractCapability? = null,
     conversationVoice: ConversationVoiceCapability? = null,
     pageCheck: () -> Unit = {},
+    voiceInput: org.formulagen.wrapper.bridge.VoiceInputCapability? = null,
+    playback: org.formulagen.wrapper.bridge.VoicePlaybackCapability? = null,
 ): List<CapabilityPack> = buildList {
     if (product == HOVEL_PRODUCT) {
         add(CompanionMethods.pack(supportedIfPresent(companion)).guardedBy(pageCheck))
         add(ProjectMethods.pack(supportedIfPresent(projects)).guardedBy(pageCheck))
         // Project workspaces have no implementation yet, so their methods stay out of host.capabilities.
         add(ProjectWorkspaceMethods.pack(Capability.Unsupported))
+        add(VoiceInputMethods.pack(supportedIfPresent(voiceInput)))
+        add(VoicePlaybackMethods.pack(supportedIfPresent(playback)))
         add(ConversationVoiceMethods.pack(supportedIfPresent(conversationVoice)))
         add(ApprovalMethods.pack(Capability.Unsupported))
         add(ApprovalDeviceMethods.pack(Capability.Unsupported))

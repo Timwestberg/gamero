@@ -18,7 +18,9 @@ internal fun iosHostCapabilities(appVersion: String): HostCapabilities = HostCap
  * `unsupported`. Phone approvals are iOS's own: [approvals] shows an approval natively and [devices] registers
  * this phone as an approval device (both `PhoneApprovals` in the app).
  */
-internal fun iosHovelBridgePacks(approvals: ApprovalCapability, devices: ApprovalDeviceCapability, lists: ListsLocalCapability): List<CapabilityPack> = listOf(
+internal fun iosHovelBridgePacks(approvals: ApprovalCapability, devices: ApprovalDeviceCapability, lists: ListsLocalCapability, voice: VoiceInputCapability? = null, playback: VoicePlaybackCapability? = null): List<CapabilityPack> = listOf(
+    VoicePlaybackMethods.pack(if (playback == null) Capability.Unsupported else Capability.Supported(playback)),
+    VoiceInputMethods.pack(if (voice == null) Capability.Unsupported else Capability.Supported(voice)),
     ListsLocalMethods.pack(Capability.Supported(lists)),
     CompanionMethods.pack(Capability.Unsupported),
     ProviderMethods.pack(Capability.Unsupported),

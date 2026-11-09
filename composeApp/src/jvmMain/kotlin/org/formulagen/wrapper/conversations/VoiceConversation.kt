@@ -279,7 +279,7 @@ internal class VoiceConversation(
             log(LogLevel.Info, "hearing", "latency endpoint_to_claimed_ms=$claimedMs")
         }
         val own = heard != null && heard.session == session
-        val run = Running(messageId, own || talk.on || claim.conversation.speak, own, stop)
+        val run = Running(messageId, (own || talk.on || claim.conversation.speak) && claim.message.playback != "local", own, stop)
         running = run
         changedLocked()
         listener(run)

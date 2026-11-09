@@ -100,6 +100,7 @@ internal data class ConversationMessage(
     val understanding: SharedUnderstanding? = null,
     val communication: ConversationCommunication? = null,
     val direction: MessageDirection? = null,
+    val playback: String? = null,
 )
 
 /** `artifactInput`: a text a sent message attaches. A heard voice turn attaches none. */

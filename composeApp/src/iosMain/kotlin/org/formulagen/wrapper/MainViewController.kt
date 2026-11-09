@@ -12,6 +12,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.ComposeUIViewController
 import com.multiplatform.webview.web.NativeWebView
 import org.formulagen.wrapper.bridge.HostBridge
+import org.formulagen.wrapper.bridge.IosVoiceInput
 import org.formulagen.wrapper.bridge.IosHostBridge
 import org.formulagen.wrapper.bridge.MediaUIDelegate
 import org.formulagen.wrapper.bridge.TrustedOrigin
@@ -39,6 +40,7 @@ fun MainViewController() = ComposeUIViewController {
         }
     } else {
         val hovel = product == "hovel"
+        val voice = remember { if (hovel) IosVoiceInput() else null }
         val attached = remember { arrayOfNulls<IosHostBridge>(1) }
         // One approval device for the app's lifetime, so a dialog outlives a page reload.
         val lists = remember { if (hovel) IosListsReplica(url) else null }
@@ -47,6 +49,7 @@ fun MainViewController() = ComposeUIViewController {
             onDispose {
                 attached[0]?.close()
                 approvals?.close()
+                voice?.close()
             }
         }
         val attach = { webView: NativeWebView ->
@@ -54,9 +57,10 @@ fun MainViewController() = ComposeUIViewController {
             // a registration an earlier page prepared is never finished by this one
             approvals?.invalidatePending()
             lists?.invalidatePending()
+            voice?.invalidate()
             // Only Hovel adds its packs, so another product's host answers unknown-method for companion.*.
-            val products = approvals?.let { iosHovelBridgePacks(it, it, checkNotNull(lists)) } ?: emptyList()
-            attached[0] = IosHostBridge(webView, HostBridge(if (hovel) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME, url, iosHostCapabilities(appVersion()), products))
+            val products = approvals?.let { iosHovelBridgePacks(it, it, checkNotNull(lists), voice, voice) } ?: emptyList()
+            attached[0] = IosHostBridge(webView, HostBridge(if (hovel) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME, url, iosHostCapabilities(appVersion()), products), onDocumentEnded = { voice?.invalidate() })
         }
         // Only Hovel's page gets the camera and microphone. WKWebView keeps its UI delegate weakly, so it lives here.
         val media = remember { MediaUIDelegate(if (hovel) TrustedOrigin(url) else null) }

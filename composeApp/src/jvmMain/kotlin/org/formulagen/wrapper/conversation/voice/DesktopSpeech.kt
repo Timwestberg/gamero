@@ -32,6 +32,8 @@ import org.formulagen.wrapper.util.loggingDaemonThreads
 /** The conversation's voice owns when to speak; an audio failure must not discard its text. */
 internal interface ChatSpeech : AutoCloseable {
     fun status(): ChatVoice
+    /** Distinguishes playback owners when this speaker is shared. */
+    fun playbackRevision(): Int = 0
     fun speak(text: String)
     fun stop()
     fun kokoroActive(): Boolean = false
@@ -95,6 +97,7 @@ internal class DesktopSpeech(
     private var state = unavailable ?: ChatVoice()
 
     override fun status(): ChatVoice = synchronized(gate) { state }
+    override fun playbackRevision(): Int = synchronized(gate) { generation }
 
     override fun onVoice(listener: () -> Unit) {
         synchronized(gate) { onVoice = listener }

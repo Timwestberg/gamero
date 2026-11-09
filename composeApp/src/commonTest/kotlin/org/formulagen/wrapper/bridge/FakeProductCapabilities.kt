@@ -87,3 +87,28 @@ class FakeHostContractCapability : HostContractCapability {
         return 1
     }
 }
+
+/** Fixture capture never opens a device microphone. */
+class FakeVoiceInputCapability : VoiceInputCapability {
+    override suspend fun availability() = VoiceInputAvailability("ready", true)
+    override suspend fun start(args: VoiceInputStart) = VoiceInputSnapshot(args.sessionId, state = "listening")
+    override suspend fun stop(args: VoiceInputStop) = VoiceInputSnapshot(args.sessionId, state = "done", final = "hello")
+    override suspend fun status(args: VoiceInputScope) = VoiceInputSnapshot(args.sessionId, state = "listening")
+}
+class FakeVoicePlaybackCapability : VoicePlaybackCapability {
+    override suspend fun speak(args: LocalSpeechArgs) = LocalSpeechStatus(args.sessionId, "speaking")
+    override suspend fun stopSpeech(args: VoiceInputScope) = LocalSpeechStatus(args.sessionId, "cancelled")
+    override suspend fun speechStatus(args: VoiceInputScope) = LocalSpeechStatus(args.sessionId, "done")
+}
+
+
+/** Storage capability presence for parity; persistence is covered by storage tests. */
+internal class FakeListsLocalCapability : ListsLocalCapability {
+    override suspend fun authorize(proof: String) = ListsLocalOwner("00000000-0000-4000-8000-000000000001")
+    override suspend fun account() = ListsLocalAccount(ExplicitNull(null))
+    override suspend fun lock() {}
+    override suspend fun read(expectedOwnerId: String, offset: Int) = ListsLocalPage(0, 0, "")
+    override suspend fun begin(expectedOwnerId: String, expectedRevision: Long, size: Int) = ListsLocalTransfer("00000000-0000-4000-8000-000000000002")
+    override suspend fun append(args: ListsLocalAppend) {}
+    override suspend fun commit(transferId: String) {}
+}

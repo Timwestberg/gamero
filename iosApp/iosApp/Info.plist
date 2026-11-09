@@ -11,7 +11,9 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Hovel uses the camera when you turn on your video in a meeting.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Hovel uses the microphone so people in a meeting can hear you.</string>
+	<string>Hovel uses the microphone when you dictate, talk to a companion, or join a meeting.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Hovel transcribes your speech when you choose Dictate or Talk.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
