@@ -54,7 +54,8 @@ class MediaUIDelegate(private val origin: TrustedOrigin?) : NSObject(), WKUIDele
  * The WebView factory for `App`: the library's WKWebView with [delegate] as its UI delegate. It turns on
  * inline playback, which the library also does, because without it a camera shows black (WebKit bug 220184).
  */
-fun mediaWebViewFactory(delegate: MediaUIDelegate): (WebViewFactoryParam) -> NativeWebView = { param ->
+fun mediaWebViewFactory(delegate: MediaUIDelegate, appBound: Boolean = false): (WebViewFactoryParam) -> NativeWebView = { param ->
     param.config.allowsInlineMediaPlayback = true
+    param.config.limitsNavigationsToAppBoundDomains = appBound
     defaultWebViewFactory(param).apply { UIDelegate = delegate }
 }
