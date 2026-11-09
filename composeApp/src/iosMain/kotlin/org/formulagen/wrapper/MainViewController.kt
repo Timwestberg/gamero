@@ -22,8 +22,10 @@ import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.hovel.HovelIosApp
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
+import org.formulagen.wrapper.lists.IosListsReplica
 import org.formulagen.wrapper.phone.iosPhoneApprovals
 import platform.Foundation.NSBundle
+import platform.Foundation.NSURL
 
 private const val TAG = "MainViewController"
 
@@ -39,6 +41,7 @@ fun MainViewController() = ComposeUIViewController {
         val hovel = product == "hovel"
         val attached = remember { arrayOfNulls<IosHostBridge>(1) }
         // One approval device for the app's lifetime, so a dialog outlives a page reload.
+        val lists = remember { if (hovel) IosListsReplica(url) else null }
         val approvals = remember { if (hovel) iosPhoneApprovals(url) else null }
         DisposableEffect(Unit) {
             onDispose {
@@ -50,13 +53,16 @@ fun MainViewController() = ComposeUIViewController {
             attached[0]?.close()
             // a registration an earlier page prepared is never finished by this one
             approvals?.invalidatePending()
+            lists?.invalidatePending()
             // Only Hovel adds its packs, so another product's host answers unknown-method for companion.*.
-            val products = approvals?.let { iosHovelBridgePacks(it, it) } ?: emptyList()
+            val products = approvals?.let { iosHovelBridgePacks(it, it, checkNotNull(lists)) } ?: emptyList()
             attached[0] = IosHostBridge(webView, HostBridge(if (hovel) HOVEL_PRODUCT else GAMERO_PRODUCT_NAME, url, iosHostCapabilities(appVersion()), products))
         }
         // Only Hovel's page gets the camera and microphone. WKWebView keeps its UI delegate weakly, so it lives here.
         val media = remember { MediaUIDelegate(if (hovel) TrustedOrigin(url) else null) }
-        val webViewFactory = remember(media) { mediaWebViewFactory(media) }
+        val boundDomains = NSBundle.mainBundle.objectForInfoDictionaryKey("WKAppBoundDomains") as? List<*>
+        val appBound = hovel && boundDomains?.contains(NSURL.URLWithString(url)?.host) == true
+        val webViewFactory = remember(media, appBound) { mediaWebViewFactory(media, appBound) }
         if (hovel) HovelIosApp(url, onPageLoaded = ::logPageLoaded, onWebViewCreated = attach, webViewFactory = webViewFactory)
         else App(url, onWebViewCreated = attach, webViewFactory = webViewFactory, onPageLoaded = ::logPageLoaded)
     }
