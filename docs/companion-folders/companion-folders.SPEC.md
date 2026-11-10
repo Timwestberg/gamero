@@ -1,7 +1,8 @@
 # Companion folders
 
-Status: draft for review, 2026-11-10. Nothing here is built. "Decisions needed"
-lists what was filled in by inference.
+Status: draft for review, revised 2026-11-10. Nothing here is built.
+"Decided" lists what has been agreed; "Decisions needed" lists what was
+filled in by inference.
 
 ## What
 
@@ -14,12 +15,14 @@ Finder. It holds, per conversation:
   coordinator;
 - a scratch area for temporary handoff files, cleaned up by rule.
 
-The coordinator also gets read-only access to the project's folder, so the
-companion can answer a question about the project's files itself.
+The coordinator also gets a view of the project it is attached to: a short
+brief of the project in every turn, and a way to ask Hovel to read files for
+it. It never gets file tools of its own.
 
 It ships in two steps. Step 1 is the visible folder of outputs. Step 2 is the
-shared notes, the scratch area and the coordinator's read access, which share
-one approval rule because all three are about what an agent may read.
+shared notes, the scratch area and the coordinator's view of the project,
+which share one approval rule because all three are about what an agent may
+read.
 
 ```
 ~/Hovel/
@@ -43,8 +46,13 @@ one approval rule because all three are about what an agent may read.
   again; its own private record stays the truth (see Behavior).
 - Sending files to the phone or the server. The phone keeps showing the short
   preview of each output that it shows today.
-- Write access for the coordinator. It reads; a working specialist changes
-  files.
+- A provider's own file tools for the coordinator, and any write access for
+  it. Hovel reads for it; a working specialist changes files.
+- A code graph or another third-party index of the project. One was tested
+  and not recommended: see `project-index-spike.md`.
+- Proving that a working specialist's read-only folders stay read-only. That
+  is still unproven for both providers (`ContextFolderSupport.UNVERIFIED`,
+  `ContextFolderProbeTest`) and is separate work; nothing here depends on it.
 - Agents that talk to each other with no coordinator turn at all. The notes
   file shares context; the coordinator still decides who runs.
 - iPhone and Android. This is the Mac app.
@@ -127,19 +135,50 @@ can open, search, back up and delete.
 - Scratch is emptied when the run that used it completes, and whatever is
   left is deleted after 7 days. It is never listed in `index.md`.
 
-### Read access for the coordinator (step 2)
+### The coordinator's view of the project (step 2)
 
-- With the person's approval, a coordinator turn can read the project's
-  working folder, its read-only folders, and the conversation's own folder.
-  It cannot write, run commands, or reach the network.
-- The first time in a conversation, the Mac asks: "Ember wants to read
-  `my-shopping-list` with Codex." It is the dialog that a specialist's start
-  of work uses today, and it is remembered for the same thing: this
-  conversation, project, folder and provider.
-- Without approval, or on a provider that cannot be held to read-only, the
-  coordinator behaves as it does today: it names the folder and delegates.
-- A reading turn has a budget, so a spoken reply does not stall: when it
-  cannot answer within the budget, it hands the question to a specialist.
+The coordinator has no tools, on any provider. Hovel reads for it. Two
+things reach it, both as data and never as instructions.
+
+**Approval.** The first time in a conversation, the Mac asks: "Ember wants to
+read `my-shopping-list` with Codex." It is the dialog a specialist's start of
+work uses today, remembered for this conversation, project, folder and
+provider. Without approval the coordinator behaves as it does today: it
+names the folder and delegates.
+
+**The project brief.** A short description of the project that Hovel builds
+itself and puts in every main-conversation turn.
+
+- It holds the manifest (name, scripts, what it depends on), the start of
+  the README, and a listing of folders with their first files.
+- It is at most 10,000 characters. On the Hovel web app's source (1,014
+  files) it measured 9,738 characters and took 3 ms to build.
+- It is built when the project gets its folder, and again when the folder
+  has changed: after a working specialist's turn ends, and when the app
+  starts. Building costs milliseconds, so there is no schedule.
+- It is kept in Hovel's private store. Nothing is written into the project's
+  folder.
+
+**Reading files.** When the brief is not enough, the coordinator asks Hovel
+in its reply, the way it asks to delegate. It can list a folder, search for
+text, and read files, several in one request.
+
+- Hovel checks every path. A path is read only when, after links are
+  resolved, it is inside the project's working folder, one of its read-only
+  folders, or the conversation's own folder. Anything else is refused and
+  the coordinator is told so.
+- Secrets and noise are skipped whatever is asked: `.env` files, key files,
+  `.git`, dependency and build folders, and files that are not text. A long
+  file is given in part, with a note that it was cut.
+- What was read comes back as data on a follow-up turn of the same message.
+- A message has a budget: two rounds of reading and 32,000 characters in
+  all. After that the coordinator answers with what it has, or hands the
+  question to a specialist.
+- The conversation shows what was read, as a line of activity: "Ember read
+  3 files", with their names.
+- In Talk, Hovel says "Let me look at the project." as soon as a read is
+  asked for. No model is needed for that line.
+- A turn that asks for no file costs nothing more than it does today.
 
 ### Cleanup
 
@@ -149,6 +188,7 @@ can open, search, back up and delete.
 | Outputs, `index.md`, `notes.md` | The conversation is deleted |
 | A conversation's folder | The conversation is deleted: it moves to the Trash |
 | A companion's folder | The companion is deleted: it moves to the Trash |
+| A project's brief | The project loses its folder, or is deleted |
 
 - A folder goes to the Trash, not straight to nothing, so a mistaken delete
   can be undone. A folder the person moved or renamed by hand is left alone
@@ -163,15 +203,30 @@ can open, search, back up and delete.
 
 - Nothing in a companion folder leaves the Mac. What reaches the server is
   what reaches it today: a preview of each output, up to 512 characters.
-- Neither provider's read-only mode is proven yet. Both work runtimes mark
-  read-only folders as unverified (`ContextFolderSupport.UNVERIFIED`), so
-  the read access ships only for a provider that passes a live check.
-- A Claude coordinator turn is one model turn with every tool off. Reading
-  files needs read tools and more than one turn, which changes its cost and
-  its speed.
+- **What the coordinator reads goes to its provider, and what it quotes goes
+  to the server.** The brief and any file text are sent to the model on the
+  person's own subscription. Anything the coordinator repeats in its reply is
+  stored as a conversation message, as every reply is. The approval dialog
+  is where the person agrees to that.
+- **Read-only and scope are Hovel's own code.** No provider setting is
+  trusted, so they are proven by ordinary tests of the path check: links,
+  `..`, names that differ only by case, and paths outside the folders.
+- **A file can try to instruct the coordinator.** It has no tools, so the
+  most it can do is answer wrongly or propose a handoff, and a handoff to a
+  working specialist is already gated by the person's approval.
+- **A read costs one more model round.** The time from the person's message
+  to the first word of the reply is measured before and after, in text and
+  in Talk.
 - The handoff rules that depend on an output's exact content (stage consent
   binds to input digests) keep using the private record, which is why the
   visible files are write-once copies.
+
+## Decided
+
+- **Hovel reads for the coordinator; it gets no provider file tools.**
+  (2026-11-10)
+- **The project index is a brief Hovel builds itself, not a third-party
+  graph.** (2026-11-10, after the spike in `project-index-spike.md`)
 
 ## Decisions needed
 
@@ -188,10 +243,22 @@ different.
 5. **The read approval is asked again after each restart**, as start of work
    is today. Remembering it across restarts is friendlier and is a separate,
    small change that would cover both.
-6. **The numbers:** notes of 2,000 characters, 8,000 characters given to a
-   turn, scratch kept 7 days, a warning at 1 GB.
+6. **The numbers:** notes of 2,000 characters, 8,000 characters of notes
+   given to a turn, scratch kept 7 days, a warning at 1 GB, a brief of
+   10,000 characters, and a reading budget of two rounds and 32,000
+   characters.
 7. **No provider subfolders.** You proposed them; this draft records the
    provider in `index.md` instead.
+8. **The brief is rebuilt when the project changes, not at the end of each
+   day.** You proposed a daily update. A brief that is a day old is wrong
+   during the hours agents are changing the project, and a rebuild costs
+   milliseconds.
+9. **The brief needs the same approval as reading.** Before approval the
+   coordinator gets only the folder's name, as today.
+10. **The skip list is fixed**: `.env` files, key files, `.git`, dependency
+    and build folders, files that are not text. The other choice is to also
+    follow the project's `.gitignore`.
+11. **The conversation shows what the coordinator read**, by file name.
 
 <!-- IMPLEMENTATION-PLAN:START -->
 
@@ -220,10 +287,23 @@ Step 1, the visible folder:
 
 Step 2, shared context:
 
-- **Prove read-only.** A live check per provider that a coordinator turn can
-  read the folder and cannot write, run a command or reach outside what it
-  was given. Depends on nothing; it gates the read access. Done when each
-  provider is marked verified or not.
+- **Measure the coordinator today.** Time from message to first word, in text
+  and in Talk, on each provider. Depends on nothing. Done when there is a
+  number to compare the later tasks against.
+- **The path check.** One function that says whether a path may be read, with
+  the skip list, and its tests. Depends on nothing; everything that reads
+  goes through it. Done when links, `..`, case and outside paths are each
+  refused by a test.
+- **The project brief.** Building it, its limit, when it is rebuilt, and its
+  place in the coordinator's turn. Depends on the path check. Done when the
+  coordinator answers "what is this project?" with no handoff and no read.
+- **The approval.** The dialog and what is remembered, covering the brief and
+  reading. Depends on the approval rule being agreed. Done when no brief and
+  no file text is sent before the person approves.
+- **Read requests.** The reply format, the follow-up turn, the budget, the
+  activity line and the spoken line in Talk. Depends on the path check and
+  the approval. Done when "what does my README say?" is answered from the
+  file, a third round is refused, and the conversation shows what was read.
 - **The notes log.** The record, its limits, `notes.md`, and the recent notes
   in every turn's input as data. Depends on step 1. Done when a second
   specialist's turn shows the first one's note.
@@ -232,9 +312,6 @@ Step 2, shared context:
   land their notes intact.
 - **Scratch.** The folder, write access for working specialists, and the two
   cleanup rules. Depends on step 1.
-- **Read access and its approval.** The dialog, what is remembered, the
-  reading budget, and the fall back to delegating. Depends on the proof and
-  on the approval rule being agreed.
 - **Cleanup on memory erase, and the size notice.** Depends on the notes log.
 
 <!-- IMPLEMENTATION-PLAN:END -->
