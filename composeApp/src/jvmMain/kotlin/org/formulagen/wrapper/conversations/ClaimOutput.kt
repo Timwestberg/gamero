@@ -39,6 +39,9 @@ internal class ClaimOutput(
     private val sequence = HashMap<String, Int>()
     private var flushing = false
 
+    /** This Mac reads the message's replies aloud. */
+    val spoken: Boolean get() = listener?.spoken == true
+
     /** Check a safe boundary and honor a Stop even when its stream event was lost. */
     fun direction(conversationId: String): Boolean = stopAware { api.direction(messageId, ClaimRequest(claimId, conversationId)) }
 

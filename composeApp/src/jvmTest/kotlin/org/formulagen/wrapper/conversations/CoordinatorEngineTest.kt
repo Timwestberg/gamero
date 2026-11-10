@@ -64,8 +64,8 @@ class CoordinatorEngineTest {
 
         /** Run [claim] here, as the runner does once it is claimed. */
         fun run(claim: ClaimResult, cancel: CancelSignal = CancelSignal(), closing: () -> Boolean = { false },
-            engine: CoordinatorEngine = this.engine): MessageState =
-            ClaimOutput(server, claim.claimId, claim.message.id, attempts = 1, onStopRequested = cancel::cancel)
+            engine: CoordinatorEngine = this.engine, listener: ReplyListener? = null): MessageState =
+            ClaimOutput(server, claim.claimId, claim.message.id, attempts = 1, onStopRequested = cancel::cancel, listener = listener)
                 .use { engine.run(claim, it, cancel, closing) }
 
         fun claim(text: String, threadId: String? = null, messageId: String = id(), history: List<ConversationMessage> = emptyList(),
@@ -241,6 +241,38 @@ Mobile first from here.""" }
         val report = direct.server.appended().mapNotNull { it.communication as? ConversationCommunication.Direction }.single()
         assertEquals(claim.message.id, report.directionMessageId)
         assertEquals("Mobile first", report.change)
+    }
+
+    /** A Mac that reads the claimed message's replies aloud. */
+    private val macSpeaks = object : ReplyListener { override val spoken = true }
+
+    @Test fun aPlainAnswerThatIsReadAloudIsWrittenForAVoice() {
+        val fixture = Fixture(brain())
+        fixture.chat.reply = { "Sure." }
+        val rules = "Hovel's rules for this answer:\n$SPOKEN_REPLY_RULES\n\n"
+        assertEquals(MessageState.ANSWERED, fixture.send("Typed, and read by eye"))
+        assertFalse(SPOKEN_REPLY_RULES in fixture.chat.requests.last().text)
+        // The phone that sent it speaks it: Talk, or Read aloud.
+        val heard = fixture.claim("Said to the phone")
+        assertEquals(MessageState.ANSWERED, fixture.run(heard.copy(message = heard.message.copy(playback = "local"))))
+        assertTrue(fixture.chat.requests.last().text.startsWith(rules))
+        // This Mac speaks it.
+        assertEquals(MessageState.ANSWERED, fixture.run(fixture.claim("Said to the Mac"), listener = macSpeaks))
+        assertTrue(fixture.chat.requests.last().text.startsWith(rules))
+        // The rules ride on the turn, so the provider's conversation is never started over for them.
+        assertEquals(1, fixture.chat.requests.map { it.persona.hash }.distinct().size)
+    }
+
+    @Test fun aCoordinatorAnswerThatIsReadAloudIsWrittenForAVoice() {
+        val fixture = Fixture(brain("Reviewer" to MemberMode.TALK))
+        fixture.decide = { "{\"kind\":\"answer\"}\nSure." }
+        assertEquals(MessageState.ANSWERED, fixture.send("Typed, and read by eye"))
+        assertFalse("spokenAnswer" in fixture.request(fixture.coordinatorTurns().last()))
+        assertEquals(MessageState.ANSWERED, fixture.run(fixture.claim("Said to the Mac"), listener = macSpeaks))
+        val spoken = fixture.coordinatorTurns().last()
+        assertEquals(SPOKEN_REPLY_RULES, fixture.request(spoken).getValue("spokenAnswer").jsonPrimitive.content)
+        assertTrue("spokenAnswer" in spoken.persona.instructions, "the protocol says what the key means")
+        assertEquals(1, fixture.coordinatorTurns().map { it.persona.hash }.distinct().size)
     }
 
     @Test fun aBrainWithoutSpecialistsStreamsAPlainAnswer() {

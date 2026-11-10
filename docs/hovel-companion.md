@@ -439,6 +439,18 @@ it themselves.
   the last. A reply Talk is speaking is never interrupted or joined: the page's
   call answers `error`. The rules are in
   [host-bridge.md](host-bridge.md#device-speech-and-notifications).
+- **An answer that will be heard is written for the ear.** When the reply to a
+  message will be read aloud, the coordinator's turn carries Hovel's rules for
+  a spoken answer (`SPOKEN_REPLY_RULES` in `ConversationPrompts.kt`): answer
+  first, short sentences, one idea each, plain words, the way a person talks,
+  and only periods, commas and question marks, with no Markdown, dashes, lists
+  or code. That is the case when the device that sent the message speaks the
+  reply (`playback: local`: Talk, or Read aloud on a phone) or this Mac does
+  (`ReplyListener.spoken`). The rules ride on the turn, as `spokenAnswer` in
+  the coordinator's request or ahead of a plain message, never in the persona:
+  turning the voice on or off does not start the provider's conversation over.
+  A thread's replies are never heard, so they never carry them. What still
+  reaches the voice with marks in it is cleaned by `normalizeForSpeech`.
 - **One conversation at a time.** `VoiceConversation` is bound to one
   conversation id, with its own share of the microphone. A page's action moves
   the voice to the conversation it names, unless Talk or dictation is on in

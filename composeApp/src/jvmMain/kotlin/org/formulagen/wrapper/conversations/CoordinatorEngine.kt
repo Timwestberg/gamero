@@ -71,6 +71,12 @@ internal class CoordinatorEngine(
         private val publishedReports = mutableSetOf<ConversationCommunication>()
 
 
+        /**
+         * The answer will be read aloud: the device that sent the message speaks it (Talk, or Read aloud on a
+         * phone), or this Mac does. A thread's replies are never heard.
+         */
+        private val spoken = claim.message.threadId == null && (claim.message.playback == "local" || out.spoken)
+
         fun run(): MessageState {
             flush(strict = false)
             return try {
@@ -166,7 +172,7 @@ internal class CoordinatorEngine(
                 val stream = ReplyStream(headed = true, optionalHeader = message.direction == null, acceptHeader = ::acceptsDirectionHeader, onUnderstanding = ::publishUnderstanding, onProgress = { publishReport(it) }) { out.delta(replyId, threadId, it) }
                 val context = record.brain.coordinatorContexts[key]?.takeIf { it.personaHash == persona.hash }
                 val input = directionInput() + if (attempt == 1) DIRECTION_REPORT_REQUIRED else ""
-                raw = turns.talk(call, role, persona, directInput(input, claim.recalledMemory, recent), context, key,
+                raw = turns.talk(call, role, persona, directInput(input, claim.recalledMemory, recent, spoken), context, key,
                     coordinator = true, stream = stream, opened = rememberCoordinator(key)).first.trim().take(CompanionLimits.MESSAGE)
                 if (acceptsDirectionHeader(splitHeader(raw).first)) break
             }
@@ -300,7 +306,7 @@ internal class CoordinatorEngine(
                 val latest = current.attempts.lastOrNull()?.outputIds?.let { handoff(it, files = false) } ?: ""
                 val request = coordinatorRequest(uuid(), current, kinds, input, latest, record.brain.messages.takeLast(10),
                     described(current.configuration))
-                conversationRequest(request, claim.recalledMemory, hint)
+                conversationRequest(request, claim.recalledMemory, hint, spoken)
             } ?: run {
                 change { it.paused(INVALID_DECISION, BrainWaitingKind.INPUT) }
                 return

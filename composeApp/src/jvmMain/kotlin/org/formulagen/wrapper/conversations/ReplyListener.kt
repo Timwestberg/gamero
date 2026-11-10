@@ -7,6 +7,9 @@ package org.formulagen.wrapper.conversations
  * the run's threads and must not block.
  */
 internal interface ReplyListener {
+    /** True when the listener reads the replies aloud, so the run writes them for a voice. */
+    val spoken: Boolean get() = false
+
     /** One more piece of reply [replyId], in order. A repaired reply streams under a new id. */
     fun delta(replyId: String, text: String) {}
 
