@@ -1,7 +1,7 @@
 # Companion folders: architecture, step 1
 
-Status: decisions agreed 2026-11-10; awaiting the go-ahead to build slice
-1a. Covers step 1 of
+Status: slice 1a is built (2026-11-10); slice 1b is not started. Covers
+step 1 of
 `companion-folders.SPEC.md`, the visible folder of outputs. Step 2 (notes,
 scratch, the coordinator's view of the project) gets its own pass once this
 one is agreed. No code is written.
@@ -87,10 +87,11 @@ internal data class FolderLedger(
 /**
  * [name] is the folder under the root as it was last seen. [from] is the
  * companion's name that Hovel made it from, so a rename in Hovel can be told
- * from a rename by hand.
+ * from a rename by hand. A folder the person renamed is [pinned]: it keeps
+ * their name.
  */
 @Serializable
-internal data class CompanionFolder(val name: String, val from: String)
+internal data class CompanionFolder(val name: String, val from: String, val pinned: Boolean = false)
 
 @Serializable
 internal data class ConversationFolder(
@@ -98,12 +99,11 @@ internal data class ConversationFolder(
     val name: String,
     /** The conversation's title that [name] was made from. */
     val from: String,
-    /** The day its first output was written, `yyyy-MM-dd`. Fixed from then on. */
+    val pinned: Boolean = false,
+    /** The day its first output was made, `yyyy-MM-dd`. Fixed from then on. */
     val startedOn: String,
     /** In the order written. An entry stays when the person deletes its file. */
     val outputs: List<MirroredOutput> = emptyList(),
-    /** True while an output could not be written; the next sync tries again. */
-    val behind: Boolean = false,
 )
 
 /** One line of `index.md`. */
@@ -140,7 +140,8 @@ internal interface CompanionFolders {
     /**
      * Brings one conversation's visible folder up to date: names it as
      * [names] says, writes every one of [outputs] not yet written, and
-     * rewrites `index.md`. Never throws; a failure sets `behind`.
+     * rewrites `index.md`. Never throws; what failed is tried again at the
+     * next call.
      */
     fun sync(names: FolderNames, outputs: List<RecordedOutput>, bytes: (ArtifactRef) -> ByteArray)
 
@@ -170,7 +171,7 @@ spec behaviours with one piece of code:
 | A new output becomes a file | It is in `outputs` and not in the ledger, so it is written |
 | A conversation that already exists is written out | The first sync finds every output missing from the ledger |
 | A rename follows | `names` differs from the ledger, so the folder is renamed first |
-| A failed write is retried | `behind` is set; the next sync writes what is still missing |
+| A failed write is retried | The output is still not in the ledger, so the next sync writes it |
 
 The engine calls it twice per message: when the message is claimed, and
 after each output is stored. Both calls pass every output of the
@@ -231,8 +232,9 @@ the conversation and makes every name unique without ` 2` suffixes.
 
 ### Failure handling
 
-- `sync` catches everything, logs it, and sets `behind`. A conversation never
-  stops because a visible file could not be written.
+- `sync` catches everything and logs it. A conversation never stops because
+  a visible file could not be written. It stops at the first output it
+  cannot write, so the numbers stay in the order the outputs were made.
 - A ledger that does not decode is not overwritten: the mirror stops for
   that account and says why in the log.
 - A marker that names another account or companion is never touched.
@@ -258,6 +260,20 @@ pure rules, which need no disk to test.
   would get a second one, and the Trash step would act on a name.
 - **A background job that mirrors on a timer.** Rejected: the claim already
   gives the names and the moment; a timer adds a second writer.
+
+### What changed while building
+
+- **No `behind` flag.** Nothing reads it until the page shows a notice, which
+  is slice 1b. A failed output is retried because it is not in the ledger.
+- **A `pinned` flag** on both folder entries, for a folder renamed by hand.
+- **The pieces are two files, not three.** `CompanionFolders.kt` holds the
+  shapes, the interface and the pure rules; `VisibleFolders.kt` holds the
+  ledger and the writer. The ledger is a few private functions and did not
+  earn a class.
+- **A link in `index.md` escapes `|`, `(`, `)`, `#`, `?` and `%`**, found by a
+  test: a `|` in a file name broke the table.
+- **A conversation older than the folders is dated by its first output's own
+  date**, not the day it was written out.
 
 ## Slices
 

@@ -47,6 +47,8 @@ internal class CoordinatorEngine(
     /** Each working thread's record of edited files; null keeps none. */
     private val editStore: ThreadEditStore? = null,
     private val beforeTurn: () -> Unit = {},
+    /** The companions' folders the person opens in Finder, kept in step with each conversation's outputs. */
+    private val companionFolders: CompanionFolders = CompanionFolders.NONE,
 ) : MessageEngine {
     /** The runtimes this Mac lets read context folders: a project lists them as `readableBy`. */
     fun readableBy(): List<RuntimeId> = turns.readableBy()
@@ -81,8 +83,27 @@ internal class CoordinatorEngine(
         private fun projectFolder(workers: List<String>): String? =
             if (claim.message.threadId == null) projectFolderNote(call.folders, workers) else null
 
+        /**
+         * Brings the conversation's visible folder up to date with every output its threads hold. A claim is where
+         * the Mac learns what the companion and the conversation are called, so a rename and a conversation older
+         * than the folders are caught here too. It never stops the run.
+         */
+        private fun mirrorOutputs() {
+            runCatching {
+                val outputs = record.threads.values.flatMap { thread ->
+                    thread.outputs.map { ref ->
+                        RecordedOutput(ref, thread.role.name, record.outputOrigins[ref.id]?.runtimeId ?: thread.role.binding.runtimeId,
+                            thread.role.binding.modelId, store.outputTime(conversationId, ref.id))
+                    }
+                }
+                companionFolders.sync(FolderNames(store.accountId, claim.companion.id, companion, conversationId, claim.conversation.title),
+                    outputs) { store.outputBytes(conversationId, it.id) }
+            }.onFailure { log(LogLevel.Warn, "conversations", "The conversation's outputs could not be listed for its visible folder", it) }
+        }
+
         fun run(): MessageState {
             flush(strict = false)
+            mirrorOutputs()
             return try {
                 recover()
                 when {
@@ -371,6 +392,7 @@ internal class CoordinatorEngine(
                 val thread = record.threads.getValue(threadId).withOutput(artifact, shareableActivity(activity, local))
                 record.copy(threads = record.threads + (threadId to thread))
             }) { it.completed(attempt, artifact, output, activity, entryId) }
+            mirrorOutputs()
         }
 
         /** The stage dialog for [attempt]. True to go on; otherwise the run waits for changes, stays paused, or stops. */
@@ -502,6 +524,7 @@ internal class CoordinatorEngine(
             emit(MessageCheckpoint.ArtifactStored(ref(artifact), sharedArtifactText(output)))
             putThread(threadId, running.withOutput(artifact, shareableActivity(activity, local))
                 .copy(state = BrainAttemptState.COMPLETED, revision = running.revision + 1))
+            mirrorOutputs()
             append(MessageAuthor.SPECIALIST, entryId, output.ifEmpty { "(no reply)" }, threadId)
             return MessageState.ANSWERED
         }

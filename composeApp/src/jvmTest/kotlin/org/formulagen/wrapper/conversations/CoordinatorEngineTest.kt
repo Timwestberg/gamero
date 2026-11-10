@@ -275,6 +275,25 @@ Mobile first from here.""" }
         assertEquals(1, fixture.coordinatorTurns().map { it.persona.hash }.distinct().size)
     }
 
+    @Test fun aSpecialistsOutputAppearsInTheCompanionsVisibleFolder() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        val visible = folder("visible").resolve("Hovel")
+        val engine = CoordinatorEngine(fixture.store, fixture.folders, fixture.turns, fixture.approvals, StartOfWork(), fixture.server,
+            companionFolders = VisibleFolders(visible, fixture.root))
+        fixture.delegateThenAnswer()
+        assertEquals(MessageState.ANSWERED, fixture.send("add sign-in", engine = engine))
+        val conversation = Files.list(visible.resolve("Ember/conversations")).use { it.toList() }.single()
+        assertTrue(conversation.fileName.toString().endsWith(" Add sign-in"), conversation.toString())
+        // The output has no heading, so it is named for the specialist that made it.
+        assertEquals("Implemented sign-in.", Files.readString(conversation.resolve("outputs/01 Implementer.md")))
+        val index = Files.readString(conversation.resolve("index.md"))
+        assertTrue("| Implementer | Codex |" in index, index)
+        // The next message in the conversation changes nothing that is already there.
+        fixture.decide = { "{\"kind\":\"answer\"}\nSure." }
+        assertEquals(MessageState.ANSWERED, fixture.send("thanks", engine = engine))
+        assertEquals(1L, Files.list(conversation.resolve("outputs")).use { it.count() })
+    }
+
     @Test fun theCoordinatorIsToldWhatTheProjectsFolderIsAndWhoWorksInIt() {
         val fixture = Fixture(brain("Implementer" to MemberMode.WORK, "Reviewer" to MemberMode.TALK), context = true)
         fixture.decide = { "{\"kind\":\"answer\"}\nSure." }

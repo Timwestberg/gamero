@@ -232,6 +232,18 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
             .also { require(sha256(it) == artifact.digest) { "Artifact changed on disk" } }
     }
 
+    /** A stored output's bytes by its [id]. A thread keeps only its outputs' references, which carry no digest. */
+    fun outputBytes(conversationId: String, id: String): ByteArray = gated(conversationId) {
+        require(SharedRules.isRecordId(id))
+        readBounded(folder(conversationId).resolve(ARTIFACTS).resolve(id), Artifacts.MAX_BYTES.toLong())
+    }
+
+    /** When the output [id] was stored. */
+    fun outputTime(conversationId: String, id: String): java.time.Instant = gated(conversationId) {
+        require(SharedRules.isRecordId(id))
+        Files.getLastModifiedTime(folder(conversationId).resolve(ARTIFACTS).resolve(id)).toInstant()
+    }
+
     /** Where a working specialist may open [artifact] itself. */
     fun artifactPath(conversationId: String, artifact: BrainArtifact): Path {
         bytes(conversationId, artifact)

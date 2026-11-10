@@ -1,7 +1,8 @@
 # Companion folders
 
-Status: decisions agreed 2026-11-10; the document itself awaits a last read.
-Nothing here is built. "Decided" lists what was agreed.
+Status: decisions agreed 2026-11-10. Built: the first slice of step 1 (the
+visible folder, readable files and the index). Not built: the rest of step 1
+(Trash, Show in Finder) and all of step 2. "Decided" lists what was agreed.
 
 ## What
 
@@ -80,7 +81,7 @@ can open, search, back up and delete.
 
 - The root is `~/Hovel`. A companion's folder is named after the companion.
   A conversation's folder is named `<date> <title>`, where the date is the
-  day its first output was written.
+  day its first output was made.
 - Hovel knows a folder by a small hidden marker file inside it, not by its
   name. Renaming the companion or the conversation in Hovel renames the
   folder. Two with the same name get ` 2`, ` 3`. The rename happens at the

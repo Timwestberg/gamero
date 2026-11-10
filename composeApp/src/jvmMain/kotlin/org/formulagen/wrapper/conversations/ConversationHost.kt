@@ -45,6 +45,8 @@ internal class ConversationHost(
     private val talk: (retained: () -> Set<String>?) -> List<ChatRuntime>,
     private val work: (approvals: ApprovalBroker, retained: () -> Set<String>?) -> List<WorkRuntime>,
     private val voice: ConversationVoiceLink? = null,
+    /** The folders the person opens in Finder; none unless the app builds them. */
+    private val companionFolders: CompanionFolders = CompanionFolders.NONE,
 ) : AutoCloseable {
     @Volatile private var running: Running? = null
     private val publishing = Executors.newSingleThreadExecutor(loggingDaemonThreads("hovel-project-folders"))
@@ -90,7 +92,7 @@ internal class ConversationHost(
                 mac = SharedRules.dialogName(registration.name, THIS_MAC))
             val cleanup = connection.cleanup
             cleanup?.register(store::eraseContext)
-            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), api, editStore, { cleanup?.check() })
+            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), api, editStore, { cleanup?.check() }, companionFolders)
             val guarded = MessageEngine { claim, output, cancel, closing ->
                 if (cleanup == null) engine.run(claim, output, cancel, closing)
                 else cleanup.run(cancel::cancel) { engine.run(claim, output, cancel, closing) }
