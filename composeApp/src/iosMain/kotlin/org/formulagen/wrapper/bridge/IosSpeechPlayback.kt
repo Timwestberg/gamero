@@ -1,7 +1,5 @@
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 package org.formulagen.wrapper.bridge
 
-import kotlinx.cinterop.ObjCSignatureOverride
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -12,18 +10,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
-import platform.AVFAudio.AVSpeechBoundary
-import platform.AVFAudio.AVSpeechSynthesisAvailableVoicesDidChangeNotification
-import platform.AVFAudio.AVSpeechSynthesisVoice
-import platform.AVFAudio.AVSpeechSynthesisVoiceQualityEnhanced
-import platform.AVFAudio.AVSpeechSynthesisVoiceQualityPremium
-import platform.AVFAudio.AVSpeechSynthesisVoiceTraitIsNoveltyVoice
-import platform.AVFAudio.AVSpeechSynthesizer
-import platform.AVFAudio.AVSpeechSynthesizerDelegateProtocol
-import platform.AVFAudio.AVSpeechUtterance
-import platform.Foundation.NSNotificationCenter
-import platform.Foundation.NSOperationQueue
-import platform.darwin.NSObject
 
 private const val TAG = "IosSpeechPlayback"
 
@@ -33,44 +19,21 @@ private const val SESSION_RETRY_MS = 500L
 private const val SESSION_RETRIES = 4
 
 /**
- * The companion's voice on iPhone: Apple's on-device synthesizer with the best voice the person has installed.
- * [LocalSpeechQueue] holds the rules; the synthesizer's own queue holds the utterances, and its delegate reports
- * each one's start and end, so `status` never reads `done` in the gap before the first word. A queue that stops
+ * The companion's voice on iPhone. [LocalSpeechQueue] holds the rules and [speaker] makes the sound: Kokoro, the
+ * Mac's voice, where the app carries its model, and Apple's synthesizer otherwise. The speaker reports each
+ * utterance's start and end, so `status` never reads `done` in the gap before the first word. A queue that stops
  * reporting is dropped as `error` after [speechBudgetMs] instead of staying `speaking`.
  *
  * State lives on the main thread.
  */
-internal class IosSpeechPlayback(private val audio: IosAudioSession) : VoicePlaybackCapability, AutoCloseable {
+internal class IosSpeechPlayback(
+    private val audio: IosAudioSession,
+    private val speaker: IosUtteranceSpeaker = iosSpeaker(),
+) : VoicePlaybackCapability, AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val queue = LocalSpeechQueue()
-    /** The utterances of the live queue the synthesizer has not finished. A flush empties it, so late reports find nothing. */
-    private val live = mutableListOf<AVSpeechUtterance>()
     private var stall: Job? = null
     private var release: Job? = null
-    /** The chosen voice for a language. An entry with a null voice means "use the system's default". */
-    private var voice: Pair<String, AVSpeechSynthesisVoice?>? = null
-
-    private val reports = object : NSObject(), AVSpeechSynthesizerDelegateProtocol {
-        @ObjCSignatureOverride
-        override fun speechSynthesizer(synthesizer: AVSpeechSynthesizer, didStartSpeechUtterance: AVSpeechUtterance) {
-            scope.launch { started(didStartSpeechUtterance) }
-        }
-
-        @ObjCSignatureOverride
-        override fun speechSynthesizer(synthesizer: AVSpeechSynthesizer, didFinishSpeechUtterance: AVSpeechUtterance) {
-            scope.launch { ended(didFinishSpeechUtterance) }
-        }
-
-        @ObjCSignatureOverride
-        override fun speechSynthesizer(synthesizer: AVSpeechSynthesizer, didCancelSpeechUtterance: AVSpeechUtterance) {
-            scope.launch { ended(didCancelSpeechUtterance) }
-        }
-    }
-    // The synthesizer keeps its delegate weakly; `reports` lives as long as this object.
-    private val speaker = AVSpeechSynthesizer().also { it.delegate = reports }
-    private val voicesChanged = NSNotificationCenter.defaultCenter.addObserverForName(
-        AVSpeechSynthesisAvailableVoicesDidChangeNotification, null, NSOperationQueue.mainQueue,
-    ) { voice = null }
 
     override suspend fun speak(args: LocalSpeechArgs): LocalSpeechStatus = withContext(Dispatchers.Main) { say(args, replace = true) }
     override suspend fun append(args: LocalSpeechArgs): LocalSpeechStatus = withContext(Dispatchers.Main) { say(args, replace = false) }
@@ -88,6 +51,9 @@ internal class IosSpeechPlayback(private val audio: IosAudioSession) : VoicePlay
         if (queue.interrupt()) drop()
     }
 
+    /** The person began to talk to the companion: its voice gets ready while they speak. */
+    fun warm() = speaker.warm()
+
     private fun say(args: LocalSpeechArgs, replace: Boolean): LocalSpeechStatus {
         val id = args.sessionId
         when (queue.admit(id, replace)) {
@@ -95,59 +61,51 @@ internal class IosSpeechPlayback(private val audio: IosAudioSession) : VoicePlay
             LocalSpeechQueue.Admission.BUSY -> return LocalSpeechStatus(id, "error")
             LocalSpeechQueue.Admission.QUEUE -> Unit
             LocalSpeechQueue.Admission.START -> {
-                flush()
+                speaker.flush()
                 release?.cancel()
                 if (!audio.begin(IosAudioSession.Use.SPEECH)) {
                     queue.fail(queue.ticket)
                     return LocalSpeechStatus(id, "error")
                 }
-                watch(SPEECH_START_BUDGET_MS)
+                watch(speaker.startBudgetMs)
             }
         }
-        val utterance = AVSpeechUtterance.speechUtteranceWithString(args.text)
-        chosenVoice()?.let { utterance.voice = it }
-        live += utterance
-        speaker.speakUtterance(utterance)
+        val ticket = queue.ticket
+        val length = args.text.length
+        speaker.say(
+            args.text,
+            started = { if (ticket == queue.ticket) watch(speechBudgetMs(length)) },
+            ended = { ended(ticket) },
+        )
         return LocalSpeechStatus(id, queue.status(id))
     }
 
-    private fun started(utterance: AVSpeechUtterance) {
-        if (live.any { it == utterance }) watch(speechBudgetMs(utterance.speechString.length))
-    }
-
-    private fun ended(utterance: AVSpeechUtterance) {
-        val index = live.indexOfFirst { it == utterance }
-        if (index < 0) return
-        live.removeAt(index)
-        if (queue.ended(queue.ticket)) {
+    private fun ended(ticket: Int) {
+        if (ticket != queue.ticket) return
+        if (queue.ended(ticket)) {
             stall?.cancel()
             releaseSession(SESSION_LINGER_MS)
         } else {
-            watch(SPEECH_START_BUDGET_MS)
+            watch(speaker.startBudgetMs)
         }
     }
 
-    /** The live queue is over before its end: silence the synthesizer and give the session back, now if iOS lets it go. */
+    /** The live queue is over before its end: silence the speaker and give the session back, now if iOS lets it go. */
     private fun drop() {
-        flush()
+        speaker.flush()
         stall?.cancel()
         release?.cancel()
-        if (!audio.end(IosAudioSession.Use.SPEECH)) releaseSession(SESSION_RETRY_MS)
+        if (audio.end(IosAudioSession.Use.SPEECH)) speaker.rest() else releaseSession(SESSION_RETRY_MS)
     }
 
-    private fun flush() {
-        live.clear()
-        if (speaker.speaking || speaker.paused) speaker.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
-    }
-
-    /** Drops the queue as `error` when the synthesizer reports nothing for [budgetMs]. */
+    /** Drops the queue as `error` when the speaker reports nothing for [budgetMs]. */
     private fun watch(budgetMs: Long) {
         val ticket = queue.ticket
         stall?.cancel()
         stall = scope.launch {
             delay(budgetMs)
             if (queue.fail(ticket)) {
-                log(LogLevel.Warn, TAG, "The synthesizer stopped reporting; the reply's voice was dropped")
+                log(LogLevel.Warn, TAG, "The speaker stopped reporting; the reply's voice was dropped")
                 drop()
             }
         }
@@ -162,40 +120,20 @@ internal class IosSpeechPlayback(private val audio: IosAudioSession) : VoicePlay
         release = scope.launch {
             delay(delayMs)
             repeat(SESSION_RETRIES) {
-                if (queue.speaking || audio.end(IosAudioSession.Use.SPEECH)) return@launch
+                if (queue.speaking) return@launch
+                if (audio.end(IosAudioSession.Use.SPEECH)) {
+                    speaker.rest()
+                    return@launch
+                }
                 delay(SESSION_RETRY_MS)
             }
         }
     }
 
-    private fun chosenVoice(): AVSpeechSynthesisVoice? {
-        val language = AVSpeechSynthesisVoice.currentLanguageCode()
-        voice?.takeIf { it.first == language }?.let { return it.second }
-        val installed = AVSpeechSynthesisVoice.speechVoices().filterIsInstance<AVSpeechSynthesisVoice>()
-        val best = bestInstalledVoice(installed.map(::installedVoice), language)
-        val chosen = best?.let { AVSpeechSynthesisVoice.voiceWithIdentifier(it) } ?: AVSpeechSynthesisVoice.voiceWithLanguage(language)
-        log(LogLevel.Info, TAG, "Voice for $language: ${chosen?.name ?: "system default"}")
-        voice = language to chosen
-        return chosen
-    }
-
     override fun close() {
         interrupt()
         scope.cancel()
-        speaker.delegate = null
-        NSNotificationCenter.defaultCenter.removeObserver(voicesChanged)
+        speaker.close()
         audio.end(IosAudioSession.Use.SPEECH)
     }
 }
-
-/** One of Apple's voices as [bestInstalledVoice] ranks it. */
-internal fun installedVoice(voice: AVSpeechSynthesisVoice): InstalledVoice = InstalledVoice(
-    id = voice.identifier,
-    language = voice.language,
-    quality = when (voice.quality) {
-        AVSpeechSynthesisVoiceQualityPremium -> 3
-        AVSpeechSynthesisVoiceQualityEnhanced -> 2
-        else -> 1
-    },
-    novelty = (voice.voiceTraits and AVSpeechSynthesisVoiceTraitIsNoveltyVoice) != 0uL,
-)

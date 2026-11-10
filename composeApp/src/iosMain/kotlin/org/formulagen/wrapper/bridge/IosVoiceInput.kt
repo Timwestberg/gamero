@@ -28,6 +28,7 @@ import platform.Foundation.NSNotification
 import platform.Foundation.NSNotificationCenter
 import platform.Foundation.NSNumber
 import platform.Foundation.NSOperationQueue
+import platform.Foundation.NSProcessInfo
 import platform.Foundation.currentLocale
 import platform.Foundation.localeIdentifier
 import platform.Foundation.preferredLanguages
@@ -44,6 +45,9 @@ private const val LISTEN_LIMIT_MS = 120_000L
 private const val FINISH_LIMIT_MS = 5_000L
 private const val FINISH_WITH_WORDS_LIMIT_MS = 1_500L
 private const val TAG = "IosVoiceInput"
+private const val VOICE_SAY_ENV = "GAMERO_VOICE_SAY"
+private const val VOICE_SAY_SESSION = "00000000-0000-4000-8000-00000000cafe"
+private const val VOICE_SAY_AFTER_MS = 2_000L
 
 /**
  * The recognizer's "no speech" errors (`kAFAssistantErrorDomain`): 1110 is "No speech detected", and 203 is what it
@@ -59,7 +63,11 @@ private val NO_SPEECH_CODES = setOf(1110L, 203L)
 internal class IosVoice : AutoCloseable {
     val audio = IosAudioSession()
     val playback = IosSpeechPlayback(audio)
-    val input = IosVoiceInput(audio, bargeIn = playback::interrupt)
+    // The person starting to talk silences the companion, and gets its voice ready for the reply.
+    val input = IosVoiceInput(audio, bargeIn = {
+        playback.interrupt()
+        playback.warm()
+    })
     private val center = NSNotificationCenter.defaultCenter
     private val observers = listOf(
         center.addObserverForName(UIApplicationDidEnterBackgroundNotification, null, NSOperationQueue.mainQueue) { invalidate() },
@@ -73,6 +81,21 @@ internal class IosVoice : AutoCloseable {
             if (number(note, AVAudioSessionRouteChangeReasonKey) == AVAudioSessionRouteChangeReasonOldDeviceUnavailable) playback.interrupt()
         },
     )
+
+    init {
+        // A development check: `GAMERO_VOICE_SAY="…"` at launch speaks the text once, sentence by sentence as a reply
+        // arrives, so a build's voice can be heard, and its speed read from the log, without a conversation.
+        (NSProcessInfo.processInfo.environment[VOICE_SAY_ENV] as? String)?.takeIf { it.isNotBlank() }?.let { text ->
+            CoroutineScope(Dispatchers.Main).launch {
+                delay(VOICE_SAY_AFTER_MS)
+                val sentences = text.split(Regex("(?<=[.!?])\\s+")).filter { it.isNotBlank() }
+                sentences.forEachIndexed { index, sentence ->
+                    val args = LocalSpeechArgs(VOICE_SAY_SESSION, sentence)
+                    if (index == 0) playback.speak(args) else playback.append(args)
+                }
+            }
+        }
+    }
 
     /** Called for backgrounding, an audio interruption and document replacement. */
     fun invalidate() {

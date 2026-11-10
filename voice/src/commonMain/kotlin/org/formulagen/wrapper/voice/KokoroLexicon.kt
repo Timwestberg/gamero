@@ -14,7 +14,11 @@ internal data class KokoroOovReport(
     fun percent(count: Int): Double = if (total == 0) 0.0 else count * 100.0 / total
 
     override fun toString(): String {
-        fun pct(count: Int) = "${"%.1f".format(percent(count))}%"
+        // One decimal place with halves rounded up, as `String.format` does; only the JVM has that call.
+        fun pct(count: Int): String {
+            val tenths = kotlin.math.floor(percent(count) * 10 + 0.5).toLong()
+            return "${tenths / 10}.${tenths % 10}%"
+        }
         return "OOV base $baseOov/$total (${pct(baseOov)}), " +
             "after inflections $inflectedOov/$total (${pct(inflectedOov)}), " +
             "after spelling $coveredOov/$total (${pct(coveredOov)})"

@@ -275,8 +275,9 @@ every product on iOS has them.
 
 ## Dictation and the companion's voice
 
-Both use Apple's speech frameworks and one shared audio session
-(`IosVoice` in `IosVoiceInput.kt` owns both).
+Dictation uses Apple's speech framework. The voice is Kokoro where the build
+carries it, and Apple's otherwise. Both share one audio session (`IosVoice` in
+`IosVoiceInput.kt` owns both).
 
 **Dictation** (`voiceInput.*`, `SFSpeechRecognizer`):
 
@@ -299,25 +300,68 @@ Both use Apple's speech frameworks and one shared audio session
 - Starting a capture stops the companion's voice, so the person can talk over
   it.
 
-**The companion's voice** (`voicePlayback.*`, `AVSpeechSynthesizer`):
+**The companion's voice** (`voicePlayback.*`):
 
-- It is Apple's on-device voice in this version, not Kokoro. The app picks the
-  best voice **installed** for the device language: premium, then enhanced, of
-  the device's own locale first, then of another region of the language. With
-  only default voices it uses the system's default, never a novelty voice. To
-  get a better voice, download one in Settings > Accessibility > Spoken
-  Content > Voices; the app picks it up on the next sentence.
+`IosSpeechPlayback` holds the queue's rules and the audio session. An
+`IosUtteranceSpeaker` makes the sound, and there are two.
+
+- **Kokoro** (`IosKokoroSpeaker`), the Mac's voice, when the build links
+  sherpa-onnx and the app bundle holds the model. Each sentence goes through
+  the Mac's own pipeline (`EmberVoice` in `:voice`: the same normalizing,
+  lexicons, voice blends and silence trimming) on a background thread, and its
+  sound plays through an `AVAudioPlayerNode` while the next sentence is
+  generated. The default voice is Sam.
+  - The model (about 330 MB) loads at the first sentence, or when a capture
+    starts, so it is ready for the reply. It unloads when iOS warns that memory
+    is short and nothing is being said.
+  - It generates on 2 threads, an iPhone's two fast cores.
+    `GAMERO_KOKORO_THREADS` overrides that at launch.
+  - Each sentence logs its speed: `Kokoro: 3.3 s of speech in 1.6 s, 2.1x real
+    time, on 2 threads`.
+  - If the model cannot load, Apple's voice speaks from then on.
+- **Apple's voice** (`AppleSpeaker`, `AVSpeechSynthesizer`) otherwise. The app
+  picks the best voice **installed** for the device language: premium, then
+  enhanced, of the device's own locale first, then of another region of the
+  language. With only default voices it uses the system's default, never a
+  novelty voice. To get a better voice, download one in Settings >
+  Accessibility > Spoken Content > Voices; the app picks it up on the next
+  sentence.
+
+To give a build Kokoro:
+
+```sh
+scripts/fetch-voice.sh                               # the model, as for the Mac
+scripts/ios-voice.sh /path/to/sherpa-onnx/build-ios  # link the engine, bundle the model
+```
+
+- sherpa-onnx 2.0.0 ships no iOS build. Build it from the `v2.0.0` tag with
+  upstream's `build-ios.sh` (needs `cmake`); the script takes that `build-ios`
+  directory.
+- The model directory also needs `voices-blends.bin` and `lexicon-chat.txt`,
+  which the Mac writes the first time Ember speaks.
+- The script writes `iosApp/Configuration/Voice.local.xcconfig`, which is not
+  committed. `scripts/ios-voice.sh --off` removes it. Without it the app links
+  no sherpa, carries no model, and speaks with Apple's voice.
+- The app grows by about 360 MB.
+
+To hear a build's voice without a conversation, launch it with
+`GAMERO_VOICE_SAY="A sentence. And another."`. The app speaks the text once,
+sentence by sentence.
+
+Both speakers follow the same rules:
+
 - `speak` starts over, `append` queues behind what is being said, so a reply is
   spoken sentence by sentence while it streams. `status` is `speaking` from the
   call on, not from the first sound, and `done` only when the whole queue has
-  been said. State comes from the synthesizer's delegate.
+  been said. State comes from the speaker's reports of each sentence's start
+  and end.
 - While it speaks, other apps' audio is ducked (`playback` category,
   `spokenAudio` mode). About 1.5 seconds after the last sentence the app
   deactivates the session and tells other apps, so music comes back. The next
   sentence of a streaming reply arrives sooner than that and keeps the session.
 - It stops, as `cancelled`, on `stop`, in the background, on an audio
   interruption, when headphones come off, and when the page goes away. A
-  synthesizer that stops reporting is dropped as `error` after a budget
+  speaker that stops reporting is dropped as `error` after a budget
   (`speechBudgetMs`), so `status` never stays `speaking` for ever.
 - **During a meeting** in the page (the web view holds the camera or the
   microphone), the app leaves the audio session alone: dictation answers

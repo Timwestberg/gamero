@@ -6,8 +6,19 @@
 #import <time.h>
 
 // Header from the sherpa-onnx 2.0.0 iOS xcframework. The JVM jar in this repo
-// is that same release. Include the directory that contains c-api.h.
+// is that same release. Include the directory that contains c-api.h. A build
+// that cannot see the header links no sherpa: every engine here is then NULL,
+// and the app speaks with the system's voice.
+#if __has_include("c-api.h")
 #import "c-api.h"
+#define EMBER_VOICE_SHERPA 1
+#else
+#define EMBER_VOICE_SHERPA 0
+#endif
+
+#if EMBER_VOICE_SHERPA
+
+extern "C" int32_t ember_voice_sherpa_linked(void) { return 1; }
 
 struct EmberSherpaEngine {
     const SherpaOnnxOfflineTts *tts;
@@ -211,3 +222,128 @@ extern "C" int32_t ember_voice_sherpa_speak(
     sherpa->busy = 0;
     return ok ? 1 : 0;
 }
+
+struct EmberKokoroEngine {
+    const SherpaOnnxOfflineTts *tts;
+    std::string model;
+    std::string voices;
+    std::string tokens;
+    std::string lexicon;
+    int32_t busy;
+};
+
+extern "C" void *ember_voice_kokoro_create(
+    const char *model,
+    const char *voices,
+    const char *tokens,
+    const char *lexicon,
+    int32_t threads) {
+    if (model == NULL || voices == NULL || tokens == NULL || lexicon == NULL) return NULL;
+    SherpaOnnxOfflineTtsConfig config;
+    memset(&config, 0, sizeof(config));
+    EmberKokoroEngine *engine = new EmberKokoroEngine();
+    engine->model = model;
+    engine->voices = voices;
+    engine->tokens = tokens;
+    engine->lexicon = lexicon;
+    // sherpa-onnx 2.0.0 ignores espeak-ng data and lang for Kokoro: the lexicon and tokens do the grapheme mapping.
+    config.model.kokoro.model = engine->model.c_str();
+    config.model.kokoro.voices = engine->voices.c_str();
+    config.model.kokoro.tokens = engine->tokens.c_str();
+    config.model.kokoro.lexicon = engine->lexicon.c_str();
+    config.model.kokoro.length_scale = 1.0f;
+    config.model.num_threads = threads > 0 ? threads : 2;
+    config.model.provider = "cpu";
+    config.model.debug = 0;
+    const SherpaOnnxOfflineTts *tts = SherpaOnnxCreateOfflineTts(&config);
+    if (tts == NULL) {
+        delete engine;
+        return NULL;
+    }
+    engine->tts = tts;
+    engine->busy = 0;
+    return engine;
+}
+
+extern "C" void ember_voice_kokoro_destroy(void *engine) {
+    if (engine == NULL) return;
+    EmberKokoroEngine *kokoro = (EmberKokoroEngine *)engine;
+    if (kokoro->tts != NULL) {
+        SherpaOnnxDestroyOfflineTts(kokoro->tts);
+        kokoro->tts = NULL;
+    }
+    delete kokoro;
+}
+
+extern "C" int32_t ember_voice_kokoro_sample_rate(void *engine) {
+    if (engine == NULL) return 0;
+    return SherpaOnnxOfflineTtsSampleRate(((EmberKokoroEngine *)engine)->tts);
+}
+
+extern "C" int32_t ember_voice_kokoro_speak(
+    void *engine,
+    const char *text,
+    int32_t sid,
+    float speed,
+    EmberVoiceSamplesFn callback,
+    void *arg) {
+    if (engine == NULL || text == NULL) return 0;
+    EmberKokoroEngine *kokoro = (EmberKokoroEngine *)engine;
+    if (!__sync_bool_compare_and_swap(&kokoro->busy, 0, 1)) {
+        fprintf(stderr, "ember voice: speak is already running\n");
+        return 0;
+    }
+    // The same defaults as the JVM's generateWithCallback: only the speaker slot and its speed are set.
+    SherpaOnnxGenerationConfig gen;
+    memset(&gen, 0, sizeof(gen));
+    gen.sid = sid;
+    gen.speed = speed > 0 ? speed : 1.0f;
+    EmberCallbackBox box;
+    box.fn = callback;
+    box.arg = arg;
+    box.got = 0;
+    box.started_ms = ember_now_ms();
+    box.first_ms = -1;
+    box.samples = 0;
+    const SherpaOnnxGeneratedAudio *audio =
+        SherpaOnnxOfflineTtsGenerateWithConfig(kokoro->tts, text, &gen, ember_progress, &box);
+    int ok = audio != NULL && audio->n > 0;
+    if (audio != NULL) SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
+    kokoro->busy = 0;
+    return ok ? 1 : 0;
+}
+
+#else  // !EMBER_VOICE_SHERPA
+
+extern "C" int32_t ember_voice_sherpa_linked(void) { return 0; }
+
+extern "C" void *ember_voice_sherpa_create(const char *model_dir, const char *voice_wav, int32_t threads) {
+    (void)model_dir; (void)voice_wav; (void)threads;
+    return NULL;
+}
+extern "C" void ember_voice_sherpa_destroy(void *engine) { (void)engine; }
+extern "C" int32_t ember_voice_sherpa_sample_rate(void *engine) { (void)engine; return 0; }
+extern "C" double ember_voice_sherpa_last_ttfa_ms(void *engine) { (void)engine; return 0; }
+extern "C" int32_t ember_voice_sherpa_last_samples(void *engine) { (void)engine; return 0; }
+extern "C" int32_t ember_voice_sherpa_speak(
+    void *engine, const char *text, int32_t max_frames, int32_t num_steps, float temperature, int32_t seed,
+    int32_t chunk_size, EmberVoiceSamplesFn callback, void *arg) {
+    (void)engine; (void)text; (void)max_frames; (void)num_steps; (void)temperature; (void)seed;
+    (void)chunk_size; (void)callback; (void)arg;
+    return 0;
+}
+
+extern "C" void *ember_voice_kokoro_create(
+    const char *model, const char *voices, const char *tokens, const char *lexicon, int32_t threads) {
+    (void)model; (void)voices; (void)tokens; (void)lexicon; (void)threads;
+    return NULL;
+}
+extern "C" void ember_voice_kokoro_destroy(void *engine) { (void)engine; }
+extern "C" int32_t ember_voice_kokoro_sample_rate(void *engine) { (void)engine; return 0; }
+extern "C" int32_t ember_voice_kokoro_speak(
+    void *engine, const char *text, int32_t sid, float speed, EmberVoiceSamplesFn callback, void *arg) {
+    (void)engine; (void)text; (void)sid; (void)speed; (void)callback; (void)arg;
+    return 0;
+}
+
+#endif  // EMBER_VOICE_SHERPA

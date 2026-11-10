@@ -25,3 +25,7 @@ APP_DISPLAY_NAME[config=Release]=$(PRODUCT_NAME)
 
 // composeApp has no iosX64 target (see composeApp/build.gradle.kts), so simulators are arm64 only.
 EXCLUDED_ARCHS[sdk=iphonesimulator*]=x86_64
+
+// Kokoro, the Mac's chat voice, on the phone: scripts/ios-voice.sh writes this file with this machine's paths to
+// sherpa-onnx and the model. Without it the app links no sherpa and speaks with the system voice.
+#include? "Voice.local.xcconfig"

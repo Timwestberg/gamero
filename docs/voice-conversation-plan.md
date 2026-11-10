@@ -609,7 +609,10 @@ Each milestone is one PR series, based on #56 for gamero. Ship them in order. A 
 > `AVSpeechSynthesizer` with the best installed voice for the companion's voice (`voicePlayback.*`, sentence by sentence
 > with `append`). So `NSSpeechRecognitionUsageDescription` is in `Info.plist`, against the first box below. The Mac stays
 > the engine for every turn. See [ios.md](ios.md#dictation-and-the-companions-voice). The plan below is kept as the
-> record of the sherpa path, which is not built.
+> record of the sherpa path for hearing, which is not built.
+>
+> **Kokoro on iPhone (2026-11-09).** The companion's voice is now Kokoro through the sherpa-onnx 2.0.0 xcframework
+> where a build links it (`scripts/ios-voice.sh`), with Apple's voice as the fallback. Dictation is still Apple's.
 
 **Size:** large, and blocked on a Mac that can see the devices. The state machine and the Zipformer files are reused. The audio graph is Swift around the same voice-processing idea, through the existing cinterop style rather than JNI.
 

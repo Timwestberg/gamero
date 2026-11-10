@@ -1,6 +1,6 @@
 # :voice
 
-Mac chat speaks with Kokoro 82M v1.0. PocketTTS stays behind the same `PieceEngine` seam for a later "speak in my voice" clip (`HOVEL_VOICE_BACKEND=sherpa`). iOS and Android still use Pocket. Kokoro on those targets is not linked.
+Mac chat speaks with Kokoro 82M v1.0. PocketTTS stays behind the same `PieceEngine` seam for a later "speak in my voice" clip (`HOVEL_VOICE_BACKEND=sherpa`). The iPhone app speaks with the same Kokoro when its build links sherpa-onnx (`scripts/ios-voice.sh`, see `docs/ios.md`). Android still uses Pocket.
 
 `scripts/fetch-voice.sh` downloads both. Kokoro's pinned files are `model.onnx`, upstream `voices.bin`, `tokens.txt`, and `lexicon-us-en.txt`. `voice/kokoro/pack-blends.py` writes the four chat blends into a derived `voices-blends.bin` (speaker slots 50–53). That file is not committed. The voice a person picks is one of:
 
@@ -41,7 +41,7 @@ Android uses the same Kotlin sherpa API once `voice/libs/sherpa-onnx.aar` is pre
 
 ## iOS
 
-`iosMain` calls `voice/ios/ember_voice_bridge.h`. The Swift and Objective-C++ next to that header include the sherpa-onnx 2.0.0 xcframework, so the Kotlin side does not guess sherpa's struct layout. `voice/ios-bench/embed-sherpa.sh` copies that framework into the app bundle. The Xcode target turns user-script sandboxing off so the script can read `SHERPA_ONNX_FRAMEWORKS`. `backend = "fluid-audio"` selects FluidAudio. One `PocketTtsManager` and one cloned voice last for the conversation. Later pieces only open a session on that clone. It does not speak a bundled named voice. Without that package linked, the bridge returns NULL and the engine says so. A second speak on the C bridge returns 0 instead of running two generations on one engine.
+`iosMain` calls `voice/ios/ember_voice_bridge.h`. Kokoro is `KokoroIosPieceEngine`: the same model files, voice blends and lexicons as the Mac, with the lexicons' words kept as hashes (`LexiconWords`) to spare the phone's memory. The app compiles the bridge through `iosApp/iosApp/EmberVoiceBridge.mm`; without the sherpa headers on its search path every engine is NULL. The Swift and Objective-C++ next to that header include the sherpa-onnx 2.0.0 xcframework, so the Kotlin side does not guess sherpa's struct layout. `voice/ios-bench/embed-sherpa.sh` copies that framework into the app bundle. The Xcode target turns user-script sandboxing off so the script can read `SHERPA_ONNX_FRAMEWORKS`. `backend = "fluid-audio"` selects FluidAudio. One `PocketTtsManager` and one cloned voice last for the conversation. Later pieces only open a session on that clone. It does not speak a bundled named voice. Without that package linked, the bridge returns NULL and the engine says so. A second speak on the C bridge returns 0 instead of running two generations on one engine.
 
 One command, on the Mac that has the phones plugged in:
 
