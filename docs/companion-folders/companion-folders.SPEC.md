@@ -1,8 +1,8 @@
 # Companion folders
 
 Status: draft for review, revised 2026-11-10. Nothing here is built.
-"Decided" lists what has been agreed; "Decisions needed" lists what was
-filled in by inference.
+"Decided" lists what has been agreed; "Decisions needed" lists what is still
+open.
 
 ## What
 
@@ -21,8 +21,7 @@ it. It never gets file tools of its own.
 
 It ships in two steps. Step 1 is the visible folder of outputs. Step 2 is the
 shared notes, the scratch area and the coordinator's view of the project,
-which share one approval rule because all three are about what an agent may
-read.
+because all three are about what an agent may read.
 
 ```
 ~/Hovel/
@@ -140,14 +139,10 @@ can open, search, back up and delete.
 The coordinator has no tools, on any provider. Hovel reads for it. Two
 things reach it, both as data and never as instructions.
 
-**Approval.** The first time in a conversation, the Mac asks: "Ember wants to
-read `my-shopping-list` with Codex." It is the dialog a specialist's start of
-work uses today, remembered for this conversation, project, folder and
-provider. Without approval the coordinator behaves as it does today: it
-names the folder and delegates.
-
 **The project brief.** A short description of the project that Hovel builds
-itself and puts in every main-conversation turn.
+itself and puts in every main-conversation turn. It needs no approval: a
+project that has a folder has a brief. Choosing the folder is the person's
+consent to it.
 
 - It holds the manifest (name, scripts, what it depends on), the start of
   the README, and a listing of folders with their first files.
@@ -156,6 +151,8 @@ itself and puts in every main-conversation turn.
 - It is built when the project gets its folder, and again when the folder
   has changed: after a working specialist's turn ends, and when the app
   starts. Building costs milliseconds, so there is no schedule.
+- It follows the skip list below: a skipped file is not named in the
+  listing, and its text is never in the brief.
 - It is kept in Hovel's private store. Nothing is written into the project's
   folder.
 
@@ -163,19 +160,27 @@ itself and puts in every main-conversation turn.
 in its reply, the way it asks to delegate. It can list a folder, search for
 text, and read files, several in one request.
 
+- Reading asks first. The first time in a conversation, the Mac asks: "Ember
+  wants to read files in `my-shopping-list` with Codex." It is the dialog a
+  specialist's start of work uses today, remembered for this conversation,
+  project, folder and provider. If the person says no, the coordinator
+  answers from the brief or hands the question to a specialist.
+
 - Hovel checks every path. A path is read only when, after links are
   resolved, it is inside the project's working folder, one of its read-only
   folders, or the conversation's own folder. Anything else is refused and
   the coordinator is told so.
-- Secrets and noise are skipped whatever is asked: `.env` files, key files,
-  `.git`, dependency and build folders, and files that are not text. A long
-  file is given in part, with a note that it was cut.
+- Secrets and noise are skipped whatever is asked. The skip list is fixed
+  and the same in every project: `.env` files, key files, `.git`, dependency
+  and build folders, and files that are not text. It does not follow the
+  project's `.gitignore`. A long file is given in part, with a note that it
+  was cut.
 - What was read comes back as data on a follow-up turn of the same message.
 - A message has a budget: two rounds of reading and 32,000 characters in
   all. After that the coordinator answers with what it has, or hands the
   question to a specialist.
 - The conversation shows what was read, as a line of activity: "Ember read
-  3 files", with their names.
+  3 files", with their names. The names are stored with the conversation.
 - In Talk, Hovel says "Let me look at the project." as soon as a read is
   asked for. No model is needed for that line.
 - A turn that asks for no file costs nothing more than it does today.
@@ -206,8 +211,11 @@ text, and read files, several in one request.
 - **What the coordinator reads goes to its provider, and what it quotes goes
   to the server.** The brief and any file text are sent to the model on the
   person's own subscription. Anything the coordinator repeats in its reply is
-  stored as a conversation message, as every reply is. The approval dialog
-  is where the person agrees to that.
+  stored as a conversation message, as every reply is.
+- **The brief is sent without a prompt.** From the moment a project has a
+  folder, its file names, its manifest and the start of its README go to the
+  coordinator's provider on every turn. The project's settings say so where
+  the folder is chosen. File text beyond the brief still asks first.
 - **Read-only and scope are Hovel's own code.** No provider setting is
   trusted, so they are proven by ordinary tests of the path check: links,
   `..`, names that differ only by case, and paths outside the folders.
@@ -223,15 +231,20 @@ text, and read files, several in one request.
 
 ## Decided
 
+All on 2026-11-10.
+
 - **Hovel reads for the coordinator; it gets no provider file tools.**
-  (2026-11-10)
 - **The project index is a brief Hovel builds itself, not a third-party
-  graph.** (2026-11-10, after the spike in `project-index-spike.md`)
+  graph.** After the spike in `project-index-spike.md`.
+- **The brief is rebuilt when the project changes, not on a schedule.**
+- **The brief needs no approval; reading files does.**
+- **The skip list is fixed and does not follow `.gitignore`.**
+- **The conversation shows what the coordinator read, by file name.**
 
 ## Decisions needed
 
-These were filled in by inference. Each changes the design if the answer is
-different.
+These were filled in by inference and are still open. Each changes the
+design if the answer is different.
 
 1. **The root is `~/Hovel`, visible in the home folder.** Or `~/Documents/
    Hovel`, or a folder the person picks.
@@ -249,16 +262,6 @@ different.
    characters.
 7. **No provider subfolders.** You proposed them; this draft records the
    provider in `index.md` instead.
-8. **The brief is rebuilt when the project changes, not at the end of each
-   day.** You proposed a daily update. A brief that is a day old is wrong
-   during the hours agents are changing the project, and a rebuild costs
-   milliseconds.
-9. **The brief needs the same approval as reading.** Before approval the
-   coordinator gets only the folder's name, as today.
-10. **The skip list is fixed**: `.env` files, key files, `.git`, dependency
-    and build folders, files that are not text. The other choice is to also
-    follow the project's `.gitignore`.
-11. **The conversation shows what the coordinator read**, by file name.
 
 <!-- IMPLEMENTATION-PLAN:START -->
 
@@ -294,12 +297,14 @@ Step 2, shared context:
   the skip list, and its tests. Depends on nothing; everything that reads
   goes through it. Done when links, `..`, case and outside paths are each
   refused by a test.
-- **The project brief.** Building it, its limit, when it is rebuilt, and its
-  place in the coordinator's turn. Depends on the path check. Done when the
-  coordinator answers "what is this project?" with no handoff and no read.
-- **The approval.** The dialog and what is remembered, covering the brief and
-  reading. Depends on the approval rule being agreed. Done when no brief and
-  no file text is sent before the person approves.
+- **The project brief.** Building it, its limit, when it is rebuilt, its
+  place in the coordinator's turn, and the line in the project's settings
+  that says what is sent. Depends on the path check. Done when the
+  coordinator answers "what is this project?" with no handoff and no read,
+  and no skipped file is named in it.
+- **The read approval.** The dialog and what is remembered. Depends on
+  nothing. Done when no file text beyond the brief is sent before the person
+  approves, and a refusal leaves the coordinator answering from the brief.
 - **Read requests.** The reply format, the follow-up turn, the budget, the
   activity line and the spoken line in Talk. Depends on the path check and
   the approval. Done when "what does my README say?" is answered from the
