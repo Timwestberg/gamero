@@ -77,6 +77,10 @@ internal class CoordinatorEngine(
          */
         private val spoken = claim.message.threadId == null && (claim.message.playback == "local" || out.spoken)
 
+        /** What the coordinator is told of the project's folder, in the main conversation; a thread's turn is about its task. */
+        private fun projectFolder(workers: List<String>): String? =
+            if (claim.message.threadId == null) projectFolderNote(call.folders, workers) else null
+
         fun run(): MessageState {
             flush(strict = false)
             return try {
@@ -172,7 +176,7 @@ internal class CoordinatorEngine(
                 val stream = ReplyStream(headed = true, optionalHeader = message.direction == null, acceptHeader = ::acceptsDirectionHeader, onUnderstanding = ::publishUnderstanding, onProgress = { publishReport(it) }) { out.delta(replyId, threadId, it) }
                 val context = record.brain.coordinatorContexts[key]?.takeIf { it.personaHash == persona.hash }
                 val input = directionInput() + if (attempt == 1) DIRECTION_REPORT_REQUIRED else ""
-                raw = turns.talk(call, role, persona, directInput(input, claim.recalledMemory, recent, spoken), context, key,
+                raw = turns.talk(call, role, persona, directInput(input, claim.recalledMemory, recent, spoken, projectFolder(emptyList())), context, key,
                     coordinator = true, stream = stream, opened = rememberCoordinator(key)).first.trim().take(CompanionLimits.MESSAGE)
                 if (acceptsDirectionHeader(splitHeader(raw).first)) break
             }
@@ -306,7 +310,8 @@ internal class CoordinatorEngine(
                 val latest = current.attempts.lastOrNull()?.outputIds?.let { handoff(it, files = false) } ?: ""
                 val request = coordinatorRequest(uuid(), current, kinds, input, latest, record.brain.messages.takeLast(10),
                     described(current.configuration))
-                conversationRequest(request, claim.recalledMemory, hint, spoken)
+                conversationRequest(request, claim.recalledMemory, hint, spoken,
+                    projectFolder(current.configuration.specialists.filter { it.mode == MemberMode.WORK && it.binding != null }.map { it.name }))
             } ?: run {
                 change { it.paused(INVALID_DECISION, BrainWaitingKind.INPUT) }
                 return

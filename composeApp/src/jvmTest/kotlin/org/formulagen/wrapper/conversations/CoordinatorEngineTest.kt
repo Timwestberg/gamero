@@ -275,6 +275,45 @@ Mobile first from here.""" }
         assertEquals(1, fixture.coordinatorTurns().map { it.persona.hash }.distinct().size)
     }
 
+    @Test fun theCoordinatorIsToldWhatTheProjectsFolderIsAndWhoWorksInIt() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK, "Reviewer" to MemberMode.TALK), context = true)
+        fixture.decide = { "{\"kind\":\"answer\"}\nSure." }
+        assertEquals(MessageState.ANSWERED, fixture.send("Can you see my project?"))
+        val told = fixture.request(fixture.coordinatorTurns().last()).getValue("projectFolder").jsonPrimitive.content
+        // The folder goes by its name, never its path; the one working specialist is named, the talk one is not.
+        assertTrue("\"hovel-notes\"" in told && "\"design-docs\"" in told, told)
+        assertFalse(fixture.working.toString() in told, told)
+        assertTrue("Implementer works inside that folder" in told && "Reviewer" !in told, told)
+        assertTrue("You cannot read or change files in this turn." in told, told)
+        assertTrue("projectFolder" in fixture.coordinatorTurns().last().persona.instructions, "the protocol says what the key means")
+    }
+
+    @Test fun aProjectWithNoFolderIsSaidToHaveNone() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK), workingFolder = false)
+        fixture.decide = { "{\"kind\":\"answer\"}\nSure." }
+        assertEquals(MessageState.ANSWERED, fixture.send("Can you see my project?"))
+        val told = fixture.request(fixture.coordinatorTurns().last()).getValue("projectFolder").jsonPrimitive.content
+        assertTrue(told.startsWith("This project has no working folder on this Mac."), told)
+    }
+
+    @Test fun aCoordinatorWithNoSpecialistsIsToldItCannotReadTheFolder() {
+        val fixture = Fixture(brain())
+        fixture.chat.reply = { "Sure." }
+        assertEquals(MessageState.ANSWERED, fixture.send("Can you see my project?"))
+        val text = fixture.chat.requests.single().text
+        assertTrue(text.startsWith("About the project's folder:\nThe project's working folder on this Mac is \"hovel-notes\"."), text)
+        assertTrue("No specialist of this brain works in the folder." in text && text.endsWith("Can you see my project?"), text)
+    }
+
+    @Test fun theFolderNoteNamesEveryWorkerAndNeverAPath() {
+        val folders = ProjectFolders(Path.of("/Users/someone/code/shop"), listOf(Path.of("/Users/someone/docs/brand")))
+        val two = projectFolderNote(folders, listOf("TPM", "Architect"))
+        assertTrue("TPM, Architect work inside that folder" in two, two)
+        assertFalse("/Users" in two, two)
+        assertTrue("\"shop\"" in two && "\"brand\"" in two, two)
+        assertFalse("/" in projectFolderNote(ProjectFolders(null), listOf("TPM")))
+    }
+
     @Test fun aBrainWithoutSpecialistsStreamsAPlainAnswer() {
         val fixture = Fixture(brain())
         fixture.decide = { "unused" }
@@ -295,7 +334,9 @@ Mobile first from here.""" }
         assertEquals(MessageState.ANSWERED, fixture.send("And then?", history = history))
         val second = fixture.chat.requests.last()
         assertNotNull(second.conversation)
-        assertEquals("And then?", second.text)
+        assertTrue(second.text.endsWith("\n\nAnd then?") && "Earlier reply" !in second.text && "Likes tea" !in second.text, second.text)
+        // What the project's folder is rides on every turn, since the person can choose one at any time.
+        assertTrue(second.text.startsWith("About the project's folder:\n"), second.text)
     }
 
     @Test fun aDelegatedTaskOpensAThreadWhoseReplyStreamsIntoIt() {

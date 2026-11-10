@@ -439,6 +439,12 @@ it themselves.
   the last. A reply Talk is speaking is never interrupted or joined: the page's
   call answers `error`. The rules are in
   [host-bridge.md](host-bridge.md#device-speech-and-notifications).
+- **The coordinator is told what the project's folder is.** Its own turn reads no files and runs outside the
+  project, so each main-conversation turn carries `projectFolder` (`projectFolderNote` in
+  `ConversationPrompts.kt`): the working folder by name, never by path, any read-only folders, that this turn
+  cannot read files, and which specialists work inside the folder, so file work is delegated to one of them.
+  A project with no folder is told so, and where the person chooses one. Like the spoken rules it rides on the
+  turn, so choosing a folder does not start the provider's conversation over.
 - **An answer that will be heard is written for the ear.** When the reply to a
   message will be read aloud, the coordinator's turn carries Hovel's rules for
   a spoken answer (`SPOKEN_REPLY_RULES` in `ConversationPrompts.kt`): answer
