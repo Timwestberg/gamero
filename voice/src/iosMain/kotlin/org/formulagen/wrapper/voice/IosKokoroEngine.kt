@@ -11,8 +11,14 @@ import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
 import platform.Foundation.NSData
 import platform.Foundation.NSDataReadingMappedIfSafe
+import platform.Foundation.NSCachesDirectory
 import platform.Foundation.NSFileManager
+import platform.Foundation.NSSearchPathForDirectoriesInDomains
+import platform.Foundation.NSString
+import platform.Foundation.NSUTF8StringEncoding
+import platform.Foundation.NSUserDomainMask
 import platform.Foundation.dataWithContentsOfFile
+import platform.Foundation.writeToFile
 import platform.posix.memcpy
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -37,6 +43,7 @@ fun kokoroFilesMissing(dir: String): List<String> =
  * sentence per [synthesize]. The model directory is read-only in the app
  * bundle, so the inflection lexicon is the bundled copy, not one written here.
  * Without it the upstream lexicon speaks alone and more words are spelled.
+ * Hovel's own words are written to the app's caches and loaded last.
  */
 @OptIn(ExperimentalForeignApi::class, ExperimentalAtomicApi::class)
 internal class KokoroIosPieceEngine(private val config: VoiceConfig) : PieceEngine {
@@ -61,7 +68,7 @@ internal class KokoroIosPieceEngine(private val config: VoiceConfig) : PieceEngi
             throw IllegalStateException("Kokoro voice ${chosen.id} sid ${chosen.sid} is outside the voice table")
         }
         // The upstream file first: sherpa ignores a later duplicate, so its pronunciation wins.
-        val lexicons = listOf("$dir/lexicon-us-en.txt", "$dir/$CHAT_LEXICON")
+        val lexicons = (listOf("$dir/lexicon-us-en.txt", "$dir/$CHAT_LEXICON") + listOfNotNull(productLexicon()))
             .filter { NSFileManager.defaultManager.fileExistsAtPath(it) }
         // One file at a time: the larger is 19 MB, and only its words' hashes are kept.
         knownWords = LexiconWords(lexicons.asSequence().mapNotNull(::fileBytes).asIterable())
@@ -122,6 +129,19 @@ internal class KokoroIosPieceEngine(private val config: VoiceConfig) : PieceEngi
         val id = voiceOverride ?: chosenVoice ?: config.kokoroVoiceId.ifEmpty { kokoroCatalog().defaultId }
         return kokoroVoice(id) ?: throw IllegalStateException("Unknown Kokoro voice '$id'.")
     }
+}
+
+/**
+ * Hovel's own words ([kokoroProductWords]) as a lexicon file in the app's caches, since the bundle cannot be
+ * written. Null when the file cannot be written; those words are then spelled, as every unknown word is.
+ */
+@OptIn(ExperimentalForeignApi::class)
+internal fun productLexicon(): String? {
+    val caches = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, true).firstOrNull() as? String
+        ?: return null
+    val path = "$caches/$KOKORO_PRODUCT_LEXICON"
+    val text = lexiconText(kokoroProductWords()) as NSString
+    return path.takeIf { text.writeToFile(it, atomically = true, encoding = NSUTF8StringEncoding, error = null) }
 }
 
 /** A file's bytes, or null when it cannot be read. */

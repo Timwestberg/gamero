@@ -116,8 +116,8 @@ internal fun createKokoroEngine(config: VoiceConfig): PieceEngine = SherpaKokoro
 private class PreparedLexicon(val files: String, val known: Set<String>)
 
 /**
- * Writes regular inflections beside the upstream lexicon and passes both files
- * to sherpa. A later duplicate is ignored, so the upstream pronunciation wins.
+ * Writes regular inflections and Hovel's own words ([kokoroProductWords]) beside the upstream lexicon and passes
+ * the files to sherpa. A later duplicate is ignored, so the upstream pronunciation wins.
  */
 private fun prepareChatLexicon(dir: File): PreparedLexicon {
     val baseFile = File(dir, "lexicon-us-en.txt")
@@ -143,7 +143,12 @@ private fun prepareChatLexicon(dir: File): PreparedLexicon {
         baseFile.path
     }
     val known = if (supplement.isFile && chat.additions.isNotEmpty()) chat.known else chat.known - chat.additions.keys
-    return PreparedLexicon(files, known)
+    // Hovel's own words go last, so a word upstream holds keeps upstream's pronunciation.
+    val product = kokoroProductWords()
+    val productFile = File(dir, KOKORO_PRODUCT_LEXICON)
+    val productText = lexiconText(product)
+    if (productFile.takeIf { it.isFile }?.readText() != productText) productFile.writeText(productText)
+    return PreparedLexicon(files + "," + productFile.path, known + product.keys)
 }
 
 private fun sha256(text: String): String {

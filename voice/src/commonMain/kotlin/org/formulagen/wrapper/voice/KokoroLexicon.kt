@@ -65,6 +65,44 @@ internal fun kokoroChatLexicon(base: Map<String, String>): KokoroChatLexicon {
 }
 
 /**
+ * Words Hovel says that the upstream lexicon lacks: its voices' names, and products that come up in a
+ * conversation. Without them the voice spells "Quinn" and "iPhone" letter by letter. Each pronunciation is put
+ * together from words the lexicon holds (quinn from quince, avery from bravery, iphone from i and phone), so
+ * every phone is one the model knows.
+ */
+internal val KOKORO_PRODUCT_WORDS: Map<String, String> = linkedMapOf(
+    "quinn" to "k w ˈ ɪ n",
+    "avery" to "ˈ A v ə ɹ i",
+    "jamie" to "ʤ ˈ A m i",
+    "iphone" to "ˈ I f ˌ O n",
+    "ipad" to "ˈ I p ˌ æ d",
+    "github" to "ɡ ˈ ɪ t h ˌ ʌ b",
+    "todo" to "t ə d ˈ u",
+    "wifi" to "w ˈ I f ˌ I",
+    "gamero" to "ɡ ə m ˈ ɛ ɹ O",
+)
+
+/** The engines write this file and hand it to sherpa after the other lexicons. */
+internal const val KOKORO_PRODUCT_LEXICON = "lexicon-hovel.txt"
+
+/**
+ * [KOKORO_PRODUCT_WORDS] with the plural of each, which is also how its possessive is said ("Quinn's"). A word the
+ * upstream lexicon already holds keeps upstream's pronunciation: sherpa ignores a later duplicate.
+ */
+internal fun kokoroProductWords(): Map<String, String> {
+    val words = LinkedHashMap<String, String>()
+    for ((word, phones) in KOKORO_PRODUCT_WORDS) {
+        words[word] = phones
+        val (plural, pluralPhones) = pluralOf(word, phones)
+        if (plural !in words) words[plural] = pluralPhones
+    }
+    return words
+}
+
+/** A lexicon file's text: one "word phones" line for each of [words]. */
+internal fun lexiconText(words: Map<String, String>): String = words.entries.joinToString("") { "${it.key} ${it.value}\n" }
+
+/**
  * Replaces a word the lexicon cannot say with its letters. A known word,
  * including one added by [inflectKokoroLexicon], is left as written, and a
  * possessive is said as the plural it sounds like.
