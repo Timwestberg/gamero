@@ -18,5 +18,10 @@ GAMERO_WEB_URL[config=Release]=https:/$()/web.worldwinner.com
 GAMERO_PRODUCT=hovel
 GAMERO_PRODUCT[config=Release]=
 
+// The name under the icon and in the system's permission prompts ("Hovel would like to access the Microphone").
+// Debug runs Hovel; Release keeps the target's name unless tools/ios-info.py names the product.
+APP_DISPLAY_NAME=Hovel
+APP_DISPLAY_NAME[config=Release]=$(PRODUCT_NAME)
+
 // composeApp has no iosX64 target (see composeApp/build.gradle.kts), so simulators are arm64 only.
 EXCLUDED_ARCHS[sdk=iphonesimulator*]=x86_64

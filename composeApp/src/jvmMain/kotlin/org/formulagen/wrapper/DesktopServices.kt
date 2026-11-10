@@ -266,6 +266,8 @@ internal fun desktopProductPacks(
         add(ProjectWorkspaceMethods.pack(Capability.Unsupported))
         add(VoiceInputMethods.pack(supportedIfPresent(voiceInput)))
         add(VoicePlaybackMethods.pack(supportedIfPresent(playback)))
+        // Reminders stay in the page on the Mac; only the iPhone schedules them itself.
+        add(org.formulagen.wrapper.bridge.NotificationMethods.pack(Capability.Unsupported))
         add(ConversationVoiceMethods.pack(supportedIfPresent(conversationVoice)))
         add(ApprovalMethods.pack(Capability.Unsupported))
         add(ApprovalDeviceMethods.pack(Capability.Unsupported))

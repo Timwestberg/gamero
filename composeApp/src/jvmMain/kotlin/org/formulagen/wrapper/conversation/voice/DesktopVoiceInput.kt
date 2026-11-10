@@ -56,14 +56,24 @@ internal class DesktopVoiceInput(private val ear: Hearing, private val speech: C
     private var speechSession: String? = null
     private var speechRevision: Int? = null
     private val speechStops = linkedSetOf<String>()
-    override suspend fun speak(args: LocalSpeechArgs): LocalSpeechStatus = synchronized(gate) {
-        if (args.sessionId in speechStops) return@synchronized LocalSpeechStatus(args.sessionId, "cancelled")
-        if (speechSession == args.sessionId) return@synchronized playbackStatus(args.sessionId)
-        if (speech.status().state.name in setOf("SPEAKING", "PREPARING")) return@synchronized LocalSpeechStatus(args.sessionId, "error")
-        speechSession = args.sessionId
-        speech.speak(args.text)
+    override suspend fun speak(args: LocalSpeechArgs): LocalSpeechStatus = say(args, replace = true)
+    override suspend fun append(args: LocalSpeechArgs): LocalSpeechStatus = say(args, replace = false)
+    /**
+     * The rules of [VoicePlaybackCapability] over the Mac's shared speaker. This session owns the speaker while the
+     * playback revision is the one it spoke at; Talk, or another session, taking the speaker changes the revision.
+     * Every piece goes through [ChatSpeech.append], so the next sentence is synthesized while this one plays.
+     */
+    private fun say(args: LocalSpeechArgs, replace: Boolean): LocalSpeechStatus = synchronized(gate) {
+        val id = args.sessionId
+        if (id in speechStops) return@synchronized LocalSpeechStatus(id, "cancelled")
+        val mine = speechSession == id && speechRevision == speech.playbackRevision()
+        val busy = speech.status().state.name in setOf("SPEAKING", "PREPARING")
+        if (busy && !mine) return@synchronized LocalSpeechStatus(id, "error")
+        if (busy && replace) speech.stop()
+        speechSession = id
         speechRevision = speech.playbackRevision()
-        playbackStatus(args.sessionId)
+        speech.append(args.text)
+        playbackStatus(id)
     }
     override suspend fun stopSpeech(args: VoiceInputScope): LocalSpeechStatus = synchronized(gate) {
         speechStops.add(args.sessionId)

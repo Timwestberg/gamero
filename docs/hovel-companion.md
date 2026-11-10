@@ -431,6 +431,14 @@ sentence through `SentenceCursor`, dictation and the latency marks, and its host
 of the loop needs its host's lock; `click`, `escape` and `toggleFillers` take
 it themselves.
 
+- **The page's own voice.** A page that speaks a reply itself uses
+  `voicePlayback.*`, served by `DesktopVoiceInput` on the same speaker
+  (`DesktopSpeech`). `speak` starts over and `append` queues the next sentence
+  behind it through `ChatSpeech.append`, a stream that ends by itself once the
+  device has played everything out, so the page never says which sentence is
+  the last. A reply Talk is speaking is never interrupted or joined: the page's
+  call answers `error`. The rules are in
+  [host-bridge.md](host-bridge.md#device-speech-and-notifications).
 - **One conversation at a time.** `VoiceConversation` is bound to one
   conversation id, with its own share of the microphone. A page's action moves
   the voice to the conversation it names, unless Talk or dictation is on in

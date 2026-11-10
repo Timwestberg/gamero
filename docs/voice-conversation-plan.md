@@ -604,6 +604,13 @@ Each milestone is one PR series, based on #56 for gamero. Ship them in order. A 
 
 ### Milestone 6 — iPhone 14 Pro Max and iPad Pro
 
+> **What shipped on iPhone instead (2026-11).** The iPhone does not run sherpa or Kokoro. It uses Apple's speech:
+> `SFSpeechRecognizer` for dictation (`voiceInput.*`, on the phone where iOS has an on-device model for the language) and
+> `AVSpeechSynthesizer` with the best installed voice for the companion's voice (`voicePlayback.*`, sentence by sentence
+> with `append`). So `NSSpeechRecognitionUsageDescription` is in `Info.plist`, against the first box below. The Mac stays
+> the engine for every turn. See [ios.md](ios.md#dictation-and-the-companions-voice). The plan below is kept as the
+> record of the sherpa path, which is not built.
+
 **Size:** large, and blocked on a Mac that can see the devices. The state machine and the Zipformer files are reused. The audio graph is Swift around the same voice-processing idea, through the existing cinterop style rather than JNI.
 
 - [ ] `NSMicrophoneUsageDescription` only. No speech-recognition usage string.

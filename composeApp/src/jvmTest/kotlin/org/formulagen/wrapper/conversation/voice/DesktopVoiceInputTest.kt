@@ -16,8 +16,12 @@ class DesktopVoiceInputTest {
         var state = VoiceState.IDLE
         override fun status() = ChatVoice(state)
         override fun playbackRevision() = revision
+        val said = mutableListOf<String>()
         override fun speak(text: String) { revision++; state = VoiceState.SPEAKING }
-        override fun stop() { revision++; stops++; state = VoiceState.IDLE }
+        override fun stop() { revision++; stops++; said.clear(); state = VoiceState.IDLE }
+        override fun append(text: String): Boolean { said += text; state = VoiceState.SPEAKING; return true }
+        /** Everything queued has been said. */
+        fun finish() { said.clear(); state = VoiceState.IDLE }
         override fun close() {}
     }
     private class Ear : Hearing {
@@ -43,6 +47,69 @@ class DesktopVoiceInputTest {
             input.invalidate()
             assertEquals(0, speaker.stops)
             assertEquals(VoiceState.SPEAKING, speaker.state)
+        } finally { input.close() }
+    }
+    @Test fun appendQueuesBehindTheSessionsReplyAndSpeakReplacesIt() = runBlocking {
+        val speaker = Speaker()
+        val input = DesktopVoiceInput(Ear(), speaker)
+        try {
+            assertEquals("speaking", input.speak(LocalSpeechArgs("first", "One.")).state)
+            assertEquals("speaking", input.append(LocalSpeechArgs("first", "Two.")).state)
+            assertEquals(listOf("One.", "Two."), speaker.said)
+            assertEquals(0, speaker.stops, "a queued sentence does not flush the one being said")
+            assertEquals("speaking", input.speak(LocalSpeechArgs("first", "Start over.")).state)
+            assertEquals(listOf("Start over."), speaker.said)
+            assertEquals(1, speaker.stops)
+            speaker.finish()
+            assertEquals("done", input.speechStatus(VoiceInputScope("first")).state)
+            // The next sentence of a streamed reply arrives after the last one finished: the session speaks again.
+            assertEquals("speaking", input.append(LocalSpeechArgs("first", "Three.")).state)
+            assertEquals(listOf("Three."), speaker.said)
+            assertEquals(1, speaker.stops)
+        } finally { input.close() }
+    }
+    @Test fun appendWithNothingPlayingIsSpeak() = runBlocking {
+        val speaker = Speaker()
+        val input = DesktopVoiceInput(Ear(), speaker)
+        try {
+            assertEquals("speaking", input.append(LocalSpeechArgs("first", "Hello.")).state)
+            assertEquals(listOf("Hello."), speaker.said)
+            assertEquals("speaking", input.speechStatus(VoiceInputScope("first")).state)
+        } finally { input.close() }
+    }
+    @Test fun anotherSessionCannotInterruptTheSpeakerWithSpeakOrAppend() = runBlocking {
+        val speaker = Speaker()
+        val input = DesktopVoiceInput(Ear(), speaker)
+        try {
+            input.speak(LocalSpeechArgs("first", "One."))
+            assertEquals("error", input.speak(LocalSpeechArgs("second", "Me first.")).state)
+            assertEquals("error", input.append(LocalSpeechArgs("second", "Me too.")).state)
+            assertEquals(listOf("One."), speaker.said)
+            assertEquals("speaking", input.speechStatus(VoiceInputScope("first")).state)
+            speaker.finish()
+            assertEquals("speaking", input.append(LocalSpeechArgs("second", "Now me.")).state)
+            assertEquals("error", input.speechStatus(VoiceInputScope("first")).state)
+        } finally { input.close() }
+    }
+    @Test fun appendNeverJoinsAReplyThatTalkStartedOnTheSameSpeaker() = runBlocking {
+        val speaker = Speaker()
+        val input = DesktopVoiceInput(Ear(), speaker)
+        try {
+            input.speak(LocalSpeechArgs("first", "One."))
+            speaker.speak("Talk's reply")
+            assertEquals("error", input.append(LocalSpeechArgs("first", "Two.")).state)
+            assertEquals(emptyList(), speaker.said.filter { it == "Two." })
+            assertEquals(0, speaker.stops)
+        } finally { input.close() }
+    }
+    @Test fun aStoppedSessionCannotAppend() = runBlocking {
+        val speaker = Speaker()
+        val input = DesktopVoiceInput(Ear(), speaker)
+        try {
+            input.speak(LocalSpeechArgs("first", "One."))
+            assertEquals("cancelled", input.stopSpeech(VoiceInputScope("first")).state)
+            assertEquals("cancelled", input.append(LocalSpeechArgs("first", "Two.")).state)
+            assertEquals(emptyList(), speaker.said)
         } finally { input.close() }
     }
     @Test fun ownedPlaybackStopsAndCannotRestartAfterCancellation() = runBlocking {

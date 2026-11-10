@@ -163,6 +163,124 @@ class DesktopSpeechStreamTest {
         }
     }
 
+    /** A line that records what reached the speaker, in order, and how many were open at once. */
+    private class RecordingLine(private val log: CopyOnWriteArrayList<String>, private val open: AtomicInteger, private val mostOpen: AtomicInteger) : PcmLine {
+        init { mostOpen.accumulateAndGet(open.incrementAndGet(), ::maxOf) }
+        override fun start() { log += "start" }
+        override fun write(pcm: ByteArray) { if (pcm.isNotEmpty()) log += "write" }
+        override fun drain() { log += "drain" }
+        override fun flush() {}
+        override fun stop() {}
+        override fun close() { if (log.lastOrNull() != "close") open.decrementAndGet(); log += "close" }
+    }
+
+    private fun countingEngine(calls: CopyOnWriteArrayList<String>) = object : PieceEngine {
+        override val sampleRate: Int = 24000
+        override fun usesFrameCeiling(): Boolean = false
+        override fun synthesize(text: String, maxFrames: Int, seed: Int): PieceAudio {
+            calls += text
+            return PieceAudio(FloatArray(4800), 24000, 1.0, 1.0)
+        }
+        override fun release() {}
+    }
+
+    @Test
+    fun appendedSentencesPlayInOrderAndTheVoiceGoesIdleByItself() {
+        val synthesized = CopyOnWriteArrayList<String>()
+        val log = CopyOnWriteArrayList<String>()
+        val open = AtomicInteger()
+        val mostOpen = AtomicInteger()
+        DesktopSpeech(VoiceConfig(), { RecordingLine(log, open, mostOpen) }, { countingEngine(synthesized) }).use { speech ->
+            val revision = speech.playbackRevision()
+            assertTrue(speech.append("Hello there."))
+            assertTrue(speech.append("This is the second sentence."))
+            assertTrue(speech.status().state != VoiceState.IDLE, "speaking from the first append on")
+            // No endStream: the stream ends once both sentences have been played out.
+            assertTrue(waitFor { speech.status().state == VoiceState.IDLE })
+            assertEquals(2, synthesized.size)
+            assertEquals(2, log.count { it == "write" })
+            assertTrue(log.indexOf("drain") > log.lastIndexOf("write"), "the device played everything out before the voice went idle: $log")
+            assertEquals(revision, speech.playbackRevision(), "append does not take the speaker from its owner")
+            // A sentence that arrives after the stream ended starts a new one.
+            assertTrue(speech.append("And one more thing."))
+            assertTrue(waitFor { synthesized.size == 3 && speech.status().state == VoiceState.IDLE })
+            assertEquals(3, log.count { it == "write" })
+            assertEquals(1, mostOpen.get(), "sentences never overlap on two lines")
+        }
+    }
+
+    @Test
+    fun aSentenceAppendedWhileTheLastOnePlaysOutContinuesTheSameStream() {
+        val synthesized = CopyOnWriteArrayList<String>()
+        val draining = CountDownLatch(1)
+        val releaseDrain = CountDownLatch(1)
+        val starts = AtomicInteger()
+        val writes = AtomicInteger()
+        val line = object : PcmLine {
+            override fun start() { starts.incrementAndGet() }
+            override fun write(pcm: ByteArray) { if (pcm.isNotEmpty()) writes.incrementAndGet() }
+            override fun drain() {
+                if (draining.count == 1L) {
+                    draining.countDown()
+                    assertTrue(releaseDrain.await(2, TimeUnit.SECONDS))
+                }
+            }
+            override fun flush() {}
+            override fun stop() { releaseDrain.countDown() }
+            override fun close() { releaseDrain.countDown() }
+        }
+        DesktopSpeech(VoiceConfig(), { line }, { countingEngine(synthesized) }).use { speech ->
+            assertTrue(speech.append("Hello there."))
+            assertTrue(draining.await(2, TimeUnit.SECONDS), "the first sentence is playing out")
+            assertTrue(speech.status().state != VoiceState.IDLE, "still speaking while the device plays out")
+            assertTrue(speech.append("This arrived just in time."))
+            assertTrue(waitFor { synthesized.size == 2 })
+            releaseDrain.countDown()
+            assertTrue(waitFor { writes.get() == 2 && speech.status().state == VoiceState.IDLE })
+            assertEquals(1, starts.get(), "the late sentence went out on the line that was already open")
+        }
+    }
+
+    @Test
+    fun stopDropsAppendedSentencesAndALaterAppendSpeaksAgain() {
+        val synthesized = CopyOnWriteArrayList<String>()
+        val inWrite = CountDownLatch(1)
+        val flushed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val line = object : PcmLine {
+            override fun start() {}
+            override fun write(pcm: ByteArray) {
+                inWrite.countDown()
+                while (!flushed.get()) Thread.sleep(5)
+            }
+            override fun drain() {}
+            override fun flush() { flushed.set(true) }
+            override fun stop() {}
+            override fun close() {}
+        }
+        DesktopSpeech(VoiceConfig(), { line }, { countingEngine(synthesized) }).use { speech ->
+            speech.append("Hello there friend.")
+            speech.append("This one is never heard.")
+            assertTrue(inWrite.await(2, TimeUnit.SECONDS))
+            speech.stop()
+            assertEquals(VoiceState.IDLE, speech.status().state)
+            assertTrue(speech.append("A fresh start."))
+            assertTrue(waitFor { synthesized.lastOrNull() == "A fresh start." && speech.status().state == VoiceState.IDLE })
+        }
+    }
+
+    @Test
+    fun appendSpeaksWordsNotMarkdownAndSkipsWhatHasNone() {
+        val synthesized = CopyOnWriteArrayList<String>()
+        DesktopSpeech(VoiceConfig(), { SilentLine() }, { countingEngine(synthesized) }).use { speech ->
+            assertTrue(speech.append("**Done.** See [the plan](https://example.com/plan)."))
+            assertTrue(waitFor { speech.status().state == VoiceState.IDLE && synthesized.isNotEmpty() })
+            assertTrue(synthesized.none { '*' in it || "https" in it }, synthesized.toString())
+            assertEquals(false, speech.append("   "))
+            assertEquals(VoiceState.IDLE, speech.status().state)
+        }
+        DesktopSpeech(null).use { speech -> assertEquals(false, speech.append("Hello."), "no voice installed") }
+    }
+
     @Test
     fun stopFlushesWithinFiftyMilliseconds() {
         val inWrite = CountDownLatch(1)
