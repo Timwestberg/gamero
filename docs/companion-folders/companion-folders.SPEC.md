@@ -1,8 +1,7 @@
 # Companion folders
 
-Status: draft for review, revised 2026-11-10. Nothing here is built.
-"Decided" lists what has been agreed; "Decisions needed" lists what is still
-open.
+Status: decisions agreed 2026-11-10; the document itself awaits a last read.
+Nothing here is built. "Decided" lists what was agreed.
 
 ## What
 
@@ -162,9 +161,14 @@ text, and read files, several in one request.
 
 - Reading asks first. The first time in a conversation, the Mac asks: "Ember
   wants to read files in `my-shopping-list` with Codex." It is the dialog a
-  specialist's start of work uses today, remembered for this conversation,
-  project, folder and provider. If the person says no, the coordinator
-  answers from the brief or hands the question to a specialist.
+  specialist's start of work uses today. If the person says no, the
+  coordinator answers from the brief or hands the question to a specialist.
+- An approval is remembered across restarts, for exactly what the dialog
+  named: this conversation, project, folder and provider. It is asked again
+  when any of them changes. This holds for a specialist's start of work too,
+  which today is asked again after every restart.
+- The project's settings list what is approved, and the person can withdraw
+  an approval there. "Not now" is never remembered.
 
 - Hovel checks every path. A path is read only when, after links are
   resolved, it is inside the project's working folder, one of its read-only
@@ -233,6 +237,17 @@ text, and read files, several in one request.
 
 All on 2026-11-10.
 
+The folders:
+
+- **The root is `~/Hovel`**, visible in the home folder.
+- **No subfolder per provider.** The provider and model of each output are
+  in `index.md`.
+- **The visible files are one-way copies.** Hovel never reads an edit back.
+- **A deleted conversation or companion moves its folder to the Trash.**
+- **Memory cleanup erases the notes and keeps the outputs.**
+
+The coordinator's view of the project:
+
 - **Hovel reads for the coordinator; it gets no provider file tools.**
 - **The project index is a brief Hovel builds itself, not a third-party
   graph.** After the spike in `project-index-spike.md`.
@@ -241,27 +256,14 @@ All on 2026-11-10.
 - **The skip list is fixed and does not follow `.gitignore`.**
 - **The conversation shows what the coordinator read, by file name.**
 
-## Decisions needed
+Approvals and limits:
 
-These were filled in by inference and are still open. Each changes the
-design if the answer is different.
-
-1. **The root is `~/Hovel`, visible in the home folder.** Or `~/Documents/
-   Hovel`, or a folder the person picks.
-2. **The visible files are one-way copies.** Hovel never reads an edit back.
-   The other choice, edits that agents see, breaks the digest rule above and
-   needs its own design.
-3. **Deleted folders go to the Trash.** Not deleted outright.
-4. **Memory cleanup erases notes and keeps outputs.**
-5. **The read approval is asked again after each restart**, as start of work
-   is today. Remembering it across restarts is friendlier and is a separate,
-   small change that would cover both.
-6. **The numbers:** notes of 2,000 characters, 8,000 characters of notes
-   given to a turn, scratch kept 7 days, a warning at 1 GB, a brief of
-   10,000 characters, and a reading budget of two rounds and 32,000
-   characters.
-7. **No provider subfolders.** You proposed them; this draft records the
-   provider in `index.md` instead.
+- **An approval is remembered across restarts**, for reading and for a
+  specialist's start of work.
+- **The limits are starting values**, to be tuned from use: notes of 2,000
+  characters, 8,000 characters of notes given to a turn, scratch kept 7
+  days, a warning at 1 GB, a brief of 10,000 characters, and a reading
+  budget of two rounds and 32,000 characters.
 
 <!-- IMPLEMENTATION-PLAN:START -->
 
@@ -302,9 +304,14 @@ Step 2, shared context:
   that says what is sent. Depends on the path check. Done when the
   coordinator answers "what is this project?" with no handoff and no read,
   and no skipped file is named in it.
-- **The read approval.** The dialog and what is remembered. Depends on
-  nothing. Done when no file text beyond the brief is sent before the person
-  approves, and a refusal leaves the coordinator answering from the brief.
+- **Remembered approvals.** Approvals kept on the Mac across restarts, for
+  start of work as well, with the list and the withdrawal in the project's
+  settings. Depends on nothing. Done when a restart does not ask again, a
+  changed folder or provider does, and a withdrawn approval asks again.
+- **The read approval.** The dialog for reading. Depends on remembered
+  approvals. Done when no file text beyond the brief is sent before the
+  person approves, and a refusal leaves the coordinator answering from the
+  brief.
 - **Read requests.** The reply format, the follow-up turn, the budget, the
   activity line and the spoken line in Talk. Depends on the path check and
   the approval. Done when "what does my README say?" is answered from the
