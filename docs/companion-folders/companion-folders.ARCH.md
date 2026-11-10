@@ -1,6 +1,7 @@
 # Companion folders: architecture, step 1
 
-Status: draft for review, 2026-11-10. Covers step 1 of
+Status: decisions agreed 2026-11-10; awaiting the go-ahead to build slice
+1a. Covers step 1 of
 `companion-folders.SPEC.md`, the visible folder of outputs. Step 2 (notes,
 scratch, the coordinator's view of the project) gets its own pass once this
 one is agreed. No code is written.
@@ -287,13 +288,14 @@ change. A file write that fails is logged; the page is not told yet.
 - **The "waiting to start" thread state** seen on 2026-11-10 is unrelated and
   not touched here.
 
-## Decisions needed
+## Decided
 
-1. **File names are `<nn> <first heading or title>.md`.** The spec said "under
-   the output's title", but a title is a role name. The other choice is the
-   title alone with ` 2` suffixes.
-2. **Step 1 ships as two slices**, 1a now and 1b after a server change.
-3. **Existing conversations are written out at their next message**, not when
-   the new version first runs.
-4. **A conversation folder's date is the day its first output is written.**
-5. **The root override replaces "a development build uses its own root".**
+All on 2026-11-10.
+
+- **File names are `<nn> <first heading or title>.md`.**
+- **Step 1 ships as two slices**: 1a in the Mac app, 1b after a server
+  change.
+- **Existing conversations are written out at their next message.**
+- **A conversation folder's date is the day its first output is written.**
+- **Every build writes to `~/Hovel`; `HOVEL_COMPANION_FOLDERS` overrides it
+  for rigs.**

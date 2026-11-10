@@ -28,8 +28,8 @@ because all three are about what an agent may read.
     conversations/
       2026-11-10 Shopping list spec/
         outputs/
-          Shopping list spec.md
-          Architecture.md
+          01 Shopping list spec.md
+          02 Architecture.md
         index.md          who made each output, with which provider and model
         notes.md          the shared log (step 2)
         scratch/          temporary handoff files (step 2)
@@ -79,37 +79,40 @@ can open, search, back up and delete.
 ### The folders
 
 - The root is `~/Hovel`. A companion's folder is named after the companion.
-  A conversation's folder is named `<date started> <title>`.
+  A conversation's folder is named `<date> <title>`, where the date is the
+  day its first output was written.
 - Hovel knows a folder by a small hidden marker file inside it, not by its
   name. Renaming the companion or the conversation in Hovel renames the
-  folder. Two with the same name get ` 2`, ` 3`.
+  folder. Two with the same name get ` 2`, ` 3`. The rename happens at the
+  conversation's next message, which is when the Mac learns the new name.
 - A name is made safe for Finder: `/` and `:` become `-`, and it is cut to
   80 characters.
 - One account has one folder per companion, whichever address the app runs
-  at. A development build uses its own root, so it never writes into the
-  real one.
+  at. Every build writes to `~/Hovel`; a setting moves the root for a test
+  rig, so a test account never writes into the real one.
 - A folder is created when its first file is written, not when the companion
   is created. An unused companion leaves nothing on disk.
 
 ### Outputs (step 1)
 
-- When an agent produces an output, Hovel writes it to `outputs/` under the
-  output's title, with an extension from its type (`.md` for Markdown and
-  plain text). A second output with the same title gets ` 2`.
+- When an agent produces an output, Hovel writes it to `outputs/` as
+  `<nn> <name>.md`: a two-digit number in the order written, then the
+  output's first heading, or the specialist's name when it has no heading.
 - `index.md` lists each output in order: its file, the specialist that made
   it, the provider and model, and the time. The output files hold only what
   the agent wrote, so they stay clean documents.
 - Hovel writes each file once and never changes it. The person may edit,
   move or delete a file; Hovel does not restore it, and does not read the
   edit. An agent that is handed an output gets Hovel's recorded copy.
-- Outputs of conversations that already exist are written out the first time
-  the new version runs.
+- A conversation that already exists gets its folder at its next message.
+  One that is never used again stays out of the visible folder.
 - If the folder cannot be written (a full disk, a missing drive), the
   conversation goes on. The private record is complete, the page says once
   that the visible folder is behind, and the missing files are written when
   the folder is back.
 - The conversation page has "Show in Finder" for the conversation's folder,
-  on the project's own Mac.
+  on the project's own Mac. This and the Trash need a server change, so they
+  come in a second slice of step 1.
 
 ### Shared notes (step 2)
 
@@ -260,6 +263,10 @@ Approvals and limits:
 
 - **An approval is remembered across restarts**, for reading and for a
   specialist's start of work.
+- **File names are a number and the output's first heading.**
+- **Existing conversations get their folder at their next message, and its
+  date is the day of its first output.**
+- **Every build writes to `~/Hovel`; a setting moves it for test rigs.**
 - **The limits are starting values**, to be tuned from use: notes of 2,000
   characters, 8,000 characters of notes given to a turn, scratch kept 7
   days, a warning at 1 GB, a brief of 10,000 characters, and a reading
@@ -269,7 +276,8 @@ Approvals and limits:
 
 ## When (remove after delivery)
 
-Step 1, the visible folder:
+Step 1, the visible folder. The first three tasks are slice 1a, in the Mac
+app only. The last two are slice 1b and need a server change first.
 
 - **Folder identity and names.** The root, the marker file, safe names,
   renames and duplicates. Depends on nothing. Done when renaming a companion
@@ -280,11 +288,13 @@ Step 1, the visible folder:
   identity. Done when a delegated task's output is a readable file within a
   second of appearing in the conversation, and a failed write does not stop
   the run.
-- **Existing conversations.** Outputs already recorded are written out once.
-  Depends on writing outputs. Done when it can run twice without duplicates.
+- **Existing conversations.** Outputs already recorded are written out at the
+  conversation's next message. Depends on writing outputs. Done when it can
+  run twice without duplicates.
 - **Delete to the Trash.** A deleted conversation or companion moves its
-  folder to the Trash. Depends on folder identity. Done when the folder is
-  in the Trash and can be put back.
+  folder to the Trash. Depends on folder identity, and on a new server route
+  that tells the Mac what no longer exists. Done when the folder is in the
+  Trash and can be put back.
 - **Show in Finder.** A host-bridge method and the page's control. Depends on
   folder identity, and on a contract change in server-platform first. Done
   when it opens the right folder on the project's Mac and is absent
