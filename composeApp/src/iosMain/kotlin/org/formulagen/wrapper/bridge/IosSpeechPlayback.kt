@@ -83,6 +83,7 @@ internal class IosSpeechPlayback(
     private fun ended(ticket: Int) {
         if (ticket != queue.ticket) return
         if (queue.ended(ticket)) {
+            log(LogLevel.Info, TAG, "The reply was spoken to its end")
             stall?.cancel()
             releaseSession(SESSION_LINGER_MS)
         } else {

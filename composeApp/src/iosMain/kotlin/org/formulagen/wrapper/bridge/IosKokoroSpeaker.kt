@@ -131,10 +131,10 @@ internal class IosKokoroSpeaker(
     }
 
     override fun flush() {
-        generation.incrementAndFetch()
+        val now = generation.incrementAndFetch()
         voice?.cancel()
         line.clear()
-        player.flush()
+        player.flush(now)
         fallback.flush()
     }
 
@@ -235,8 +235,7 @@ internal class IosKokoroSpeaker(
             usable = false
             val waiting = line.toList()
             line.clear()
-            generation.incrementAndFetch()
-            player.flush()
+            player.flush(generation.incrementAndFetch())
             for (spoken in waiting) fallback.say(spoken.text, spoken.started, spoken.ended)
         }
     }
@@ -262,13 +261,17 @@ private class KokoroPlayer {
     private var format: AVAudioFormat? = null
     /** The flush generation whose sound the node holds, or -1 when it holds none. */
     private val holding = AtomicInt(-1)
+    /** The flush generation whose sound is wanted. A sentence of an earlier one, still being made at the flush, is refused. */
+    private val live = AtomicInt(0)
+    /** 1 once the node was told to play on the engine as it runs now. */
+    private val nodePlays = AtomicInt(0)
 
     /** True when sound of [generation] is already in line, so what follows needs a pause before it. */
     fun holdsSound(generation: Int): Boolean = holding.load() == generation
 
     /** Plays [samples] after what the node holds, [leadSilence] samples of silence first. */
     fun play(generation: Int, samples: FloatArray, sampleRate: Int, leadSilence: Int) {
-        if (samples.isEmpty() || !start(sampleRate)) return
+        if (samples.isEmpty() || generation != live.load() || !start(sampleRate)) return
         val buffer = buffer(leadSilence + samples.size) ?: return
         val channel = buffer.floatChannelData?.get(0) ?: return
         samples.usePinned { pinned ->
@@ -280,6 +283,7 @@ private class KokoroPlayer {
 
     /** Runs [played] once everything handed over so far has been heard. */
     fun mark(generation: Int, sampleRate: Int, played: () -> Unit) {
+        if (generation != live.load()) return
         val rate = if (sampleRate > 0) sampleRate else DEFAULT_RATE
         val buffer = if (start(rate)) buffer(rate * END_MARK_MS / MS_PER_SECOND) else null
         if (buffer == null) {
@@ -292,13 +296,20 @@ private class KokoroPlayer {
         }
     }
 
-    /** Silences the node and drops what it holds. Their marks still report; the speaker ignores a stale one. */
-    fun flush() {
+    /**
+     * Silences the player, drops what it holds and takes sound of [now] only from here on. Marks of what was dropped
+     * still report; the speaker ignores a stale one. The
+     * engine stops too, so the next reply starts it afresh on the audio session as it is then: between two replies
+     * of Talk the session records, and an engine left running through that plays nothing afterwards.
+     */
+    fun flush(now: Int) {
+        live.store(now)
         holding.store(-1)
-        if (engine.running) node.stop()
+        rest()
     }
 
     fun rest() {
+        if (nodePlays.exchange(0) == 1) node.stop()
         if (engine.running) engine.stop()
     }
 
@@ -319,13 +330,17 @@ private class KokoroPlayer {
             format = mono
         }
         if (!engine.running) {
+            // The engine is stopped, by `rest` or by iOS when the audio route changed. A node goes on saying it plays
+            // through that and then plays nothing it is handed, so it is stopped and started with the engine.
+            nodePlays.store(0)
+            node.stop()
             engine.prepare()
             if (!engine.startAndReturnError(null)) {
                 log(LogLevel.Warn, TAG, "The audio engine did not start; Kokoro's sound was dropped")
                 return false
             }
         }
-        if (!node.playing) node.play()
+        if (nodePlays.exchange(1) == 0) node.play()
         return true
     }
 

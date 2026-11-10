@@ -48,6 +48,8 @@ private const val TAG = "IosVoiceInput"
 private const val VOICE_SAY_ENV = "GAMERO_VOICE_SAY"
 private const val VOICE_SAY_SESSION = "00000000-0000-4000-8000-00000000cafe"
 private const val VOICE_SAY_AFTER_MS = 2_000L
+private const val VOICE_SAY_POLL_MS = 200L
+private const val VOICE_SAY_REPLIES = " || "
 
 /**
  * The recognizer's "no speech" errors (`kAFAssistantErrorDomain`): 1110 is "No speech detected", and 203 is what it
@@ -84,14 +86,21 @@ internal class IosVoice : AutoCloseable {
 
     init {
         // A development check: `GAMERO_VOICE_SAY="…"` at launch speaks the text once, sentence by sentence as a reply
-        // arrives, so a build's voice can be heard, and its speed read from the log, without a conversation.
+        // arrives, so a build's voice can be heard, and its speed read from the log, without a conversation. Texts
+        // separated by " || " are spoken as replies of their own, each after the one before it has ended and the
+        // audio session has gone back.
         (NSProcessInfo.processInfo.environment[VOICE_SAY_ENV] as? String)?.takeIf { it.isNotBlank() }?.let { text ->
             CoroutineScope(Dispatchers.Main).launch {
                 delay(VOICE_SAY_AFTER_MS)
-                val sentences = text.split(Regex("(?<=[.!?])\\s+")).filter { it.isNotBlank() }
-                sentences.forEachIndexed { index, sentence ->
-                    val args = LocalSpeechArgs(VOICE_SAY_SESSION, sentence)
-                    if (index == 0) playback.speak(args) else playback.append(args)
+                text.split(VOICE_SAY_REPLIES).filter { it.isNotBlank() }.forEachIndexed { reply, words ->
+                    val session = VOICE_SAY_SESSION.dropLast(1) + reply % 10
+                    val sentences = words.split(Regex("(?<=[.!?])\\s+")).filter { it.isNotBlank() }
+                    sentences.forEachIndexed { index, sentence ->
+                        val args = LocalSpeechArgs(session, sentence)
+                        if (index == 0) playback.speak(args) else playback.append(args)
+                    }
+                    while (playback.speechStatus(VoiceInputScope(session)).state == "speaking") delay(VOICE_SAY_POLL_MS)
+                    delay(VOICE_SAY_AFTER_MS)
                 }
             }
         }
