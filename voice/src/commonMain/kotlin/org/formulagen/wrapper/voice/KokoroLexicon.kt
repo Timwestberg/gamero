@@ -66,14 +66,31 @@ internal fun kokoroChatLexicon(base: Map<String, String>): KokoroChatLexicon {
 
 /**
  * Replaces a word the lexicon cannot say with its letters. A known word,
- * including one added by [inflectKokoroLexicon], is left as written.
+ * including one added by [inflectKokoroLexicon], is left as written, and a
+ * possessive is said as the plural it sounds like.
  */
 internal fun coverUnknownWords(text: String, known: Set<String>): String {
     return SPOKEN_WORD.replace(text) { match ->
         val token = match.value
         val key = token.lowercase()
-        if (key in known) token else token.filter { it.isLetter() }.map { it.lowercaseChar() }.joinToString(" ")
+        if (key in known) {
+            token
+        } else {
+            possessiveAsPlural(key, known) ?: token.filter { it.isLetter() }.map { it.lowercaseChar() }.joinToString(" ")
+        }
     }
+}
+
+/**
+ * The lexicon lists contractions such as "it's", but no possessive of a name
+ * or noun: "Tim's" and "that's" are not in it. A possessive sounds the same as
+ * the plural, which [inflectKokoroLexicon] adds, so "tims" is said instead.
+ */
+private fun possessiveAsPlural(key: String, known: Set<String>): String? {
+    // A one-letter stem is a letter name: "A's" is not the word "as".
+    if (!key.endsWith("'s") || key.length < 4) return null
+    val plural = pluralSpelling(key.dropLast(2))
+    return if (plural in known) plural else null
 }
 
 internal fun kokoroOovReport(words: List<String>, base: Map<String, String>): KokoroOovReport {
@@ -94,12 +111,14 @@ private fun addInflection(extra: MutableMap<String, String>, known: MutableSet<S
     known.add(word)
 }
 
+private fun pluralSpelling(word: String): String = when {
+    word.endsWith("s") || word.endsWith("x") || word.endsWith("z") || word.endsWith("ch") || word.endsWith("sh") -> word + "es"
+    word.endsWith("y") && word.length >= 2 && !isVowel(word[word.length - 2]) -> word.dropLast(1) + "ies"
+    else -> word + "s"
+}
+
 private fun pluralOf(word: String, phones: String): Pair<String, String> {
-    val spelling = when {
-        word.endsWith("s") || word.endsWith("x") || word.endsWith("z") || word.endsWith("ch") || word.endsWith("sh") -> word + "es"
-        word.endsWith("y") && word.length >= 2 && !isVowel(word[word.length - 2]) -> word.dropLast(1) + "ies"
-        else -> word + "s"
-    }
+    val spelling = pluralSpelling(word)
     val last = lastPhone(phones)
     val suffix = when {
         last in SIBILANTS || word.endsWith("ch") || word.endsWith("sh") || word.endsWith("x") || word.endsWith("s") || word.endsWith("z") -> "ᵻ z"

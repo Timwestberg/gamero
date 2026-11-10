@@ -433,26 +433,11 @@
    ]
   ],
   [
-   "t",
+   "thats",
    [
+    "ð",
+    "æ",
     "t",
-    "ˈ",
-    "i"
-   ]
-  ],
-  [
-   "h",
-   [
-    "ˈ",
-    "A",
-    "ʧ"
-   ]
-  ],
-  [
-   "s",
-   [
-    "ˈ",
-    "ɛ",
     "s"
    ]
   ],
@@ -664,6 +649,22 @@
    ]
   ],
   [
+   "t",
+   [
+    "t",
+    "ˈ",
+    "i"
+   ]
+  ],
+  [
+   "h",
+   [
+    "ˈ",
+    "A",
+    "ʧ"
+   ]
+  ],
+  [
    "u",
    [
     "j",
@@ -733,6 +734,14 @@
    [
     "ˈ",
     "i"
+   ]
+  ],
+  [
+   "s",
+   [
+    "ˈ",
+    "ɛ",
+    "s"
    ]
   ],
   [
@@ -1065,32 +1074,14 @@
    ]
   ],
   [
-   "symbol",
-   [
-    "s",
-    "ˈ",
-    "ɪ",
-    "m",
-    "b",
-    "ᵊ",
-    "l"
-   ]
-  ],
-  [
-   "l",
-   [
-    "ˈ",
-    "ɛ",
-    "l"
-   ]
-  ],
-  [
-   "q",
+   "quotes",
    [
     "k",
-    "j",
+    "w",
     "ˈ",
-    "u"
+    "O",
+    "t",
+    "s"
    ]
   ],
   [
@@ -1102,6 +1093,35 @@
     "ʃ",
     "ᵻ",
     "z"
+   ]
+  ],
+  [
+   "parentheses",
+   [
+    "p",
+    "ə",
+    "ɹ",
+    "ˈ",
+    "ɛ",
+    "n",
+    "θ",
+    "ə",
+    "s",
+    "i",
+    "z"
+   ]
+  ],
+  [
+   "brackets",
+   [
+    "b",
+    "ɹ",
+    "ˈ",
+    "æ",
+    "k",
+    "ə",
+    "t",
+    "s"
    ]
   ],
   [
@@ -1450,6 +1470,72 @@
     "ɛ",
     "n"
    ]
+  ],
+  [
+   "don't",
+   [
+    "d",
+    "ˈ",
+    "O",
+    "n",
+    "t"
+   ]
+  ],
+  [
+   "tims",
+   [
+    "t",
+    "ˈ",
+    "ɪ",
+    "m",
+    "z"
+   ]
+  ],
+  [
+   "ours",
+   [
+    "ˈ",
+    "W",
+    "ə",
+    "ɹ",
+    "z"
+   ]
+  ],
+  [
+   "for",
+   [
+    "f",
+    "ɔ",
+    "ɹ"
+   ]
+  ],
+  [
+   "now",
+   [
+    "n",
+    "ˈ",
+    "W"
+   ]
+  ],
+  [
+   "done",
+   [
+    "d",
+    "ˈ",
+    "ʌ",
+    "n"
+   ]
+  ],
+  [
+   "thirty",
+   [
+    "θ",
+    "ˈ",
+    "ɜ",
+    "ɹ",
+    "ɾ",
+    "i"
+   ]
   ]
  ],
  "known": [
@@ -1460,11 +1546,13 @@
   "answered",
   "are",
   "art",
+  "b",
   "barged",
   "blends",
   "boxes",
   "brackets",
   "build",
+  "c",
   "can",
   "candidate",
   "catalog",
@@ -1475,6 +1563,8 @@
   "companion",
   "dashes",
   "desktop",
+  "don't",
+  "done",
   "dot",
   "e",
   "edit",
@@ -1483,14 +1573,18 @@
   "eleven",
   "ember",
   "emoji",
+  "f",
   "fifteen",
   "fine",
   "first",
   "five",
+  "for",
   "four",
   "fourteen",
+  "g",
   "go",
   "got",
+  "h",
   "help",
   "hi",
   "hmm",
@@ -1503,23 +1597,29 @@
   "in",
   "is",
   "it's",
+  "j",
+  "k",
   "know",
   "known",
   "let",
   "lexicon",
   "listened",
   "long",
+  "m",
   "mail",
   "may",
   "maybe",
   "me",
   "milliseconds",
+  "n",
   "na",
   "names",
   "next",
   "nine",
   "nineteen",
   "not",
+  "now",
+  "o",
   "of",
   "oh",
   "ok",
@@ -1527,6 +1627,7 @@
   "open",
   "operate",
   "or",
+  "ours",
   "parentheses",
   "perhaps",
   "pick",
@@ -1536,6 +1637,7 @@
   "pull",
   "questions",
   "quickly",
+  "quotes",
   "r",
   "really",
   "release",
@@ -1559,24 +1661,29 @@
   "stopped",
   "sum",
   "sure",
-  "symbol",
+  "t",
   "take",
   "ten",
   "that",
+  "thats",
   "the",
   "then",
   "think",
   "thirteen",
+  "thirty",
   "three",
   "time",
+  "tims",
   "to",
   "today",
   "twelve",
   "twenty",
   "two",
   "u",
+  "v",
   "vee",
   "voices",
+  "w",
   "wait",
   "way",
   "we",
@@ -1586,7 +1693,10 @@
   "were",
   "what",
   "with",
+  "x",
+  "y",
   "yes",
+  "z",
   "zero"
  ],
  "cases": [
@@ -1947,44 +2057,15 @@
    "text": "Wait... what?! Really?",
    "pieces": [
     {
-     "piece": "Wait.",
-     "spoken": "Wait.",
+     "piece": "Wait, what?",
+     "spoken": "Wait, what?",
      "sentences": [
       [
        65,
        156,
        24,
        62,
-       4
-      ]
-     ],
-     "samples": 16585
-    },
-    {
-     "piece": ".",
-     "spoken": ".",
-     "sentences": [
-      [
-       4
-      ]
-     ],
-     "samples": 6380
-    },
-    {
-     "piece": ".",
-     "spoken": ".",
-     "sentences": [
-      [
-       4
-      ]
-     ],
-     "samples": 6380
-    },
-    {
-     "piece": "what?",
-     "spoken": "what?",
-     "sentences": [
-      [
+       3,
        65,
        157,
        138,
@@ -1992,17 +2073,7 @@
        6
       ]
      ],
-     "samples": 14403
-    },
-    {
-     "piece": "!",
-     "spoken": "!",
-     "sentences": [
-      [
-       5
-      ]
-     ],
-     "samples": 8770
+     "samples": 19883
     },
     {
      "piece": "Really?",
@@ -2018,7 +2089,7 @@
        6
       ]
      ],
-     "samples": 17190
+     "samples": 17208
     }
    ]
   },
@@ -2027,25 +2098,12 @@
    "pieces": [
     {
      "piece": "That's twenty-one questions, and the boxes are well-known state-of-the-art.",
-     "spoken": "t h a t s twenty-one questions, and the boxes are well-known state-of-the-art.",
+     "spoken": "thats twenty-one questions, and the boxes are well-known state-of-the-art.",
      "sentences": [
       [
+       81,
+       72,
        62,
-       156,
-       51,
-       16,
-       156,
-       24,
-       133,
-       16,
-       24,
-       16,
-       62,
-       156,
-       51,
-       16,
-       156,
-       86,
        61,
        16,
        62,
@@ -2069,9 +2127,7 @@
        42,
        56,
        68,
-       3
-      ],
-      [
+       3,
        72,
        56,
        46,
@@ -2115,7 +2171,7 @@
        4
       ]
      ],
-     "samples": 113660
+     "samples": 85940
     }
    ]
   },
@@ -2711,8 +2767,8 @@
    "text": "Emoji 🎉 and “quotes” — dashes… and (parentheses) [brackets].",
    "pieces": [
     {
-     "piece": "Emoji symbol symbol and symbolquotes symbol symbol dashes symbol and (parentheses) [brackets].",
-     "spoken": "Emoji symbol symbol and s y m b o l q u o t e s symbol symbol dashes symbol and (parentheses) [brackets].",
+     "piece": "Emoji and quotes, dashes, and, parentheses, brackets.",
+     "spoken": "Emoji and quotes, dashes, and, parentheses, brackets.",
      "sentences": [
       [
        102,
@@ -2722,113 +2778,54 @@
        82,
        51,
        16,
-       61,
-       156,
-       102,
-       55,
-       44,
-       42,
-       54,
-       16,
-       61,
-       156,
-       102,
-       55,
-       44,
-       42,
-       54,
-       16,
        72,
        56,
        46,
        16,
-       156,
-       86,
-       61,
-       16,
+       53,
        65,
        156,
-       25,
-       16,
-       156,
-       86,
-       55,
-       16,
-       44,
-       156,
-       51,
-       16,
-       156,
        31,
-       16,
-       156,
-       86,
-       54,
-       16,
-       53,
-       52,
-       156,
-       63,
-       16,
-       52,
-       156,
-       63,
-       16,
-       156,
-       31,
-       16,
        62,
-       156,
-       51,
-       16,
-       156,
-       51,
-       16,
-       156,
-       86,
        61,
-       16,
-       61,
-       156,
-       102,
-       55,
-       44,
-       42,
-       54,
-       16,
-       61,
-       156,
-       102,
-       55,
-       44,
-       42,
-       54,
-       16,
+       3,
        46,
        156,
        72,
        131,
        177,
        68,
-       16,
-       61,
-       156,
-       102,
-       55,
-       44,
-       42,
-       54
-      ],
-      [
+       3,
        72,
        56,
        46,
-       16,
-       16,
+       3
+      ],
+      [
+       58,
+       83,
+       123,
+       156,
+       86,
+       56,
+       119,
+       83,
+       61,
+       51,
+       68,
+       3,
+       44,
+       123,
+       156,
+       72,
+       53,
+       83,
+       62,
+       61,
        4
       ]
      ],
-     "samples": 125676
+     "samples": 77206
     }
    ]
   },
@@ -3262,6 +3259,137 @@
       ]
      ],
      "samples": 72030
+    }
+   ]
+  },
+  {
+   "text": "I don’t think it’s Tim’s — it’s “ours” (for now)…",
+   "pieces": [
+    {
+     "piece": "I don't think it's Tim's, it's ours, for now",
+     "spoken": "I don't think it's tims, it's ours, for now",
+     "sentences": [
+      [
+       156,
+       25,
+       16,
+       46,
+       156,
+       31,
+       56,
+       62,
+       16,
+       119,
+       156,
+       102,
+       112,
+       53,
+       16,
+       102,
+       62,
+       61,
+       16,
+       62,
+       156,
+       102,
+       55,
+       68,
+       3
+      ],
+      [
+       102,
+       62,
+       61,
+       16,
+       156,
+       39,
+       83,
+       123,
+       68,
+       3,
+       48,
+       76,
+       123,
+       16,
+       56,
+       156,
+       39
+      ]
+     ],
+     "samples": 63013
+    }
+   ]
+  },
+  {
+   "text": "Say 'now', then run `build` -> done?! It's 12:30.",
+   "pieces": [
+    {
+     "piece": "Say now, then run build to done?",
+     "spoken": "Say now, then run build to done?",
+     "sentences": [
+      [
+       61,
+       156,
+       24,
+       16,
+       56,
+       156,
+       39,
+       3,
+       81,
+       156,
+       86,
+       56,
+       16,
+       123,
+       156,
+       138,
+       56,
+       16,
+       44,
+       156,
+       102,
+       54,
+       46,
+       16,
+       62,
+       63,
+       16,
+       46,
+       156,
+       138,
+       56,
+       6
+      ]
+     ],
+     "samples": 44059
+    },
+    {
+     "piece": "It's twelve thirty.",
+     "spoken": "It's twelve thirty.",
+     "sentences": [
+      [
+       102,
+       62,
+       61,
+       16,
+       62,
+       65,
+       156,
+       86,
+       54,
+       64,
+       16,
+       119,
+       156,
+       87,
+       123,
+       125,
+       51,
+       4
+      ]
+     ],
+     "samples": 29030
     }
    ]
   }
