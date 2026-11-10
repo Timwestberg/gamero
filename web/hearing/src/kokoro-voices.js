@@ -1,88 +1,74 @@
 /**
- * Ember's nine Kokoro voices. KOKORO_BLENDS is a copy of gamero
+ * Ember's seven Kokoro voices. KOKORO_BLENDS is a copy of gamero
  * voice/kokoro/blends.json (kokoro-voices.test.js compares them), and the
  * blend math is voice/kokoro/pack-blends.py: a weighted sum accumulated in
  * float64, divided by the weight total, stored as float32.
  *
  * The browser does not need the 28 MB upstream voices.bin. It loads
- * voices-ember.bin, the nine blended style tables in recipe order
- * (9 x 510 x 256 float32, 4,700,160 bytes), cut from the same derived table
- * desktop builds. The first four are the first file's, byte for byte.
+ * voices-ember.bin, the seven blended style tables in recipe order
+ * (7 x 510 x 256 float32, 3,655,680 bytes), cut from the same derived table
+ * desktop builds.
  */
 
 export const KOKORO_BLENDS = {
-  defaultId: "adam70-michael30",
+  defaultId: "heart70-nicole30",
   modelOnnxSha256: "b40f62b166ac8164b0627ef48a0b358eda0985e272fb03ef5252e7206305da11",
   tokensSha256: "6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425",
   lexiconUsEnSha256: "7daaab53a181be9885b853a8582bf1838186317e5dadacbcef9c426d6fa0da14",
   upstreamVoicesSha256: "1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29",
-  derivedVoicesSha256: "9781ddfe1b3c6fc0104bc550cb4ba7fc9634d6cebf099ffd029c1598461b69d0",
-  replacedSlots: "45 zf_xiaobei, 46 zf_xiaoni, 47 zf_xiaoxiao, 48 zf_xiaoyi, 49 zm_yunjian, 50 zm_yunxi, 51 zm_yunxia, 52 zm_yunyang, 53 em_santa",
+  derivedVoicesSha256: "e00fb10d67373bfec27db8b8440c35ca544b9d6985c090353444cd5f772a01b5",
+  replacedSlots: "45 zf_xiaobei, 46 zf_xiaoni, 47 zf_xiaoxiao, 48 zf_xiaoyi, 49 zm_yunjian, 50 zm_yunxi, 51 zm_yunxia",
   layout: { speakers: 54, frames: 510, dim: 256 },
-  speakers: { af_bella: 2, af_heart: 3, af_nicole: 6, am_adam: 11, am_fenrir: 14, am_michael: 16, bf_emma: 21, bm_george: 26 },
+  speakers: { af_bella: 2, af_heart: 3, af_nicole: 6, am_fenrir: 14, bf_emma: 21, bm_fable: 25 },
   voices: [
     {
-      id: "adam70-michael30",
-      name: "Sam",
-      sid: 50,
-      speed: "1.00",
-      weights: [{ speaker: "am_adam", weight: "0.70" }, { speaker: "am_michael", weight: "0.30" }],
-    },
-    {
-      id: "adam60-george40",
-      name: "Jamie",
-      sid: 51,
-      speed: "0.95",
-      weights: [{ speaker: "am_adam", weight: "0.60" }, { speaker: "bm_george", weight: "0.40" }],
-    },
-    {
-      id: "adam55-bella45",
-      name: "Riley",
-      sid: 52,
-      speed: "0.95",
-      weights: [{ speaker: "am_adam", weight: "0.55" }, { speaker: "af_bella", weight: "0.45" }],
-    },
-    {
-      id: "heart60-adam40",
-      name: "Harper",
-      sid: 53,
-      speed: "0.97",
-      weights: [{ speaker: "af_heart", weight: "0.60" }, { speaker: "am_adam", weight: "0.40" }],
+      id: "heart70-nicole30",
+      name: "Sage",
+      sid: 49,
+      speed: "1.10",
+      weights: [{ speaker: "af_heart", weight: "0.70" }, { speaker: "af_nicole", weight: "0.30" }],
     },
     {
       id: "heart70-bella30",
       name: "Quinn",
       sid: 45,
-      speed: "1.00",
+      speed: "1.05",
       weights: [{ speaker: "af_heart", weight: "0.70" }, { speaker: "af_bella", weight: "0.30" }],
     },
     {
-      id: "heart60-michael40",
-      name: "Avery",
+      id: "heart60-bella20-nicole20",
+      name: "Harper",
       sid: 46,
-      speed: "0.98",
-      weights: [{ speaker: "af_heart", weight: "0.60" }, { speaker: "am_michael", weight: "0.40" }],
+      speed: "1.10",
+      weights: [{ speaker: "af_heart", weight: "0.60" }, { speaker: "af_bella", weight: "0.20" }, { speaker: "af_nicole", weight: "0.20" }],
     },
     {
-      id: "heart65-emma35",
-      name: "Emery",
-      sid: 47,
-      speed: "0.97",
-      weights: [{ speaker: "af_heart", weight: "0.65" }, { speaker: "bf_emma", weight: "0.35" }],
-    },
-    {
-      id: "heart60-fenrir40",
+      id: "fenrir90-heart10",
       name: "Rowan",
       sid: 48,
-      speed: "0.98",
-      weights: [{ speaker: "af_heart", weight: "0.60" }, { speaker: "am_fenrir", weight: "0.40" }],
+      speed: "1.00",
+      weights: [{ speaker: "am_fenrir", weight: "0.90" }, { speaker: "af_heart", weight: "0.10" }],
     },
     {
-      id: "heart70-nicole30",
-      name: "Sage",
-      sid: 49,
-      speed: "0.97",
-      weights: [{ speaker: "af_heart", weight: "0.70" }, { speaker: "af_nicole", weight: "0.30" }],
+      id: "fenrir85-nicole15",
+      name: "Sam",
+      sid: 50,
+      speed: "1.00",
+      weights: [{ speaker: "am_fenrir", weight: "0.85" }, { speaker: "af_nicole", weight: "0.15" }],
+    },
+    {
+      id: "fable70-heart30",
+      name: "Emery",
+      sid: 47,
+      speed: "1.05",
+      weights: [{ speaker: "bm_fable", weight: "0.70" }, { speaker: "af_heart", weight: "0.30" }],
+    },
+    {
+      id: "fable85-emma15",
+      name: "Jamie",
+      sid: 51,
+      speed: "1.05",
+      weights: [{ speaker: "bm_fable", weight: "0.85" }, { speaker: "bf_emma", weight: "0.15" }],
     },
   ],
 };
@@ -99,7 +85,7 @@ export const KOKORO_VOICE_LIST = KOKORO_BLENDS.voices.map((voice, slot) => ({
 
 export const DEFAULT_VOICE_ID = KOKORO_BLENDS.defaultId;
 
-/** The voice for an id. An unknown or empty id is Sam, the default. */
+/** The voice for an id. An unknown or empty id is Sage, the default. */
 export function kokoroVoice(id) {
   return KOKORO_VOICE_LIST.find((voice) => voice.id === id) ?? kokoroVoiceStrict(DEFAULT_VOICE_ID);
 }

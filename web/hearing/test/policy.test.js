@@ -21,7 +21,7 @@ test("the fixture matches the shared recipe", () => {
     KOKORO_VOICES.map((voice) => [voice.id, voice.speed.toFixed(2)]),
     fixture.voices.map((voice) => [voice.id, voice.speed]),
   );
-  assert.equal(fixture.defaultVoiceId, "adam70-michael30");
+  assert.equal(fixture.defaultVoiceId, "heart70-nicole30");
   for (const [key, value] of Object.entries(fixture.checksums)) {
     assert.equal(MODEL_PINS[key], value, key);
   }

@@ -78,10 +78,10 @@ test("piece N+1 is synthesized while piece N plays, with 160 ms of silence befor
   const engine = fakeEngine();
   const player = fakePlayer();
   let starts = 0;
-  const speaker = createSpeaker({ engine, player, voiceId: "adam60-george40" });
+  const speaker = createSpeaker({ engine, player, voiceId: "fable85-emma15" });
   const done = speaker.speak("First one. Second one! Third one?", { onStart: () => { starts += 1; } });
   await tick();
-  assert.deepEqual(engine.requests.map((r) => [r.piece, r.voiceId]), [["First one.", "adam60-george40"]]);
+  assert.deepEqual(engine.requests.map((r) => [r.piece, r.voiceId]), [["First one.", "fable85-emma15"]]);
 
   engine.finish(0);
   await tick();

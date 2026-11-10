@@ -310,7 +310,7 @@ carries it, and Apple's otherwise. Both share one audio session (`IosVoice` in
   the Mac's own pipeline (`EmberVoice` in `:voice`: the same normalizing,
   lexicons, voice blends and silence trimming) on a background thread, and its
   sound plays through an `AVAudioPlayerNode` while the next sentence is
-  generated. The default voice is Sam.
+  generated. The default voice is Sage.
   - `voicePlayback.voices` lists the Kokoro blends and the one in use, and
     `voicePlayback.choose` changes it. The model holds every voice, so a change
     loads nothing: the next utterance uses it. The choice is kept in

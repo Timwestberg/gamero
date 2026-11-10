@@ -249,7 +249,7 @@ The partial transcript is the recognizer's current text, shown in the composer a
 
 Permission copy, shown before the first capture, in the catalog and in the native row: "Ember hears you on this Mac to turn what you say into a chat message. The recording is not saved." If macOS has already denied the app, the notice says to turn the microphone on for Gamero Adventures in System Settings. The app does not re-prompt in a loop.
 
-The Kokoro row (Sam, Jamie, Riley, Harper) stays the place the voice is chosen. The mic control joins that row for the first Mac loop, then moves to the catalog composer. Both call the same host method.
+The Kokoro row (seven voices today, Sage first; see `voice/README.md`) stays the place the voice is chosen. The mic control joins that row for the first Mac loop, then moves to the catalog composer. Both call the same host method.
 
 ### 5.4 Fillers
 

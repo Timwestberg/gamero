@@ -30,27 +30,25 @@ test("the web recipe is desktop's voice/kokoro/blends.json", () => {
   assert.equal(KOKORO_WEB.files.lexicon.sha256, MODEL_PINS.lexiconSha256);
 });
 
-test("Sam is the default and each blend keeps its desktop sid and speed", () => {
-  assert.equal(DEFAULT_VOICE_ID, "adam70-michael30");
+test("Sage is the default and each blend keeps its desktop sid and speed", () => {
+  assert.equal(DEFAULT_VOICE_ID, "heart70-nicole30");
   assert.deepEqual(
     KOKORO_VOICE_LIST.map(({ id, name, sid, slot, speed }) => [id, name, sid, slot, speed]),
     [
-      ["adam70-michael30", "Sam", 50, 0, 1],
-      ["adam60-george40", "Jamie", 51, 1, 0.95],
-      ["adam55-bella45", "Riley", 52, 2, 0.95],
-      ["heart60-adam40", "Harper", 53, 3, 0.97],
-      ["heart70-bella30", "Quinn", 45, 4, 1],
-      ["heart60-michael40", "Avery", 46, 5, 0.98],
-      ["heart65-emma35", "Emery", 47, 6, 0.97],
-      ["heart60-fenrir40", "Rowan", 48, 7, 0.98],
-      ["heart70-nicole30", "Sage", 49, 8, 0.97],
+      ["heart70-nicole30", "Sage", 49, 0, 1.1],
+      ["heart70-bella30", "Quinn", 45, 1, 1.05],
+      ["heart60-bella20-nicole20", "Harper", 46, 2, 1.1],
+      ["fenrir90-heart10", "Rowan", 48, 3, 1],
+      ["fenrir85-nicole15", "Sam", 50, 4, 1],
+      ["fable70-heart30", "Emery", 47, 5, 1.05],
+      ["fable85-emma15", "Jamie", 51, 6, 1.05],
     ],
   );
-  assert.equal(kokoroVoice("").name, "Sam");
-  assert.equal(kokoroVoice("not-a-voice").name, "Sam");
-  assert.equal(kokoroVoice("heart60-adam40").name, "Harper");
+  assert.equal(kokoroVoice("").name, "Sage");
+  assert.equal(kokoroVoice("not-a-voice").name, "Sage");
+  assert.equal(kokoroVoice("fable85-emma15").name, "Jamie");
   assert.throws(() => kokoroVoiceStrict("af_bella"), /Unknown Kokoro voice/);
-  assert.deepEqual(KOKORO_VOICES.map((voice) => voice.name), ["Sam", "Jamie", "Riley", "Harper", "Quinn", "Avery", "Emery", "Rowan", "Sage"]);
+  assert.deepEqual(KOKORO_VOICES.map((voice) => voice.name), ["Sage", "Quinn", "Harper", "Rowan", "Sam", "Emery", "Jamie"]);
 });
 
 test("blending follows pack-blends.py: weighted, normalized, float32, other slots untouched", () => {
@@ -80,7 +78,7 @@ test("a sentence uses the style row at its token count, inside the 510-row table
   assert.deepEqual([...floatsFromBytes(bytesFromFloats(Float32Array.of(1.5, -2)))], [1.5, -2]);
 });
 
-test("voices-ember.bin is the nine blended slots of desktop's derived table", {
+test("voices-ember.bin is the seven blended slots of desktop's derived table", {
   skip: existsSync(new URL(".upstream/voices.bin", assets)) ? false : "run web/hearing/scripts/fetch-web-voice.mjs",
 }, () => {
   const upstream = floatsFromBytes(new Uint8Array(readFileSync(new URL(".upstream/voices.bin", assets))));

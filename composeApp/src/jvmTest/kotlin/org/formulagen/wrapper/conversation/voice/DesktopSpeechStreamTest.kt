@@ -390,16 +390,16 @@ class DesktopSpeechStreamTest {
                 Thread {
                     speech.status()
                     speech.stop()
-                    speech.chooseVoice("heart60-adam40")
+                    speech.chooseVoice("heart70-bella30")
                     answered.countDown()
                 }.start()
                 assertTrue(answered.await(1, TimeUnit.SECONDS), "nothing waited on the load")
                 loaded.countDown()
                 speech.speak("Hello there.")
                 assertTrue(waitFor { seen.isNotEmpty() })
-                assertEquals(listOf("heart60-adam40"), seen, "the voice chosen during the load speaks")
-                assertEquals(listOf("adam70-michael30", "heart60-adam40"), opened)
-                assertEquals(listOf("adam70-michael30"), released, "the load for the old voice was let go")
+                assertEquals(listOf("heart70-bella30"), seen, "the voice chosen during the load speaks")
+                assertEquals(listOf("heart70-nicole30", "heart70-bella30"), opened)
+                assertEquals(listOf("heart70-nicole30"), released, "the load for the old voice was let go")
             }
         } finally {
             root.toFile().deleteRecursively()
@@ -433,29 +433,29 @@ class DesktopSpeechStreamTest {
         }
         try {
             DesktopSpeech(config, { SilentLine() }, { opens.incrementAndGet(); engine(it) }).use { speech ->
-                assertEquals(listOf("Sam", "Jamie", "Riley", "Harper", "Quinn", "Avery", "Emery", "Rowan", "Sage"), speech.voices().map { it.name })
+                assertEquals(listOf("Sage", "Quinn", "Harper", "Rowan", "Sam", "Emery", "Jamie"), speech.voices().map { it.name })
                 speech.speak("Hello there.")
                 assertTrue(waitFor { seen.size == 1 })
                 speech.speak("Hello again.")
                 assertTrue(waitFor { seen.size == 2 })
-                assertEquals(listOf("adam70-michael30", "adam70-michael30"), seen)
+                assertEquals(listOf("heart70-nicole30", "heart70-nicole30"), seen)
                 assertEquals(1, opens.get())
-                speech.chooseVoice("heart60-adam40")
-                assertEquals("heart60-adam40", speech.currentVoiceId())
-                val beforeHarper = seen.size
+                speech.chooseVoice("heart70-bella30")
+                assertEquals("heart70-bella30", speech.currentVoiceId())
+                val beforeQuinn = seen.size
                 speech.speak("Third sentence here.")
-                assertTrue(waitFor { seen.size > beforeHarper })
-                assertEquals("heart60-adam40", seen.last())
+                assertTrue(waitFor { seen.size > beforeQuinn })
+                assertEquals("heart70-bella30", seen.last())
                 assertEquals(2, opens.get())
                 assertFailsWith<IllegalArgumentException> { speech.chooseVoice("expresso") }
             }
             val restarted = checkNotNull(desktopVoiceConfig(env, engineLinked = true))
-            assertEquals("heart60-adam40", restarted.kokoroVoiceId)
-            writeKokoroVoiceChoice(choice, "adam60-george40")
+            assertEquals("heart70-bella30", restarted.kokoroVoiceId)
+            writeKokoroVoiceChoice(choice, "fable85-emma15")
             val edited = checkNotNull(desktopVoiceConfig(env, engineLinked = true))
-            assertEquals("adam60-george40", edited.kokoroVoiceId)
-            val pinned = checkNotNull(desktopVoiceConfig(env + ("HOVEL_KOKORO_VOICE" to "adam55-bella45"), engineLinked = true))
-            assertEquals("adam55-bella45", pinned.kokoroVoiceId)
+            assertEquals("fable85-emma15", edited.kokoroVoiceId)
+            val pinned = checkNotNull(desktopVoiceConfig(env + ("HOVEL_KOKORO_VOICE" to "fenrir90-heart10"), engineLinked = true))
+            assertEquals("fenrir90-heart10", pinned.kokoroVoiceId)
             assertTrue(pinned.kokoroVoiceFromEnv)
         } finally {
             root.toFile().deleteRecursively()
@@ -489,21 +489,21 @@ class DesktopSpeechStreamTest {
             override val sampleRate = 24000
             override fun synthesize(text: String, maxFrames: Int, seed: Int) = PieceAudio(floatArrayOf(0.2f), 24000, 1.0, 1.0)
             override fun synthesizeLine(text: String, voiceId: String): PieceAudio {
-                if (voiceId == "heart60-adam40" && cancelled.compareAndSet(false, true)) {
+                if (voiceId == "heart70-bella30" && cancelled.compareAndSet(false, true)) {
                     throw SpeechCancelled()
                 }
                 return PieceAudio(floatArrayOf(0.2f), 24000, 1.0, 1.0)
             }
             override fun release() {}
         }
-        val config = VoiceConfig(backend = VoiceConfig.KOKORO, kokoroVoiceId = "heart60-adam40", fillersEnabled = true)
+        val config = VoiceConfig(backend = VoiceConfig.KOKORO, kokoroVoiceId = "heart70-bella30", fillersEnabled = true)
         DesktopSpeech(config, { SilentLine() }, { engine }).use { speech ->
             speech.warmFillers(FILLER_LINES)
             assertTrue(waitFor { cancelled.get() })
             speech.warmFillers(FILLER_LINES)
-            assertTrue(waitFor { speech.fillerPcm("heart60-adam40", "Hmm,") != null })
-            assertTrue(speech.fillerPcm("heart60-adam40", "Let me think,") != null)
-            assertTrue(speech.fillerPcm("heart60-adam40", "Okay, so") != null)
+            assertTrue(waitFor { speech.fillerPcm("heart70-bella30", "Hmm,") != null })
+            assertTrue(speech.fillerPcm("heart70-bella30", "Let me think,") != null)
+            assertTrue(speech.fillerPcm("heart70-bella30", "Okay, so") != null)
         }
     }
 

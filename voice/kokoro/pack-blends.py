@@ -5,7 +5,8 @@ Kokoro v1.0 stores one float32 style tensor per speaker, shaped
 [speakers, frames, dim]. sherpa-onnx reads n_speakers from the ONNX
 metadata (54), so a 55th speaker cannot be appended without rebuilding
 that metadata. Slots 45-53 are the Mandarin voices (zf_xiaobei through
-zm_yunyang) and em_santa. English chat does not select them. This script
+zm_yunyang) and em_santa. English chat does not select them, and the
+recipe uses as many of them as it has voices. This script
 copies the upstream table and overwrites those slots with the weighted
 blends in blends.json. The upstream file is left unchanged.
 

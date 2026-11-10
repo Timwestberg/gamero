@@ -172,18 +172,16 @@ fun runVoiceSelfCheck() {
     EmberVoice(kokoroLike, VoiceConfig(backend = VoiceConfig.KOKORO)).speak("Done!")
     check(kokoroCalls == 1) { "Kokoro does not regenerate a take that fills the Pocket frame ceiling" }
     val catalog = kokoroCatalog()
-    check(catalog.defaultId == "adam70-michael30") { "default blend" }
-    check(catalog.voices.size == 9) { "nine blends" }
+    check(catalog.defaultId == "heart70-nicole30") { "default blend" }
+    check(catalog.voices.size == 7) { "seven blends" }
     val expectedVoices = mapOf(
-        "adam70-michael30" to Triple("Sam", 50, "1.00"),
-        "adam60-george40" to Triple("Jamie", 51, "0.95"),
-        "adam55-bella45" to Triple("Riley", 52, "0.95"),
-        "heart60-adam40" to Triple("Harper", 53, "0.97"),
-        "heart70-bella30" to Triple("Quinn", 45, "1.00"),
-        "heart60-michael40" to Triple("Avery", 46, "0.98"),
-        "heart65-emma35" to Triple("Emery", 47, "0.97"),
-        "heart60-fenrir40" to Triple("Rowan", 48, "0.98"),
-        "heart70-nicole30" to Triple("Sage", 49, "0.97"),
+        "heart70-nicole30" to Triple("Sage", 49, "1.10"),
+        "heart70-bella30" to Triple("Quinn", 45, "1.05"),
+        "heart60-bella20-nicole20" to Triple("Harper", 46, "1.10"),
+        "fenrir90-heart10" to Triple("Rowan", 48, "1.00"),
+        "fenrir85-nicole15" to Triple("Sam", 50, "1.00"),
+        "fable70-heart30" to Triple("Emery", 47, "1.05"),
+        "fable85-emma15" to Triple("Jamie", 51, "1.05"),
     )
     check(catalog.voices.map { it.id }.toSet() == expectedVoices.keys) { "voice ids" }
     for (voice in catalog.voices) {
@@ -193,12 +191,12 @@ fun runVoiceSelfCheck() {
         val weight = voice.weights.sumOf { it.weight.toDouble() }
         check(weight > 0.99 && weight < 1.01) { "weights $weight" }
     }
-    check(catalog.voices.map { it.sid }.toSet().size == 9) { "sids" }
+    check(catalog.voices.map { it.sid }.toSet().size == 7) { "sids" }
     val contract = kokoroVoiceContract()
     check(contract.engine == VoiceConfig.KOKORO) { "engine id" }
-    check(contract.voiceId == "adam70-michael30" && contract.speed == "1.00") { "default contract" }
+    check(contract.voiceId == "heart70-nicole30" && contract.speed == "1.10") { "default contract" }
     check(contract.lexiconSha256.length == 64) { "lexicon hash" }
-    check(kokoroVoiceContract("heart60-adam40").speed == "0.97") { "harper speed" }
+    check(kokoroVoiceContract("heart70-bella30").speed == "1.05") { "quinn speed" }
     val lexicon = parseKokoroLexicon(
         "question k w ˈ ɛ s ʧ ᵊ n\ntry t ɹ ˈ I\ncity s ˈ ɪ ɾ i\ndog d ˈ ɔ ɡ\nbox b ˈ ɑ k s\nwant w ˈ ɑ n t\n" +
             ('a'..'z').joinToString("\n") { "$it $it" },

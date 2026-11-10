@@ -2,23 +2,28 @@
 
 Mac chat speaks with Kokoro 82M v1.0. PocketTTS stays behind the same `PieceEngine` seam for a later "speak in my voice" clip (`HOVEL_VOICE_BACKEND=sherpa`). The iPhone app speaks with the same Kokoro when its build links sherpa-onnx (`scripts/ios-voice.sh`, see `docs/ios.md`). Android still uses Pocket.
 
-`scripts/fetch-voice.sh` downloads both. Kokoro's pinned files are `model.onnx`, upstream `voices.bin`, `tokens.txt`, and `lexicon-us-en.txt`. `voice/kokoro/pack-blends.py` writes the nine chat blends into a derived `voices-blends.bin` (speaker slots 45–53, which hold the Mandarin voices and `em_santa` upstream). That file is not committed. The voice a person picks is one of:
+`scripts/fetch-voice.sh` downloads both. Kokoro's pinned files are `model.onnx`, upstream `voices.bin`, `tokens.txt`, and `lexicon-us-en.txt`. `voice/kokoro/pack-blends.py` writes the seven chat blends into a derived `voices-blends.bin` (speaker slots 45–51, which hold Mandarin voices upstream). That file is not committed. The voice a person picks is one of:
 
 | Id | Name | Speed | Blend |
 | --- | --- | --- | --- |
-| `adam70-michael30` | Sam | 1.00 | Adam 70 / Michael 30, the default |
-| `adam60-george40` | Jamie | 0.95 | Adam 60 / George 40 |
-| `adam55-bella45` | Riley | 0.95 | Adam 55 / Bella 45 |
-| `heart60-adam40` | Harper | 0.97 | Heart 60 / Adam 40 |
-| `heart70-bella30` | Quinn | 1.00 | Heart 70 / Bella 30 |
-| `heart60-michael40` | Avery | 0.98 | Heart 60 / Michael 40 |
-| `heart65-emma35` | Emery | 0.97 | Heart 65 / Emma 35 |
-| `heart60-fenrir40` | Rowan | 0.98 | Heart 60 / Fenrir 40 |
-| `heart70-nicole30` | Sage | 0.97 | Heart 70 / Nicole 30 |
+| `heart70-nicole30` | Sage | 1.10 | Heart 70 / Nicole 30, the default |
+| `heart70-bella30` | Quinn | 1.05 | Heart 70 / Bella 30 |
+| `heart60-bella20-nicole20` | Harper | 1.10 | Heart 60 / Bella 20 / Nicole 20 |
+| `fenrir90-heart10` | Rowan | 1.00 | Fenrir 90 / Heart 10 |
+| `fenrir85-nicole15` | Sam | 1.00 | Fenrir 85 / Nicole 15 |
+| `fable70-heart30` | Emery | 1.05 | Fable 70 / Heart 30, British |
+| `fable85-emma15` | Jamie | 1.05 | Fable 85 / Emma 15, British |
 
-The last five are led by `af_heart`, the voice upstream grades highest, with a second voice for color. A new blend is one object in `voice/kokoro/blends.json`, the same object in `KOKORO_BLENDS_JSON` and `web/hearing/src/kokoro-voices.js`, and a free slot. Run `pack-blends.py` with `derivedVoicesSha256` emptied to print the new hash, then pin it in those three files, `web/hearing/src/models.js` and `VoiceConversationTest`. tool-webkit keeps its own copy of the pins for the browser voice, and the hosted `voices-ember.bin` has to be published again before a browser can use a new blend.
+These are the voices Tim marked natural in two listening rounds on 2026-11-10. What the rounds showed, for the next person who adds a voice:
 
-Sam is the default because it is the blend closest to the Adam sample that was the clearest of the set, at the same speed. While Ember's chat is open, the Mac window shows a Voice row with these names. The selected name is the one in use. Choosing another speaks "Hi, I'm …" and the next sentence uses it, and the id is saved to `~/.gamero/kokoro-voice`. `HOVEL_KOKORO_VOICE` still overrides that file at launch. The row is hidden when the engine is Pocket.
+- One voice leads each mix at 60% or more. Two male voices mixed 70/30 sounded computerized, and so did a male and a female voice at 60/40.
+- No mix uses `am_adam`. Upstream grades it F+, and the three voices led by it (the first Sam, Jamie and Riley) were the first to be called computerized.
+- Faster reads as more natural: the Heart-led voices went from okay at 1.00 to natural at 1.05 and 1.10. `bm_fable` is a slow talker, so its mixes run at 1.05.
+- The raw voices differ in loudness by about 5 dB (the Fenrir-led ones are louder). Nothing evens that out yet.
+
+A new blend is one object in `voice/kokoro/blends.json`, the same object in `KOKORO_BLENDS_JSON` and `web/hearing/src/kokoro-voices.js`, and a free slot. Run `pack-blends.py` with `derivedVoicesSha256` emptied to print the new hash, then pin it in those three files, `web/hearing/src/models.js` and `VoiceConversationTest`. Give it a name the voice can say (`KokoroLexiconTest` checks). tool-webkit keeps its own copy of the pins for the browser voice.
+
+While Ember's chat is open, the Mac window shows a Voice row with these names, and the composer's options hold the same choice on the Mac and the iPhone. Choosing a voice speaks "Hi, I'm …" and the next sentence uses it. The Mac saves the id to `~/.gamero/kokoro-voice`; `HOVEL_KOKORO_VOICE` overrides that file for one launch. A saved id that is no longer a voice falls back to the default.
 
 A word missing from `lexicon-us-en.txt` used to be skipped. Regular inflections of a listed stem are written to `lexicon-chat.txt` beside it, and any word that is still unknown is spelled letter by letter so it is not dropped.
 
