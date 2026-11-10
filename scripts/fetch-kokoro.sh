@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Download Kokoro 82M v1.0 and build the four chat blends into voices-blends.bin.
+# Download Kokoro 82M v1.0 and build the chat blends into voices-blends.bin.
 # The archive, the four files chat loads, and the derived voice table are hash
 # pinned. Nothing this downloads is committed. The model and the voice table
 # are Apache-2.0. Expresso and test_wavs stay refused elsewhere.

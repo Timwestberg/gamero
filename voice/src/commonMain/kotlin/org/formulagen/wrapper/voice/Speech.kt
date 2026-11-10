@@ -50,6 +50,12 @@ interface PieceEngine {
     fun synthesizeLine(text: String, voiceId: String): PieceAudio = synthesize(text, 0, 1)
     fun release()
 
+    /**
+     * Speak with [voiceId] from the next sentence on, without loading the model again. An engine with one voice,
+     * or one that takes its voice only when it opens, ignores this.
+     */
+    fun chooseVoice(voiceId: String) {}
+
     /** PocketTTS retries when a take fills [maxFrames]. Kokoro does not use that cap. */
     fun usesFrameCeiling(): Boolean = true
     fun requestCancel() {}
@@ -111,6 +117,9 @@ class EmberVoice(
     fun cancel() {
         engine.requestCancel()
     }
+
+    /** Outside [speak], on the thread that speaks: the voice of what is said next. */
+    fun chooseVoice(voiceId: String) = engine.chooseVoice(voiceId)
 
     /** Outside [speak]. The caller serializes this with speech on one thread. */
     fun synthesizeLine(text: String, voiceId: String): PieceAudio = engine.synthesizeLine(text, voiceId)

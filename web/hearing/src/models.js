@@ -14,7 +14,7 @@ export const MODEL_PINS = {
   tokensSha256: "6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425",
   lexiconSha256: "7daaab53a181be9885b853a8582bf1838186317e5dadacbcef9c426d6fa0da14",
   upstreamVoicesSha256: "1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29",
-  derivedVoicesSha256: "35cce6c473585fd74244f31c2623d6f2f835283918dad6fa2e2a79d60639b26f",
+  derivedVoicesSha256: "9781ddfe1b3c6fc0104bc550cb4ba7fc9634d6cebf099ffd029c1598461b69d0",
 };
 
 export const MODEL_URLS = {
@@ -33,7 +33,7 @@ export const MODEL_URLS = {
  *   its float32 weights stored as float16 and cast back to float32 in the
  *   graph (voice/kokoro/fp16-weights.py, onnx 1.19.1, numpy 2.0.2). Compute
  *   stays float32. Half the download of the 325,560,556-byte original.
- * - styles: the four chat blends cut from desktop's voices-blends.bin
+ * - styles: the nine chat blends cut from desktop's voices-blends.bin
  *   (MODEL_PINS.derivedVoicesSha256), in recipe order.
  * - tokens, lexicon: unchanged upstream files.
  * - ortWasm: onnxruntime-web 1.30.0 (MIT), the build behind ort.webgpu.min.mjs.
@@ -43,7 +43,7 @@ export const KOKORO_WEB = {
   ortVersion: "1.30.0",
   files: {
     model: { name: "kokoro-v1_0-fp16w.onnx", bytes: 163422642, sha256: "5d03aeca73c1a6c9b1327e67a17565fac5994837e6751fce4124cd2c19408ef7" },
-    styles: { name: "voices-ember.bin", bytes: 2088960, sha256: "3b1b659af3765b38108ac15c0524652b8001d2e4c40c161f5c9ce2d5e4d40172" },
+    styles: { name: "voices-ember.bin", bytes: 4700160, sha256: "5fde3d7db4ca9e085a247f1211149e3b99169c362df7f626c414cfb93f9a4da2" },
     tokens: { name: "tokens.txt", bytes: 687, sha256: MODEL_PINS.tokensSha256 },
     lexicon: { name: "lexicon-us-en.txt", bytes: 5956885, sha256: MODEL_PINS.lexiconSha256 },
     ortWasm: { name: "ort-wasm-simd-threaded.asyncify.wasm", bytes: 26781914, sha256: "39f9f0894d478800487ed9f7dbe92618498db320cf55c8e3d89adff8dce658da" },

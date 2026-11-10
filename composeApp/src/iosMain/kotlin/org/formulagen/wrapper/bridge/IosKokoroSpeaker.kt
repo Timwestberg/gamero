@@ -16,8 +16,12 @@ import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.voice.EmberVoice
 import org.formulagen.wrapper.voice.VoiceConfig
+import org.formulagen.wrapper.voice.kokoroCatalog
 import org.formulagen.wrapper.voice.kokoroFilesMissing
 import org.formulagen.wrapper.voice.kokoroLinked
+import org.formulagen.wrapper.voice.kokoroVoice
+import org.formulagen.wrapper.voice.kokoroVoices
+import org.formulagen.wrapper.voice.openingClause
 import org.formulagen.wrapper.voice.openPieceEngine
 import platform.AVFAudio.AVAudioEngine
 import platform.AVFAudio.AVAudioFormat
@@ -29,6 +33,7 @@ import platform.Foundation.NSBundle
 import platform.Foundation.NSNotificationCenter
 import platform.Foundation.NSOperationQueue
 import platform.Foundation.NSProcessInfo
+import platform.Foundation.NSUserDefaults
 import platform.UIKit.UIApplicationDidReceiveMemoryWarningNotification
 import platform.posix.memcpy
 import kotlin.concurrent.Volatile
@@ -52,8 +57,14 @@ private const val KOKORO_THREADS = 4
 /** Loading the model and generating the first sentence come before the first sound, once per launch. */
 private const val KOKORO_START_BUDGET_MS = 30_000L
 
+/** Where the person's voice choice is kept on the phone. */
+private const val VOICE_KEY = "hovel.voice.kokoro"
+
 /** The pause between two sentences, as on the Mac ([VoiceConfig.resolvedSentenceGapMs]). */
 private const val SENTENCE_GAP_MS = 160
+
+/** The pause between the two parts of one sentence that was said as two: a comma's worth. */
+private const val CLAUSE_GAP_MS = 80
 
 /** A stretch of silence that marks an utterance's end: when it has played, everything before it has. */
 private const val END_MARK_MS = 20
@@ -93,7 +104,14 @@ internal class IosKokoroSpeaker(
     private val fallback: IosUtteranceSpeaker,
 ) : IosUtteranceSpeaker {
     /** One utterance in line. [sound] is true once any of it was handed to the player. */
-    private class Spoken(val generation: Int, val text: String, val started: () -> Unit, val ended: () -> Unit) {
+    private class Spoken(
+        val generation: Int,
+        val text: String,
+        val started: () -> Unit,
+        val ended: () -> Unit,
+        /** The silence before it when sound is already in line. */
+        val gapMs: Int = SENTENCE_GAP_MS,
+    ) {
         var sound = false
         var reported = false
     }
@@ -110,6 +128,10 @@ internal class IosKokoroSpeaker(
     /** The loaded voice. Written on the synthesis thread; read on the main thread only to cancel. */
     @Volatile
     private var voice: EmberVoice? = null
+    /** The voice a person picked, kept across launches. Read on the synthesis thread before each utterance. */
+    @Volatile
+    private var chosen: String = (NSUserDefaults.standardUserDefaults.stringForKey(VOICE_KEY))
+        ?.takeIf { kokoroVoice(it) != null } ?: kokoroCatalog().defaultId
     private val memoryWarning = NSNotificationCenter.defaultCenter.addObserverForName(
         UIApplicationDidReceiveMemoryWarningNotification, null, NSOperationQueue.mainQueue,
     ) { if (line.isEmpty()) scope.launch(synthesis) { unload() } }
@@ -125,9 +147,21 @@ internal class IosKokoroSpeaker(
             fallback.say(text, started, ended)
             return
         }
-        val spoken = Spoken(generation.load(), text, started, ended)
-        line += spoken
-        work.trySend(spoken)
+        // Nothing is being said, so the first sound waits on the whole of the first sentence. A long one is said as
+        // two: its opening clause is ready in half the time, and the rest is made while that plays.
+        val opening = if (line.isEmpty()) openingClause(text) else null
+        val parts = if (opening == null) {
+            listOf(Spoken(generation.load(), text, started, ended))
+        } else {
+            listOf(
+                Spoken(generation.load(), opening.first, started, ended = {}),
+                Spoken(generation.load(), opening.second, started = {}, ended, CLAUSE_GAP_MS),
+            )
+        }
+        for (spoken in parts) {
+            line += spoken
+            work.trySend(spoken)
+        }
     }
 
     override fun flush() {
@@ -136,6 +170,17 @@ internal class IosKokoroSpeaker(
         line.clear()
         player.flush(now)
         fallback.flush()
+    }
+
+    override fun voices(): List<PlaybackVoice> = if (usable) kokoroVoices().map { PlaybackVoice(it.id, it.name) } else emptyList()
+
+    override val voiceId: String? get() = chosen.takeIf { usable }
+
+    override fun choose(id: String): Boolean {
+        if (!usable || kokoroVoice(id) == null) return false
+        chosen = id
+        NSUserDefaults.standardUserDefaults.setObject(id, VOICE_KEY)
+        return true
     }
 
     override fun warm() {
@@ -167,10 +212,11 @@ internal class IosKokoroSpeaker(
         }
         var first = true
         try {
+            engine.chooseVoice(chosen)
             val result = engine.speakStreaming(spoken.text) { samples, rate ->
                 if (stale(spoken)) return@speakStreaming false
                 // Sentences of one utterance already carry their gap; the gap before an utterance is added here.
-                val lead = if (first && player.holdsSound(spoken.generation)) rate * SENTENCE_GAP_MS / MS_PER_SECOND else 0
+                val lead = if (first && player.holdsSound(spoken.generation)) rate * spoken.gapMs / MS_PER_SECOND else 0
                 player.play(spoken.generation, samples, rate, lead)
                 if (first) {
                     first = false
@@ -247,6 +293,7 @@ internal class IosKokoroSpeaker(
 
     /** The loaded voice with the rate its sound comes at. */
     private class KokoroVoice(private val ember: EmberVoice, val sampleRate: Int) {
+        fun chooseVoice(id: String) = ember.chooseVoice(id)
         fun speakStreaming(text: String, onSentence: (FloatArray, Int) -> Boolean) = ember.speakStreaming(text, null, onSentence)
     }
 }

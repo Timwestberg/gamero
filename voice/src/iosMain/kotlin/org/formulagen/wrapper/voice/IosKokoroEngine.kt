@@ -44,6 +44,8 @@ internal class KokoroIosPieceEngine(private val config: VoiceConfig) : PieceEngi
     private val knownWords: Set<String>
     private val cancel = AtomicInt(0)
     private var voiceOverride: String? = null
+    /** The voice a person picked after the engine opened. The model holds every voice, so a change loads nothing. */
+    private var chosenVoice: String? = null
     override val sampleRate: Int
 
     init {
@@ -90,6 +92,10 @@ internal class KokoroIosPieceEngine(private val config: VoiceConfig) : PieceEngi
         }
     }
 
+    override fun chooseVoice(voiceId: String) {
+        if (kokoroVoice(voiceId) != null) chosenVoice = voiceId
+    }
+
     override fun requestCancel() = cancel.store(1)
 
     override fun clearCancel() = cancel.store(0)
@@ -113,7 +119,7 @@ internal class KokoroIosPieceEngine(private val config: VoiceConfig) : PieceEngi
     }
 
     private fun voice(): KokoroVoice {
-        val id = voiceOverride ?: config.kokoroVoiceId.ifEmpty { kokoroCatalog().defaultId }
+        val id = voiceOverride ?: chosenVoice ?: config.kokoroVoiceId.ifEmpty { kokoroCatalog().defaultId }
         return kokoroVoice(id) ?: throw IllegalStateException("Unknown Kokoro voice '$id'.")
     }
 }

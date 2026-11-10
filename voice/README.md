@@ -2,7 +2,7 @@
 
 Mac chat speaks with Kokoro 82M v1.0. PocketTTS stays behind the same `PieceEngine` seam for a later "speak in my voice" clip (`HOVEL_VOICE_BACKEND=sherpa`). The iPhone app speaks with the same Kokoro when its build links sherpa-onnx (`scripts/ios-voice.sh`, see `docs/ios.md`). Android still uses Pocket.
 
-`scripts/fetch-voice.sh` downloads both. Kokoro's pinned files are `model.onnx`, upstream `voices.bin`, `tokens.txt`, and `lexicon-us-en.txt`. `voice/kokoro/pack-blends.py` writes the four chat blends into a derived `voices-blends.bin` (speaker slots 50–53). That file is not committed. The voice a person picks is one of:
+`scripts/fetch-voice.sh` downloads both. Kokoro's pinned files are `model.onnx`, upstream `voices.bin`, `tokens.txt`, and `lexicon-us-en.txt`. `voice/kokoro/pack-blends.py` writes the nine chat blends into a derived `voices-blends.bin` (speaker slots 45–53, which hold the Mandarin voices and `em_santa` upstream). That file is not committed. The voice a person picks is one of:
 
 | Id | Name | Speed | Blend |
 | --- | --- | --- | --- |
@@ -10,12 +10,19 @@ Mac chat speaks with Kokoro 82M v1.0. PocketTTS stays behind the same `PieceEngi
 | `adam60-george40` | Jamie | 0.95 | Adam 60 / George 40 |
 | `adam55-bella45` | Riley | 0.95 | Adam 55 / Bella 45 |
 | `heart60-adam40` | Harper | 0.97 | Heart 60 / Adam 40 |
+| `heart70-bella30` | Quinn | 1.00 | Heart 70 / Bella 30 |
+| `heart60-michael40` | Avery | 0.98 | Heart 60 / Michael 40 |
+| `heart65-emma35` | Emery | 0.97 | Heart 65 / Emma 35 |
+| `heart60-fenrir40` | Rowan | 0.98 | Heart 60 / Fenrir 40 |
+| `heart70-nicole30` | Sage | 0.97 | Heart 70 / Nicole 30 |
+
+The last five are led by `af_heart`, the voice upstream grades highest, with a second voice for color. A new blend is one object in `voice/kokoro/blends.json`, the same object in `KOKORO_BLENDS_JSON` and `web/hearing/src/kokoro-voices.js`, and a free slot. Run `pack-blends.py` with `derivedVoicesSha256` emptied to print the new hash, then pin it in those three files, `web/hearing/src/models.js` and `VoiceConversationTest`. tool-webkit keeps its own copy of the pins for the browser voice, and the hosted `voices-ember.bin` has to be published again before a browser can use a new blend.
 
 Sam is the default because it is the blend closest to the Adam sample that was the clearest of the set, at the same speed. While Ember's chat is open, the Mac window shows a Voice row with these names. The selected name is the one in use. Choosing another speaks "Hi, I'm …" and the next sentence uses it, and the id is saved to `~/.gamero/kokoro-voice`. `HOVEL_KOKORO_VOICE` still overrides that file at launch. The row is hidden when the engine is Pocket.
 
 A word missing from `lexicon-us-en.txt` used to be skipped. Regular inflections of a listed stem are written to `lexicon-chat.txt` beside it, and any word that is still unknown is spelled letter by letter so it is not dropped.
 
-Speech is normalized before it is split into sentences: versions (`Sonnet 5.5`, `2.0.1`), units, URLs, and filenames become words. A token the normalizer does not know is spelled. It is not dropped. Each sentence is one Kokoro generate. Playback is the existing stream: the first sentence can start while the next one is still generating. Kokoro's padding at a period is trimmed, then `sentenceGapMs` (160) is the only pause inserted between sentences. The next sentence is synthesized while the current one is still playing, on `KOKORO_THREADS` (4) threads. `startAfterMs` waits once, before the first sentence of a reply.
+Speech is normalized before it is split into sentences: versions (`Sonnet 5.5`, `2.0.1`), units, URLs, and filenames become words. A token the normalizer does not know is spelled. It is not dropped. A mark with no sound is never named: a quotation mark or an emoji is dropped, a dash, a bracket or an ellipsis becomes the pause it stands for (a comma), and a curly apostrophe becomes the plain one so a contraction stays one word (`SpeechPunctuationTest`). `openingClause` cuts the first clause off a long sentence, for a caller that wants the first sound sooner. Each sentence is one Kokoro generate. Playback is the existing stream: the first sentence can start while the next one is still generating. Kokoro's padding at a period is trimmed, then `sentenceGapMs` (160) is the only pause inserted between sentences. The next sentence is synthesized while the current one is still playing, on `KOKORO_THREADS` (4) threads. `startAfterMs` waits once, before the first sentence of a reply.
 
 On-device PocketTTS remains in this module for the cloned-voice path. The Mac companion uses the JVM backend through `DesktopSpeech`.
 

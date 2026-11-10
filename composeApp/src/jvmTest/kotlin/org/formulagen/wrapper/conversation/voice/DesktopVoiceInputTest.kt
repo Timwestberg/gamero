@@ -4,6 +4,9 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import org.formulagen.wrapper.bridge.LocalSpeechArgs
+import org.formulagen.wrapper.bridge.PlaybackVoice
+import org.formulagen.wrapper.bridge.PlaybackVoiceChoice
+import org.formulagen.wrapper.bridge.PlaybackVoices
 import org.formulagen.wrapper.bridge.VoiceInputScope
 import org.formulagen.wrapper.conversation.ChatVoice
 import org.formulagen.wrapper.conversation.VoiceState
@@ -22,6 +25,12 @@ class DesktopVoiceInputTest {
         override fun append(text: String): Boolean { said += text; state = VoiceState.SPEAKING; return true }
         /** Everything queued has been said. */
         fun finish() { said.clear(); state = VoiceState.IDLE }
+        var voices = listOf(VoiceChoice("adam70-michael30", "Sam"), VoiceChoice("heart60-adam40", "Harper"))
+        var voice = "adam70-michael30"
+        val previews = mutableListOf<String>()
+        override fun voiceChoices() = voices
+        override fun currentVoiceId() = voice
+        override fun previewVoice(id: String) { voice = id; previews += id }
         override fun close() {}
     }
     private class Ear : Hearing {
@@ -35,6 +44,23 @@ class DesktopVoiceInputTest {
         override fun endSession() {}
         override fun awaitStopped(timeoutMs: Long) {}
         override fun close() {}
+    }
+    @Test fun listsTheMacsVoicesAndSpeaksWithTheOneChosen() = runBlocking {
+        val speaker = Speaker()
+        val input = DesktopVoiceInput(Ear(), speaker)
+        try {
+            val sam = PlaybackVoice("adam70-michael30", "Sam")
+            val harper = PlaybackVoice("heart60-adam40", "Harper")
+            assertEquals(PlaybackVoices("adam70-michael30", listOf(sam, harper)), input.voices())
+            assertEquals(PlaybackVoices("heart60-adam40", listOf(sam, harper)), input.chooseVoice(PlaybackVoiceChoice("heart60-adam40")))
+            assertEquals(listOf("heart60-adam40"), speaker.previews, "the Mac says hello in the new voice")
+            // A voice the Mac does not list changes nothing and says nothing.
+            assertEquals(PlaybackVoices("heart60-adam40", listOf(sam, harper)), input.chooseVoice(PlaybackVoiceChoice("af_nobody")))
+            assertEquals(1, speaker.previews.size)
+            // A Mac on a voice with no choice lists none and selects none.
+            speaker.voices = emptyList()
+            assertEquals(PlaybackVoices(null, emptyList()), input.voices())
+        } finally { input.close() }
     }
     @Test fun stalePlaybackCannotStopAnotherSpeakersReply() = runBlocking {
         val speaker = Speaker()

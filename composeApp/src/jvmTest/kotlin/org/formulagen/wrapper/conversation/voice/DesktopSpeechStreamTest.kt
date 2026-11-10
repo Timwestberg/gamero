@@ -433,7 +433,7 @@ class DesktopSpeechStreamTest {
         }
         try {
             DesktopSpeech(config, { SilentLine() }, { opens.incrementAndGet(); engine(it) }).use { speech ->
-                assertEquals(listOf("Sam", "Jamie", "Riley", "Harper"), speech.voices().map { it.name })
+                assertEquals(listOf("Sam", "Jamie", "Riley", "Harper", "Quinn", "Avery", "Emery", "Rowan", "Sage"), speech.voices().map { it.name })
                 speech.speak("Hello there.")
                 assertTrue(waitFor { seen.size == 1 })
                 speech.speak("Hello again.")

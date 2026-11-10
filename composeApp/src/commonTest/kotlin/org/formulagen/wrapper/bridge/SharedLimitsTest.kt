@@ -24,6 +24,8 @@ class SharedLimitsTest {
     @Test fun nativeMirrorsEqualTheContract() {
         assertEquals(mapOf("notice" to ChatLimits.NOTICE), numbers("CONVERSATION_VOICE_LIMITS"))
         assertEquals(ChatLimits.REPLY, numbers("COMPANION_LIMITS").getValue("message"))
+        assertEquals(mapOf("voiceId" to VoicePlaybackLimits.VOICE_ID, "voiceName" to VoicePlaybackLimits.VOICE_NAME,
+            "voices" to VoicePlaybackLimits.VOICES), numbers("VOICE_PLAYBACK_LIMITS"))
         assertEquals(SharedRules.COMPANION_NAME_LIMIT, limits.getValue("COMPANION_NAME_LIMIT").jsonPrimitive.int)
         assertEquals(mapOf("detail" to ActivityLimits.DETAIL, "label" to ActivityLimits.LABEL, "steps" to ActivityLimits.STEPS), numbers("ACTIVITY_LIMITS"))
         assertEquals(mapOf("accountLabel" to ProviderLimits.ACCOUNT_LABEL, "displayName" to ProviderLimits.DISPLAY_NAME,

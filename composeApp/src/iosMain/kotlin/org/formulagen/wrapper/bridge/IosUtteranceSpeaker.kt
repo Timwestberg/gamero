@@ -48,6 +48,15 @@ internal interface IosUtteranceSpeaker {
     /** Nothing is being said and the audio session is going back: lets go of what only speaking needs. */
     fun rest() = Unit
 
+    /** The voices a person can choose between. None when the speaker has one voice it cannot change. */
+    fun voices(): List<PlaybackVoice> = emptyList()
+
+    /** The id of the voice in use, one of [voices]. Null when there are none. */
+    val voiceId: String? get() = null
+
+    /** Speaks with the voice [id] from the next utterance on, and remembers it. False when [id] is not one of [voices]. */
+    fun choose(id: String): Boolean = false
+
     fun close()
 }
 

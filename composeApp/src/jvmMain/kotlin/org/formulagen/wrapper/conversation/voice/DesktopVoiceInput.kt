@@ -82,6 +82,13 @@ internal class DesktopVoiceInput(private val ear: Hearing, private val speech: C
         LocalSpeechStatus(args.sessionId, "cancelled")
     }
     override suspend fun speechStatus(args: VoiceInputScope) = synchronized(gate) { playbackStatus(args.sessionId) }
+    override suspend fun voices(): PlaybackVoices = synchronized(gate) { listedVoices() }
+    /** The Mac's own voice row does the same: [ChatSpeech.previewVoice] stops the speaker, switches and says hello. */
+    override suspend fun chooseVoice(args: PlaybackVoiceChoice): PlaybackVoices = synchronized(gate) {
+        if (speech.voiceChoices().any { it.id == args.voiceId }) speech.previewVoice(args.voiceId)
+        listedVoices()
+    }
+    private fun listedVoices() = playbackVoices(speech.currentVoiceId(), speech.voiceChoices().map { PlaybackVoice(it.id, it.name) })
     private fun playbackStatus(id: String): LocalSpeechStatus = LocalSpeechStatus(id, when {
         id in speechStops -> "cancelled"
         speechSession != id || speechRevision != speech.playbackRevision() -> "error"

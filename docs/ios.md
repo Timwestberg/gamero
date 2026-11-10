@@ -261,7 +261,7 @@ method's exact behaviour).
 | Capability | Methods and events | Code (`iosMain/.../bridge/` unless it says otherwise) |
 | --- | --- | --- |
 | Dictation | `voiceInput.availability`, `.start`, `.stop`, `.status` | `IosVoiceInput.kt` |
-| The companion's voice | `voicePlayback.speak`, `.append`, `.stop`, `.status` | `IosSpeechPlayback.kt`, `IosAudioSession.kt` |
+| The companion's voice | `voicePlayback.speak`, `.append`, `.stop`, `.status`, `.voices`, `.choose` | `IosSpeechPlayback.kt`, `IosKokoroSpeaker.kt`, `IosAudioSession.kt` |
 | Offline Lists | `listsLocal.*` | `iosMain/.../lists/IosListsReplica.kt` |
 | Reminders and Focus phase ends | `notifications.status`, `.request`, `.sync` | `IosNotifications.kt`, rules in `commonMain/.../NotificationsCapability.kt` |
 | Links that leave the app | `link.open`, and any `target="_blank"` link | `IosHostCapabilities.kt`, `IosMediaGrant.kt` |
@@ -311,6 +311,16 @@ carries it, and Apple's otherwise. Both share one audio session (`IosVoice` in
   lexicons, voice blends and silence trimming) on a background thread, and its
   sound plays through an `AVAudioPlayerNode` while the next sentence is
   generated. The default voice is Sam.
+  - `voicePlayback.voices` lists the Kokoro blends and the one in use, and
+    `voicePlayback.choose` changes it. The model holds every voice, so a change
+    loads nothing: the next utterance uses it. The choice is kept in
+    `NSUserDefaults` (`hovel.voice.kokoro`). Choosing stops what was being said
+    and says "Hi, I'm …" in the new voice; a capture or a meeting that holds
+    the audio session keeps that hello silent. On Apple's voice there is
+    nothing to choose, and the list is empty.
+  - When nothing is being said, a first sentence longer than 70 characters is
+    said as two utterances: its opening clause, then the rest (`openingClause`
+    in `:voice`). The first sound then waits on half the sentence.
   - The model (about 330 MB) loads at the first sentence, or when a capture
     starts, so it is ready for the reply. It unloads when iOS warns that memory
     is short and nothing is being said.

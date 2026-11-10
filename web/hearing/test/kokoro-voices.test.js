@@ -39,13 +39,18 @@ test("Sam is the default and each blend keeps its desktop sid and speed", () => 
       ["adam60-george40", "Jamie", 51, 1, 0.95],
       ["adam55-bella45", "Riley", 52, 2, 0.95],
       ["heart60-adam40", "Harper", 53, 3, 0.97],
+      ["heart70-bella30", "Quinn", 45, 4, 1],
+      ["heart60-michael40", "Avery", 46, 5, 0.98],
+      ["heart65-emma35", "Emery", 47, 6, 0.97],
+      ["heart60-fenrir40", "Rowan", 48, 7, 0.98],
+      ["heart70-nicole30", "Sage", 49, 8, 0.97],
     ],
   );
   assert.equal(kokoroVoice("").name, "Sam");
   assert.equal(kokoroVoice("not-a-voice").name, "Sam");
   assert.equal(kokoroVoice("heart60-adam40").name, "Harper");
   assert.throws(() => kokoroVoiceStrict("af_bella"), /Unknown Kokoro voice/);
-  assert.deepEqual(KOKORO_VOICES.map((voice) => voice.name), ["Sam", "Jamie", "Riley", "Harper"]);
+  assert.deepEqual(KOKORO_VOICES.map((voice) => voice.name), ["Sam", "Jamie", "Riley", "Harper", "Quinn", "Avery", "Emery", "Rowan", "Sage"]);
 });
 
 test("blending follows pack-blends.py: weighted, normalized, float32, other slots untouched", () => {
@@ -75,7 +80,7 @@ test("a sentence uses the style row at its token count, inside the 510-row table
   assert.deepEqual([...floatsFromBytes(bytesFromFloats(Float32Array.of(1.5, -2)))], [1.5, -2]);
 });
 
-test("voices-ember.bin is the four blended slots of desktop's derived table", {
+test("voices-ember.bin is the nine blended slots of desktop's derived table", {
   skip: existsSync(new URL(".upstream/voices.bin", assets)) ? false : "run web/hearing/scripts/fetch-web-voice.mjs",
 }, () => {
   const upstream = floatsFromBytes(new Uint8Array(readFileSync(new URL(".upstream/voices.bin", assets))));

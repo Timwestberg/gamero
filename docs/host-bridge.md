@@ -91,7 +91,7 @@ is what each method does, on every host that supports it.
 | Capability | Mac | iPhone | Android |
 | --- | --- | --- | --- |
 | `voiceInput.*` | the shared recognizer (`DesktopVoiceInput`) | Apple speech (`IosVoiceInput`) | unsupported |
-| `voicePlayback.*` | Kokoro (`DesktopVoiceInput` over `DesktopSpeech`) | Apple speech (`IosSpeechPlayback`) | unsupported |
+| `voicePlayback.*` | Kokoro (`DesktopVoiceInput` over `DesktopSpeech`) | Kokoro, or Apple speech without its model (`IosSpeechPlayback`) | unsupported |
 | `notifications.*` | unsupported: notices stay in the page | `UNUserNotificationCenter` (`IosNotifications`) | unsupported |
 
 **`voicePlayback`** (`commonMain/.../VoicePlaybackCapability.kt`). A
@@ -112,6 +112,14 @@ is what each method does, on every host that supports it.
 - One session speaks at a time. While it has anything left to say, another
   session's `speak` or `append` answers `error` and does not interrupt it. On
   the Mac, a reply that Talk is speaking counts as another session.
+- `voices()` answers `{selected, voices: [{id, name}]}`: the voices a person
+  can choose between on this device, and the id of the one in use. A device
+  with one voice it cannot change answers `{selected: null, voices: []}`.
+- `choose({voiceId})` speaks with that voice from then on and keeps the choice
+  on the device (`~/.gamero/kokoro-voice` on the Mac, `NSUserDefaults` on
+  iPhone). It stops what the device was saying and says "Hi, I'm …" in the new
+  voice, so the person hears what they picked. It answers the list as it is
+  afterwards. An id the device does not list changes nothing.
 
 `LocalSpeechQueue` holds these rules for a host whose engine reports each
 utterance's end (iOS). The Mac keeps the same rules over its shared speaker in

@@ -173,12 +173,17 @@ fun runVoiceSelfCheck() {
     check(kokoroCalls == 1) { "Kokoro does not regenerate a take that fills the Pocket frame ceiling" }
     val catalog = kokoroCatalog()
     check(catalog.defaultId == "adam70-michael30") { "default blend" }
-    check(catalog.voices.size == 4) { "four blends" }
+    check(catalog.voices.size == 9) { "nine blends" }
     val expectedVoices = mapOf(
         "adam70-michael30" to Triple("Sam", 50, "1.00"),
         "adam60-george40" to Triple("Jamie", 51, "0.95"),
         "adam55-bella45" to Triple("Riley", 52, "0.95"),
         "heart60-adam40" to Triple("Harper", 53, "0.97"),
+        "heart70-bella30" to Triple("Quinn", 45, "1.00"),
+        "heart60-michael40" to Triple("Avery", 46, "0.98"),
+        "heart65-emma35" to Triple("Emery", 47, "0.97"),
+        "heart60-fenrir40" to Triple("Rowan", 48, "0.98"),
+        "heart70-nicole30" to Triple("Sage", 49, "0.97"),
     )
     check(catalog.voices.map { it.id }.toSet() == expectedVoices.keys) { "voice ids" }
     for (voice in catalog.voices) {
@@ -188,7 +193,7 @@ fun runVoiceSelfCheck() {
         val weight = voice.weights.sumOf { it.weight.toDouble() }
         check(weight > 0.99 && weight < 1.01) { "weights $weight" }
     }
-    check(catalog.voices.map { it.sid }.toSet().size == 4) { "sids" }
+    check(catalog.voices.map { it.sid }.toSet().size == 9) { "sids" }
     val contract = kokoroVoiceContract()
     check(contract.engine == VoiceConfig.KOKORO) { "engine id" }
     check(contract.voiceId == "adam70-michael30" && contract.speed == "1.00") { "default contract" }

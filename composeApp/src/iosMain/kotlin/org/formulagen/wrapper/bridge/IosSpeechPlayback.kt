@@ -18,6 +18,9 @@ private const val SESSION_LINGER_MS = 1_500L
 private const val SESSION_RETRY_MS = 500L
 private const val SESSION_RETRIES = 4
 
+/** The session of a voice's hello. A page's session is a record id, so the two never meet. */
+private const val HELLO_SESSION = "voice-hello-"
+
 /**
  * The companion's voice on iPhone. [LocalSpeechQueue] holds the rules and [speaker] makes the sound: Kokoro, the
  * Mac's voice, where the app carries its model, and Apple's synthesizer otherwise. The speaker reports each
@@ -34,6 +37,7 @@ internal class IosSpeechPlayback(
     private val queue = LocalSpeechQueue()
     private var stall: Job? = null
     private var release: Job? = null
+    private var hellos = 0
 
     override suspend fun speak(args: LocalSpeechArgs): LocalSpeechStatus = withContext(Dispatchers.Main) { say(args, replace = true) }
     override suspend fun append(args: LocalSpeechArgs): LocalSpeechStatus = withContext(Dispatchers.Main) { say(args, replace = false) }
@@ -46,6 +50,23 @@ internal class IosSpeechPlayback(
     override suspend fun speechStatus(args: VoiceInputScope): LocalSpeechStatus =
         withContext(Dispatchers.Main) { LocalSpeechStatus(args.sessionId, queue.status(args.sessionId)) }
 
+    override suspend fun voices(): PlaybackVoices = withContext(Dispatchers.Main) { listedVoices() }
+
+    /**
+     * The hello is an utterance of its own session, so the rules of the queue hold for it: it replaces what was
+     * being said, and a capture or a meeting that holds the audio session keeps it silent.
+     */
+    override suspend fun chooseVoice(args: PlaybackVoiceChoice): PlaybackVoices = withContext(Dispatchers.Main) {
+        if (speaker.choose(args.voiceId)) {
+            val name = speaker.voices().first { it.id == args.voiceId }.name
+            interrupt()
+            say(LocalSpeechArgs("$HELLO_SESSION${++hellos}", voiceHello(name)), replace = true)
+        }
+        listedVoices()
+    }
+
+    private fun listedVoices() = playbackVoices(speaker.voiceId, speaker.voices())
+
     /** Backgrounding, an audio interruption, a capture that needs the session, or the page ending: the speaker stops as `cancelled`. */
     fun interrupt() {
         if (queue.interrupt()) drop()
@@ -56,6 +77,8 @@ internal class IosSpeechPlayback(
 
     private fun say(args: LocalSpeechArgs, replace: Boolean): LocalSpeechStatus {
         val id = args.sessionId
+        // A voice's hello never keeps a reply waiting.
+        if (!id.startsWith(HELLO_SESSION) && queue.speaker?.startsWith(HELLO_SESSION) == true) interrupt()
         when (queue.admit(id, replace)) {
             LocalSpeechQueue.Admission.CANCELLED -> return LocalSpeechStatus(id, "cancelled")
             LocalSpeechQueue.Admission.BUSY -> return LocalSpeechStatus(id, "error")

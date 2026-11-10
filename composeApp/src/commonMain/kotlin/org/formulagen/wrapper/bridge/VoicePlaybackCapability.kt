@@ -1,5 +1,9 @@
 package org.formulagen.wrapper.bridge
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 
 /**
  * Playback belongs to a local Talk session, never a remote microphone owner. Every host keeps the same rules:
@@ -8,26 +12,72 @@ import kotlinx.serialization.Serializable
  * - one session speaks at a time: another session's `speak` or `append` answers `error` while the speaker has
  *   anything left to say, and never interrupts it;
  * - a stopped session stays `cancelled`: a late `speak` or `append` cannot start it again;
- * - [speechStatus] is `speaking` until everything queued has been said, then `done`.
+ * - [speechStatus] is `speaking` until everything queued has been said, then `done`;
+ * - [voices] lists the voices a person can choose between and the one in use. A device with one voice it cannot
+ *   change lists none and selects none;
+ * - [chooseVoice] speaks with another voice from then on and keeps the choice on the device. It stops what the
+ *   device was saying and says [voiceHello] in the new voice. An id the device does not list changes nothing.
  */
 interface VoicePlaybackCapability {
     suspend fun speak(args: LocalSpeechArgs): LocalSpeechStatus
     suspend fun append(args: LocalSpeechArgs): LocalSpeechStatus
     suspend fun stopSpeech(args: VoiceInputScope): LocalSpeechStatus
     suspend fun speechStatus(args: VoiceInputScope): LocalSpeechStatus
+    suspend fun voices(): PlaybackVoices = PlaybackVoices(null, emptyList())
+    suspend fun chooseVoice(args: PlaybackVoiceChoice): PlaybackVoices = voices()
 }
 @Serializable data class LocalSpeechArgs(val sessionId: String, val text: String)
 @Serializable data class LocalSpeechStatus(val sessionId: String, val state: String)
+@Serializable data class PlaybackVoice(val id: String, val name: String)
+@Serializable data class PlaybackVoiceChoice(val voiceId: String)
+
+/** `playbackVoices`. [selected] is one of [voices], or null when there is nothing to choose. */
+@Serializable(with = PlaybackVoicesSerializer::class)
+data class PlaybackVoices(val selected: String?, val voices: List<PlaybackVoice>)
+
+/** The contract's `selected` is `nullable`, not `optional`, so it is written through an [ExplicitNull] and the key stays. */
+internal object PlaybackVoicesSerializer : KSerializer<PlaybackVoices> {
+    @Serializable
+    private class Wire(val selected: ExplicitNull<String>, val voices: List<PlaybackVoice>)
+
+    override val descriptor: SerialDescriptor = Wire.serializer().descriptor
+    override fun serialize(encoder: Encoder, value: PlaybackVoices) =
+        encoder.encodeSerializableValue(Wire.serializer(), Wire(ExplicitNull(value.selected), value.voices))
+    override fun deserialize(decoder: Decoder): PlaybackVoices =
+        decoder.decodeSerializableValue(Wire.serializer()).let { PlaybackVoices(it.selected.value, it.voices) }
+}
+
+/** `VOICE_PLAYBACK_LIMITS` in event-contracts. */
+object VoicePlaybackLimits {
+    const val VOICE_ID = 64
+    const val VOICE_NAME = 40
+    const val VOICES = 32
+}
+
+/** What a voice says when a person picks it, so they hear the choice. */
+fun voiceHello(name: String): String = "Hi, I'm $name."
+
+/** [voices] as the contract carries them: within its bounds, and [selected] only when it is one of them. */
+fun playbackVoices(selected: String?, voices: List<PlaybackVoice>): PlaybackVoices {
+    val listed = voices
+        .filter { it.id.length in 1..VoicePlaybackLimits.VOICE_ID && it.name.isNotEmpty() }
+        .map { it.copy(name = it.name.take(VoicePlaybackLimits.VOICE_NAME)) }
+        .take(VoicePlaybackLimits.VOICES)
+    return PlaybackVoices(selected?.takeIf { id -> listed.any { it.id == id } }, listed)
+}
 object VoicePlaybackMethods {
     private fun speech(args: LocalSpeechArgs) = SharedRules.isRecordId(args.sessionId) && args.text.length in 1..CompanionLimits.MESSAGE
     val APPEND = BridgeMethod("voicePlayback.append", LocalSpeechArgs.serializer(), LocalSpeechStatus.serializer(), accepts = ::speech)
     val SPEAK = BridgeMethod("voicePlayback.speak", LocalSpeechArgs.serializer(), LocalSpeechStatus.serializer(), accepts = ::speech)
     val STOP = BridgeMethod("voicePlayback.stop", VoiceInputScope.serializer(), LocalSpeechStatus.serializer()) { SharedRules.isRecordId(it.sessionId) }
     val STATUS = BridgeMethod("voicePlayback.status", VoiceInputScope.serializer(), LocalSpeechStatus.serializer()) { SharedRules.isRecordId(it.sessionId) }
+    val VOICES = BridgeMethod("voicePlayback.voices", NoArgs.serializer(), PlaybackVoices.serializer())
+    val CHOOSE = BridgeMethod("voicePlayback.choose", PlaybackVoiceChoice.serializer(), PlaybackVoices.serializer()) { it.voiceId.length in 1..VoicePlaybackLimits.VOICE_ID }
     fun pack(input: Capability<VoicePlaybackCapability>): CapabilityPack = binder.pack(input)
     internal val binder = CapabilityBinder("voicePlayback", listOf<CapabilityHandler<VoicePlaybackCapability>>(
         APPEND.handle { input, args -> input.append(args) }, SPEAK.handle { input, args -> input.speak(args) },
         STOP.handle { input, args -> input.stopSpeech(args) }, STATUS.handle { input, args -> input.speechStatus(args) },
+        VOICES.handle { input, _ -> input.voices() }, CHOOSE.handle { input, args -> input.chooseVoice(args) },
     ))
 }
 

@@ -35,6 +35,31 @@
             "id": "heart60-adam40",
             "name": "Harper",
             "speed": "0.97"
+        },
+        {
+            "id": "heart70-bella30",
+            "name": "Quinn",
+            "speed": "1.00"
+        },
+        {
+            "id": "heart60-michael40",
+            "name": "Avery",
+            "speed": "0.98"
+        },
+        {
+            "id": "heart65-emma35",
+            "name": "Emery",
+            "speed": "0.97"
+        },
+        {
+            "id": "heart60-fenrir40",
+            "name": "Rowan",
+            "speed": "0.98"
+        },
+        {
+            "id": "heart70-nicole30",
+            "name": "Sage",
+            "speed": "0.97"
         }
     ],
     "checksums": {
@@ -42,7 +67,7 @@
         "tokensSha256": "6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425",
         "lexiconSha256": "7daaab53a181be9885b853a8582bf1838186317e5dadacbcef9c426d6fa0da14",
         "upstreamVoicesSha256": "1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29",
-        "derivedVoicesSha256": "35cce6c473585fd74244f31c2623d6f2f835283918dad6fa2e2a79d60639b26f",
+        "derivedVoicesSha256": "9781ddfe1b3c6fc0104bc550cb4ba7fc9634d6cebf099ffd029c1598461b69d0",
         "sileroVadSha256": "6b99cbfd39246b6706f98ec13c7c50c6b299181f2474fa05cbc8046acc274396",
         "zipformerArchiveSha256": "639e25b578e9e997131402199419c13a941f8e4e198e2da1ce57dbf5cf401282",
         "zipformerEncoderSha256": "5022b2eca5b19d1bc104fcf33e26bc32604b7df553cd2e1f62e31dc7b05e9c87",

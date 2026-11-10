@@ -1,5 +1,8 @@
 package org.formulagen.wrapper.conversation.voice
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -85,7 +88,7 @@ internal fun voicePickerState(
 }
 
 /** The line spoken when a person picks a voice, so the next sentence is not the first time they hear it. */
-internal fun voicePreviewLine(name: String) = "Hi, I'm $name."
+internal fun voicePreviewLine(name: String) = org.formulagen.wrapper.bridge.voiceHello(name)
 
 internal class VoicePickerModel {
     private val holder = mutableStateOf(VoicePickerState.Hidden)
@@ -152,16 +155,22 @@ internal fun KokoroVoicePicker(
                     modifier = Modifier.padding(end = 8.dp),
                 )
             }
-            Spacer(Modifier.weight(1f))
-            Text("Voice", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(end = 4.dp))
-            for (voice in state.voices) {
-                val selected = voice.id == state.selectedId
-                TextButton(onClick = { if (!selected) onSelect(voice.id) }, modifier = Modifier.height(32.dp)) {
-                    Text(
-                        voice.name,
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+            // The voices take what is left of the row, at its end, and scroll when a narrow window cannot show them all.
+            Row(
+                Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Voice", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(end = 4.dp))
+                for (voice in state.voices) {
+                    val selected = voice.id == state.selectedId
+                    TextButton(onClick = { if (!selected) onSelect(voice.id) }, modifier = Modifier.height(32.dp)) {
+                        Text(
+                            voice.name,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }

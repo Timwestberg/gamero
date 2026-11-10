@@ -6,8 +6,10 @@ package org.formulagen.wrapper.voice
  * copy, so a build does not need the repo checkout. Adding a blend is a new
  * object in that recipe; the engine only asks this catalog for a sid and a speed.
  *
- * Slots 50 through 53 overwrite zm_yunxi, zm_yunxia, zm_yunyang, and em_santa.
- * Kokoro v1.0 has no spare speaker id without an ONNX metadata rebuild.
+ * Slots 45 through 53 overwrite the Mandarin voices (zf_xiaobei through
+ * zm_yunyang) and em_santa, which English chat never selects. Kokoro v1.0 has
+ * no spare speaker id without an ONNX metadata rebuild. Slots 45 through 49
+ * hold the blends led by af_heart, upstream's best-graded voice.
  */
 internal const val KOKORO_BLENDS_JSON = """
 {
@@ -16,8 +18,8 @@ internal const val KOKORO_BLENDS_JSON = """
   "tokensSha256": "6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425",
   "lexiconUsEnSha256": "7daaab53a181be9885b853a8582bf1838186317e5dadacbcef9c426d6fa0da14",
   "upstreamVoicesSha256": "1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29",
-  "derivedVoicesSha256": "35cce6c473585fd74244f31c2623d6f2f835283918dad6fa2e2a79d60639b26f",
-  "replacedSlots": "50 zm_yunxi, 51 zm_yunxia, 52 zm_yunyang, 53 em_santa",
+  "derivedVoicesSha256": "9781ddfe1b3c6fc0104bc550cb4ba7fc9634d6cebf099ffd029c1598461b69d0",
+  "replacedSlots": "45 zf_xiaobei, 46 zf_xiaoni, 47 zf_xiaoxiao, 48 zf_xiaoyi, 49 zm_yunjian, 50 zm_yunxi, 51 zm_yunxia, 52 zm_yunyang, 53 em_santa",
   "layout": {
     "speakers": 54,
     "frames": 510,
@@ -26,8 +28,11 @@ internal const val KOKORO_BLENDS_JSON = """
   "speakers": {
     "af_bella": 2,
     "af_heart": 3,
+    "af_nicole": 6,
     "am_adam": 11,
+    "am_fenrir": 14,
     "am_michael": 16,
+    "bf_emma": 21,
     "bm_george": 26
   },
   "voices": [
@@ -69,6 +74,56 @@ internal const val KOKORO_BLENDS_JSON = """
       "weights": [
         {"speaker": "af_heart", "weight": "0.60"},
         {"speaker": "am_adam", "weight": "0.40"}
+      ]
+    },
+    {
+      "id": "heart70-bella30",
+      "name": "Quinn",
+      "sid": 45,
+      "speed": "1.00",
+      "weights": [
+        {"speaker": "af_heart", "weight": "0.70"},
+        {"speaker": "af_bella", "weight": "0.30"}
+      ]
+    },
+    {
+      "id": "heart60-michael40",
+      "name": "Avery",
+      "sid": 46,
+      "speed": "0.98",
+      "weights": [
+        {"speaker": "af_heart", "weight": "0.60"},
+        {"speaker": "am_michael", "weight": "0.40"}
+      ]
+    },
+    {
+      "id": "heart65-emma35",
+      "name": "Emery",
+      "sid": 47,
+      "speed": "0.97",
+      "weights": [
+        {"speaker": "af_heart", "weight": "0.65"},
+        {"speaker": "bf_emma", "weight": "0.35"}
+      ]
+    },
+    {
+      "id": "heart60-fenrir40",
+      "name": "Rowan",
+      "sid": 48,
+      "speed": "0.98",
+      "weights": [
+        {"speaker": "af_heart", "weight": "0.60"},
+        {"speaker": "am_fenrir", "weight": "0.40"}
+      ]
+    },
+    {
+      "id": "heart70-nicole30",
+      "name": "Sage",
+      "sid": 49,
+      "speed": "0.97",
+      "weights": [
+        {"speaker": "af_heart", "weight": "0.70"},
+        {"speaker": "af_nicole", "weight": "0.30"}
       ]
     }
   ]
