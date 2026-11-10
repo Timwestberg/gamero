@@ -10,6 +10,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.logger.log
 import platform.AVFAudio.AVAudioApplication
 import platform.AVFAudio.AVAudioApplicationRecordPermissionDenied
 import platform.AVFAudio.AVAudioApplicationRecordPermissionUndetermined
@@ -40,6 +42,14 @@ import kotlin.coroutines.resume
 private const val START_LIMIT_MS = 30_000L
 private const val LISTEN_LIMIT_MS = 120_000L
 private const val FINISH_LIMIT_MS = 5_000L
+private const val FINISH_WITH_WORDS_LIMIT_MS = 1_500L
+private const val TAG = "IosVoiceInput"
+
+/**
+ * The recognizer's "no speech" errors (`kAFAssistantErrorDomain`): 1110 is "No speech detected", and 203 is what it
+ * answers when asked to finish with nothing to report.
+ */
+private val NO_SPEECH_CODES = setOf(1110L, 203L)
 
 /**
  * Dictation and the companion's voice on iPhone, which share one audio session. iOS events that end either one
@@ -92,6 +102,8 @@ internal class IosVoiceInput(private val audio: IosAudioSession, private val bar
     private var engine: AVAudioEngine? = null
     private var request: SFSpeechAudioBufferRecognitionRequest? = null
     private var task: SFSpeechRecognitionTask? = null
+    /** The words of the capture in progress, kept across the stretches iOS closes. */
+    private var words: HeardWords? = null
     private var deadline: Job? = null
     /** iOS stops the engine when the input route changes (headphones on or off). Listen again on the new route. */
     private val rerouted = NSNotificationCenter.defaultCenter.addObserverForName(
@@ -154,25 +166,28 @@ internal class IosVoiceInput(private val audio: IosAudioSession, private val bar
             if (recognizer.supportsOnDeviceRecognition) buffer.requiresOnDeviceRecognition = true
             engine = capture
             request = buffer
+            val heard = HeardWords()
+            words = heard
             task = recognizer.recognitionTaskWithRequest(buffer) { result, error ->
                 scope.launch {
                     if (!sessions.owns(id)) return@launch
-                    val words = result?.bestTranscription?.formattedString
-                    if (result?.final == true) {
-                        releaseCapture()
-                        sessions.update(id, "done", final = words ?: "")
-                    } else if (error != null) {
-                        releaseCapture()
-                        sessions.update(id, "error", reason = "unavailable")
-                    } else if (words != null) sessions.update(id, sessions.read(id).state, partial = words)
+                    // iOS closes a stretch of speech after a pause (it then carries metadata) and starts the next from nothing.
+                    val all = result?.let { heard.hear(it.bestTranscription.formattedString, it.final || it.speechRecognitionMetadata != null) } ?: heard.all
+                    when {
+                        result?.final == true -> finish(id, RecognitionEnd.HEARD, all, "final")
+                        error != null -> finish(id, recognitionEnd(all, noSpeech = error.code in NO_SPEECH_CODES), all, "error ${error.domain} ${error.code}")
+                        all.isNotBlank() -> sessions.update(id, sessions.read(id).state, partial = all)
+                    }
                 }
             }
             check(tap(capture, buffer))
             capture.prepare()
             check(capture.startAndReturnError(null))
             sessions.update(id, "listening")
+            log(LogLevel.Info, TAG, "Capture listening (on-device: ${recognizer.supportsOnDeviceRecognition})")
             limit(LISTEN_LIMIT_MS) { stop(VoiceInputStop(id, "keep")) }
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
+            log(LogLevel.Warn, TAG, "Capture could not start", failure)
             releaseCapture()
             sessions.update(id, "error", reason = "unavailable")
         }
@@ -195,6 +210,7 @@ internal class IosVoiceInput(private val audio: IosAudioSession, private val bar
         if (sessions.read(id).state != "listening") return
         capture.inputNode.removeTapOnBus(0u)
         val listening = tap(capture, buffer) && run { capture.prepare(); capture.startAndReturnError(null) }
+        log(LogLevel.Info, TAG, "The audio route changed while listening; listening again: $listening")
         if (!listening) scope.launch { stop(VoiceInputStop(id, "keep")) }
     }
 
@@ -205,22 +221,42 @@ internal class IosVoiceInput(private val audio: IosAudioSession, private val bar
         val keep = args.disposition == "keep" && sessions.read(id).state == "listening"
         releaseCapture()
         if (!keep) {
-            task?.cancel(); task = null; request = null
+            task?.cancel(); task = null; request = null; words = null
             return@withContext sessions.update(id, "cancelled")
         }
         sessions.update(id, "stopping")
         request?.endAudio()
-        limit(FINISH_LIMIT_MS) {
-            if (sessions.owns(id)) { task?.cancel(); sessions.update(id, "error", reason = "timeout") }
+        // The recognizer usually answers at once. With words already heard there is little left for it to add, so the
+        // wait for it is short; with none, it gets longer to produce its first.
+        val heard = words?.all.orEmpty()
+        limit(if (heard.isBlank()) FINISH_LIMIT_MS else FINISH_WITH_WORDS_LIMIT_MS) {
+            if (sessions.owns(id)) {
+                task?.cancel()
+                val all = words?.all.orEmpty()
+                if (all.isBlank()) sessions.update(id, "error", reason = "timeout").also { log(LogLevel.Warn, TAG, "Capture ended: the recognizer did not finish, and nothing was heard") }
+                else finish(id, RecognitionEnd.HEARD, all, "finish limit")
+            }
         }
         sessions.read(id)
+    }
+
+    /** Ends the capture with what the recognizer's ending means. The log names how it ended and how much was heard, never the words. */
+    private fun finish(id: String, end: RecognitionEnd, all: String, how: String) {
+        log(if (end == RecognitionEnd.FAILED) LogLevel.Warn else LogLevel.Info, TAG, "Capture ended: $end after ${sessions.read(id).state}, ${all.length} characters ($how)")
+        releaseCapture()
+        when (end) {
+            RecognitionEnd.HEARD -> sessions.update(id, "done", final = all)
+            // Nothing was said: an empty turn, which the page offers to try again, not a broken microphone.
+            RecognitionEnd.SILENCE -> sessions.update(id, "done", final = "")
+            RecognitionEnd.FAILED -> sessions.update(id, "error", reason = "unavailable")
+        }
     }
 
     override suspend fun status(args: VoiceInputScope) = withContext(Dispatchers.Main) { sessions.read(args.sessionId) }
 
     /** Called for backgrounding, audio interruption and document replacement. */
     fun invalidate() {
-        sessions.cancelAll(); releaseCapture(); task?.cancel(); task = null; request = null
+        sessions.cancelAll(); releaseCapture(); task?.cancel(); task = null; request = null; words = null
     }
 
     override fun close() {
