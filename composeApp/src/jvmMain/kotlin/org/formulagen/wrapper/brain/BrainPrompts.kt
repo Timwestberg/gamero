@@ -280,15 +280,46 @@ internal fun resumeDialog(
 }
 
 /**
- * Why [role]'s attempt cannot start on this Mac, called [mac]: its readiness [issues] by their contract names, and the
- * provider skills it cannot use in sentences of their own ([skillsPause]).
+ * Why [role]'s attempt cannot start on this Mac, called [mac], in sentences a person can act on: each readiness
+ * issue ([readinessSentences]) and each provider skill it cannot use ([skillsPause]), then how to go on.
  */
 internal fun notReadyPause(role: BrainRoleSnapshot, issues: List<BrainIssue>, mac: String): String {
     val (skills, others) = issues.partition { it.reason == BrainIssueReason.MISSING_SKILL && it.skill != null }
-    val reasons = others.joinToString { brainWire(it.reason).jsonPrimitive.content }
-    val lines = listOfNotNull("${role.name} is not ready: $reasons.".takeIf { others.isNotEmpty() }) +
-        skillsPause(role, skills.mapNotNull { it.skill }, mac)
-    return (lines + "Update the brain or provider and resume.").joinToString(" ")
+    val lines = readinessSentences(role, others.map { it.reason }, mac) + skillsPause(role, skills.mapNotNull { it.skill }, mac)
+    return (lines + "Then resume.").joinToString(" ")
+}
+
+/**
+ * What stands between [role] and its work, by readiness [reasons], with where to fix each: the brain for the role's
+ * provider, model and mode, the project page for its folder, and the Mac for a sign-in. The two reasons a working
+ * role cannot work read as one, since either fix alone leaves the other.
+ */
+internal fun readinessSentences(role: BrainRoleSnapshot, reasons: List<BrainIssueReason>, mac: String): List<String> {
+    val name = role.name
+    val provider = role.binding.runtimeId.copy
+    val noFolder = BrainIssueReason.MISSING_PROJECT in reasons
+    val cannotWork = BrainIssueReason.UNSUPPORTED_PROJECT_WORK in reasons
+    val work = when {
+        noFolder && cannotWork -> "$name works in a project folder, but ${provider.product} can only talk on $mac, and this project has no folder there. " +
+            "Make $name talk-only in the brain, or run it on a provider that can work on $mac and choose a folder on the project page."
+        cannotWork -> "$name works in a project folder, but ${provider.product} can only talk on $mac. " +
+            "Make $name talk-only in the brain, or run it on a provider that can work on $mac."
+        noFolder -> "$name works in a project folder, and this project has none on $mac. " +
+            "Choose a folder on the project page, or make $name talk-only in the brain."
+        else -> null
+    }
+    val rest = reasons.distinct().mapNotNull { reason ->
+        when (reason) {
+            BrainIssueReason.MISSING_BINDING -> "$name has no provider. Choose one in the brain."
+            BrainIssueReason.UNAVAILABLE_PROVIDER -> "$name runs on ${provider.product}, which is not signed in on $mac. Sign in to ${provider.program} there."
+            BrainIssueReason.UNAVAILABLE_MODEL -> "$name's model, ${provider.modelName(role.binding.modelId)}, is not available in ${provider.program} on $mac. Choose another in the brain."
+            BrainIssueReason.UNSUPPORTED_EFFORT -> "$name's effort setting is not one its model offers. Choose another in the brain."
+            BrainIssueReason.MISSING_ROLE -> "$name is no longer in the brain. Choose who does this step."
+            BrainIssueReason.EMPTY_WORKFLOW -> "This workflow has no steps. Add one in the brain."
+            BrainIssueReason.MISSING_PROJECT, BrainIssueReason.UNSUPPORTED_PROJECT_WORK, BrainIssueReason.MISSING_SKILL -> null
+        }
+    }
+    return rest + listOfNotNull(work)
 }
 
 /**

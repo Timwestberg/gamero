@@ -678,7 +678,9 @@ Mobile first from here.""" }
         fixture.delegateThenAnswer()
         assertEquals(MessageState.FAILED, fixture.send("Add sign-in"))
         assertEquals(emptyList(), fixture.worker.requests)
-        assertTrue("missing-project" in fixture.server.appended().last().text)
+        val said = fixture.server.appended().last().text
+        assertTrue("Implementer works in a project folder, and this project has none on" in said, said)
+        assertTrue("Choose a folder on the project page" in said && "missing-project" !in said, said)
     }
 
     /** [base]'s specialists, in a version 2 brain, using Hovel skill [style] and Codex's installed `code-review`. */
@@ -703,7 +705,7 @@ Mobile first from here.""" }
         fixture.delegateThenAnswer()
         assertEquals(MessageState.FAILED, fixture.send("Add sign-in"))
         assertEquals(emptyList(), fixture.worker.requests, "paused before it started")
-        val pause = "Implementer uses code-review, which isn't installed in Codex on Studio Mac. Update the brain or provider and resume."
+        val pause = "Implementer uses code-review, which isn't installed in Codex on Studio Mac. Then resume."
         assertEquals(pause, fixture.server.appended().last().text)
         assertEquals(BrainRunState.PAUSED, fixture.record().brain.run?.summary?.state)
         fixture.installReview(readable = false)
