@@ -44,10 +44,10 @@ private const val BUNDLE_FOLDER = "kokoro"
 private const val THREADS_ENV = "GAMERO_KOKORO_THREADS"
 
 /**
- * How many threads Kokoro generates on. An iPhone has two fast cores and four slow ones; the Mac's four threads would
- * put half the work on slow cores, where the fast two then wait for them.
+ * How many threads Kokoro generates on: four, as on the Mac. An iPhone 14 Pro Max, with two fast cores and four slow
+ * ones, makes speech at 2.0 times real time on four threads and 1.7 times on two.
  */
-private const val KOKORO_THREADS = 2
+private const val KOKORO_THREADS = 4
 
 /** Loading the model and generating the first sentence come before the first sound, once per launch. */
 private const val KOKORO_START_BUDGET_MS = 30_000L

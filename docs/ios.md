@@ -314,10 +314,13 @@ carries it, and Apple's otherwise. Both share one audio session (`IosVoice` in
   - The model (about 330 MB) loads at the first sentence, or when a capture
     starts, so it is ready for the reply. It unloads when iOS warns that memory
     is short and nothing is being said.
-  - It generates on 2 threads, an iPhone's two fast cores.
-    `GAMERO_KOKORO_THREADS` overrides that at launch.
+  - It generates on 4 threads, as on the Mac. `GAMERO_KOKORO_THREADS` overrides
+    that at launch.
   - Each sentence logs its speed: `Kokoro: 3.3 s of speech in 1.6 s, 2.1x real
-    time, on 2 threads`.
+    time, on 4 threads`. That line is from an iPhone 14 Pro Max, where two
+    threads make 1.7 times real time. The first sentence of a reply therefore
+    starts about a second and a half after it arrives, and each later one is
+    ready before the one before it ends.
   - If the model cannot load, Apple's voice speaks from then on.
 - **Apple's voice** (`AppleSpeaker`, `AVSpeechSynthesizer`) otherwise. The app
   picks the best voice **installed** for the device language: premium, then
