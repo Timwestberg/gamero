@@ -1,10 +1,8 @@
 # Companion folders
 
-Status: decisions agreed. Built: the first slice of step 1 (the visible
-folder, readable files and the index) and the first slice of step 2 (the
-project brief, the shared notes, approvals kept across restarts). Not
-built: the Trash and Show in Finder, the coordinator reading files, and
-scratch. "Decided" lists what was agreed.
+Status: built, on the branch `claude/feat/conversations-lists-polish`, not
+merged. "Decided" lists what was agreed. How to check it by hand is in
+`companion-folders.TEST.md`.
 
 ## What
 
@@ -303,75 +301,3 @@ Approvals and limits:
   characters, 8,000 characters of notes given to a turn, scratch kept 7
   days, a warning at 1 GB, a brief of 10,000 characters, and a reading
   budget of two rounds and 32,000 characters.
-
-<!-- IMPLEMENTATION-PLAN:START -->
-
-## When (remove after delivery)
-
-Step 1, the visible folder. The first three tasks are slice 1a, in the Mac
-app only. The last two are slice 1b and need a server change first.
-
-- **Folder identity and names.** The root, the marker file, safe names,
-  renames and duplicates. Depends on nothing. Done when renaming a companion
-  and a conversation renames their folders and a hand-moved folder is
-  reported, not recreated.
-- **Write outputs and the index.** Each new output is written once with its
-  name and extension, and `index.md` gains its line. Depends on folder
-  identity. Done when a delegated task's output is a readable file within a
-  second of appearing in the conversation, and a failed write does not stop
-  the run.
-- **Existing conversations.** Outputs already recorded are written out at the
-  conversation's next message. Depends on writing outputs. Done when it can
-  run twice without duplicates.
-- **Delete to the Trash.** A deleted conversation or companion moves its
-  folder to the Trash. Depends on folder identity, and on a new server route
-  that tells the Mac what no longer exists. Done when the folder is in the
-  Trash and can be put back.
-- **Show in Finder.** A host-bridge method and the page's control. Depends on
-  folder identity, and on a contract change in server-platform first. Done
-  when it opens the right folder on the project's Mac and is absent
-  elsewhere.
-
-Step 2, shared context. Three slices: brief, notes and remembered approvals
-in the Mac app; reading after a server change; scratch after the provider
-checks.
-
-- **Measure the coordinator today.** Time from message to first word, in text
-  and in Talk, on each provider. Depends on nothing. Done when there is a
-  number to compare the later tasks against.
-- **The path check.** One function that says whether a path may be read, with
-  the skip list, and its tests. Depends on nothing; everything that reads
-  goes through it. Done when links, `..`, case and outside paths are each
-  refused by a test.
-- **The project brief.** Building it, its limit, when it is rebuilt, its
-  place in the coordinator's turn, and the line in the project's settings
-  that says what is sent. Depends on the path check. Done when the
-  coordinator answers "what is this project?" with no handoff and no read,
-  and no skipped file is named in it.
-- **Remembered approvals.** Approvals kept on the Mac across restarts, for
-  start of work as well, with the list and the withdrawal in the project's
-  settings. Depends on nothing. Done when a restart does not ask again, a
-  changed folder or provider does, and a withdrawn approval asks again.
-- **The read approval.** The dialog for reading. Depends on remembered
-  approvals. Done when no file text beyond the brief is sent before the
-  person approves, and a refusal leaves the coordinator answering from the
-  brief.
-- **Read requests.** The reply format, the follow-up turn, the budget, the
-  activity line and the spoken line in Talk. Depends on the path check and
-  the approval. Done when "what does my README say?" is answered from the
-  file, a third round is refused, and the conversation shows what was read.
-- **The notes log.** The record, its limits, `notes.md`, and the recent notes
-  in every turn's input as data. Depends on step 1. Done when a second
-  specialist's turn shows the first one's note.
-- **Agents add notes.** The reply format for a note, on talk and work turns.
-  Depends on the notes log. Done when two specialists running at once both
-  land their notes intact.
-- **Prove a second writable folder.** A live check per provider that a
-  working turn can write in scratch and is refused or asked elsewhere.
-  Depends on nothing; it gates scratch. Done when each provider is marked
-  verified or not.
-- **Scratch.** The folder, write access for the providers that passed, and
-  the two cleanup rules. Depends on step 1 and on the check.
-- **Cleanup on memory erase, and the size notice.** Depends on the notes log.
-
-<!-- IMPLEMENTATION-PLAN:END -->

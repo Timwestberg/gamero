@@ -216,9 +216,10 @@ after a change that adds to the coordinator's turn.
 - The page uses `project.storage`, `project.setStorageLimit` and
   `project.cleanStorage`. Passing the limit only changes what the page says.
 
-## Not built yet
+## Checking it by hand
 
-`TEST.md`, the manual check list for the whole feature.
+`companion-folders.TEST.md` has the manual cases, the known edge cases, and
+what has and has not been seen in the real app.
 
 ## Known limits
 
