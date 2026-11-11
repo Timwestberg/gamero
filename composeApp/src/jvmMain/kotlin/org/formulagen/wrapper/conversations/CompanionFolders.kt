@@ -90,14 +90,14 @@ internal data class RecordedOutput(
 internal fun interface CompanionFolders {
     /**
      * Brings one conversation's visible folder up to date: names it as [names] says, writes every one of [outputs]
-     * not yet written ([bytes] reads one), and rewrites its index. It is safe to repeat, and it never throws: what
-     * could not be written is tried again at the next call.
+     * not yet written ([bytes] reads one), and rewrites its index and its copy of the shared [notes]. It is safe to
+     * repeat, and it never throws: what could not be written is tried again at the next call.
      */
-    fun sync(names: FolderNames, outputs: List<RecordedOutput>, bytes: (ArtifactRef) -> ByteArray)
+    fun sync(names: FolderNames, outputs: List<RecordedOutput>, notes: List<TeamNote>, bytes: (ArtifactRef) -> ByteArray)
 
     companion object {
         /** A Mac that keeps no visible folders, and every test that does not ask for them. */
-        val NONE = CompanionFolders { _, _, _ -> }
+        val NONE = CompanionFolders { _, _, _, _ -> }
     }
 }
 
@@ -107,6 +107,7 @@ internal object CompanionFolderRules {
     const val CONVERSATIONS = "conversations"
     const val OUTPUTS = "outputs"
     const val INDEX = "index.md"
+    const val NOTES = "notes.md"
 
     /** Moves the root, for a test rig: a test account must never write into the person's real folders. */
     const val ROOT_OVERRIDE = "HOVEL_COMPANION_FOLDERS"

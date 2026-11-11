@@ -44,15 +44,15 @@ internal class VisibleFolders(
     private class Settled(val dir: Path, val name: String, val pinned: Boolean)
 
     @Synchronized
-    override fun sync(names: FolderNames, outputs: List<RecordedOutput>, bytes: (ArtifactRef) -> ByteArray) {
+    override fun sync(names: FolderNames, outputs: List<RecordedOutput>, notes: List<TeamNote>, bytes: (ArtifactRef) -> ByteArray) {
         try {
-            bring(names, outputs, bytes)
+            bring(names, outputs, notes, bytes)
         } catch (error: Exception) {
             log(LogLevel.Warn, TAG, "A conversation's visible folder is behind; it is tried again at its next message", error)
         }
     }
 
-    private fun bring(names: FolderNames, outputs: List<RecordedOutput>, bytes: (ArtifactRef) -> ByteArray) {
+    private fun bring(names: FolderNames, outputs: List<RecordedOutput>, notes: List<TeamNote>, bytes: (ArtifactRef) -> ByteArray) {
         require(SharedRules.isRecordId(names.accountId) && SharedRules.isRecordId(names.companionId) && SharedRules.isRecordId(names.conversationId))
         val ledger = read(names.accountId)
         val known = ledger.conversations[names.conversationId]
@@ -80,6 +80,10 @@ internal class VisibleFolders(
         val (all, failure) = write(conversation.dir.resolve(CompanionFolderRules.OUTPUTS), written, missing, bytes)
         val folder = ConversationFolder(names.companionId, conversation.name, names.conversation, conversation.pinned, startedOn, all)
         replaceIfChanged(conversation.dir.resolve(CompanionFolderRules.INDEX), CompanionFolderRules.index(names, folder, zone).toByteArray())
+        // The notes file is Hovel's copy of the log: with no notes left, as after a memory cleanup, the copy goes too.
+        val notesFile = conversation.dir.resolve(CompanionFolderRules.NOTES)
+        if (notes.isEmpty()) Files.deleteIfExists(notesFile)
+        else replaceIfChanged(notesFile, TeamNotes.markdown(names.conversation, notes, zone).toByteArray())
         val next = ledger.copy(
             companions = ledger.companions + (names.companionId to CompanionFolder(companion.name, names.companion, companion.pinned)),
             conversations = ledger.conversations + (names.conversationId to folder),

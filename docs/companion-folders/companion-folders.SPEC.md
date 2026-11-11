@@ -1,8 +1,10 @@
 # Companion folders
 
-Status: decisions agreed 2026-11-10. Built: the first slice of step 1 (the
-visible folder, readable files and the index). Not built: the rest of step 1
-(Trash, Show in Finder) and all of step 2. "Decided" lists what was agreed.
+Status: decisions agreed. Built: the first slice of step 1 (the visible
+folder, readable files and the index) and the first slice of step 2 (the
+project brief, the shared notes, approvals kept across restarts). Not
+built: the Trash and Show in Finder, the coordinator reading files, and
+scratch. "Decided" lists what was agreed.
 
 ## What
 

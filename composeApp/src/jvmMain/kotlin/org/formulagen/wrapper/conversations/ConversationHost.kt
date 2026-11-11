@@ -6,6 +6,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import org.formulagen.wrapper.approvals.ApprovalBroker
 import org.formulagen.wrapper.approvals.NativeDialogs
+import org.formulagen.wrapper.approvals.ApprovalMemory
 import org.formulagen.wrapper.approvals.StartOfWork
 import org.formulagen.wrapper.bridge.ProviderCapability
 import org.formulagen.wrapper.bridge.RuntimeId
@@ -92,7 +93,8 @@ internal class ConversationHost(
                 mac = SharedRules.dialogName(registration.name, THIS_MAC))
             val cleanup = connection.cleanup
             cleanup?.register(store::eraseContext)
-            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(), api, editStore, { cleanup?.check() }, companionFolders)
+            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(ApprovalMemory(providerRoot, registration.ownerId)), api, editStore,
+                { cleanup?.check() }, companionFolders)
             val guarded = MessageEngine { claim, output, cancel, closing ->
                 if (cleanup == null) engine.run(claim, output, cancel, closing)
                 else cleanup.run(cancel::cancel) { engine.run(claim, output, cancel, closing) }

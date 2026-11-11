@@ -155,11 +155,13 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
         writeDurably(privateFolder(folder(conversationId)).resolve(RECORD), bytes)
     }
 
-    /** The cleanup barrier has stopped every run. Keep content-free claim fences and user artifacts. */
+    /** The cleanup barrier has stopped every run. Keep content-free claim fences and user artifacts; the shared notes go. */
     fun eraseContext() {
         Files.list(base).use { files -> files.filter { Files.isDirectory(it, NOFOLLOW_LINKS) &&
             SharedRules.isRecordId(it.fileName.toString()) }.forEach { directory ->
                 write(directory.fileName.toString(), ConversationRecord())
+                // The notes are the agents' working context, so they go with it.
+                Files.deleteIfExists(directory.resolve(NOTES))
                 Files.list(directory).use { copies -> copies.filter { it.fileName.toString().startsWith(".record-") &&
                     it.fileName.toString().endsWith(".tmp") }.forEach { Files.delete(it) } }
                 FileChannel.open(directory, READ).use { it.force(true) }
@@ -242,6 +244,22 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
     fun outputTime(conversationId: String, id: String): java.time.Instant = gated(conversationId) {
         require(SharedRules.isRecordId(id))
         Files.getLastModifiedTime(folder(conversationId).resolve(ARTIFACTS).resolve(id)).toInstant()
+    }
+
+    /** [conversationId]'s shared notes, oldest first; none when it has none. */
+    fun notes(conversationId: String): List<TeamNote> = gated(conversationId) { readNotes(conversationId) }
+
+    /** Adds [note] to [conversationId]'s shared notes, dropping the oldest past [TeamNoteLimits.KEPT]. */
+    fun addNote(conversationId: String, note: TeamNote): Unit = gated(conversationId) {
+        val kept = (readNotes(conversationId) + note).takeLast(TeamNoteLimits.KEPT)
+        writeDurably(privateFolder(folder(conversationId)).resolve(NOTES), brainJson.encodeToString(TeamNoteLog.serializer(), TeamNoteLog(notes = kept)).toByteArray())
+    }
+
+    private fun readNotes(conversationId: String): List<TeamNote> {
+        val file = folder(conversationId).resolve(NOTES)
+        if (!Files.exists(file)) return emptyList()
+        return brainJson.decodeFromString(TeamNoteLog.serializer(), readBounded(file, NOTES_BYTES).decodeToString())
+            .also { require(it.version == 1) { "Unknown notes version" } }.notes
     }
 
     /** Where a working specialist may open [artifact] itself. */
@@ -327,6 +345,8 @@ internal class ConversationStore(root: Path, val accountId: String) : AutoClosea
 
     companion object {
         private const val RECORD = "conversation.json"
+        private const val NOTES = "notes.json"
+        private const val NOTES_BYTES = 4_000_000L
         private const val JOURNAL = "journal"
         private const val ARTIFACTS = "artifacts"
         private const val STOPS = "stop-on-claim"

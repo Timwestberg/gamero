@@ -83,6 +83,34 @@ internal class CoordinatorEngine(
         private fun projectFolder(workers: List<String>): String? =
             if (claim.message.threadId == null) projectFolderNote(call.folders, workers) else null
 
+        /** What the project's folder holds, built once for this message; null in a thread and for a project with no folder. */
+        private val projectBrief: String? by lazy { if (claim.message.threadId == null) projectBrief(call.folders) else null }
+
+        /** Adds a line to the conversation's shared notes. A note that cannot be kept is dropped: it never stops a run. */
+        private fun leaveNote(by: String, kind: TeamNoteKind, text: String) {
+            val note = TeamNotes.note(by, kind, text, java.time.Instant.now()) ?: return
+            runCatching { store.addNote(conversationId, note) }
+                .onFailure { log(LogLevel.Warn, "conversations", "A shared note could not be kept", it) }
+        }
+
+        /**
+         * The conversation's recent notes as a turn reads them, or null when there are none or they cannot be read.
+         * A specialist ([startingAs]) is not shown the task it was just given as a note: its turn already says it.
+         */
+        private fun teamNotes(startingAs: String? = null): String? = runCatching {
+            val notes = store.notes(conversationId)
+            TeamNotes.forTurn(if (startingAs == null) notes else notes.dropLastWhile { it.kind == TeamNoteKind.TASK && it.by == startingAs })
+        }.getOrNull()
+
+        private val startedNs = System.nanoTime()
+        private val firstWordLogged = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        /** Logs once, at the coordinator's first streamed text, how long the person waited for it. */
+        private fun firstWord() {
+            if (!firstWordLogged.compareAndSet(false, true)) return
+            log(LogLevel.Info, "conversations", "coordinator first_word_ms=${(System.nanoTime() - startedNs) / 1_000_000} spoken=$spoken brief_chars=${projectBrief?.length ?: 0}")
+        }
+
         /**
          * Brings the conversation's visible folder up to date with every output its threads hold. A claim is where
          * the Mac learns what the companion and the conversation are called, so a rename and a conversation older
@@ -97,7 +125,7 @@ internal class CoordinatorEngine(
                     }
                 }
                 companionFolders.sync(FolderNames(store.accountId, claim.companion.id, companion, conversationId, claim.conversation.title),
-                    outputs) { store.outputBytes(conversationId, it.id) }
+                    outputs, store.notes(conversationId)) { store.outputBytes(conversationId, it.id) }
             }.onFailure { log(LogLevel.Warn, "conversations", "The conversation's outputs could not be listed for its visible folder", it) }
         }
 
@@ -161,6 +189,7 @@ internal class CoordinatorEngine(
                 value.copy(directionMessageId = message.id)
             } else value
             publishedReports.add(value)
+            if (report is ConversationCommunication.Handoff) leaveNote("The coordinator", TeamNoteKind.REPORT, report.text())
             emit(MessageCheckpoint.MessageAppended(MessageAppend(MessageAuthor.COORDINATOR, uuid(),
                 text = report.text(), threadId = null, understanding = understanding, communication = report)))
         }
@@ -194,10 +223,10 @@ internal class CoordinatorEngine(
                 .takeLast(10).map { it.author.name.lowercase() to it.text }
             var raw = ""
             for (attempt in 0..1) {
-                val stream = ReplyStream(headed = true, optionalHeader = message.direction == null, acceptHeader = ::acceptsDirectionHeader, onUnderstanding = ::publishUnderstanding, onProgress = { publishReport(it) }) { out.delta(replyId, threadId, it) }
+                val stream = ReplyStream(headed = true, optionalHeader = message.direction == null, acceptHeader = ::acceptsDirectionHeader, onUnderstanding = ::publishUnderstanding, onProgress = { publishReport(it) }) { firstWord(); out.delta(replyId, threadId, it) }
                 val context = record.brain.coordinatorContexts[key]?.takeIf { it.personaHash == persona.hash }
                 val input = directionInput() + if (attempt == 1) DIRECTION_REPORT_REQUIRED else ""
-                raw = turns.talk(call, role, persona, directInput(input, claim.recalledMemory, recent, spoken, projectFolder(emptyList())), context, key,
+                raw = turns.talk(call, role, persona, directInput(input, claim.recalledMemory, recent, spoken, projectFolder(emptyList()), projectBrief), context, key,
                     coordinator = true, stream = stream, opened = rememberCoordinator(key)).first.trim().take(CompanionLimits.MESSAGE)
                 if (acceptsDirectionHeader(splitHeader(raw).first)) break
             }
@@ -266,6 +295,7 @@ internal class CoordinatorEngine(
                     val note = decision.note?.trimEcma()?.takeIf { it.isNotEmpty() }
                     val said = "Forwarded to ${thread.role.name}" + (note?.let { ": $it" } ?: ".")
                     append(MessageAuthor.COORDINATOR, uuid(), said, threadId, CoordinatorNote(NoteKind.FORWARDED, threadId))
+                    leaveNote(thread.role.name, TeamNoteKind.TASK, "The person replied in its thread: ${message.text}" + (note?.let { " (the coordinator adds: $it)" } ?: ""))
                     threadTurn(threadId, thread) { forwardedTurn(message.text, note) }
                 }
                 is CoordinatorDecision.Delegate -> {
@@ -278,6 +308,7 @@ internal class CoordinatorEngine(
                     putThread(newThread, opened)
                     val started = CoordinatorNote(NoteKind.STARTED, newThread)
                     append(MessageAuthor.COORDINATOR, uuid(), "Started a new task: $title", threadId, started)
+                    leaveNote(role.name, TeamNoteKind.TASK, decision.task)
                     threadTurn(newThread, opened) { skills -> delegatedTurn(role, decision.task, message.text, skills) }
                 }
                 else -> error("Not a thread reply decision")
@@ -332,7 +363,8 @@ internal class CoordinatorEngine(
                 val request = coordinatorRequest(uuid(), current, kinds, input, latest, record.brain.messages.takeLast(10),
                     described(current.configuration))
                 conversationRequest(request, claim.recalledMemory, hint, spoken,
-                    projectFolder(current.configuration.specialists.filter { it.mode == MemberMode.WORK && it.binding != null }.map { it.name }))
+                    projectFolder(current.configuration.specialists.filter { it.mode == MemberMode.WORK && it.binding != null }.map { it.name }),
+                    projectBrief, teamNotes())
             } ?: run {
                 change { it.paused(INVALID_DECISION, BrainWaitingKind.INPUT) }
                 return
@@ -376,6 +408,7 @@ internal class CoordinatorEngine(
             }
             if (role.mode == MemberMode.WORK && !startWork(role, threadId) { change { it.declined(attempt, notApproved(role)) } }) return
             change { it.dispatched(attempt) }
+            leaveNote(role.name, TeamNoteKind.TASK, step?.instructions ?: current.task)
             val entryId = uuid()
             val input = specialistTurn(role, current, step, handoff(attempt.inputIds, files = role.mode == MemberMode.WORK),
                 skills.block(role.mode == MemberMode.WORK))
@@ -544,7 +577,7 @@ internal class CoordinatorEngine(
             val input = request(allowed)
             repeat(2) { attempt ->
                 val replyId = uuid()
-                val stream = ReplyStream(headed = true, allowAnswer = DecisionKind.ANSWER in allowed, acceptHeader = ::acceptsDirectionHeader, onUnderstanding = ::publishUnderstanding, onProgress = { publishReport(it) }) { out.delta(replyId, threadId, it) }
+                val stream = ReplyStream(headed = true, allowAnswer = DecisionKind.ANSWER in allowed, acceptHeader = ::acceptsDirectionHeader, onUnderstanding = ::publishUnderstanding, onProgress = { publishReport(it) }) { firstWord(); out.delta(replyId, threadId, it) }
                 val conversation = record.brain.coordinatorContexts[key]?.takeIf { it.personaHash == persona.hash }
                 val text = turns.talk(call, coordinator, persona, input + if (attempt == 1) REPLY_REPAIR + if (message.direction != null) DIRECTION_REPORT_REQUIRED else "" else "", conversation, key,
                     coordinator = true, stream = stream, opened = rememberCoordinator(key)).first
@@ -577,10 +610,15 @@ internal class CoordinatorEngine(
             val conversation = record.threadContexts[threadId]?.takeIf { it.personaHash == persona.hash }
             val stream = ReplyStream(headed = false) { out.delta(entryId, threadId, it) }
             val remember = { native: NativeConversation -> update { it.copy(threadContexts = it.threadContexts + (threadId to native)) } }
-            return if (role.mode == MemberMode.WORK) {
-                turns.work(call, threadId, role, persona, input, conversation, scope(threadId), stream, remember, openEditRecord(threadId, role),
+            // What the other agents left is read before the task is done; what this one leaves is kept after it.
+            val briefed = withTeamNotes(input, teamNotes(startingAs = role.name))
+            val result = if (role.mode == MemberMode.WORK) {
+                turns.work(call, threadId, role, persona, briefed, conversation, scope(threadId), stream, remember, openEditRecord(threadId, role),
                     skillFolders)
-            } else turns.talk(call, role, persona, input, conversation, threadId, coordinator = false, stream = stream, opened = remember)
+            } else turns.talk(call, role, persona, briefed, conversation, threadId, coordinator = false, stream = stream, opened = remember)
+            leaveNote(role.name, TeamNoteKind.OUTPUT, TeamNotes.outputStart(result.first))
+            TeamNotes.section(result.first)?.let { leaveNote(role.name, TeamNoteKind.NOTE, it) }
+            return result
         }
 
         /**

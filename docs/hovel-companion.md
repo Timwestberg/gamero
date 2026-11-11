@@ -445,6 +445,11 @@ it themselves.
   cannot read files, and which specialists work inside the folder, so file work is delegated to one of them.
   A project with no folder is told so, and where the person chooses one. Like the spoken rules it rides on the
   turn, so choosing a folder does not start the provider's conversation over.
+- **The coordinator is shown what the folder holds, and agents share notes.** Each main-conversation turn also
+  carries `projectBrief`, a bounded description of the working folder built for that message, and `teamNotes`,
+  the recent part of the conversation's shared log. Every specialist turn is given the notes too. How both are
+  built, and what is never named in a brief, is in
+  [companion-folders.README.md](companion-folders/companion-folders.README.md).
 - **An answer that will be heard is written for the ear.** When the reply to a
   message will be read aloud, the coordinator's turn carries Hovel's rules for
   a spoken answer (`SPOKEN_REPLY_RULES` in `ConversationPrompts.kt`): answer

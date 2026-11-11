@@ -1,9 +1,16 @@
 # Companion folders
 
-Each companion has a folder the person can open in Finder. Slice 1a is
-built: a conversation's outputs appear there as readable files, with an
-index of who made each one. Why and what next: `companion-folders.SPEC.md`
-and `companion-folders.ARCH.md`.
+Each companion has a folder the person can open in Finder, and its agents
+share context on the person's Mac. Built so far:
+
+- **Slice 1a:** a conversation's outputs as readable files, with an index of
+  who made each one.
+- **Slice 2a:** a brief of the project in every coordinator turn, a shared
+  notes log every agent reads and adds to, and approvals that survive a
+  restart.
+
+Why and what next: `companion-folders.SPEC.md`, `companion-folders.ARCH.md`
+(step 1) and `companion-folders-step2.ARCH.md` (step 2).
 
 ```
 ~/Hovel/
@@ -13,6 +20,7 @@ and `companion-folders.ARCH.md`.
       2026-11-10 Add sign-in/
         .hovel.json
         index.md                         each output, who made it, with what
+        notes.md                         the shared notes, as a document
         outputs/
           01 Shopping list spec.md
           02 Architect.md                an output with no heading
@@ -76,6 +84,69 @@ inputs, add it to the list `mirrorOutputs` passes; `sync` needs no change.
 Do not write into the visible tree from anywhere but `VisibleFolders`, and
 do not read the visible files back: the conversation record is the truth.
 
+## The project brief
+
+`projectBrief(folders)` in `ProjectBrief.kt` describes the project's working
+folder: what its build files say, the start of its README, and its folders
+with their first files. The coordinator gets it in every main-conversation
+turn (`projectBrief` in its request), so it can answer "what is this
+project?" without a handoff.
+
+- It is built for each message and never stored. The walk is bounded
+  (`BriefLimits`: 60 folders, 12 files named per folder, 10,000 characters),
+  so a large project costs no more than a small one.
+- It needs no approval. A project that has a folder has a brief, and the
+  brief goes to the coordinator's provider on every turn.
+- `SkipList` decides what is never read and never named: `.env` files, key
+  files, `.git`, and dependency and build folders. Add a name there, not at
+  a call site. A linked folder is not followed.
+- To teach the brief a new kind of project, add its build file to
+  `MANIFESTS`. Only `package.json` is quoted; the others are named.
+
+## The shared notes
+
+A conversation's notes are a log every agent in it reads and adds to.
+
+- **Hovel writes most of it** (`CoordinatorEngine.leaveNote`): each task the
+  coordinator gives, how each finished output starts, and each handoff
+  report.
+- **An agent adds a note** by ending its reply with a section headed
+  `## Notes for the team`. `TeamNotes.section` copies it into the log. The
+  section stays in the reply.
+- **Every turn is given the recent notes as data**: a specialist's turn in
+  `specialist()` (through `withTeamNotes`), the coordinator's as `teamNotes`
+  in its request. `TeamNoteLimits` holds the sizes.
+- They are kept in `<conversation>/notes.json` in the private store, through
+  `ConversationStore.notes` and `addNote`. `eraseContext` deletes them, so
+  memory cleanup takes them with the rest of the agents' context.
+- A note never stops a conversation. One that cannot be kept is logged and
+  dropped.
+
+```kotlin
+// To record something new in the log, one line where it happens:
+leaveNote(role.name, TeamNoteKind.TASK, "what was asked")
+```
+
+## Approvals that survive a restart
+
+`ApprovalMemory` keeps each yes in `<provider root>/<account>/approvals.json`.
+`StartOfWork` reads and writes it, so a specialist's start of work is asked
+once and not again after the app restarts. It is asked again when the
+conversation, project, folder, provider or model changes.
+
+- Only a yes is kept. "Not now" is never remembered.
+- `StartOfWork()` with no memory keeps the old behaviour, which tests use.
+- `ApprovalMemory.withdraw` takes an approval back. Nothing calls it yet;
+  the list in the project's settings is slice 2b.
+- A file that cannot be read means every approval is asked again. It is
+  never overwritten.
+
+## Measuring the coordinator
+
+Each message logs once, at the coordinator's first streamed text:
+`coordinator first_word_ms=… spoken=… brief_chars=…`. Compare it before and
+after a change that adds to the coordinator's turn.
+
 ## Not built yet
 
 Slice 1b, which needs a server change first: moving a folder to the Trash
@@ -83,6 +154,13 @@ when its conversation or companion is deleted, "Show in Finder" on the
 page, and a notice on the page when a folder is behind. Until then a
 deleted conversation leaves its folder in place, and a failed write shows
 only in the Mac's log.
+
+Slice 2b, which needs a server change first: the coordinator reading files
+on request, its approval, and the list of approvals in the project's
+settings with the line that says what the brief sends.
+
+Slice 2c, which needs a live check on each provider first: the scratch
+folder for working specialists.
 
 ## Known limits
 

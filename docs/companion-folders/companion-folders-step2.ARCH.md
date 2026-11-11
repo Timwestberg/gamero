@@ -1,7 +1,7 @@
 # Companion folders: architecture, step 2
 
-Status: decisions agreed 2026-11-11; awaiting the go-ahead to build slice
-2a. Covers step 2 of
+Status: slice 2a is built (2026-11-11); slices 2b and 2c are not started.
+Covers step 2 of
 `companion-folders.SPEC.md`: shared notes, the scratch area, and the
 coordinator's view of the project. Step 1's first slice is built
 (`companion-folders.ARCH.md`). No code for step 2 is written.
@@ -357,6 +357,26 @@ instead of a set. That is the whole change for start of work.
 - **Reusing `start-of-work` for reading.** Rejected: finding 3.
 - **Reading as a tool call, not a decision.** Rejected in the spec: the
   coordinator keeps no tools on any provider.
+
+### What changed while building slice 2a
+
+- **The notes are `TeamNote`, `TeamNoteKind` and `TeamNotes`**, in
+  `TeamNotes.kt`. `NoteKind` was already taken by the coordinator's own
+  message notes.
+- **No `NotesStore` class.** The notes are three small functions on
+  `ConversationStore` (`notes`, `addNote`, and a line in `eraseContext`),
+  which already owns the conversation's folder and its lock.
+- **`SkipList` is built now, in `ProjectBrief.kt`**, because the brief must
+  not name a file of secrets. `PathGuard` will use it in slice 2b.
+  `projectBrief` takes the folders alone.
+- **`Approved` has no time field.** Nothing reads one until the settings
+  list exists.
+- **A specialist is not shown its own task as a note.** A test found it:
+  the task is recorded before the turn, so the turn read it back.
+- **Notes reach every specialist turn in one place**, `specialist()`, not in
+  the three turn builders. The builders are unchanged.
+- **The visible `notes.md` is removed when the notes are erased**, at the
+  conversation's next message. It is Hovel's copy, not the person's file.
 
 ## Slices
 

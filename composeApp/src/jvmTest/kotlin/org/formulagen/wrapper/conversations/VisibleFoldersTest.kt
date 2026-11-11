@@ -29,8 +29,10 @@ class VisibleFoldersTest {
         return RecordedOutput(ArtifactRef(id, "text/markdown", text.take(40), madeBy), madeBy, RuntimeId.CODEX, "gpt-6-luna", at.plusSeconds(minutes * 60))
     }
 
+    private var notes = emptyList<TeamNote>()
+
     private fun sync(names: FolderNames, vararg outputs: RecordedOutput) =
-        folders.sync(names, outputs.toList()) { stored.getValue(it.id) }
+        folders.sync(names, outputs.toList(), notes) { stored.getValue(it.id) }
 
     private fun tree(): List<String> = if (!Files.exists(root)) emptyList() else Files.walk(root).use { all ->
         all.filter { Files.isRegularFile(it) }.map { root.relativize(it).toString() }.sorted().toList()
@@ -53,6 +55,28 @@ class VisibleFoldersTest {
         sync(names(), spec, reply)
         sync(names(), spec, reply)
         assertEquals(listOf("01 Shopping list spec.md", "02 Architect.md"), tree().filter { "/outputs/" in it }.map { it.substringAfterLast('/') })
+    }
+
+    @Test fun theSharedNotesAreCopiedForThePersonAndGoWhenTheNotesGo() {
+        val spec = output("# Spec")
+        notes = listOf(TeamNote("2026-11-10T14:02:00Z", "TPM", TeamNoteKind.TASK, "Write the spec"))
+        sync(names(), spec)
+        val file = root.resolve("$home/notes.md")
+        assertTrue("## 2026-11-10 14:02 · Task for TPM\n\nWrite the spec" in Files.readString(file), Files.readString(file))
+        notes = notes + TeamNote("2026-11-10T14:05:00Z", "TPM", TeamNoteKind.NOTE, "Prices are in cents.")
+        sync(names(), spec)
+        assertTrue("Note from TPM\n\nPrices are in cents." in Files.readString(file))
+        // Memory cleanup erased the notes: the person's copy is Hovel's file, and it goes too. The outputs stay.
+        notes = emptyList()
+        sync(names(), spec)
+        assertFalse(Files.exists(file))
+        assertTrue(Files.exists(root.resolve("$home/outputs/01 Spec.md")))
+    }
+
+    @Test fun aConversationWithNotesAndNoOutputHasNoFolderYet() {
+        notes = listOf(TeamNote("2026-11-10T14:02:00Z", "TPM", TeamNoteKind.TASK, "Write the spec"))
+        sync(names())
+        assertFalse(Files.exists(root))
     }
 
     @Test fun aConversationOlderThanTheFoldersIsWrittenOutInTheOrderItWasMade() {
