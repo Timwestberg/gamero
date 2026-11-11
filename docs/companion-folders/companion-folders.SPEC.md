@@ -112,8 +112,7 @@ can open, search, back up and delete.
   that the visible folder is behind, and the missing files are written when
   the folder is back.
 - The conversation page has "Show in Finder" for the conversation's folder,
-  on the project's own Mac. This and the Trash need a server change, so they
-  come in a second slice of step 1.
+  on the project's own Mac.
 
 ### Shared notes (step 2)
 
