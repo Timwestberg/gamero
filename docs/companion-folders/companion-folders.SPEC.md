@@ -145,6 +145,9 @@ can open, search, back up and delete.
   check gets no scratch.
 - Scratch is emptied when the run that used it completes, and whatever is
   left is deleted after 7 days. It is never listed in `index.md`.
+- Scratch is added to what the person's own provider settings allow. Hovel
+  does not tighten those settings to make scratch the only other place a
+  specialist can write.
 
 ### The coordinator's view of the project (step 2)
 

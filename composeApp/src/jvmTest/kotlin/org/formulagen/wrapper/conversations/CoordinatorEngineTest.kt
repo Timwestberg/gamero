@@ -338,6 +338,40 @@ Mobile first from here.""" }
         assertEquals(1L, Files.list(conversation.resolve("outputs")).use { it.count() })
     }
 
+    @Test fun aWorkingSpecialistIsGivenTheScratchFolderWhichIsEmptiedWhenTheRunCompletes() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        val visible = folder("visible").resolve("Hovel")
+        val engine = CoordinatorEngine(fixture.store, fixture.folders, fixture.turns, fixture.approvals, StartOfWork(), fixture.server,
+            companionFolders = VisibleFolders(visible, fixture.root))
+        fixture.worker.scratchSupport = ScratchSupport.VERIFIED
+        fixture.delegateThenAnswer()
+        var draft: Path? = null
+        fixture.worker.reply = { turn ->
+            draft = Files.writeString(checkNotNull(turn.work?.scratch).resolve("draft.md"), "a draft")
+            "Implemented sign-in."
+        }
+        assertEquals(MessageState.ANSWERED, fixture.send("add sign-in", engine = engine))
+        val turn = fixture.worker.requests.single()
+        val scratch = checkNotNull(turn.work?.scratch)
+        val conversation = Files.list(visible.resolve("Ember/conversations")).use { it.toList() }.single()
+        assertEquals(conversation.resolve("scratch"), scratch, "it is in the conversation's own folder")
+        assertTrue("Scratch folder: $scratch\n" in turn.text && "Hovel empties the scratch folder when this work completes" in turn.text, turn.text)
+        assertTrue(turn.text.endsWith(TeamNotes.INSTRUCTION), "the notes rule is still the last thing it reads")
+        // The specialist wrote there during its turn; the run completed, so the folder is empty and still there.
+        assertFalse(Files.exists(checkNotNull(draft)))
+        assertTrue(Files.isDirectory(scratch))
+        assertEquals("Implemented sign-in.", Files.readString(conversation.resolve("outputs/01 Implementer.md")), "the output is the person's and stays")
+        // A runtime that was not proven to keep to it gets no scratch folder and is told of none.
+        val unproven = Fixture(brain("Implementer" to MemberMode.WORK))
+        val other = CoordinatorEngine(unproven.store, unproven.folders, unproven.turns, unproven.approvals, StartOfWork(), unproven.server,
+            companionFolders = VisibleFolders(folder("visible").resolve("Hovel"), unproven.root))
+        unproven.delegateThenAnswer()
+        assertEquals(MessageState.ANSWERED, unproven.send("add sign-in", engine = other))
+        val plain = unproven.worker.requests.single()
+        assertNull(plain.work?.scratch)
+        assertFalse("Scratch folder" in plain.text, plain.text)
+    }
+
     @Test fun theCoordinatorIsToldWhatTheProjectsFolderIsAndWhoWorksInIt() {
         val fixture = Fixture(brain("Implementer" to MemberMode.WORK, "Reviewer" to MemberMode.TALK), context = true)
         fixture.decide = { "{\"kind\":\"answer\"}\nSure." }

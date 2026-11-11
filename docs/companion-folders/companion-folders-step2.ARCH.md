@@ -418,6 +418,41 @@ instead of a set. That is the whole change for start of work.
 - **The contract mirrors `read`** in its internal `coordinatorDecision`, with
   the same bounds (`READ_REQUEST_LIMITS`).
 
+### What changed while building slice 2c
+
+- **Both providers passed the live check on 2026-11-11** (`ScratchProbeTest`,
+  Claude Code 2.1.304 and Codex 0.167), so both are `ScratchSupport.VERIFIED`.
+- **Scratch is added to the person's own settings; it does not tighten
+  them.** The design said Codex would get the `workspace-write` sandbox for
+  every working turn. It does not. Without a context folder the sandbox is
+  left as the person set it, and scratch is only one more writable root:
+  under their `workspace-write` it becomes writable, under full access it
+  changes nothing, under read-only nothing is writable. Forcing a sandbox
+  would have taken away access the person chose.
+- **What each check proves differs, because the providers' settings do.**
+  - Claude Code asks before a write wherever it is. The check shows that it
+    reads in scratch without asking, that a write there asks as one in the
+    working folder does, and that a write outside both is asked and denied.
+    No turn was run without `--add-dir` to compare.
+  - Codex was checked in the sandbox Hovel sets itself (beside a context
+    folder), where the roots decide: it wrote in the working and scratch
+    folders, and a write outside both failed.
+- **A probe's folders must not be in the temporary folder.** Codex's
+  `workspace-write` may always write there, so the first Codex check wrote
+  its "outside" file and proved nothing. The probe now works under
+  `~/Library/Caches/HovelProbe` and removes it. `ContextFolderProbeTest` has
+  the same flaw and is not fixed here; context folders stay unverified.
+- **The folder is made at a working turn's first use**, by
+  `CompanionFolders.scratch(names)`. So a conversation's folder can now
+  appear before its first output, dated that day.
+- **A link where `scratch/` should be is refused.** An agent is never given
+  write access through one. Inside scratch, a link is deleted as a link.
+- **Emptied when the run completes; swept at connect.** A run that pauses,
+  fails or is cancelled keeps its scratch, so a resumed run still finds it.
+  A turn outside a run (a forwarded thread reply) is covered by the sweep.
+- **The specialist is given the path**, as it is given its working folder,
+  and is told the folder is emptied when the work completes.
+
 ## Slices
 
 **Slice 2a, gamero only.** The project brief; the notes log, its place in
@@ -430,7 +465,7 @@ change.
 approval; the list of approvals and the withdrawal in the project's
 settings; the line in the settings that says what the brief sends.
 
-**Slice 2c, needs the provider checks first.** Scratch: the live check on
+**Slice 2c, built.** Scratch: the live check on
 Claude Code and on Codex, then the folder, the launch change for each
 provider that passed, the task's sentence about it, and the two cleanup
 rules.

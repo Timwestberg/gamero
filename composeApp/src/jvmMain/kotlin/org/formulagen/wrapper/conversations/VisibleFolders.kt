@@ -1,11 +1,15 @@
 package org.formulagen.wrapper.conversations
 
 import java.awt.Desktop
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 import java.time.Instant
 import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.json.Json
 import org.formulagen.wrapper.bridge.SharedRules
@@ -37,7 +41,8 @@ private val markerJson = Json { encodeDefaults = true; ignoreUnknownKeys = true 
  * account and says so in the log.
  *
  * The one thing it takes away is the folder of a conversation or companion the account deleted ([gone]), and only to
- * the Trash.
+ * the Trash. The exception is `scratch/`, which is the agents' and not the person's: it is emptied when its run
+ * completes, and swept of what is older than a week.
  */
 internal class VisibleFolders(
     private val root: Path,
@@ -148,21 +153,8 @@ internal class VisibleFolders(
         // A folder appears with its first file: a conversation that has produced nothing leaves nothing on disk.
         if (known == null && missing.isEmpty()) return
 
-        val companionLast = ledger.companions[names.companionId]
-        val companion = settle(
-            parent = root,
-            marker = FolderMarker(accountId = names.accountId, companionId = names.companionId),
-            lastName = companionLast?.name, lastFrom = companionLast?.from, pinned = companionLast?.pinned == true,
-            from = names.companion, wanted = CompanionFolderRules.safeName(names.companion, "Companion"),
-        )
         // The day the conversation's first output was made, which for one older than the folders is not today.
-        val startedOn = known?.startedOn ?: (missing.firstOrNull()?.at ?: now()).atZone(zone).toLocalDate().toString()
-        val conversation = settle(
-            parent = companion.dir.resolve(CompanionFolderRules.CONVERSATIONS),
-            marker = FolderMarker(accountId = names.accountId, companionId = names.companionId, conversationId = names.conversationId),
-            lastName = known?.name, lastFrom = known?.from, pinned = known?.pinned == true,
-            from = names.conversation, wanted = CompanionFolderRules.conversationName(startedOn, names.conversation),
-        )
+        val (companion, conversation, startedOn) = home(names, ledger, missing.firstOrNull()?.at)
 
         val (all, failure) = write(conversation.dir.resolve(CompanionFolderRules.OUTPUTS), written, missing, bytes)
         val folder = ConversationFolder(names.companionId, conversation.name, names.conversation, conversation.pinned, startedOn, all)
@@ -177,6 +169,98 @@ internal class VisibleFolders(
         )
         if (next != ledger) writeLedger(names.accountId, next)
         failure?.let { throw it }
+    }
+
+    /** A conversation's folder and its companion's, as they stand after [home], and the day the conversation's folder is dated. */
+    private data class Home(val companion: Settled, val conversation: Settled, val startedOn: String)
+
+    /**
+     * The companion's folder and the conversation's in it, made or renamed as [names] says. A conversation with no
+     * folder yet is dated [first], the time of its first output, or today when it has none.
+     */
+    private fun home(names: FolderNames, ledger: FolderLedger, first: Instant?): Home {
+        val known = ledger.conversations[names.conversationId]
+        val companionLast = ledger.companions[names.companionId]
+        val companion = settle(
+            parent = root,
+            marker = FolderMarker(accountId = names.accountId, companionId = names.companionId),
+            lastName = companionLast?.name, lastFrom = companionLast?.from, pinned = companionLast?.pinned == true,
+            from = names.companion, wanted = CompanionFolderRules.safeName(names.companion, "Companion"),
+        )
+        val startedOn = known?.startedOn ?: (first ?: now()).atZone(zone).toLocalDate().toString()
+        val conversation = settle(
+            parent = companion.dir.resolve(CompanionFolderRules.CONVERSATIONS),
+            marker = FolderMarker(accountId = names.accountId, companionId = names.companionId, conversationId = names.conversationId),
+            lastName = known?.name, lastFrom = known?.from, pinned = known?.pinned == true,
+            from = names.conversation, wanted = CompanionFolderRules.conversationName(startedOn, names.conversation),
+        )
+        return Home(companion, conversation, startedOn)
+    }
+
+    @Synchronized
+    override fun scratch(names: FolderNames): Path? = try {
+        require(SharedRules.isRecordId(names.accountId) && SharedRules.isRecordId(names.companionId) && SharedRules.isRecordId(names.conversationId))
+        val ledger = read(names.accountId)
+        val (companion, conversation, startedOn) = home(names, ledger, null)
+        val dir = conversation.dir.resolve(CompanionFolderRules.SCRATCH)
+        // A link there is not Hovel's folder: an agent is never given write access through one.
+        check(!Files.exists(dir, NOFOLLOW_LINKS) || Files.isDirectory(dir, NOFOLLOW_LINKS)) { "The scratch folder is not a folder" }
+        privateFolder(dir)
+        val folder = ConversationFolder(names.companionId, conversation.name, names.conversation, conversation.pinned, startedOn,
+            ledger.conversations[names.conversationId]?.outputs.orEmpty())
+        val next = ledger.copy(
+            companions = ledger.companions + (names.companionId to CompanionFolder(companion.name, names.companion, companion.pinned)),
+            conversations = ledger.conversations + (names.conversationId to folder),
+        )
+        if (next != ledger) writeLedger(names.accountId, next)
+        dir.toAbsolutePath().normalize()
+    } catch (error: Exception) {
+        log(LogLevel.Warn, TAG, "A conversation's scratch folder could not be made; its working turn goes on without one", error)
+        null
+    }
+
+    @Synchronized
+    override fun emptyScratch(accountId: String, conversationId: String) {
+        try {
+            scratchOf(accountId, read(accountId), conversationId)?.let { prune(it, cutoff = null) }
+        } catch (error: Exception) {
+            log(LogLevel.Warn, TAG, "A conversation's scratch folder could not be emptied; the sweep at the next connect tries again", error)
+        }
+    }
+
+    @Synchronized
+    override fun sweepScratch(accountId: String) {
+        try {
+            val ledger = read(accountId)
+            val cutoff = now().minus(ScratchLimits.KEPT_DAYS, ChronoUnit.DAYS)
+            for (id in ledger.conversations.keys) {
+                runCatching { scratchOf(accountId, ledger, id)?.let { prune(it, cutoff) } }
+                    .onFailure { log(LogLevel.Warn, TAG, "A scratch folder could not be swept", it) }
+            }
+        } catch (error: Exception) {
+            log(LogLevel.Warn, TAG, "The scratch folders could not be swept", error)
+        }
+    }
+
+    /** [conversationId]'s scratch folder, when it has one that is a real folder. */
+    private fun scratchOf(accountId: String, ledger: FolderLedger, conversationId: String): Path? =
+        conversationFolder(accountId, ledger, conversationId)?.resolve(CompanionFolderRules.SCRATCH)?.takeIf { Files.isDirectory(it, NOFOLLOW_LINKS) }
+
+    /**
+     * Deletes what is in [dir], and with a [cutoff] only what was last changed before it. A folder inside goes when
+     * nothing is left in it; [dir] itself stays. A link is deleted as a link, never followed.
+     */
+    private fun prune(dir: Path, cutoff: Instant?) {
+        Files.walkFileTree(dir, object : SimpleFileVisitor<Path>() {
+            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                if (cutoff == null || attrs.lastModifiedTime().toInstant().isBefore(cutoff)) Files.deleteIfExists(file)
+                return FileVisitResult.CONTINUE
+            }
+            override fun postVisitDirectory(folder: Path, failure: java.io.IOException?): FileVisitResult {
+                if (folder != dir && Files.list(folder).use { !it.findAny().isPresent }) Files.deleteIfExists(folder)
+                return FileVisitResult.CONTINUE
+            }
+        })
     }
 
     /**

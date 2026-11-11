@@ -63,8 +63,9 @@ companionFolders.sync(FolderNames(accountId, companionId, companion, conversatio
   conversation older than the folders, are caught at the next message.
 - **An output's file is `<nn> <first heading>.md`**, or `<nn> <specialist>.md`
   when the output has no heading.
-- **A folder appears with its first file.** A conversation that produces no
-  output leaves nothing on disk.
+- **A folder appears with its first file, or its first working turn.** A
+  conversation that produces no output and runs no working specialist
+  leaves nothing on disk.
 
 ## Change it
 
@@ -149,6 +150,31 @@ The coordinator has no file tools. It asks Hovel to read:
 To change what may be read, change `PathGuard` or `SkipList`, and nothing
 else: no other code opens a project file for the coordinator.
 
+## The scratch folder
+
+`<conversation's folder>/scratch/` is where working specialists leave files
+for each other: a draft, a data file, a test log.
+
+- The engine asks for it when a working turn starts
+  (`companionFolders.scratch(names)`) and passes it in `WorkScope.scratch`.
+  The specialist's task names the path.
+- Only a runtime whose `scratch` is `ScratchSupport.VERIFIED` is given it.
+  Claude Code gets `--add-dir`; Codex gets one more writable root. Neither
+  changes the person's own provider settings.
+- It is emptied when the run completes, and at each connect what is older
+  than 7 days is deleted (`ScratchLimits.KEPT_DAYS`). It is never in
+  `index.md`.
+- To prove a provider again, for example after it changes how folders are
+  granted, run its probe. Each is one short turn on your own subscription:
+
+```bash
+HOVEL_SCRATCH_CLAUDE_PROBE="$HOME/.local/bin/claude" ./gradlew :composeApp:jvmTest --tests '*ScratchProbeTest.claude*' -i
+```
+
+```bash
+HOVEL_SCRATCH_CODEX_PROBE="/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex" ./gradlew :composeApp:jvmTest --tests '*ScratchProbeTest.codex*' -i
+```
+
 ## Folders on the page
 
 - `project.outputsFolder` answers `none`, `ready` or `behind` for a
@@ -181,8 +207,8 @@ after a change that adds to the coordinator's turn.
 
 ## Not built yet
 
-Slice 2c, which needs a live check on each provider first: the scratch
-folder for working specialists.
+The notice on the Companions page when a companion's folder passes 1 GB.
+It needs a bridge method and a page change, so a contract change first.
 
 ## Known limits
 
@@ -193,6 +219,11 @@ folder for working specialists.
   what that means when an account is pointed at the wrong database.
 - After a restart the page shows no "behind" notice until the
   conversation's next message.
+- With Codex set to full access, as on the development Mac, a specialist
+  can write anywhere, so scratch limits nothing there. That is the
+  person's setting, and Hovel leaves it.
+- A conversation's folder can now appear before its first output: a working
+  turn makes it for scratch.
 
 - The ledger is per app address, as the conversations are. The same account
   run from two addresses on one Mac shares the folders through their

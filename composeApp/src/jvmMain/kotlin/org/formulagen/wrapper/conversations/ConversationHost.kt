@@ -122,7 +122,12 @@ internal class ConversationHost(
             running = Running(registration.ownerId, store, publisher, engine::readableBy, onThisMac::isOnThisMac, startOfWork)
             runner.start()
             // A delete made while this Mac was off reaches its disk here. It never holds the connection back.
-            runCatching { publishing.execute { discardDeletedFolders(api, companionFolders, registration.ownerId) } }
+            runCatching {
+                publishing.execute {
+                    discardDeletedFolders(api, companionFolders, registration.ownerId)
+                    companionFolders.sweepScratch(registration.ownerId)
+                }
+            }
             voice?.connected(heardTurns(api, runner))
             return AutoCloseable {
                 running = null

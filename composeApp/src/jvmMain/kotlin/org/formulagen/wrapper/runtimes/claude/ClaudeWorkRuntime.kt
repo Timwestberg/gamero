@@ -27,6 +27,7 @@ import org.formulagen.wrapper.runtimes.ClaudeEvent
 import org.formulagen.wrapper.runtimes.ClaudeFailures
 import org.formulagen.wrapper.runtimes.ClaudeStream
 import org.formulagen.wrapper.runtimes.ContextFolderSupport
+import org.formulagen.wrapper.runtimes.ScratchSupport
 import org.formulagen.wrapper.runtimes.EditListener
 import org.formulagen.wrapper.runtimes.Persona
 import org.formulagen.wrapper.runtimes.Readiness
@@ -82,6 +83,12 @@ internal class ClaudeWorkRuntime(
     override val id = RuntimeId.CLAUDE_CODE
     /** `--add-dir` with deny rules for Edit and Write ([claudeContextArguments]); unverified until the live probe passes. */
     override val contextFolders = ContextFolderSupport.UNVERIFIED
+    /**
+     * `--add-dir` with no rule of Hovel's ([claudeScratchArguments]). The live probe passed on 2026-11-11 with Claude
+     * Code 2.1.304 (`ScratchProbeTest`): it read there without asking, a write asked as one in the working folder
+     * does, and a write outside both was asked and denied.
+     */
+    override val scratch = ScratchSupport.VERIFIED
     private val processes = ConcurrentHashMap<String, WorkProcess>()
     /** Approvals block on the native dialog, so each one waits on its own thread. */
     private val approvals = Executors.newCachedThreadPool(loggingDaemonThreads("hovel-claude-approval"))
@@ -110,11 +117,11 @@ internal class ClaudeWorkRuntime(
         val current = processes[work.lease]
         // Skill folders are read-only like context folders; one a permission rule cannot name is left to Claude Code's prompt.
         val context = (work.folders.context + work.skills.filter(::claudeRuleNames)).distinct()
-        val process = current?.takeIf { it.fits(work.folder, context, model, turn.persona, saved?.id, turn.effort) && it.ready(settle) } ?: run {
+        val process = current?.takeIf { it.fits(work.folder, context, work.scratch, model, turn.persona, saved?.id, turn.effort) && it.ready(settle) } ?: run {
             // Changed settings or an unsettled turn replace the process.
             current?.let { processes.remove(work.lease, it); it.closeAndWait() }
             val session = saved?.id ?: UUID.randomUUID().toString()
-            WorkProcess(work.lease, work.folder, context, model, turn.persona, session, opens = saved == null, work.companion, work.member, turn.effort).also { fresh ->
+            WorkProcess(work.lease, work.folder, context, work.scratch, model, turn.persona, session, opens = saved == null, work.companion, work.member, turn.effort).also { fresh ->
                 processes[work.lease] = fresh
                 try { fresh.start() } catch (error: Exception) {
                     processes.remove(work.lease, fresh); fresh.close()
@@ -155,6 +162,8 @@ internal class ClaudeWorkRuntime(
         val folder: Path,
         /** Read-only folders, context and skill: readable through `--add-dir`, with Edit and Write denied under each. */
         val context: List<Path>,
+        /** The conversation's scratch folder: part of the workspace through `--add-dir`, with the person's own rules. */
+        val scratch: Path?,
         val model: String,
         val persona: Persona,
         val session: String,
@@ -177,8 +186,8 @@ internal class ClaudeWorkRuntime(
         @Volatile private var asked = false
         @Volatile private var current: WorkTurn? = null
 
-        fun fits(folder: Path, context: List<Path>, model: String, persona: Persona, session: String?, effort: ModelEffort?) =
-            !ended.get() && process.isAlive && this.folder == folder && this.context == context && this.model == model &&
+        fun fits(folder: Path, context: List<Path>, scratch: Path?, model: String, persona: Persona, session: String?, effort: ModelEffort?) =
+            !ended.get() && process.isAlive && this.folder == folder && this.context == context && this.scratch == scratch && this.model == model &&
                 this.persona == persona && session == this.session && this.effort == effort
 
         /** No earlier turn still running: a stopped one gets [wait] to report its end. */
@@ -190,7 +199,7 @@ internal class ClaudeWorkRuntime(
         fun start() {
             val conversation = if (opens) listOf("--session-id", session) else listOf("--resume", session)
             process = ProcessBuilder(listOf(claude.executable.toString()) + claudeWorkArguments(model, persona) + claudeContextArguments(context) +
-                claudeEffortArguments(effort) + conversation)
+                claudeScratchArguments(scratch) + claudeEffortArguments(effort) + conversation)
                 .directory(folder.toFile()).redirectError(ProcessBuilder.Redirect.DISCARD)
                 .apply { environment().clear(); environment().putAll(this@ClaudeWorkRuntime.environment()) }
                 .start()
@@ -443,6 +452,17 @@ internal fun claudeContextArguments(context: List<Path>): List<String> = context
     require(claudeRuleNames(folder)) { "A permission rule cannot name this folder exactly" }
     val rule = "//" + path.removePrefix("/") + "/**"
     listOf("--add-dir", path, "--disallowedTools", "Edit($rule)", "--disallowedTools", "Write($rule)")
+}
+
+/**
+ * A working Claude Code's [scratch] folder: added to its workspace with `--add-dir` and no rule of Hovel's, so it
+ * reads there without asking and the person's own settings decide what a write asks, as in the working folder.
+ * Nothing else becomes reachable.
+ */
+internal fun claudeScratchArguments(scratch: Path?): List<String> {
+    if (scratch == null) return emptyList()
+    require(scratch.isAbsolute && scratch.normalize() == scratch && scratch.nameCount > 0) { "A scratch folder must be an absolute, normalized folder" }
+    return listOf("--add-dir", scratch.toString())
 }
 
 /** Whether a permission rule can name [folder] exactly: an absolute, normalized folder with no pattern or control character. */

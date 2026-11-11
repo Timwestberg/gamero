@@ -100,6 +100,12 @@ internal data class FolderIds(val companionIds: Set<String> = emptySet(), val co
     val isEmpty: Boolean get() = companionIds.isEmpty() && conversationIds.isEmpty()
 }
 
+/** How long a scratch file is kept. A starting value, to be tuned from use. */
+internal object ScratchLimits {
+    /** A file a run did not clear, because the run never completed, goes after this many days. */
+    const val KEPT_DAYS = 7L
+}
+
 /** The visible folders as the conversation engine sees them. */
 internal fun interface CompanionFolders {
     /**
@@ -124,6 +130,19 @@ internal fun interface CompanionFolders {
      */
     fun gone(accountId: String, gone: FolderIds) {}
 
+    /**
+     * The conversation's scratch folder, where its working agents leave files for each other, made when a working
+     * turn first needs it. Null when this Mac keeps no visible folders, or the folder cannot be made: the turn then
+     * works without one.
+     */
+    fun scratch(names: FolderNames): Path? = null
+
+    /** Empties the conversation's scratch folder: the run that used it has completed. */
+    fun emptyScratch(accountId: String, conversationId: String) {}
+
+    /** Deletes what has lain in any of [accountId]'s scratch folders for more than [ScratchLimits.KEPT_DAYS] days. */
+    fun sweepScratch(accountId: String) {}
+
     companion object {
         /** A Mac that keeps no visible folders, and every test that does not ask for them. */
         val NONE = CompanionFolders { _, _, _, _ -> }
@@ -137,6 +156,7 @@ internal object CompanionFolderRules {
     const val OUTPUTS = "outputs"
     const val INDEX = "index.md"
     const val NOTES = "notes.md"
+    const val SCRATCH = "scratch"
 
     /** Moves the root, for a test rig: a test account must never write into the person's real folders. */
     const val ROOT_OVERRIDE = "HOVEL_COMPANION_FOLDERS"

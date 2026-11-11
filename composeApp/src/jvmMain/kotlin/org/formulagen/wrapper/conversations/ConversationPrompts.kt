@@ -1,5 +1,6 @@
 package org.formulagen.wrapper.conversations
 
+import java.nio.file.Path
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -199,10 +200,22 @@ internal fun directInput(message: String, recalledMemory: String?, recent: List<
 
 /**
  * A specialist's [input] with the conversation's [notes] for it to read ([TeamNotes.forTurn]) and how to leave one of
- * its own. The notes are another agent's words, so they are data.
+ * its own. The notes are another agent's words, so they are data. A working specialist whose runtime is given the
+ * conversation's [scratch] folder is told where it is.
  */
-internal fun withTeamNotes(input: String, notes: String?): String =
-    input + (notes?.let { "\n\n$it" } ?: "") + "\n\n" + TeamNotes.INSTRUCTION
+internal fun withTeamNotes(input: String, notes: String?, scratch: Path? = null): String =
+    input + (notes?.let { "\n\n$it" } ?: "") + (scratch?.let { "\n\n" + scratchNote(it) } ?: "") + "\n\n" + TeamNotes.INSTRUCTION
+
+/**
+ * What a working specialist is told of the conversation's [scratch] folder. It works with the person's own tools,
+ * so it is given the path, as it is given its working folder.
+ */
+internal fun scratchNote(scratch: Path): String =
+    "Scratch folder: $scratch\n" +
+        "It holds files the agents in this conversation leave for each other: a draft, a data file, a test log. You may read and write there. " +
+        "Keep the project's own files in the project. Hovel empties the scratch folder when this work completes, " +
+        "so name in your reply any file there that the next agent needs."
+
 
 /** A forwarded thread reply as its specialist reads it: the person's words, and the coordinator's note as context. */
 internal fun forwardedTurn(reply: String, note: String?): String =

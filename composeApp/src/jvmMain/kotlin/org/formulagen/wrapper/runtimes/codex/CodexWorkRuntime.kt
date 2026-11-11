@@ -23,6 +23,7 @@ import org.formulagen.wrapper.conversation.TeamMember
 import org.formulagen.wrapper.runtimes.ActivityLog
 import org.formulagen.wrapper.runtimes.ChatFailure
 import org.formulagen.wrapper.runtimes.ContextFolderSupport
+import org.formulagen.wrapper.runtimes.ScratchSupport
 import org.formulagen.wrapper.runtimes.EditListener
 import org.formulagen.wrapper.runtimes.Readiness
 import org.formulagen.wrapper.runtimes.ReplyText
@@ -66,6 +67,12 @@ internal class CodexWorkRuntime(
     override val id = RuntimeId.CODEX
     /** A thread whose sandbox writes only the working folder ([codexContextSandbox]); unverified until the live probe passes. */
     override val contextFolders = ContextFolderSupport.UNVERIFIED
+    /**
+     * One more writable root of the thread's sandbox ([codexWorkThreadSettings]). The live probe passed on 2026-11-11
+     * with Codex 0.167 (`ScratchProbeTest`), in the `workspace-write` sandbox Hovel sets beside a context folder: it
+     * wrote in the working and scratch folders, and a write outside both failed.
+     */
+    override val scratch = ScratchSupport.VERIFIED
     private val connections = ConcurrentHashMap<String, Connection>()
     private val approvals = Executors.newCachedThreadPool(loggingDaemonThreads("hovel-codex-approval"))
     /** Changes on every release; a connection made across one is closed at once. */
@@ -92,8 +99,8 @@ internal class CodexWorkRuntime(
         check(!closed) { "Chat closed" }
         val started = epoch.get()
         val context = work.folders.context
-        val connection = connections[work.lease]?.takeIf { it.folder == work.folder && it.context == context && it.open }
-            ?: Connection(work.lease, work.folder, context, work.companion).also {
+        val connection = connections[work.lease]?.takeIf { it.folder == work.folder && it.context == context && it.scratch == work.scratch && it.open }
+            ?: Connection(work.lease, work.folder, context, work.scratch, work.companion).also {
             connections.remove(work.lease)?.close(); connections[work.lease] = it
         }
         // A release or close while it started: it ends now, and the chat has ended the turn already.
@@ -108,8 +115,9 @@ internal class CodexWorkRuntime(
 
     override fun close() { closed = true; release(); approvals.shutdownNow() }
 
-    /** One working app-server and its thread; [context] folders it may only read. */
-    private inner class Connection(private val lease: String, val folder: Path, val context: List<Path>, private val companionName: String) {
+    /** One working app-server and its thread; [context] folders it may only read, and the [scratch] folder it may also write. */
+    private inner class Connection(private val lease: String, val folder: Path, val context: List<Path>, val scratch: Path?,
+        private val companionName: String) {
         private val paths = WorkPaths(folder)
         private val relay = ApprovalRelay(broker)
         private val rpc = createRpc(CodexRuntime(executable, providerRoot), ::notify, ::request)
@@ -135,7 +143,7 @@ internal class CodexWorkRuntime(
                 val params = buildJsonObject {
                     saved?.let { put("threadId", it); put("excludeTurns", true) }
                     put("cwd", folder.toString()); put("approvalsReviewer", "user"); put("developerInstructions", request.persona.instructions)
-                    codexWorkThreadSettings(folder, context).forEach { (key, value) -> put(key, value) }
+                    codexWorkThreadSettings(folder, context, scratch).forEach { (key, value) -> put(key, value) }
                 }
                 val result = if (saved == null) rpc.call("thread/start", params)
                     else try { rpc.call("thread/resume", params) } catch (_: CodexRequestRejected) { events.failed(ChatFailure.ConversationLost); return TurnHandle {} }
@@ -384,9 +392,12 @@ internal fun codexContextSandbox(working: Path, context: List<Path>): JsonObject
     require(working.isAbsolute && context.all { it.isAbsolute }) { "Project folders are absolute" }
     return buildJsonObject {
         put("sandbox", "workspace-write")
-        putJsonObject("config") { putJsonArray("sandbox_workspace_write.writable_roots") { add(working.toString()) } }
+        putJsonObject("config") { putJsonArray(CODEX_WRITABLE_ROOTS) { add(working.toString()) } }
     }
 }
+
+/** The thread setting that names the folders a `workspace-write` sandbox may write besides its working folder. */
+internal const val CODEX_WRITABLE_ROOTS = "sandbox_workspace_write.writable_roots"
 
 /**
  * What turns Codex's own skills off for a companion's working turn, the same switches as talk's lockdown
@@ -401,13 +412,18 @@ internal val CODEX_WORK_SKILLS_OFF: JsonObject = buildJsonObject {
 /**
  * A working thread's settings beyond its folder and persona: [CODEX_WORK_SKILLS_OFF] as its own `config` (process-level
  * `-c` settings do not reach everything a thread loads), and with [context] folders the read-only sandbox
- * ([codexContextSandbox]) beside it.
+ * ([codexContextSandbox]) beside it. The [scratch] folder is one more writable root. Without context folders the
+ * sandbox itself is left to the person's own setting: under their `workspace-write` the root lets the thread write
+ * there, under full access it changes nothing, and under read-only nothing is writable, scratch included.
  */
-internal fun codexWorkThreadSettings(working: Path, context: List<Path>): JsonObject {
+internal fun codexWorkThreadSettings(working: Path, context: List<Path>, scratch: Path? = null): JsonObject {
+    require(scratch == null || scratch.isAbsolute) { "A scratch folder is absolute" }
     val sandbox = codexContextSandbox(working, context)
+    val roots = listOfNotNull(working.takeIf { sandbox != null }, scratch)
     return buildJsonObject {
         sandbox?.forEach { (key, value) -> if (key != "config") put(key, value) }
-        put("config", JsonObject(CODEX_WORK_SKILLS_OFF + sandbox?.get("config")?.jsonObject.orEmpty()))
+        put("config", JsonObject(CODEX_WORK_SKILLS_OFF +
+            if (roots.isEmpty()) emptyMap() else mapOf(CODEX_WRITABLE_ROOTS to JsonArray(roots.map { JsonPrimitive(it.toString()) }))))
     }
 }
 

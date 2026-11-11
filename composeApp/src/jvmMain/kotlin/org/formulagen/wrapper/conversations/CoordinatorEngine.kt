@@ -148,6 +148,9 @@ internal class CoordinatorEngine(
             log(LogLevel.Info, "conversations", "coordinator first_word_ms=${(System.nanoTime() - startedNs) / 1_000_000} spoken=$spoken brief_chars=${projectBrief?.length ?: 0}")
         }
 
+        /** What the claim says the companion's folder and the conversation's are called now. */
+        private fun folderNames() = FolderNames(store.accountId, claim.companion.id, companion, conversationId, claim.conversation.title)
+
         /**
          * Brings the conversation's visible folder up to date with every output its threads hold. A claim is where
          * the Mac learns what the companion and the conversation are called, so a rename and a conversation older
@@ -161,8 +164,7 @@ internal class CoordinatorEngine(
                             thread.role.binding.modelId, store.outputTime(conversationId, ref.id))
                     }
                 }
-                companionFolders.sync(FolderNames(store.accountId, claim.companion.id, companion, conversationId, claim.conversation.title),
-                    outputs, store.notes(conversationId)) { store.outputBytes(conversationId, it.id) }
+                companionFolders.sync(folderNames(), outputs, store.notes(conversationId)) { store.outputBytes(conversationId, it.id) }
             }.onFailure { log(LogLevel.Warn, "conversations", "The conversation's outputs could not be listed for its visible folder", it) }
         }
 
@@ -380,6 +382,8 @@ internal class CoordinatorEngine(
                     failed(failure)
                 }
             }
+            // The run is done with what its specialists left each other.
+            if (record.brain.run?.summary?.state == BrainRunState.COMPLETED) companionFolders.emptyScratch(store.accountId, conversationId)
             return when (record.brain.run?.summary?.state) {
                 BrainRunState.COMPLETED, BrainRunState.AWAITING_INPUT -> MessageState.ANSWERED
                 BrainRunState.CANCELLED -> MessageState.STOPPED
@@ -662,11 +666,13 @@ internal class CoordinatorEngine(
             val conversation = record.threadContexts[threadId]?.takeIf { it.personaHash == persona.hash }
             val stream = ReplyStream(headed = false) { out.delta(entryId, threadId, it) }
             val remember = { native: NativeConversation -> update { it.copy(threadContexts = it.threadContexts + (threadId to native)) } }
+            // A working turn whose runtime keeps to it gets the conversation's scratch folder, made at its first use.
+            val scratch = if (role.mode == MemberMode.WORK && turns.givesScratch(role.binding.runtimeId)) companionFolders.scratch(folderNames()) else null
             // What the other agents left is read before the task is done; what this one leaves is kept after it.
-            val briefed = withTeamNotes(input, teamNotes(startingAs = role.name))
+            val briefed = withTeamNotes(input, teamNotes(startingAs = role.name), scratch)
             val result = if (role.mode == MemberMode.WORK) {
                 turns.work(call, threadId, role, persona, briefed, conversation, scope(threadId), stream, remember, openEditRecord(threadId, role),
-                    skillFolders)
+                    skillFolders, scratch)
             } else turns.talk(call, role, persona, briefed, conversation, threadId, coordinator = false, stream = stream, opened = remember)
             leaveNote(role.name, TeamNoteKind.OUTPUT, TeamNotes.outputStart(result.first))
             TeamNotes.section(result.first)?.let { leaveNote(role.name, TeamNoteKind.NOTE, it) }

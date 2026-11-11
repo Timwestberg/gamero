@@ -7,6 +7,8 @@ import java.time.ZoneOffset
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.formulagen.wrapper.bridge.RuntimeId
 
@@ -265,6 +267,78 @@ class VisibleFoldersTest {
         // An account with no folders asks nothing.
         ConversationHost.discardDeletedFolders(server, watched, id())
         assertEquals(2, asked.size)
+    }
+
+    // ---- Scratch ---------------------------------------------------------------------------------
+
+    @Test fun aWorkingTurnsScratchFolderIsMadeBeforeAnyOutputAndIsNeverInTheIndex() {
+        val scratch = assertNotNull(watched.scratch(names()))
+        assertEquals(root.resolve("$home/scratch"), scratch)
+        assertTrue(Files.isDirectory(scratch) && scratch.isAbsolute)
+        assertEquals(scratch, watched.scratch(names()), "the same folder every time")
+        assertEquals(FolderState.READY, watched.state(account, conversation))
+        // An output then lands beside it, and the index lists outputs only.
+        Files.writeString(scratch.resolve("draft.md"), "a draft")
+        watched.sync(names(), listOf(output("# Spec")), emptyList()) { stored.getValue(it.id) }
+        assertTrue(Files.exists(root.resolve("$home/outputs/01 Spec.md")), tree().toString())
+        val index = Files.readString(root.resolve("$home/index.md"))
+        assertFalse("draft" in index || "scratch" in index, index)
+        assertEquals("a draft", Files.readString(scratch.resolve("draft.md")), "a sync never touches scratch")
+    }
+
+    @Test fun scratchIsEmptiedWhenItsRunCompletesAndNothingElseIs() {
+        watched.sync(names(), listOf(output("# Spec")), emptyList()) { stored.getValue(it.id) }
+        val scratch = assertNotNull(watched.scratch(names()))
+        val elsewhere = folder("elsewhere")
+        val kept = Files.writeString(elsewhere.resolve("keep.txt"), "keep")
+        Files.writeString(scratch.resolve("draft.md"), "a draft")
+        Files.writeString(Files.createDirectories(scratch.resolve("logs/run")).resolve("test.log"), "ok")
+        Files.createSymbolicLink(scratch.resolve("link.txt"), kept)
+        Files.createSymbolicLink(scratch.resolve("linked-folder"), elsewhere)
+        // Another account's run never empties this one.
+        watched.emptyScratch(id(), conversation)
+        assertTrue(Files.exists(scratch.resolve("draft.md")))
+        watched.emptyScratch(account, conversation)
+        assertEquals(emptyList(), Files.list(scratch).use { it.toList() })
+        assertTrue(Files.isDirectory(scratch), "the folder stays for the next run")
+        assertEquals("keep", Files.readString(kept), "a link is deleted as a link, never followed")
+        assertTrue(Files.exists(root.resolve("$home/outputs/01 Spec.md")), "outputs are the person's and stay")
+    }
+
+    @Test fun aScratchFileARunNeverClearedGoesAfterAWeek() {
+        val scratch = assertNotNull(watched.scratch(names()))
+        fun aged(file: java.nio.file.Path, days: Long) =
+            Files.setLastModifiedTime(Files.writeString(file, "x"), java.nio.file.attribute.FileTime.from(at.minusSeconds(days * 86_400)))
+        val old = aged(scratch.resolve("old.log"), 8)
+        val oldInside = aged(Files.createDirectories(scratch.resolve("logs")).resolve("old.txt"), 30)
+        val fresh = aged(scratch.resolve("fresh.md"), 6)
+        val mixed = Files.createDirectories(scratch.resolve("mixed"))
+        aged(mixed.resolve("old.txt"), 9)
+        val keptInside = aged(mixed.resolve("new.txt"), 1)
+        watched.sweepScratch(account)
+        assertFalse(Files.exists(old) || Files.exists(oldInside))
+        assertFalse(Files.exists(scratch.resolve("logs")), "a folder with nothing left goes too")
+        assertTrue(Files.exists(fresh) && Files.exists(keptInside), tree().toString())
+        assertFalse(Files.exists(mixed.resolve("old.txt")))
+        // An output is never swept, however old it is.
+        watched.sync(names(), listOf(output("# Spec")), emptyList()) { stored.getValue(it.id) }
+        val spec = root.resolve("$home/outputs/01 Spec.md")
+        Files.setLastModifiedTime(spec, java.nio.file.attribute.FileTime.from(at.minusSeconds(400L * 86_400)))
+        watched.sweepScratch(account)
+        assertTrue(Files.exists(spec))
+    }
+
+    @Test fun aLinkWhereTheScratchFolderShouldBeIsNeverGivenToAnAgent() {
+        watched.sync(names(), listOf(output("# Spec")), emptyList()) { stored.getValue(it.id) }
+        val elsewhere = folder("elsewhere")
+        val theirs = Files.writeString(elsewhere.resolve("theirs.txt"), "theirs")
+        Files.createSymbolicLink(root.resolve("$home/scratch"), elsewhere)
+        assertNull(watched.scratch(names()), "write access is never given through a link")
+        watched.emptyScratch(account, conversation)
+        watched.sweepScratch(account)
+        assertEquals("theirs", Files.readString(theirs))
+        // A Mac that keeps no visible folders gives no scratch.
+        assertNull(CompanionFolders.NONE.scratch(names()))
     }
 
     @Test fun aFolderWithoutTheMarkerIsNeverTaken() {

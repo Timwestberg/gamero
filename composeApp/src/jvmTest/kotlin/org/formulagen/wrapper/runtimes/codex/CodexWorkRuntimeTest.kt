@@ -209,6 +209,16 @@ class CodexWorkRuntimeTest {
         assertEquals(JsonObject(CODEX_WORK_SKILLS_OFF + ("sandbox_workspace_write.writable_roots" to buildJsonArray { add(working.toString()) })),
             settings["config"])
         assertEquals(buildJsonObject { put("config", CODEX_WORK_SKILLS_OFF) }, codexWorkThreadSettings(working, emptyList()))
+        // The scratch folder is one more writable root. Beside a context folder Hovel's own sandbox names both roots.
+        val scratch = Path.of("/Users/ember/Hovel/Ember/conversations/talk/scratch")
+        val both = codexWorkThreadSettings(working, listOf(Path.of("/work/docs")), scratch)
+        assertEquals(JsonPrimitive("workspace-write"), both["sandbox"])
+        assertEquals(buildJsonArray { add(working.toString()); add(scratch.toString()) }, both.getValue("config").jsonObject[CODEX_WRITABLE_ROOTS])
+        // With no context folder the sandbox stays the person's own: only the root is added.
+        val alone = codexWorkThreadSettings(working, emptyList(), scratch)
+        assertNull(alone["sandbox"], "the person's own sandbox setting stands")
+        assertEquals(JsonObject(CODEX_WORK_SKILLS_OFF + (CODEX_WRITABLE_ROOTS to buildJsonArray { add(scratch.toString()) })), alone["config"])
+        assertFails { codexWorkThreadSettings(working, emptyList(), Path.of("scratch")) }
     }
 
     @Test fun workingTurnsPassEffortToCodex() {
