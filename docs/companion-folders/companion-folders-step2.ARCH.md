@@ -1,6 +1,7 @@
 # Companion folders: architecture, step 2
 
-Status: draft for review, 2026-11-10. Covers step 2 of
+Status: decisions agreed 2026-11-11; awaiting the go-ahead to build slice
+2a. Covers step 2 of
 `companion-folders.SPEC.md`: shared notes, the scratch area, and the
 coordinator's view of the project. Step 1's first slice is built
 (`companion-folders.ARCH.md`). No code for step 2 is written.
@@ -215,6 +216,23 @@ internal class ApprovalMemory(root: Path, accountId: String) {
 }
 ```
 
+### Scratch
+
+```kotlin
+/** Whether a work runtime can be given a second folder to write in. As `ContextFolderSupport`. */
+internal enum class ScratchSupport { VERIFIED, UNVERIFIED, NONE }
+
+// WorkScope gains one field. Null for a runtime that is not VERIFIED.
+val scratch: Path? = null
+
+internal object ScratchLimits {
+    const val KEPT_DAYS = 7
+}
+```
+
+The folder is `<conversation's visible folder>/scratch/`, made by
+`VisibleFolders` when a working turn first needs it.
+
 ### Contract changes (slice 2b only)
 
 In `server-platform/event-contracts`:
@@ -273,6 +291,29 @@ from the stream.
 Every turn of the conversation is given the most recent notes, as data, in
 the builders listed above.
 
+### Scratch
+
+A working specialist's turn is given the conversation's scratch folder as a
+second place it may write, and its task says so. Each provider needs its
+own mechanism, and neither is proven:
+
+- **Claude Code:** `--add-dir <scratch>`, with none of the deny rules that
+  make a context folder read-only.
+- **Codex:** the `workspace-write` sandbox with two writable roots, the
+  working folder and the scratch folder. Today that sandbox is set only when
+  a project has context folders; otherwise the person's own sandbox setting
+  stands. Giving scratch to Codex therefore sets the sandbox for every
+  working turn, which is a change to how Codex runs.
+
+Each is proven by a live turn before it is given: one short turn on the
+person's own subscription, in throwaway folders, that must write a file in
+scratch, read it back, and be refused or asked when it writes outside both
+folders. It follows `ContextFolderProbeTest`. A runtime that passes is
+marked `VERIFIED` and gets scratch; one that does not is left as it is.
+
+Cleanup is Hovel's: scratch is emptied when the run that used it completes,
+and a sweep at connect deletes what is older than seven days.
+
 ### Remembered approvals
 
 `StartOfWork` keeps its interface and reads and writes `ApprovalMemory`
@@ -292,6 +333,8 @@ instead of a set. That is the whole change for start of work.
 | `ConversationPrompts`: the brief, `projectFiles`, `teamNotes`, the notes rule | Changed |
 | `VisibleFolders`: `notes.md` | Changed |
 | `StartOfWork`: backed by `ApprovalMemory` | Changed |
+| `WorkScope.scratch`, `ScratchSupport`, each work runtime's launch | Changed, slice 2c |
+| `ScratchProbeTest` | New, slice 2c |
 | `ConversationStore.eraseContext`: also erases notes | Changed |
 
 ### Failure handling
@@ -327,30 +370,36 @@ change.
 approval; the list of approvals and the withdrawal in the project's
 settings; the line in the settings that says what the brief sends.
 
+**Slice 2c, needs the provider checks first.** Scratch: the live check on
+Claude Code and on Codex, then the folder, the launch change for each
+provider that passed, the task's sentence about it, and the two cleanup
+rules.
+
 ## Deferred / out of scope
 
-- **The scratch area.** See "Decisions needed", 1.
 - **Notes written by the coordinator.** Its tasks and reports already reach
   the log. A `note` field on its header is an easy later addition.
 - **Search beyond plain text.** `search` is a bounded scan for a phrase. Code
   search belongs to a working specialist.
+- **Scratch for a provider that fails its check.** It gets none until the
+  mechanism is fixed and proven.
 
-## Decisions needed
+## Decided
 
-1. **Defer the scratch area.** It is the only part that needs each provider's
-   unproven folder mechanism, and a handoff already passes files between
-   specialists. The other choice is to build it now, behind a live check on
-   each provider.
-2. **Hovel writes the log; agents add to it with a `## Notes for the team`
-   section that stays in their reply.** The other choice is a hidden block
-   cut from the reply, which fights the stream.
-3. **The brief is built for each message and never stored.** This replaces
-   the spec's "rebuilt when the project changes" and its cleanup rule.
-4. **Reading is asked through a new approval kind, `read-files`**, so the
-   phone can answer it. The other choice is a dialog on the Mac only, with
-   no contract change.
-5. **No special spoken line in Talk.** The thinking phrase and the status
-   line cover it. The spec said Hovel would say "Let me look at the
-   project."
-6. **Step 2 ships as two slices**: 2a in the Mac app, 2b after a server
-   change.
+All on 2026-11-11.
+
+- **The scratch area is built now, not deferred**, and only after a live
+  check proves each provider. It is its own slice.
+- **Hovel writes the log; agents add to it with a `## Notes for the team`
+  section that stays in their reply.**
+- **The brief is built for each message and never stored.**
+- **Reading is asked through a new approval kind, `read-files`**, which the
+  phone can answer.
+- **No special spoken line in Talk.** The thinking phrase covers the silence
+  and Talk's status shows what is being read.
+- **Step 2 ships as three slices**: 2a in the Mac app, 2b after a server
+  change, 2c after the provider checks.
+
+The first of these went against the draft's recommendation, which was to
+defer scratch. The finding stands: scratch is the one part that changes how
+a provider is started.

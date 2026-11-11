@@ -122,8 +122,12 @@ can open, search, back up and delete.
 - Every agent turn in the conversation is given the most recent notes, up to
   8,000 characters, marked as data from other agents and never as
   instructions. This is the same rule a handoff follows today.
-- An agent adds a note through Hovel, as part of its reply. No agent writes
-  the file itself, so two agents working at once cannot damage it.
+- Hovel writes most of the log itself: each task the coordinator delegates,
+  each output a specialist finishes, and each handoff report.
+- An agent adds a note of its own by ending its reply with a section headed
+  `## Notes for the team`. The section stays in the reply, where the person
+  reads it too. No agent writes the file itself, so two agents working at
+  once cannot damage it.
 - `notes.md` is Hovel's readable copy of the log. The person can read it. An
   edit to it is not read back and is replaced at the next note.
 - The coordinator's instructions say what notes are for: facts the next
@@ -134,6 +138,9 @@ can open, search, back up and delete.
 - `scratch/` is a place for a working specialist to leave files for the next
   one: a draft, a data file, a test log. A working specialist can read and
   write there. It keeps such files out of the project's own folder.
+- A provider is given scratch only after a live check proves it can write
+  there and nowhere else beyond the project's folder. One that fails the
+  check gets no scratch.
 - Scratch is emptied when the run that used it completes, and whatever is
   left is deleted after 7 days. It is never listed in `index.md`.
 
@@ -151,13 +158,11 @@ consent to it.
   the README, and a listing of folders with their first files.
 - It is at most 10,000 characters. On the Hovel web app's source (1,014
   files) it measured 9,738 characters and took 3 ms to build.
-- It is built when the project gets its folder, and again when the folder
-  has changed: after a working specialist's turn ends, and when the app
-  starts. Building costs milliseconds, so there is no schedule.
+- It is built fresh for each message. Building costs milliseconds, so there
+  is nothing to store and no schedule.
 - It follows the skip list below: a skipped file is not named in the
   listing, and its text is never in the brief.
-- It is kept in Hovel's private store. Nothing is written into the project's
-  folder.
+- It is not kept anywhere. Nothing is written into the project's folder.
 
 **Reading files.** When the brief is not enough, the coordinator asks Hovel
 in its reply, the way it asks to delegate. It can list a folder, search for
@@ -189,8 +194,8 @@ text, and read files, several in one request.
   question to a specialist.
 - The conversation shows what was read, as a line of activity: "Ember read
   3 files", with their names. The names are stored with the conversation.
-- In Talk, Hovel says "Let me look at the project." as soon as a read is
-  asked for. No model is needed for that line.
+- In Talk, the status line shows what is being read. The thinking phrase the
+  person already hears covers the silence, so no line is spoken for it.
 - A turn that asks for no file costs nothing more than it does today.
 
 ### Cleanup
@@ -201,7 +206,6 @@ text, and read files, several in one request.
 | Outputs, `index.md`, `notes.md` | The conversation is deleted |
 | A conversation's folder | The conversation is deleted: it moves to the Trash |
 | A companion's folder | The companion is deleted: it moves to the Trash |
-| A project's brief | The project loses its folder, or is deleted |
 
 - A folder goes to the Trash, not straight to nothing, so a mistaken delete
   can be undone. A folder the person moved or renamed by hand is left alone
@@ -255,10 +259,14 @@ The coordinator's view of the project:
 - **Hovel reads for the coordinator; it gets no provider file tools.**
 - **The project index is a brief Hovel builds itself, not a third-party
   graph.** After the spike in `project-index-spike.md`.
-- **The brief is rebuilt when the project changes, not on a schedule.**
+- **The brief is built fresh for each message and never stored.**
 - **The brief needs no approval; reading files does.**
 - **The skip list is fixed and does not follow `.gitignore`.**
-- **The conversation shows what the coordinator read, by file name.**
+- **The conversation shows what the coordinator read, by file name.** In
+  Talk that is the status line; nothing is spoken for it.
+- **Reading is asked through its own approval, which the phone can answer.**
+- **Hovel writes the notes log; agents add a visible section to it.**
+- **Scratch is built, after a live check on each provider.**
 
 Approvals and limits:
 
@@ -301,7 +309,9 @@ app only. The last two are slice 1b and need a server change first.
   when it opens the right folder on the project's Mac and is absent
   elsewhere.
 
-Step 2, shared context:
+Step 2, shared context. Three slices: brief, notes and remembered approvals
+in the Mac app; reading after a server change; scratch after the provider
+checks.
 
 - **Measure the coordinator today.** Time from message to first word, in text
   and in Talk, on each provider. Depends on nothing. Done when there is a
@@ -333,8 +343,12 @@ Step 2, shared context:
 - **Agents add notes.** The reply format for a note, on talk and work turns.
   Depends on the notes log. Done when two specialists running at once both
   land their notes intact.
-- **Scratch.** The folder, write access for working specialists, and the two
-  cleanup rules. Depends on step 1.
+- **Prove a second writable folder.** A live check per provider that a
+  working turn can write in scratch and is refused or asked elsewhere.
+  Depends on nothing; it gates scratch. Done when each provider is marked
+  verified or not.
+- **Scratch.** The folder, write access for the providers that passed, and
+  the two cleanup rules. Depends on step 1 and on the check.
 - **Cleanup on memory erase, and the size notice.** Depends on the notes log.
 
 <!-- IMPLEMENTATION-PLAN:END -->
