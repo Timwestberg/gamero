@@ -2,6 +2,7 @@ package org.formulagen.wrapper.approvals
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -21,7 +22,15 @@ internal data class Approved(
     val runtimeId: RuntimeId,
     val modelId: String,
     val purpose: ApprovedFor,
-)
+) {
+    /**
+     * A name for this approval that says nothing of the folder, so a page can ask for it to be withdrawn: the
+     * SHA-256 of its fields. The same approval always has the same name.
+     */
+    val id: String get() = MessageDigest.getInstance("SHA-256")
+        .digest(listOf(conversationId, projectId, folder, runtimeId.name, modelId, purpose.name).joinToString("\u0000").toByteArray())
+        .joinToString("") { "%02x".format(it) }
+}
 
 @Serializable
 internal enum class ApprovedFor {

@@ -127,6 +127,36 @@ A conversation's notes are a log every agent in it reads and adds to.
 leaveNote(role.name, TeamNoteKind.TASK, "what was asked")
 ```
 
+## Reading for the coordinator
+
+The coordinator has no file tools. It asks Hovel to read:
+
+```json
+{"kind":"read","files":["README.md"],"list":["src"],"search":"sign in"}
+```
+
+- The engine offers `read` in the main conversation of a project with a
+  working folder. It answers the decision itself and asks the coordinator
+  again; a run never sees one.
+- The person is asked once per conversation (`read-files`, which the phone
+  can answer). The yes is kept like a start of work.
+- Every path goes through `PathGuard`. It allows only the working folder and
+  the read-only folders, by their real path, and nothing `SkipList` names.
+  What it refuses is named to the coordinator with its reason.
+- `ReadLimits` is one message's allowance: 2 rounds, 32,000 characters.
+- The conversation says what was read: "Read README.md and 2 more."
+
+To change what may be read, change `PathGuard` or `SkipList`, and nothing
+else: no other code opens a project file for the coordinator.
+
+## Folders on the page
+
+- `project.outputsFolder` answers `none`, `ready` or `behind` for a
+  conversation; `project.showOutputs` opens its folder in Finder.
+- When the Mac connects it asks the account which of its folders belong to
+  a deleted conversation or companion (`POST /folders/gone`) and moves
+  those to the Trash. A server without the route changes nothing.
+
 ## Approvals that survive a restart
 
 `ApprovalMemory` keeps each yes in `<provider root>/<account>/approvals.json`.
@@ -136,8 +166,10 @@ conversation, project, folder, provider or model changes.
 
 - Only a yes is kept. "Not now" is never remembered.
 - `StartOfWork()` with no memory keeps the old behaviour, which tests use.
-- `ApprovalMemory.withdraw` takes an approval back. Nothing calls it yet;
-  the list in the project's settings is slice 2b.
+- `StartOfWork.kept(projectId)` lists them and `withdraw(projectId, id)`
+  takes one back. The project's settings do both through
+  `project.approvals` and `project.withdrawApproval`. An approval's `id` is
+  the SHA-256 of its fields, so the page never sees a folder.
 - A file that cannot be read means every approval is asked again. It is
   never overwritten.
 
@@ -149,20 +181,18 @@ after a change that adds to the coordinator's turn.
 
 ## Not built yet
 
-Slice 1b, which needs a server change first: moving a folder to the Trash
-when its conversation or companion is deleted, "Show in Finder" on the
-page, and a notice on the page when a folder is behind. Until then a
-deleted conversation leaves its folder in place, and a failed write shows
-only in the Mac's log.
-
-Slice 2b, which needs a server change first: the coordinator reading files
-on request, its approval, and the list of approvals in the project's
-settings with the line that says what the brief sends.
-
 Slice 2c, which needs a live check on each provider first: the scratch
 folder for working specialists.
 
 ## Known limits
+
+- Slices 1b and 2b need the server of this branch. Against an older server
+  a deleted conversation's folder stays, and the reading approval shows on
+  the Mac only.
+- The Trash trusts the account's answer. See the step 1 architecture for
+  what that means when an account is pointed at the wrong database.
+- After a restart the page shows no "behind" notice until the
+  conversation's next message.
 
 - The ledger is per app address, as the conversations are. The same account
   run from two addresses on one Mac shares the folders through their

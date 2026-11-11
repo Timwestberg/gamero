@@ -347,7 +347,7 @@ Mobile first from here.""" }
         assertTrue("\"hovel-notes\"" in told && "\"design-docs\"" in told, told)
         assertFalse(fixture.working.toString() in told, told)
         assertTrue("Implementer works inside that folder" in told && "Reviewer" !in told, told)
-        assertTrue("You cannot read or change files in this turn." in told, told)
+        assertTrue("You cannot change files in this turn. Hovel can read files in these folders for you" in told, told)
         assertTrue("projectFolder" in fixture.coordinatorTurns().last().persona.instructions, "the protocol says what the key means")
     }
 
@@ -365,7 +365,96 @@ Mobile first from here.""" }
         assertEquals(MessageState.ANSWERED, fixture.send("Can you see my project?"))
         val text = fixture.chat.requests.single().text
         assertTrue(text.startsWith("About the project's folder:\nThe project's working folder on this Mac is \"hovel-notes\"."), text)
-        assertTrue("No specialist of this brain works in the folder." in text && text.endsWith("Can you see my project?"), text)
+        assertTrue("No specialist of this brain works in the folder, so nothing can change its files." in text && text.endsWith("Can you see my project?"), text)
+        assertTrue(DIRECT_READ_INSTRUCTION in text, "its turn says how to ask to be read a file: $text")
+    }
+
+    @Test fun theCoordinatorIsReadTheFilesItAsksForOnceThePersonAgrees() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK), context = true)
+        Files.writeString(fixture.working.resolve("README.md"), "# Hovel notes\n\nNotes for the house.")
+        Files.writeString(fixture.working.resolve(".env"), "TOKEN=abc")
+        Files.writeString(fixture.docs.resolve("plan.md"), "# Plan")
+        fixture.decide = { turn ->
+            if ("projectFiles" in fixture.request(turn)) "{\"kind\":\"answer\"}\nIt is notes for the house."
+            else """{"kind":"read","files":["README.md",".env","../elsewhere","[design-docs]/plan.md"]}"""
+        }
+        assertEquals(MessageState.ANSWERED, fixture.send("What does my README say?"))
+        val (asking, answering) = fixture.coordinatorTurns()
+        assertTrue("read" in fixture.allowed(asking), "the engine offers it: ${fixture.allowed(asking)}")
+        assertTrue("\"kind\":\"read\"" in asking.persona.instructions, "the protocol teaches the header")
+        val files = fixture.request(answering).getValue("projectFiles").jsonPrimitive.content
+        assertTrue("File README.md, in full:\n<<<\n# Hovel notes\n\nNotes for the house.\n>>>" in files, files)
+        assertTrue("File [design-docs]/plan.md, in full:\n<<<\n# Plan\n>>>" in files, files)
+        assertFalse("TOKEN" in files || fixture.working.toString() in files, files)
+        assertTrue("Not read: .env (never read: a key, an environment file or a build folder); ../elsewhere (outside the project's folders)." in files, files)
+        // The person was asked once, as an approval of its own that the phone can answer, in the main conversation.
+        val opened = fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.ApprovalOpened>().single().approval
+        assertEquals(ApprovalKind.READ_FILES, opened.kind)
+        assertEquals(listOf(ApprovalOption.CONTINUE, ApprovalOption.NOT_NOW), opened.options)
+        assertNull(opened.threadId)
+        val dialog = fixture.screen.shown.single()
+        assertTrue(dialog.title.startsWith("Ember wants to read files in hovel-notes with "), dialog.title)
+        assertEquals(listOf("Read files", "Not now"), dialog.buttons.map { it.first })
+        // The conversation says what was read, by name, and then the answer.
+        val said = fixture.server.appended().map { it.text }
+        assertEquals(listOf("Read README.md and [design-docs]/plan.md.", "It is notes for the house."), said.takeLast(2))
+        assertEquals(BrainRunState.COMPLETED, fixture.record().brain.run?.summary?.state)
+        assertEquals(1, fixture.coordinatorTurns().map { it.persona.hash }.distinct().size, "reading never restarts the provider's conversation")
+        // The next message in the conversation reads without asking again.
+        assertEquals(MessageState.ANSWERED, fixture.send("And again?"))
+        assertEquals(1, fixture.screen.shown.size)
+        assertEquals(4, fixture.coordinatorTurns().size)
+    }
+
+    @Test fun aNoToReadingIsNotAskedTwiceInAMessageAndIsNeverKept() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        Files.writeString(Files.createDirectories(fixture.working.resolve("docs")).resolve("plan.md"), "Plan B")
+        fixture.screen.answer = { 1 }
+        fixture.decide = { turn ->
+            if ("read" in fixture.allowed(turn)) """{"kind":"read","files":["docs/plan.md"]}""" else "{\"kind\":\"answer\"}\nI did not read your files."
+        }
+        assertEquals(MessageState.ANSWERED, fixture.send("What does my README say?"))
+        val (_, answering) = fixture.coordinatorTurns()
+        assertEquals(READING_DECLINED, fixture.request(answering).getValue("projectFiles").jsonPrimitive.content)
+        assertFalse("read" in fixture.allowed(answering))
+        assertTrue("You cannot read or change files in this turn." in fixture.request(answering).getValue("projectFolder").jsonPrimitive.content)
+        assertTrue(fixture.server.appended().none { it.text.startsWith("Read ") }, "nothing was read, so nothing says so")
+        assertFalse("Plan B" in fixture.coordinatorTurns().joinToString { it.text }, "the file's text never left the Mac")
+        // A no is never kept: the next message may ask again.
+        assertEquals(MessageState.ANSWERED, fixture.send("Try again?"))
+        assertEquals(2, fixture.screen.shown.size)
+    }
+
+    @Test fun aMessagesReadingAllowanceEndsAndTheCoordinatorMustDecide() {
+        val fixture = Fixture(brain("Implementer" to MemberMode.WORK))
+        Files.writeString(fixture.working.resolve("README.md"), "# Hovel notes")
+        fixture.decide = { turn ->
+            if ("read" in fixture.allowed(turn)) """{"kind":"read","list":["."]}""" else "{\"kind\":\"answer\"}\nThat is all I can read."
+        }
+        assertEquals(MessageState.ANSWERED, fixture.send("Read everything"))
+        val turns = fixture.coordinatorTurns()
+        assertEquals(listOf(true, true, false), turns.map { "read" in fixture.allowed(it) }, "two rounds, then it must decide")
+        val last = fixture.request(turns.last()).getValue("projectFiles").jsonPrimitive.content
+        assertTrue(last.endsWith("This message's reading allowance is now used up. Answer from what you have, or delegate."), last)
+        // A thread's reply is about its task: it is never offered reading.
+        assertEquals(1, fixture.screen.shown.size)
+    }
+
+    @Test fun aCoordinatorWithNoSpecialistsIsReadFilesBeforeItAnswers() {
+        val fixture = Fixture(brain())
+        Files.writeString(fixture.working.resolve("README.md"), "# Hovel notes\n\nNotes for the house.")
+        fixture.chat.reply = { turn ->
+            if ("What Hovel read from the project's files for you" in turn.text) "It is notes for the house."
+            else """{"kind":"read","files":["README.md"]}"""
+        }
+        assertEquals(MessageState.ANSWERED, fixture.send("What does my README say?"))
+        val (asking, answering) = fixture.chat.requests
+        assertTrue(DIRECT_READ_INSTRUCTION in asking.text, asking.text)
+        assertTrue("File README.md, in full:\n<<<\n# Hovel notes\n\nNotes for the house.\n>>>" in answering.text, answering.text)
+        assertTrue(answering.text.endsWith("What does my README say?"), "the person's message is still the turn")
+        assertEquals(listOf("Read README.md.", "It is notes for the house."), fixture.server.appended().map { it.text })
+        assertFalse(fixture.server.deltas.any { "kind" in it.text }, "the request to read is never shown")
+        assertEquals(ApprovalKind.READ_FILES, fixture.server.checkpoints.filterIsInstance<MessageCheckpoint.ApprovalOpened>().single().approval.kind)
     }
 
     @Test fun theFolderNoteNamesEveryWorkerAndNeverAPath() {

@@ -1,10 +1,12 @@
 package org.formulagen.wrapper.conversations
 
+import java.awt.Desktop
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.time.Instant
 import java.time.ZoneId
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.json.Json
 import org.formulagen.wrapper.bridge.SharedRules
 import org.formulagen.wrapper.logger.LogLevel
@@ -33,13 +35,23 @@ private val markerJson = Json { encodeDefaults = true; ignoreUnknownKeys = true 
  * person then edits, moves or deletes is theirs. What it has written is kept per account in the ledger under
  * [ledgerRoot], beside the conversations. A ledger that cannot be read is never replaced: the mirror stops for that
  * account and says so in the log.
+ *
+ * The one thing it takes away is the folder of a conversation or companion the account deleted ([gone]), and only to
+ * the Trash.
  */
 internal class VisibleFolders(
     private val root: Path,
     private val ledgerRoot: Path,
     private val zone: ZoneId = ZoneId.systemDefault(),
+    /** Opens a folder in Finder. */
+    private val reveal: (Path) -> Unit = { Desktop.getDesktop().open(it.toFile()) },
+    /** Moves a folder to the Trash; false when the Mac could not. */
+    private val trash: (Path) -> Boolean = { Desktop.getDesktop().moveToTrash(it.toFile()) },
     private val now: () -> Instant = Instant::now,
 ) : CompanionFolders {
+    /** The conversations whose last sync could not write everything. Kept until the app quits: a sync clears it. */
+    private val behind = ConcurrentHashMap.newKeySet<String>()
+
     /** A folder as it stands after [settle]. */
     private class Settled(val dir: Path, val name: String, val pinned: Boolean)
 
@@ -47,9 +59,84 @@ internal class VisibleFolders(
     override fun sync(names: FolderNames, outputs: List<RecordedOutput>, notes: List<TeamNote>, bytes: (ArtifactRef) -> ByteArray) {
         try {
             bring(names, outputs, notes, bytes)
+            behind -= names.conversationId
         } catch (error: Exception) {
+            behind += names.conversationId
             log(LogLevel.Warn, TAG, "A conversation's visible folder is behind; it is tried again at its next message", error)
         }
+    }
+
+    @Synchronized
+    override fun state(accountId: String, conversationId: String): FolderState = try {
+        when {
+            read(accountId).conversations[conversationId] == null -> if (conversationId in behind) FolderState.BEHIND else FolderState.NONE
+            conversationId in behind -> FolderState.BEHIND
+            else -> FolderState.READY
+        }
+    } catch (_: Exception) {
+        // The ledger cannot be read, so nothing is being written.
+        FolderState.BEHIND
+    }
+
+    @Synchronized
+    override fun show(accountId: String, conversationId: String): Boolean = try {
+        val dir = conversationFolder(accountId, read(accountId), conversationId)
+        if (dir != null) reveal(dir)
+        dir != null
+    } catch (error: Exception) {
+        log(LogLevel.Warn, TAG, "A conversation's visible folder could not be shown", error)
+        false
+    }
+
+    @Synchronized
+    override fun kept(accountId: String): FolderIds = try {
+        read(accountId).let { FolderIds(it.companions.keys, it.conversations.keys) }
+    } catch (_: Exception) {
+        FolderIds()
+    }
+
+    @Synchronized
+    override fun gone(accountId: String, gone: FolderIds) {
+        if (gone.isEmpty) return
+        try {
+            var ledger = read(accountId)
+            // A conversation first: when its companion goes too, the companion's folder then takes what is left.
+            for (id in gone.conversationIds) {
+                val folder = ledger.conversations[id] ?: continue
+                val dir = conversationFolder(accountId, ledger, id)
+                if (dir != null && !discard(dir)) continue
+                ledger = ledger.copy(conversations = ledger.conversations - id)
+                behind -= id
+                log(LogLevel.Info, TAG, "A deleted conversation's folder \"${folder.name}\" " + if (dir == null) "was already gone" else "was moved to the Trash")
+            }
+            for (id in gone.companionIds) {
+                val folder = ledger.companions[id] ?: continue
+                val dir = find(root, FolderMarker(accountId = accountId, companionId = id), folder.name)
+                if (dir != null && !discard(dir)) continue
+                val theirs = ledger.conversations.filterValues { it.companionId == id }.keys
+                ledger = ledger.copy(companions = ledger.companions - id, conversations = ledger.conversations - theirs)
+                behind -= theirs
+                log(LogLevel.Info, TAG, "A deleted companion's folder \"${folder.name}\" " + if (dir == null) "was already gone" else "was moved to the Trash")
+            }
+            writeLedger(accountId, ledger)
+        } catch (error: Exception) {
+            log(LogLevel.Warn, TAG, "The folders of deleted conversations could not be moved to the Trash; it is tried again at the next connect", error)
+        }
+    }
+
+    /** Moves [dir] to the Trash. False, and logged, when the Mac could not: the folder stays and is tried again. */
+    private fun discard(dir: Path): Boolean =
+        runCatching { trash(dir) }.getOrDefault(false).also { moved ->
+            if (!moved) log(LogLevel.Warn, TAG, "A folder could not be moved to the Trash and is left where it is")
+        }
+
+    /** [conversationId]'s folder where it is now, found by its marker; null when it has none or the person removed it. */
+    private fun conversationFolder(accountId: String, ledger: FolderLedger, conversationId: String): Path? {
+        val conversation = ledger.conversations[conversationId] ?: return null
+        val companion = find(root, FolderMarker(accountId = accountId, companionId = conversation.companionId), ledger.companions[conversation.companionId]?.name)
+            ?: return null
+        return find(companion.resolve(CompanionFolderRules.CONVERSATIONS),
+            FolderMarker(accountId = accountId, companionId = conversation.companionId, conversationId = conversationId), conversation.name)
     }
 
     private fun bring(names: FolderNames, outputs: List<RecordedOutput>, notes: List<TeamNote>, bytes: (ArtifactRef) -> ByteArray) {
@@ -88,7 +175,7 @@ internal class VisibleFolders(
             companions = ledger.companions + (names.companionId to CompanionFolder(companion.name, names.companion, companion.pinned)),
             conversations = ledger.conversations + (names.conversationId to folder),
         )
-        if (next != ledger) writeDurably(ledgerFile(names.accountId), ledgerJson.encodeToString(FolderLedger.serializer(), next).toByteArray())
+        if (next != ledger) writeLedger(names.accountId, next)
         failure?.let { throw it }
     }
 
@@ -163,6 +250,9 @@ internal class VisibleFolders(
     }
 
     private fun ledgerFile(accountId: String): Path = ledgerRoot.resolve(accountId).resolve(LEDGER)
+
+    private fun writeLedger(accountId: String, ledger: FolderLedger) =
+        writeDurably(ledgerFile(accountId), ledgerJson.encodeToString(FolderLedger.serializer(), ledger).toByteArray())
 
     private fun read(accountId: String): FolderLedger {
         val file = ledgerFile(accountId)

@@ -2,7 +2,9 @@ package org.formulagen.wrapper.conversations
 
 import java.util.UUID
 import org.formulagen.wrapper.approvals.CancelSignal
+import org.formulagen.wrapper.approvals.ApprovedFor
 import org.formulagen.wrapper.approvals.StartOfWork
+import org.formulagen.wrapper.approvals.readFilesDialog
 import org.formulagen.wrapper.approvals.startOfWorkDialog
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.brain.*
@@ -25,6 +27,9 @@ import org.formulagen.wrapper.workspace.ThreadEditStore
  * claims it next.
  *
  * - **No specialists:** the coordinator is a plain talk turn that streams, with no decision step.
+ * - **Reading:** in the main conversation the coordinator may first ask to be read project files (`read`). The
+ *   engine asks the person once per conversation, reads within the message's allowance, says what it read, and asks
+ *   the coordinator again. A run never sees a `read`.
  * - **A main message:** the coordinator decides; an answer's body streams once its header line validates.
  *   Each delegated task is a thread, announced in the conversation, whose specialist reply streams into it.
  * - **A thread reply** (`THREAD_REPLY`): the coordinator forwards it to the thread's specialist, answers in
@@ -81,7 +86,39 @@ internal class CoordinatorEngine(
 
         /** What the coordinator is told of the project's folder, in the main conversation; a thread's turn is about its task. */
         private fun projectFolder(workers: List<String>): String? =
-            if (claim.message.threadId == null) projectFolderNote(call.folders, workers) else null
+            if (claim.message.threadId == null) projectFolderNote(call.folders, workers, readable = canRead()) else null
+
+        /** Reads project files for the coordinator, within this message's allowance. */
+        private val reader by lazy { ProjectReader(PathGuard(call.folders)) }
+
+        /** The person said no to reading in this message: the coordinator is not offered it again. */
+        private var readDeclined = false
+
+        /** Whether the coordinator may ask to be read files now: the main conversation of a project with a folder, with allowance left. */
+        private fun canRead(): Boolean =
+            claim.message.threadId == null && !readDeclined && call.folders.working != null && reader.possible && !reader.spent
+
+        /**
+         * Answers the coordinator's `read`: asks the person the first time in this conversation, reads what the path
+         * check allows, and says in the conversation what was read. The answer is what the coordinator's next request
+         * carries as `projectFiles`.
+         */
+        private fun read(asked: CoordinatorDecision.Read, coordinator: BrainRoleSnapshot): String {
+            val folder = call.folders.working ?: return READING_UNAVAILABLE
+            if (!canRead()) return READING_UNAVAILABLE
+            val member = coordinator.binding.member()
+            if (!startOfWork.isConfirmed(conversationId, projectId, folder, member, ApprovedFor.READ)) {
+                val approved = approvals.ask(scope(null), ApprovalKind.READ_FILES, readFilesDialog(companion, folder, member),
+                    listOf(ApprovalOption.CONTINUE to true, ApprovalOption.NOT_NOW to false), cancel) == true
+                call.live()
+                if (!approved) { readDeclined = true; return READING_DECLINED }
+                startOfWork.remember(conversationId, projectId, folder, member, ApprovedFor.READ)
+            }
+            val result = reader.answer(asked)
+            log(LogLevel.Info, "conversations", "coordinator read files=${result.read.size} refused=${result.refused.size} chars=${result.text.length}")
+            result.line()?.let { publishReport(ConversationCommunication.Progress(it)) }
+            return result.text.ifEmpty { "Nothing was read." }
+        }
 
         /** What the project's folder holds, built once for this message; null in a thread and for a project with no folder. */
         private val projectBrief: String? by lazy { if (claim.message.threadId == null) projectBrief(call.folders) else null }
@@ -222,15 +259,22 @@ internal class CoordinatorEngine(
             val recent = if (conversation != null) emptyList() else claim.history.filter { it.id != message.id && it.threadId == null }
                 .takeLast(10).map { it.author.name.lowercase() to it.text }
             var raw = ""
-            for (attempt in 0..1) {
-                val stream = ReplyStream(headed = true, optionalHeader = message.direction == null, acceptHeader = ::acceptsDirectionHeader, onUnderstanding = ::publishUnderstanding, onProgress = { publishReport(it) }) { firstWord(); out.delta(replyId, threadId, it) }
-                val context = record.brain.coordinatorContexts[key]?.takeIf { it.personaHash == persona.hash }
-                val input = directionInput() + if (attempt == 1) DIRECTION_REPORT_REQUIRED else ""
-                raw = turns.talk(call, role, persona, directInput(input, claim.recalledMemory, recent, spoken, projectFolder(emptyList()), projectBrief), context, key,
-                    coordinator = true, stream = stream, opened = rememberCoordinator(key)).first.trim().take(CompanionLimits.MESSAGE)
-                if (acceptsDirectionHeader(splitHeader(raw).first)) break
+            var files: String? = null
+            // The coordinator may ask to be read files before it answers; each round is one more turn.
+            for (round in 0..ReadLimits.ROUNDS) {
+                for (attempt in 0..1) {
+                    val stream = ReplyStream(headed = true, optionalHeader = message.direction == null, acceptHeader = ::acceptsDirectionHeader, onUnderstanding = ::publishUnderstanding, onProgress = { publishReport(it) }) { firstWord(); out.delta(replyId, threadId, it) }
+                    val context = record.brain.coordinatorContexts[key]?.takeIf { it.personaHash == persona.hash }
+                    val input = directionInput() + if (attempt == 1) DIRECTION_REPORT_REQUIRED else ""
+                    raw = turns.talk(call, role, persona, directInput(input, claim.recalledMemory, recent.takeIf { context == null }.orEmpty(), spoken,
+                        projectFolder(emptyList()), projectBrief, files, reading = canRead()), context, key,
+                        coordinator = true, stream = stream, opened = rememberCoordinator(key)).first.trim().take(CompanionLimits.MESSAGE)
+                    if (acceptsDirectionHeader(splitHeader(raw).first)) break
+                }
+                check(acceptsDirectionHeader(splitHeader(raw).first)) { "Direction acknowledgement was not provided" }
+                files = read(directReadRequest(raw) ?: break, role)
             }
-            check(acceptsDirectionHeader(splitHeader(raw).first)) { "Direction acknowledgement was not provided" }
+            check(directReadRequest(raw) == null) { "The coordinator asked to read again instead of answering" }
             val answer = parseDirectCoordinatorReply(raw)
             publishReportHeader(raw, answer = true)
             understandingHeader(splitHeader(raw).first).second?.let(::publishUnderstanding)
@@ -357,15 +401,23 @@ internal class CoordinatorEngine(
                 append(MessageAuthor.SYSTEM, hint.requestId, "Jev recommends ${role.name}. This is advisory; the coordinator decides.", null)
             }
 
-            val (decision, replyId) = decide(coordinator, allowed, null) { kinds ->
-                val input = handoff(current.artifacts.filter { it.id in current.inputs }.map { it.id }, files = false)
-                val latest = current.attempts.lastOrNull()?.outputIds?.let { handoff(it, files = false) } ?: ""
-                val request = coordinatorRequest(uuid(), current, kinds, input, latest, record.brain.messages.takeLast(10),
-                    described(current.configuration))
-                conversationRequest(request, claim.recalledMemory, hint, spoken,
-                    projectFolder(current.configuration.specialists.filter { it.mode == MemberMode.WORK && it.binding != null }.map { it.name }),
-                    projectBrief, teamNotes())
-            } ?: run {
+            var files: String? = null
+            var decided: Pair<CoordinatorDecision, String>?
+            // A `read` is answered here and the coordinator is asked again, until it decides something for the run.
+            while (true) {
+                val offered = if (DecisionKind.ANSWER in allowed && canRead()) allowed + DecisionKind.READ else allowed
+                decided = decide(coordinator, offered, null) { kinds ->
+                    val input = handoff(current.artifacts.filter { it.id in current.inputs }.map { it.id }, files = false)
+                    val latest = current.attempts.lastOrNull()?.outputIds?.let { handoff(it, files = false) } ?: ""
+                    val request = coordinatorRequest(uuid(), current, kinds, input, latest, record.brain.messages.takeLast(10),
+                        described(current.configuration))
+                    conversationRequest(request, claim.recalledMemory, hint, spoken,
+                        projectFolder(current.configuration.specialists.filter { it.mode == MemberMode.WORK && it.binding != null }.map { it.name }),
+                        projectBrief, teamNotes(), files)
+                }
+                files = read(decided?.first as? CoordinatorDecision.Read ?: break, coordinator)
+            }
+            val (decision, replyId) = decided ?: run {
                 change { it.paused(INVALID_DECISION, BrainWaitingKind.INPUT) }
                 return
             }

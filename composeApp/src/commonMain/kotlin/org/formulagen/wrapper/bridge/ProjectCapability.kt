@@ -2,6 +2,7 @@ package org.formulagen.wrapper.bridge
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.formulagen.wrapper.conversation.TeamMember
 import org.formulagen.wrapper.util.takeWhole
 import kotlin.time.Duration.Companion.minutes
 
@@ -20,7 +21,59 @@ interface ProjectCapability {
     /** Forgets the folder. It does not touch the folder or its files. */
     suspend fun forgetFolder(args: ProjectForgetFolderArgs): ProjectFoldersStatus
     suspend fun folderStatus(scope: ProjectScope): ProjectFoldersStatus
+    /** Whether the conversation has a folder of outputs on this Mac, and whether it holds them all. Never a path. */
+    suspend fun outputsFolder(args: ProjectConversationArgs): ProjectOutputsFolder = ProjectOutputsFolder(ProjectOutputsFolder.NONE)
+    /** Shows the conversation's folder of outputs in the Mac's file browser. */
+    suspend fun showOutputs(args: ProjectConversationArgs): ProjectShowOutputsResult = ProjectShowOutputsResult("unavailable")
+    /** The approvals this Mac keeps for the project, so it does not ask again. */
+    suspend fun approvals(scope: ProjectScope): ProjectApprovals = ProjectApprovals(emptyList())
+    /** Forgets one approval and answers those left: the next time, the Mac asks. */
+    suspend fun withdrawApproval(args: ProjectWithdrawApprovalArgs): ProjectApprovals = ProjectApprovals(emptyList())
 }
+
+/** A conversation of a project this Mac runs. */
+@Serializable
+data class ProjectConversationArgs(val projectId: String, val conversationId: String)
+
+/** `none` until the conversation has an output, `behind` while one could not be written there, `ready` otherwise. */
+@Serializable
+data class ProjectOutputsFolder(val state: String) {
+    init { require(state in STATES) }
+    companion object {
+        const val NONE = "none"
+        const val READY = "ready"
+        const val BEHIND = "behind"
+        val STATES = setOf(NONE, READY, BEHIND)
+    }
+}
+
+/** `shown`, or `unavailable` when the conversation has no folder yet. */
+@Serializable
+data class ProjectShowOutputsResult(val status: String)
+
+/**
+ * A yes this Mac keeps: [member] may `work` in the project's folder, or the coordinator as [member] may be `read` its
+ * files, in one conversation. [id] names it for a withdrawal and says nothing of the folder.
+ */
+@Serializable
+data class ProjectApproval(val conversationId: String, val id: String, val member: TeamMember, val purpose: String) {
+    init { require(SharedRules.isRecordId(conversationId) && APPROVAL_ID.matches(id) && purpose in PURPOSES) }
+    companion object {
+        val PURPOSES = setOf("work", "read")
+        internal val APPROVAL_ID = Regex("^[0-9a-f]{64}$")
+        /** `PROJECT_APPROVALS_LIMIT`. */
+        const val LIMIT = 200
+    }
+}
+
+/** The approvals kept for a project, oldest first. */
+@Serializable
+data class ProjectApprovals(val approvals: List<ProjectApproval>) {
+    init { require(approvals.size <= ProjectApproval.LIMIT) }
+}
+
+@Serializable
+data class ProjectWithdrawApprovalArgs(val projectId: String, val approvalId: String)
 
 @Serializable
 data class ProjectOpenOutputArgs(val projectId: String, val conversationId: String, val artifactId: String)
@@ -157,6 +210,19 @@ object ProjectMethods {
         SharedRules.isRecordId(it.projectId)
     }
 
+    val OUTPUTS_FOLDER = BridgeMethod("project.outputsFolder", ProjectConversationArgs.serializer(), ProjectOutputsFolder.serializer()) {
+        SharedRules.isRecordId(it.projectId) && SharedRules.isRecordId(it.conversationId)
+    }
+    val SHOW_OUTPUTS = BridgeMethod("project.showOutputs", ProjectConversationArgs.serializer(), ProjectShowOutputsResult.serializer()) {
+        SharedRules.isRecordId(it.projectId) && SharedRules.isRecordId(it.conversationId)
+    }
+    val APPROVALS = BridgeMethod("project.approvals", ProjectScope.serializer(), ProjectApprovals.serializer()) {
+        SharedRules.isRecordId(it.projectId)
+    }
+    val WITHDRAW_APPROVAL = BridgeMethod("project.withdrawApproval", ProjectWithdrawApprovalArgs.serializer(), ProjectApprovals.serializer()) {
+        SharedRules.isRecordId(it.projectId) && ProjectApproval.APPROVAL_ID.matches(it.approvalId)
+    }
+
     fun pack(project: Capability<ProjectCapability>): CapabilityPack = binder.pack(project)
 
     internal val binder = CapabilityBinder("project", listOf<CapabilityHandler<ProjectCapability>>(
@@ -165,5 +231,9 @@ object ProjectMethods {
         CHOOSE_FOLDER.handle { project, args -> project.chooseFolder(args) },
         FORGET_FOLDER.handle { project, args -> project.forgetFolder(args) },
         FOLDER_STATUS.handle { project, scope -> project.folderStatus(scope) },
+        OUTPUTS_FOLDER.handle { project, args -> project.outputsFolder(args) },
+        SHOW_OUTPUTS.handle { project, args -> project.showOutputs(args) },
+        APPROVALS.handle { project, scope -> project.approvals(scope) },
+        WITHDRAW_APPROVAL.handle { project, args -> project.withdrawApproval(args) },
     ))
 }

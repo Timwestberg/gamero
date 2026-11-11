@@ -4,6 +4,15 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
+import org.formulagen.wrapper.approvals.ApprovedFor
+import org.formulagen.wrapper.approvals.StartOfWork
+import org.formulagen.wrapper.bridge.ProjectApproval
+import org.formulagen.wrapper.bridge.ProjectApprovals
+import org.formulagen.wrapper.bridge.ProjectConversationArgs
+import org.formulagen.wrapper.bridge.ProjectOutputsFolder
+import org.formulagen.wrapper.bridge.ProjectShowOutputsResult
+import org.formulagen.wrapper.bridge.ProjectWithdrawApprovalArgs
+import org.formulagen.wrapper.conversation.TeamMember
 import org.formulagen.wrapper.bridge.ProjectOpenOutputArgs
 import org.formulagen.wrapper.bridge.ProjectOpenOutputResult
 import org.formulagen.wrapper.bridge.FolderRole
@@ -37,7 +46,47 @@ internal class DesktopProjects(
     /** Whether the account says the project runs on this Mac; null when it cannot be asked now. */
     private val owns: (accountId: String, projectId: String) -> Boolean? = { _, _ -> null },
     private val output: (String, ProjectOpenOutputArgs) -> ProjectOpenOutputResult = { _, _ -> ProjectOpenOutputResult("unavailable") },
+    /** The folders the person opens in Finder. */
+    private val visible: CompanionFolders = CompanionFolders.NONE,
+    /** The approvals the connected account's runner keeps; null while this Mac is not connected. */
+    private val kept: (accountId: String) -> StartOfWork? = { null },
 ) : ProjectCapability {
+    override suspend fun outputsFolder(args: ProjectConversationArgs): ProjectOutputsFolder = runInterruptible(Dispatchers.IO) {
+        val accountId = ours(args.projectId)
+        ProjectOutputsFolder(when (visible.state(accountId, args.conversationId)) {
+            FolderState.NONE -> ProjectOutputsFolder.NONE
+            FolderState.READY -> ProjectOutputsFolder.READY
+            FolderState.BEHIND -> ProjectOutputsFolder.BEHIND
+        })
+    }
+
+    override suspend fun showOutputs(args: ProjectConversationArgs): ProjectShowOutputsResult = runInterruptible(Dispatchers.IO) {
+        val accountId = ours(args.projectId)
+        ProjectShowOutputsResult(if (visible.show(accountId, args.conversationId)) "shown" else "unavailable")
+    }
+
+    override suspend fun approvals(scope: ProjectScope): ProjectApprovals = runInterruptible(Dispatchers.IO) {
+        approvalsOf(ours(scope.projectId), scope.projectId)
+    }
+
+    override suspend fun withdrawApproval(args: ProjectWithdrawApprovalArgs): ProjectApprovals = runInterruptible(Dispatchers.IO) {
+        val accountId = ours(args.projectId)
+        kept(accountId)?.withdraw(args.projectId, args.approvalId)
+        approvalsOf(accountId, args.projectId)
+    }
+
+    /** The approvals kept for [projectId], oldest first, as the page sees them: no folder, the newest when there are too many. */
+    private fun approvalsOf(accountId: String, projectId: String) = ProjectApprovals(kept(accountId)?.kept(projectId).orEmpty()
+        .takeLast(ProjectApproval.LIMIT).map { approved ->
+            ProjectApproval(approved.conversationId, approved.id, TeamMember(approved.runtimeId, approved.modelId),
+                if (approved.purpose == ApprovedFor.READ) "read" else "work")
+        })
+
+    /** The connected account, once it says [projectId] runs on this Mac. */
+    private fun ours(projectId: String): String = registered().also { accountId ->
+        check(owns(accountId, projectId) == true) { "Connect to verify this project belongs to this Mac" }
+    }
+
     override suspend fun openOutput(args: ProjectOpenOutputArgs): ProjectOpenOutputResult = runInterruptible(Dispatchers.IO) {
         val accountId = registered()
         check(owns(accountId, args.projectId) == true) { "Connect to verify this project belongs to this Mac" }

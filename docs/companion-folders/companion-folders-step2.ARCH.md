@@ -378,6 +378,46 @@ instead of a set. That is the whole change for start of work.
 - **The visible `notes.md` is removed when the notes are erased**, at the
   conversation's next message. It is Hovel's copy, not the person's file.
 
+### What changed while building slice 2b
+
+- **The folders that can be read are the working folder and the read-only
+  folders.** The conversation's visible folder is left out: the run already
+  hands the coordinator every output.
+- **A read-only folder is named `[its name]/…`**, as an approval already
+  shows one. A path in the working folder is plain: `src/app.ts`.
+- **`PathGuard` has three refusals, not four.** `OUTSIDE`, `SKIPPED` and
+  `MISSING`. Whether a file is text is the reader's to find out, since it
+  must open the file to know.
+- **An absolute path is refused even when it points into the folder.** The
+  coordinator never learns one, so one it sends is not one Hovel gave it.
+- **The fields of `read` are optional, not empty by default.** The strict
+  reader writes a decision back and compares it with what came; a default
+  empty list does not survive that. A `read` that asks for nothing is
+  refused.
+- **`read` is offered only where `answer` is.** While the coordinator grades
+  an attempt or picks the next step it is not offered.
+- **A brain with no specialists is taught `read` in its turn**, not in its
+  persona, because its persona has no protocol. The engine recognises a
+  reply that is only a `read` header.
+- **A no to reading holds for the message.** `read` leaves the allowed kinds
+  and the coordinator is told why. A no is never kept, so the next message
+  may ask again.
+- **An older server needs no fallback code.** `RemoteApprovals` already shows
+  the Mac's dialog alone when the server refuses the checkpoint, which is
+  what a server that does not know `read-files` does.
+- **A search stops after 1,500 files, 3 seconds or 40 lines**, and says when
+  it stopped early. A file over 200,000 bytes is not searched, and only its
+  start is read.
+- **`StartOfWork` keeps both purposes.** `isConfirmed` and `remember` take
+  `ApprovedFor`, and `kept` and `withdraw` serve the settings list. A
+  second class would have held the same ten lines.
+- **An approval is named by the SHA-256 of its fields.** The page withdraws
+  by that name and never sees the folder. `approvals.json` did not change.
+- **The reading approval names the working folder.** The read-only folders
+  come with it.
+- **The contract mirrors `read`** in its internal `coordinatorDecision`, with
+  the same bounds (`READ_REQUEST_LIMITS`).
+
 ## Slices
 
 **Slice 2a, gamero only.** The project brief; the notes log, its place in
@@ -385,7 +425,7 @@ every turn and `notes.md`; approvals remembered across restarts for start
 of work; a log line that times the coordinator's first word. No contract
 change.
 
-**Slice 2b, needs server-platform first.** Reading: the path check, the
+**Slice 2b, built.** Reading: the path check, the
 `read` decision, the allowance and the progress line; the `read-files`
 approval; the list of approvals and the withdrawal in the project's
 settings; the line in the settings that says what the brief sends.

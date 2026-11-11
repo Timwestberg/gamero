@@ -86,6 +86,20 @@ internal data class RecordedOutput(
     val at: Instant,
 )
 
+/** Whether a conversation has a visible folder, and whether it holds every output. */
+internal enum class FolderState {
+    /** No folder yet: the conversation has produced no output, or this Mac keeps no visible folders. */
+    NONE,
+    READY,
+    /** The last sync could not write something there; it is tried again at the conversation's next message. */
+    BEHIND,
+}
+
+/** The conversations and companions this Mac keeps a visible folder for, or those of them the account no longer has. */
+internal data class FolderIds(val companionIds: Set<String> = emptySet(), val conversationIds: Set<String> = emptySet()) {
+    val isEmpty: Boolean get() = companionIds.isEmpty() && conversationIds.isEmpty()
+}
+
 /** The visible folders as the conversation engine sees them. */
 internal fun interface CompanionFolders {
     /**
@@ -94,6 +108,21 @@ internal fun interface CompanionFolders {
      * repeat, and it never throws: what could not be written is tried again at the next call.
      */
     fun sync(names: FolderNames, outputs: List<RecordedOutput>, notes: List<TeamNote>, bytes: (ArtifactRef) -> ByteArray)
+
+    /** Whether [conversationId] has a visible folder, and whether it is up to date. */
+    fun state(accountId: String, conversationId: String): FolderState = FolderState.NONE
+
+    /** Shows [conversationId]'s folder in Finder. False when it has none. */
+    fun show(accountId: String, conversationId: String): Boolean = false
+
+    /** Every conversation and companion of [accountId] a folder is kept for. */
+    fun kept(accountId: String): FolderIds = FolderIds()
+
+    /**
+     * The account no longer has [gone]: each of their folders is moved to the Trash, where the person can still get it
+     * back, and forgotten. A folder is moved only when its marker says it is that conversation's or companion's.
+     */
+    fun gone(accountId: String, gone: FolderIds) {}
 
     companion object {
         /** A Mac that keeps no visible folders, and every test that does not ask for them. */

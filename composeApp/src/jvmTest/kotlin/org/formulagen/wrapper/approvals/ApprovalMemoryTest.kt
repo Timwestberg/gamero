@@ -65,4 +65,26 @@ class ApprovalMemoryTest {
         assertEquals("{ not json", Files.readString(file), "nothing is assumed and nothing is overwritten")
         assertFalse(memory.has(work))
     }
+
+    @Test fun aKeptApprovalHasANameThatSaysNothingOfTheFolderAndCanBeWithdrawnByIt() {
+        val start = StartOfWork(ApprovalMemory(root, account))
+        start.remember(conversation, project, folder, codex)
+        start.remember(conversation, project, folder, codex, ApprovedFor.READ)
+        start.remember(conversation, UUID.randomUUID().toString(), folder, codex)
+        val kept = start.kept(project)
+        assertEquals(listOf(ApprovedFor.WORK, ApprovedFor.READ), kept.map { it.purpose })
+        assertTrue(kept.all { Regex("^[0-9a-f]{64}$").matches(it.id) }, kept.map { it.id }.toString())
+        assertEquals(2, kept.map { it.id }.toSet().size, "reading and working are two approvals")
+        assertEquals(kept[0].id, kept[0].copy().id, "the same approval always has the same name")
+        // Reading is taken back: working stays, and reading asks again, after a restart too.
+        start.withdraw(project, kept[1].id)
+        assertFalse(start.isConfirmed(conversation, project, folder, codex, ApprovedFor.READ))
+        assertTrue(start.isConfirmed(conversation, project, folder, codex))
+        val restarted = StartOfWork(ApprovalMemory(root, account))
+        assertEquals(listOf(ApprovedFor.WORK), restarted.kept(project).map { it.purpose })
+        // A name of another project's approval, or of none, changes nothing.
+        restarted.withdraw(UUID.randomUUID().toString(), kept[0].id)
+        restarted.withdraw(project, "0".repeat(64))
+        assertTrue(restarted.isConfirmed(conversation, project, folder, codex))
+    }
 }

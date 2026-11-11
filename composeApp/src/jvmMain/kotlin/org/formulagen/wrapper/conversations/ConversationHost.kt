@@ -17,6 +17,8 @@ import org.formulagen.wrapper.util.loggingDaemonThreads
 import org.formulagen.wrapper.closeInReverse
 import org.formulagen.wrapper.hovel.HostConnection
 import org.formulagen.wrapper.hovel.HovelStatusException
+import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.workspace.ThreadEditStore
 
 /**
@@ -59,6 +61,8 @@ internal class ConversationHost(
         val publisher: ProjectFolderPublisher,
         val readableBy: () -> List<RuntimeId>,
         val owns: (projectId: String) -> Boolean?,
+        /** The approvals this account gave on this Mac. */
+        val approvals: StartOfWork,
     )
 
     /** `project.*` for the page: answers `failed` until this Mac is connected to an account, and for another Mac's project. */
@@ -73,6 +77,8 @@ internal class ConversationHost(
             val current = checkNotNull(running?.takeIf { it.accountId == accountId }) { "The connected account changed; retry" }
             openProviderOutput(current.store.read(args.conversationId), args)
         },
+        visible = companionFolders,
+        kept = { accountId -> running?.takeIf { it.accountId == accountId }?.approvals },
     )
 
     /** Start the runner for [connection]'s account. Closing the answer stops it and its runtimes. */
@@ -93,7 +99,8 @@ internal class ConversationHost(
                 mac = SharedRules.dialogName(registration.name, THIS_MAC))
             val cleanup = connection.cleanup
             cleanup?.register(store::eraseContext)
-            val engine = CoordinatorEngine(store, folders, turns, approvals, StartOfWork(ApprovalMemory(providerRoot, registration.ownerId)), api, editStore,
+            val startOfWork = StartOfWork(ApprovalMemory(providerRoot, registration.ownerId))
+            val engine = CoordinatorEngine(store, folders, turns, approvals, startOfWork, api, editStore,
                 { cleanup?.check() }, companionFolders)
             val guarded = MessageEngine { claim, output, cancel, closing ->
                 if (cleanup == null) engine.run(claim, output, cancel, closing)
@@ -112,8 +119,10 @@ internal class ConversationHost(
                 listSuggestionsRequested = connection.listSuggestions, contextReady = { cleanup?.ready ?: true })
             owned += runner
             val onThisMac = ProjectsOnThisMac(api, folders, registration.ownerId, registration.id, publishing)
-            running = Running(registration.ownerId, store, publisher, engine::readableBy, onThisMac::isOnThisMac)
+            running = Running(registration.ownerId, store, publisher, engine::readableBy, onThisMac::isOnThisMac, startOfWork)
             runner.start()
+            // A delete made while this Mac was off reaches its disk here. It never holds the connection back.
+            runCatching { publishing.execute { discardDeletedFolders(api, companionFolders, registration.ownerId) } }
             voice?.connected(heardTurns(api, runner))
             return AutoCloseable {
                 running = null
@@ -146,6 +155,31 @@ internal class ConversationHost(
                 if (!refusal.final) null else folders.answered(accountId, projectId, null, request)
             } catch (_: Exception) {
                 null
+            }
+        }
+
+        /**
+         * Asks the account which of the conversations and companions [folders] keeps a folder for it no longer has, and
+         * moves those folders to the Trash. A server older than the route, or one that cannot be reached, changes nothing:
+         * the next connect asks again.
+         */
+        internal fun discardDeletedFolders(api: ConversationApi, folders: CompanionFolders, accountId: String) {
+            try {
+                val kept = folders.kept(accountId)
+                if (kept.isEmpty) return
+                val companions = kept.companionIds.chunked(FoldersKept.LIMIT)
+                val conversations = kept.conversationIds.chunked(FoldersKept.LIMIT)
+                for (index in 0 until maxOf(companions.size, conversations.size)) {
+                    val asked = FoldersKept(companions.getOrElse(index) { emptyList() }, conversations.getOrElse(index) { emptyList() })
+                    val gone = api.foldersGone(asked)
+                    // Only what was asked about can be gone, whatever the answer holds.
+                    folders.gone(accountId, FolderIds(gone.companionIds.toSet().intersect(asked.companionIds.toSet()),
+                        gone.conversationIds.toSet().intersect(asked.conversationIds.toSet())))
+                }
+            } catch (refusal: HovelStatusException) {
+                if (!refusal.final) log(LogLevel.Warn, "companion-folders", "The account could not say which conversations were deleted", refusal)
+            } catch (error: Exception) {
+                log(LogLevel.Warn, "companion-folders", "The account could not say which conversations were deleted", error)
             }
         }
 

@@ -275,6 +275,41 @@ pure rules, which need no disk to test.
 - **A conversation older than the folders is dated by its first output's own
   date**, not the day it was written out.
 
+### What changed while building slice 1b
+
+- **One route, `POST /folders/gone`.** The Mac sends `foldersKept` (the
+  conversation and companion ids it keeps a folder for, at most 500 of
+  each per call) and the server answers `foldersGone`, those of them the
+  account no longer has. Only a delete answers there: an archived
+  conversation, and one whose project moved to another computer, is still
+  the account's.
+- **The Mac takes only what it asked about.** An id in the answer that was
+  not in the question changes nothing.
+- **A server older than the route changes nothing.** It answers 404, which
+  the Mac reads as "nothing is gone" and does not log. The next connect
+  asks again. So the staged app is safe against a server that has not been
+  released yet.
+- **A folder the Trash refuses stays in the ledger**, so the next connect
+  tries again. A folder the person already removed is only forgotten.
+- **`behind` is kept in memory, not in the ledger.** It is true after a sync
+  that failed and false after one that did not. After a restart it is
+  unknown until the conversation's next message, and the page then shows no
+  notice. A ledger field would only say what the next sync finds out anyway.
+- **Two bridge methods, not a field.** `project.outputsFolder` answers
+  `none`, `ready` or `behind`; `project.showOutputs` opens the folder. No
+  path crosses the bridge.
+- **`VisibleFolders` takes `reveal` and `trash` as functions**, so a test
+  watches Finder and the Trash without a desktop.
+
+### A limit to know: the Trash trusts the account's answer
+
+The Mac moves a folder to the Trash because the account says the
+conversation is not there. An account pointed at the wrong database (a
+fresh one, in development) would say that of every conversation. The
+folders would then all go to the Trash, where the person can put them
+back. The Trash, and not a delete, is what makes this acceptable. A record
+of deletes on the server would be the stronger design, and is deferred.
+
 ## Slices
 
 The spec's five tasks for step 1 fall into two slices, because of finding 3.
@@ -283,7 +318,7 @@ The spec's five tasks for step 1 fall into two slices, because of finding 3.
 `index.md`, existing conversations at their next message. No contract
 change. A file write that fails is logged; the page is not told yet.
 
-**Slice 1b, needs server-platform first.** Each part needs a contract change:
+**Slice 1b, built.** Each part needed a contract change:
 
 - *Delete to the Trash.* A host route the Mac calls when it connects: it
   sends the conversation and companion ids it has folders for, and the

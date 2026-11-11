@@ -51,6 +51,12 @@ internal interface ConversationApi {
     /** One page of an artifact's text, from character [cursor]. */
     fun artifactText(artifactId: String, cursor: Int): ArtifactTextPage
 
+    /**
+     * Which of [kept], the conversations and companions this Mac keeps a folder for, the account no longer has. A
+     * server older than the route refuses it for good (`HovelStatusException`), and then nothing is gone.
+     */
+    fun foldersGone(kept: FoldersKept): FoldersKept = FoldersKept()
+
     /** Ephemeral preview transport, never journaled as conversation output. */
     fun imageWork(requestId: String): ImageRelayWork = throw UnsupportedOperationException()
     fun imageChunk(requestId: String, chunk: JsonObject) { throw UnsupportedOperationException() }
@@ -97,6 +103,9 @@ internal class HttpConversationApi(private val exchange: NativeExchange, private
 
     override fun artifactText(artifactId: String, cursor: Int): ArtifactTextPage =
         fromWire(ArtifactTextPage.serializer(), send(NativeRoute.ARTIFACT_TEXT, NativeRoute.ARTIFACT_TEXT.path(artifactId, cursor = cursor), null))
+
+    override fun foldersGone(kept: FoldersKept): FoldersKept =
+        fromWire(FoldersKept.serializer(), send(NativeRoute.FOLDERS_GONE, NativeRoute.FOLDERS_GONE.path(), wire(FoldersKept.serializer(), kept)))
 
     override fun imageWork(requestId: String): ImageRelayWork =
         fromWire(ImageRelayWork.serializer(), send(NativeRoute.IMAGE_RELAY_READ, NativeRoute.IMAGE_RELAY_READ.path(requestId), null))

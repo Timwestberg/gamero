@@ -219,6 +219,56 @@ class ProjectFoldersTest {
         assertFails { projects.folderStatus(ProjectScope(project)) }
     }
 
+    @Test fun theBridgeListsTheApprovalsThisMacKeepsAndTakesOneBack() = runBlocking<Unit> {
+        val conversation = id()
+        val kept = org.formulagen.wrapper.approvals.StartOfWork()
+        var verdict: Boolean? = true
+        val projects = DesktopProjects(store, { account }, { emptyList() }, changed = { _, _ -> }, owns = { _, _ -> verdict },
+            kept = { accountId -> kept.takeIf { accountId == account } })
+        assertEquals(ProjectApprovals(emptyList()), projects.approvals(ProjectScope(project)))
+        val member = org.formulagen.wrapper.conversation.TeamMember(RuntimeId.CODEX, "gpt-6-luna")
+        kept.remember(conversation, project, disk.resolve("hovel-notes"), member)
+        kept.remember(conversation, project, disk.resolve("hovel-notes"), member, org.formulagen.wrapper.approvals.ApprovedFor.READ)
+        kept.remember(conversation, id(), disk.resolve("other"), member)
+        val listed = projects.approvals(ProjectScope(project))
+        assertEquals(listOf("work", "read"), listed.approvals.map { it.purpose })
+        assertTrue(listed.approvals.all { it.conversationId == conversation && it.member == member })
+        assertFalse(bridgeJson.encodeToString(ProjectApprovals.serializer(), listed).contains(disk.toString()), "never a path")
+        val after = projects.withdrawApproval(ProjectWithdrawApprovalArgs(project, listed.approvals.last().id))
+        assertEquals(listOf("work"), after.approvals.map { it.purpose })
+        assertFalse(kept.isConfirmed(conversation, project, disk.resolve("hovel-notes"), member, org.formulagen.wrapper.approvals.ApprovedFor.READ))
+        // Only for a project the account gives this Mac.
+        verdict = false
+        assertFails { projects.approvals(ProjectScope(project)) }
+        assertFails { projects.withdrawApproval(ProjectWithdrawApprovalArgs(project, listed.approvals.first().id)) }
+        assertTrue(kept.isConfirmed(conversation, project, disk.resolve("hovel-notes"), member))
+    }
+
+    @Test fun theBridgeSaysWhetherAConversationHasAFolderAndShowsIt() = runBlocking<Unit> {
+        val conversation = id()
+        val shown = mutableListOf<String>()
+        var state = FolderState.NONE
+        val visible = object : CompanionFolders {
+            override fun sync(names: FolderNames, outputs: List<RecordedOutput>, notes: List<TeamNote>, bytes: (ArtifactRef) -> ByteArray) {}
+            override fun state(accountId: String, conversationId: String) = state
+            override fun show(accountId: String, conversationId: String): Boolean { shown += conversationId; return state != FolderState.NONE }
+        }
+        var verdict: Boolean? = true
+        val projects = DesktopProjects(store, { account }, { emptyList() }, changed = { _, _ -> }, owns = { _, _ -> verdict }, visible = visible)
+        val args = ProjectConversationArgs(project, conversation)
+        assertEquals(ProjectOutputsFolder("none"), projects.outputsFolder(args))
+        assertEquals(ProjectShowOutputsResult("unavailable"), projects.showOutputs(args))
+        state = FolderState.BEHIND
+        assertEquals(ProjectOutputsFolder("behind"), projects.outputsFolder(args))
+        state = FolderState.READY
+        assertEquals(ProjectOutputsFolder("ready"), projects.outputsFolder(args))
+        assertEquals(ProjectShowOutputsResult("shown"), projects.showOutputs(args))
+        assertEquals(listOf(conversation, conversation), shown)
+        verdict = null
+        assertFails("only once the account says the project is this Mac's") { projects.showOutputs(args) }
+        assertFails { projects.outputsFolder(args) }
+    }
+
     @Test fun folderStatusAnswersOnlyForAProjectTheAccountGivesThisMac() = runBlocking<Unit> {
         var verdict: Boolean? = null
         val projects = DesktopProjects(store, { account }, { emptyList() }, changed = { _, _ -> }, owns = { _, _ -> verdict })

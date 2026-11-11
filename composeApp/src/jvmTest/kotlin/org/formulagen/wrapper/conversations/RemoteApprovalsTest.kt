@@ -162,6 +162,8 @@ class RemoteApprovalsTest {
         assertTrue(MacApprovalLabels.of(ApprovalKind.PERMISSION, ApprovalOption.DENY) in permission, permission.toString())
         val start = org.formulagen.wrapper.approvals.startOfWorkDialog("Ember", working, member).buttons.map { it.first }
         assertEquals(listOf(ApprovalOption.CONTINUE, ApprovalOption.NOT_NOW).map { MacApprovalLabels.of(ApprovalKind.START_OF_WORK, it) }, start)
+        val reading = org.formulagen.wrapper.approvals.readFilesDialog("Ember", working, member).buttons.map { it.first }
+        assertEquals(listOf(ApprovalOption.CONTINUE, ApprovalOption.NOT_NOW).map { MacApprovalLabels.of(ApprovalKind.READ_FILES, it) }, reading)
         // a stage and the resume review, built as the engine builds them (CoordinatorEngine's option order)
         val document = brain("Implementer" to org.formulagen.wrapper.conversation.MemberMode.WORK, workflow = true)
         val specialist = document.configuration.specialists.single()

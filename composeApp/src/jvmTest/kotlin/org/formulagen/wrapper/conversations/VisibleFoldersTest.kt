@@ -161,6 +161,112 @@ class VisibleFoldersTest {
         assertFalse(Files.exists(root), "nothing is written while the ledger cannot be trusted")
     }
 
+    // ---- Shown, behind, and gone -------------------------------------------------------------
+
+    private val revealed = ArrayList<java.nio.file.Path>()
+    private val trashed = ArrayList<String>()
+    private var trashWorks = true
+
+    /** Folders whose Finder and Trash the test watches: a trashed folder is deleted, as it leaves its place. */
+    private val watched = VisibleFolders(root, ledgers, ZoneOffset.UTC, reveal = { revealed.add(it) }, trash = { dir ->
+        if (trashWorks) { trashed.add(root.relativize(dir).toString()); dir.toFile().deleteRecursively() }
+        trashWorks
+    }) { at }
+
+    @Test fun aConversationsFolderIsShownOnceItHasOne() {
+        assertEquals(FolderState.NONE, watched.state(account, conversation))
+        assertFalse(watched.show(account, conversation), "nothing to show before the first output")
+        watched.sync(names(), listOf(output("# Spec")), emptyList()) { stored.getValue(it.id) }
+        assertEquals(FolderState.READY, watched.state(account, conversation))
+        assertTrue(watched.show(account, conversation))
+        assertEquals(listOf(root.resolve(home)), revealed)
+        // The person renamed it: it is still found, by its marker.
+        Files.move(root.resolve(home), root.resolve("Ember/conversations/Sign-in work"))
+        assertTrue(watched.show(account, conversation))
+        assertEquals(root.resolve("Ember/conversations/Sign-in work"), revealed.last())
+        // Another account never sees it.
+        assertEquals(FolderState.NONE, watched.state(id(), conversation))
+    }
+
+    @Test fun aFolderThatCouldNotBeWrittenIsBehindUntilItIs() {
+        val broken = output("# Broken")
+        val bytes = stored.remove(broken.artifact.id)!!
+        watched.sync(names(), listOf(broken), emptyList()) { stored.getValue(it.id) }
+        assertEquals(FolderState.BEHIND, watched.state(account, conversation))
+        stored[broken.artifact.id] = bytes
+        watched.sync(names(), listOf(broken), emptyList()) { stored.getValue(it.id) }
+        assertEquals(FolderState.READY, watched.state(account, conversation))
+    }
+
+    @Test fun aDeletedConversationsFolderGoesToTheTrashAndOnlyThatOne() {
+        val other = id()
+        watched.sync(names(), listOf(output("# Spec")), emptyList()) { stored.getValue(it.id) }
+        watched.sync(names(title = "Add sign-out", conversationId = other), listOf(output("# Sign-out")), emptyList()) { stored.getValue(it.id) }
+        assertEquals(FolderIds(setOf(companion), setOf(conversation, other)), watched.kept(account))
+        watched.gone(account, FolderIds(conversationIds = setOf(conversation, id())))
+        assertEquals(listOf(home), trashed)
+        assertEquals(FolderIds(setOf(companion), setOf(other)), watched.kept(account))
+        assertEquals(FolderState.NONE, watched.state(account, conversation))
+        assertTrue(Files.exists(root.resolve("Ember/conversations/2026-11-10 Add sign-out/outputs/01 Sign-out.md")), tree().toString())
+        // The companion goes: its folder goes whole, with the person's own files in it, and is still in the Trash.
+        Files.writeString(root.resolve("Ember/my notes.txt"), "mine")
+        watched.gone(account, FolderIds(companionIds = setOf(companion)))
+        assertEquals(listOf(home, "Ember"), trashed)
+        assertEquals(FolderIds(), watched.kept(account))
+    }
+
+    @Test fun aFolderIsTrashedOnlyWhenItsMarkerSaysItIsThatConversations() {
+        watched.sync(names(), listOf(output("# Spec")), emptyList()) { stored.getValue(it.id) }
+        // The person replaced the folder with one of their own under the same name: no marker, so it is not Hovel's.
+        root.resolve(home).toFile().deleteRecursively()
+        Files.createDirectories(root.resolve(home))
+        Files.writeString(root.resolve("$home/mine.txt"), "mine")
+        watched.gone(account, FolderIds(conversationIds = setOf(conversation)))
+        assertEquals(emptyList(), trashed)
+        assertEquals("mine", Files.readString(root.resolve("$home/mine.txt")))
+        assertEquals(emptySet(), watched.kept(account).conversationIds, "the folder Hovel made is gone, so it is forgotten")
+        // Another account's answer never reaches this account's folders.
+        watched.sync(names(), listOf(output("# Again")), emptyList()) { stored.getValue(it.id) }
+        watched.gone(id(), FolderIds(setOf(companion), setOf(conversation)))
+        assertEquals(emptyList(), trashed)
+    }
+
+    @Test fun aFolderTheTrashRefusesStaysAndIsTriedAgain() {
+        watched.sync(names(), listOf(output("# Spec")), emptyList()) { stored.getValue(it.id) }
+        trashWorks = false
+        watched.gone(account, FolderIds(conversationIds = setOf(conversation)))
+        assertTrue(Files.exists(root.resolve("$home/outputs/01 Spec.md")))
+        assertEquals(setOf(conversation), watched.kept(account).conversationIds, "still kept, so the next connect asks again")
+        trashWorks = true
+        watched.gone(account, FolderIds(conversationIds = setOf(conversation)))
+        assertEquals(listOf(home), trashed)
+    }
+
+    @Test fun atConnectTheAccountSaysWhichFoldersBelongToDeletedConversations() {
+        val other = id()
+        watched.sync(names(), listOf(output("# Spec")), emptyList()) { stored.getValue(it.id) }
+        watched.sync(names(title = "Add sign-out", conversationId = other), listOf(output("# Sign-out")), emptyList()) { stored.getValue(it.id) }
+        val asked = ArrayList<FoldersKept>()
+        var answer: (FoldersKept) -> FoldersKept = { FoldersKept() }
+        val server = object : ConversationApi by FakeServer() {
+            override fun foldersGone(kept: FoldersKept): FoldersKept { asked += kept; return answer(kept) }
+        }
+        // A server older than the route refuses it for good: nothing is gone.
+        answer = { throw org.formulagen.wrapper.hovel.HovelStatusException(404) }
+        ConversationHost.discardDeletedFolders(server, watched, account)
+        assertEquals(emptyList(), trashed)
+        assertEquals(FoldersKept(listOf(companion), listOf(conversation, other)).let { it.copy(conversationIds = it.conversationIds.sorted()) },
+            asked.single().let { it.copy(conversationIds = it.conversationIds.sorted()) })
+        // It names one deleted conversation, and an id nobody asked about, which changes nothing.
+        answer = { FoldersKept(listOf(id()), listOf(other, id())) }
+        ConversationHost.discardDeletedFolders(server, watched, account)
+        assertEquals(listOf("Ember/conversations/2026-11-10 Add sign-out"), trashed)
+        assertEquals(FolderIds(setOf(companion), setOf(conversation)), watched.kept(account))
+        // An account with no folders asks nothing.
+        ConversationHost.discardDeletedFolders(server, watched, id())
+        assertEquals(2, asked.size)
+    }
+
     @Test fun aFolderWithoutTheMarkerIsNeverTaken() {
         Files.createDirectories(root.resolve("Ember/conversations"))
         Files.writeString(root.resolve("Ember/notes.txt"), "the person's own folder")
