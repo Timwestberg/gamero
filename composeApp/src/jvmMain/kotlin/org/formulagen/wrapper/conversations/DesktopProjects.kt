@@ -6,7 +6,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import org.formulagen.wrapper.approvals.ApprovedFor
 import org.formulagen.wrapper.approvals.StartOfWork
+import org.formulagen.wrapper.bridge.CompanionScope
 import org.formulagen.wrapper.bridge.ProjectApproval
+import org.formulagen.wrapper.bridge.ProjectCleanStorageArgs
+import org.formulagen.wrapper.bridge.ProjectSetStorageLimitArgs
+import org.formulagen.wrapper.bridge.ProjectStorage
+import org.formulagen.wrapper.bridge.ProjectStorageConversation
 import org.formulagen.wrapper.bridge.ProjectApprovals
 import org.formulagen.wrapper.bridge.ProjectConversationArgs
 import org.formulagen.wrapper.bridge.ProjectOutputsFolder
@@ -74,6 +79,23 @@ internal class DesktopProjects(
         kept(accountId)?.withdraw(args.projectId, args.approvalId)
         approvalsOf(accountId, args.projectId)
     }
+
+    override suspend fun storage(scope: CompanionScope): ProjectStorage = runInterruptible(Dispatchers.IO) {
+        wire(visible.usage(registered(), scope.companionId))
+    }
+
+    override suspend fun setStorageLimit(args: ProjectSetStorageLimitArgs): ProjectStorage = runInterruptible(Dispatchers.IO) {
+        wire(visible.setLimit(registered(), args.companionId, args.limitBytes))
+    }
+
+    override suspend fun cleanStorage(args: ProjectCleanStorageArgs): ProjectStorage = runInterruptible(Dispatchers.IO) {
+        wire(visible.clean(registered(), args.companionId, args.conversationIds.toSet(), args.scratch))
+    }
+
+    /** A companion's folder as the page sees it: sizes and times, never a path. */
+    private fun wire(usage: FolderUsage?): ProjectStorage = if (usage == null) ProjectStorage.NONE else ProjectStorage(
+        usage.conversations.map { ProjectStorageConversation(it.changedAt.toString(), it.conversationId, it.usedBytes) },
+        usage.limitBytes, usage.partial, usage.scratchBytes, "ready", usage.usedBytes)
 
     /** The approvals kept for [projectId], oldest first, as the page sees them: no folder, the newest when there are too many. */
     private fun approvalsOf(accountId: String, projectId: String) = ProjectApprovals(kept(accountId)?.kept(projectId).orEmpty()

@@ -301,6 +301,46 @@ pure rules, which need no disk to test.
 - **`VisibleFolders` takes `reveal` and `trash` as functions**, so a test
   watches Finder and the Trash without a desktop.
 
+### Space: the count, the limit and the clean-up
+
+Measured first, on the development Mac on 2026-11-11: Hovel's own
+conversation data was about 32 KB, and outputs are Markdown. A companion's
+folder passes 1 GB only through scratch files, or files the person puts
+there. So the clean-up is about scratch and whole conversation folders,
+and compressing Markdown was not worth a second format to support.
+
+```kotlin
+internal data class ConversationUsage(val conversationId: String, val usedBytes: Long, val changedAt: Instant)
+internal data class FolderUsage(val usedBytes: Long, val limitBytes: Long, val scratchBytes: Long,
+    val partial: Boolean, val conversations: List<ConversationUsage>)
+
+// CompanionFolders
+fun usage(accountId: String, companionId: String): FolderUsage?
+fun setLimit(accountId: String, companionId: String, limitBytes: Long): FolderUsage?
+fun clean(accountId: String, companionId: String, conversationIds: Set<String>, scratch: Boolean): FolderUsage?
+```
+
+- **The limit lives on the Mac, in the ledger** (`CompanionFolder.limitBytes`,
+  null for the default). The folder is this Mac's, so its limit is too; the
+  account's companion record did not change. A companion with no folder
+  here has nothing to limit.
+- **One bounded walk counts the folder.** It follows no link and stops at
+  200,000 entries or 2 seconds, and then says the sizes are "at least"
+  (`partial`). It is not cached: the page asks when it shows a companion.
+- **A cleaned folder is treated as one the person deleted by hand.** Its
+  ledger entry stays, so its outputs are not written out again. `sync` now
+  leaves a missing folder alone until the conversation has a new output,
+  and `state` answers `none` for it, so the page offers no Show in Finder.
+- **Only this companion's conversations, and only a folder its marker
+  names.** An id of another companion in a clean-up changes nothing.
+- **Three bridge methods on the project capability**: `project.storage`,
+  `project.setStorageLimit`, `project.cleanStorage`. They are scoped to a
+  companion, not a project, and need only a connected account. Sizes and
+  times cross the bridge, never a path.
+- Rejected: storing the limit in the account (a server change for a
+  number about one Mac's disk), a background watcher (the page asking is
+  enough), and removal by age (the person decided against it).
+
 ### A limit to know: the Trash trusts the account's answer
 
 The Mac moves a folder to the Trash because the account says the

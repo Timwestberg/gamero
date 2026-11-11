@@ -218,8 +218,17 @@ text, and read files, several in one request.
 - When the person has Hovel forget what it knows (memory cleanup), the notes
   are erased with the rest of the agents' context. Outputs are the person's
   documents and stay.
-- When a companion's folder passes 1 GB, the Companions page says so. Hovel
-  deletes nothing by size alone.
+- Each companion's folder has a space limit on the Mac that holds it: 1 GB
+  unless the person sets another, in that companion's settings. When the
+  folder passes it, the Companions page says so. Nothing is blocked, and
+  Hovel deletes nothing by size alone.
+- The person can clean up a companion's folder. Clean up shows each
+  conversation's folder with its size and when it last changed, the one
+  changed longest ago first. It empties the agents' scratch folders, and
+  moves the folders the person ticks to the Trash. The conversations stay
+  in Hovel and can still be opened. A folder that went comes back only when
+  its conversation has something new to put in it. The person's own files
+  in the companion's folder are counted and never touched.
 
 ### Constraints
 
@@ -248,7 +257,16 @@ text, and read files, several in one request.
 
 ## Decided
 
-All on 2026-11-10.
+All on 2026-11-10, but the three on space, which are of 2026-11-11.
+
+Space:
+
+- **Clean up moves only what the person picks, and to the Trash.** Not a
+  zip of older folders, and not an automatic removal by age.
+- **The limit is per companion**, 1 GB by default, raised in that
+  companion's settings.
+- **Over the limit there is a notice and nothing else.** Work goes on and
+  outputs are still written.
 
 The folders:
 

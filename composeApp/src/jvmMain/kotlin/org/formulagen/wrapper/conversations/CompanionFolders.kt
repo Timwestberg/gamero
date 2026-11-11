@@ -39,10 +39,12 @@ internal data class FolderLedger(
 
 /**
  * [name] is the folder as it was last seen, and [from] the companion's name it was made from, which tells a rename
- * in Hovel from a rename by hand. A folder the person renamed is [pinned]: Hovel keeps their name.
+ * in Hovel from a rename by hand. A folder the person renamed is [pinned]: Hovel keeps their name. [limitBytes] is
+ * the space the person lets this companion's folder take on this Mac before the page says so; null is the default
+ * ([StorageLimits.DEFAULT_BYTES]).
  */
 @Serializable
-internal data class CompanionFolder(val name: String, val from: String, val pinned: Boolean = false)
+internal data class CompanionFolder(val name: String, val from: String, val pinned: Boolean = false, val limitBytes: Long? = null)
 
 /** A conversation's folder, named as [CompanionFolder] is, from the conversation's title. */
 @Serializable
@@ -100,6 +102,32 @@ internal data class FolderIds(val companionIds: Set<String> = emptySet(), val co
     val isEmpty: Boolean get() = companionIds.isEmpty() && conversationIds.isEmpty()
 }
 
+/**
+ * A companion's folder and the space it takes. Bytes are a thousand to the kilobyte, as Finder counts them. The
+ * values mirror the contract's `STORAGE_LIMITS`; the counting bounds are this Mac's own.
+ */
+internal object StorageLimits {
+    const val DEFAULT_BYTES = 1_000_000_000L
+    const val MIN_BYTES = 100_000_000L
+    const val MAX_BYTES = 1_000_000_000_000L
+    /** The most conversations one answer lists, and one clean-up names. */
+    const val CONVERSATIONS = 200
+    /** A folder with more entries than this, or one that takes longer to count, is reported as at least what was counted. */
+    const val ENTRIES = 200_000
+    const val MILLIS = 2_000L
+}
+
+/** One conversation's folder: what it takes, and when a file in it last changed. */
+internal data class ConversationUsage(val conversationId: String, val usedBytes: Long, val changedAt: Instant)
+
+/**
+ * What a companion's folder takes on this Mac: all of it ([usedBytes], the person's own files there too), the part in
+ * scratch folders, and each conversation's folder, the one changed longest ago first. [partial]: the folder was too
+ * large to count to the end, so every size is at least this. Passing [limitBytes] changes nothing but what the page says.
+ */
+internal data class FolderUsage(val usedBytes: Long, val limitBytes: Long, val scratchBytes: Long, val partial: Boolean,
+    val conversations: List<ConversationUsage>)
+
 /** How long a scratch file is kept. A starting value, to be tuned from use. */
 internal object ScratchLimits {
     /** A file a run did not clear, because the run never completed, goes after this many days. */
@@ -142,6 +170,19 @@ internal fun interface CompanionFolders {
 
     /** Deletes what has lain in any of [accountId]'s scratch folders for more than [ScratchLimits.KEPT_DAYS] days. */
     fun sweepScratch(accountId: String) {}
+
+    /** What [companionId]'s folder takes on this Mac. Null when it has no folder here, or it cannot be counted. */
+    fun usage(accountId: String, companionId: String): FolderUsage? = null
+
+    /** Sets the space [companionId]'s folder may take before the page says so, and answers its usage. Null when it has no folder here. */
+    fun setLimit(accountId: String, companionId: String, limitBytes: Long): FolderUsage? = null
+
+    /**
+     * The person's clean-up of [companionId]'s folder: with [scratch], every scratch folder in it is emptied, and the
+     * folder of each of [conversationIds] is moved to the Trash. The conversations stay in the account, and a folder
+     * that went comes back only when its conversation has something new to put in it. Answers the usage afterwards.
+     */
+    fun clean(accountId: String, companionId: String, conversationIds: Set<String>, scratch: Boolean): FolderUsage? = null
 
     companion object {
         /** A Mac that keeps no visible folders, and every test that does not ask for them. */

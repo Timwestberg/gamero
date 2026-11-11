@@ -205,10 +205,20 @@ Each message logs once, at the coordinator's first streamed text:
 `coordinator first_word_ms=… spoken=… brief_chars=…`. Compare it before and
 after a change that adds to the coordinator's turn.
 
+## Space and clean-up
+
+- `companionFolders.usage(accountId, companionId)` counts a companion's
+  folder: all of it, the part in scratch, and each conversation's folder.
+- `setLimit` keeps the person's limit for that companion on this Mac
+  (`StorageLimits`: 1 GB by default, 100 MB to 1 TB).
+- `clean` empties scratch and moves the chosen conversations' folders to
+  the Trash. The conversations stay in the account.
+- The page uses `project.storage`, `project.setStorageLimit` and
+  `project.cleanStorage`. Passing the limit only changes what the page says.
+
 ## Not built yet
 
-The notice on the Companions page when a companion's folder passes 1 GB.
-It needs a bridge method and a page change, so a contract change first.
+`TEST.md`, the manual check list for the whole feature.
 
 ## Known limits
 

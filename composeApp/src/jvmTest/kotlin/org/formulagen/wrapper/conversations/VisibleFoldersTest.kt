@@ -341,6 +341,95 @@ class VisibleFoldersTest {
         assertNull(CompanionFolders.NONE.scratch(names()))
     }
 
+    // ---- Space, its limit, and the clean-up ---------------------------------------------------------
+
+    private fun aged(file: java.nio.file.Path, days: Long, text: String = "x"): java.nio.file.Path =
+        Files.setLastModifiedTime(Files.writeString(file, text), java.nio.file.attribute.FileTime.from(at.minusSeconds(days * 86_400)))
+
+    private fun bytesUnder(dir: java.nio.file.Path): Long =
+        Files.walk(dir).use { all -> all.filter { Files.isRegularFile(it) }.mapToLong { Files.size(it) }.sum() }
+
+    @Test fun aCompanionsFolderIsCountedWithItsScratchAndEachConversation() {
+        assertNull(watched.usage(account, companion), "no folder yet")
+        val other = id()
+        watched.sync(names(), listOf(output("# Spec")), emptyList()) { stored.getValue(it.id) }
+        watched.sync(names(title = "Add sign-out", conversationId = other), listOf(output("# Sign-out")), emptyList()) { stored.getValue(it.id) }
+        val scratch = assertNotNull(watched.scratch(names()))
+        aged(Files.createDirectories(scratch.resolve("logs")).resolve("run.log"), 2, "y".repeat(5_000))
+        aged(root.resolve("$home/outputs/01 Spec.md"), 20, "# Spec")
+        aged(root.resolve("Ember/my own notes.txt"), 1, "z".repeat(700))
+        // Every other file of the first conversation is older than its scratch log, which is its last change.
+        Files.walk(root.resolve(home)).use { all -> all.filter { Files.isRegularFile(it) && it.fileName.toString() != "run.log" }
+            .forEach { Files.setLastModifiedTime(it, java.nio.file.attribute.FileTime.from(at.minusSeconds(20 * 86_400))) } }
+        Files.walk(root.resolve("Ember/conversations/2026-11-10 Add sign-out")).use { all -> all.filter { Files.isRegularFile(it) }
+            .forEach { Files.setLastModifiedTime(it, java.nio.file.attribute.FileTime.from(at.minusSeconds(9 * 86_400))) } }
+
+        val usage = assertNotNull(watched.usage(account, companion))
+        assertEquals(bytesUnder(root.resolve("Ember")), usage.usedBytes, "all of it, the person's own file too")
+        assertEquals(5_000, usage.scratchBytes)
+        assertEquals(StorageLimits.DEFAULT_BYTES, usage.limitBytes)
+        assertFalse(usage.partial)
+        // The one changed longest ago first.
+        assertEquals(listOf(other, conversation), usage.conversations.map { it.conversationId })
+        assertEquals(listOf(bytesUnder(root.resolve("Ember/conversations/2026-11-10 Add sign-out")), bytesUnder(root.resolve(home))),
+            usage.conversations.map { it.usedBytes })
+        assertEquals(listOf(at.minusSeconds(9 * 86_400), at.minusSeconds(2 * 86_400)), usage.conversations.map { it.changedAt })
+        // A link is never followed, and another account sees nothing of it.
+        val elsewhere = folder("elsewhere")
+        Files.writeString(elsewhere.resolve("huge.bin"), "h".repeat(50_000))
+        val link = Files.createSymbolicLink(root.resolve("Ember/elsewhere"), elsewhere)
+        val itself = Files.readAttributes(link, java.nio.file.attribute.BasicFileAttributes::class.java, java.nio.file.LinkOption.NOFOLLOW_LINKS).size()
+        assertEquals(usage.usedBytes + itself, watched.usage(account, companion)?.usedBytes, "the link counts as a link, not as what it points to")
+        assertNull(watched.usage(id(), companion))
+    }
+
+    @Test fun aCompanionsLimitIsThePersonsAndOutlivesEverySync() {
+        assertNull(watched.setLimit(account, companion, 5_000_000_000), "a companion with no folder has nothing to limit")
+        watched.sync(names(), listOf(output("# Spec")), emptyList()) { stored.getValue(it.id) }
+        assertEquals(5_000_000_000, watched.setLimit(account, companion, 5_000_000_000)?.limitBytes)
+        watched.sync(names(companionName = "Ember the Second"), listOf(output("# More", minutes = 3)), emptyList()) { stored.getValue(it.id) }
+        watched.scratch(names(companionName = "Ember the Second"))
+        assertEquals(5_000_000_000, watched.usage(account, companion)?.limitBytes, "a rename and a new output keep it")
+        // Out of bounds changes nothing.
+        assertNull(watched.setLimit(account, companion, StorageLimits.MIN_BYTES - 1))
+        assertNull(watched.setLimit(account, companion, StorageLimits.MAX_BYTES + 1))
+        assertEquals(5_000_000_000, watched.usage(account, companion)?.limitBytes)
+        // The app starts again with the same ledger.
+        val restarted = VisibleFolders(root, ledgers, ZoneOffset.UTC) { at }
+        assertEquals(5_000_000_000, restarted.usage(account, companion)?.limitBytes)
+    }
+
+    @Test fun aCleanUpEmptiesScratchAndTrashesOnlyTheFoldersThePersonChose() {
+        val other = id()
+        val spec = output("# Spec")
+        watched.sync(names(), listOf(spec), emptyList()) { stored.getValue(it.id) }
+        watched.sync(names(title = "Add sign-out", conversationId = other), listOf(output("# Sign-out")), emptyList()) { stored.getValue(it.id) }
+        val scratch = assertNotNull(watched.scratch(names(title = "Add sign-out", conversationId = other)))
+        Files.writeString(scratch.resolve("big.log"), "y".repeat(9_000))
+        Files.writeString(root.resolve("Ember/my own notes.txt"), "mine")
+        // Scratch only: nothing goes to the Trash.
+        val swept = assertNotNull(watched.clean(account, companion, emptySet(), scratch = true))
+        assertEquals(0, swept.scratchBytes)
+        assertEquals(emptyList(), trashed)
+        assertTrue(Files.isDirectory(scratch))
+        // One conversation chosen, with an id that is not this companion's: only the chosen folder goes.
+        val after = assertNotNull(watched.clean(account, companion, setOf(conversation, id()), scratch = false))
+        assertEquals(listOf(home), trashed)
+        assertEquals(listOf(other), after.conversations.map { it.conversationId })
+        assertEquals(bytesUnder(root.resolve("Ember")), after.usedBytes)
+        assertEquals("mine", Files.readString(root.resolve("Ember/my own notes.txt")), "the person's own files are never touched")
+        assertEquals(FolderState.NONE, watched.state(account, conversation), "there is no folder to show now")
+        // The conversation is still the account's: its next message brings nothing back until it has something new.
+        watched.sync(names(), listOf(spec), emptyList()) { stored.getValue(it.id) }
+        assertFalse(Files.exists(root.resolve(home)), tree().toString())
+        watched.sync(names(), listOf(spec, output("# Next", minutes = 4)), emptyList()) { stored.getValue(it.id) }
+        assertEquals(listOf("02 Next.md"), tree().filter { it.startsWith("$home/outputs/") }.map { it.substringAfterLast('/') })
+        // A folder the Trash refuses stays, and is still counted.
+        trashWorks = false
+        val refused = assertNotNull(watched.clean(account, companion, setOf(other), scratch = false))
+        assertEquals(setOf(other, conversation), refused.conversations.map { it.conversationId }.toSet())
+    }
+
     @Test fun aFolderWithoutTheMarkerIsNeverTaken() {
         Files.createDirectories(root.resolve("Ember/conversations"))
         Files.writeString(root.resolve("Ember/notes.txt"), "the person's own folder")

@@ -29,7 +29,61 @@ interface ProjectCapability {
     suspend fun approvals(scope: ProjectScope): ProjectApprovals = ProjectApprovals(emptyList())
     /** Forgets one approval and answers those left: the next time, the Mac asks. */
     suspend fun withdrawApproval(args: ProjectWithdrawApprovalArgs): ProjectApprovals = ProjectApprovals(emptyList())
+    /** What a companion's folder takes on this Mac, against the person's limit for it. Sizes, never a path. */
+    suspend fun storage(scope: CompanionScope): ProjectStorage = ProjectStorage.NONE
+    /** Sets the companion's limit on this Mac and answers its storage. */
+    suspend fun setStorageLimit(args: ProjectSetStorageLimitArgs): ProjectStorage = ProjectStorage.NONE
+    /** Empties scratch and moves the chosen conversations' folders to the Trash, and answers what is left. */
+    suspend fun cleanStorage(args: ProjectCleanStorageArgs): ProjectStorage = ProjectStorage.NONE
 }
+
+/** A companion, for what this Mac keeps for it. */
+@Serializable
+data class CompanionScope(val companionId: String)
+
+/** `STORAGE_LIMITS`: bytes are a thousand to the kilobyte. */
+object ProjectStorageLimits {
+    const val CONVERSATIONS = 200
+    const val DEFAULT_BYTES = 1_000_000_000L
+    const val MAX_BYTES = 1_000_000_000_000L
+    const val MIN_BYTES = 100_000_000L
+}
+
+/** One conversation's folder: what it takes, and when a file in it last changed (an ISO-8601 instant). */
+@Serializable
+data class ProjectStorageConversation(val changedAt: String, val conversationId: String, val usedBytes: Long) {
+    init { require(SharedRules.isRecordId(conversationId) && usedBytes >= 0) }
+}
+
+/**
+ * What a companion's folder takes on this Mac. `none`: it has no folder here, and every size is 0. [partial]: the
+ * folder was too large to count to the end, so the sizes are at least these.
+ */
+@Serializable
+data class ProjectStorage(
+    val conversations: List<ProjectStorageConversation>,
+    val limitBytes: Long,
+    val partial: Boolean,
+    val scratchBytes: Long,
+    val state: String,
+    val usedBytes: Long,
+) {
+    init {
+        require(state == "none" || state == "ready")
+        require(conversations.size <= ProjectStorageLimits.CONVERSATIONS && usedBytes >= 0 && scratchBytes >= 0)
+        require(limitBytes in ProjectStorageLimits.MIN_BYTES..ProjectStorageLimits.MAX_BYTES)
+    }
+    companion object {
+        /** A companion with no folder on this Mac. */
+        val NONE = ProjectStorage(emptyList(), ProjectStorageLimits.DEFAULT_BYTES, false, 0, "none", 0)
+    }
+}
+
+@Serializable
+data class ProjectSetStorageLimitArgs(val companionId: String, val limitBytes: Long)
+
+@Serializable
+data class ProjectCleanStorageArgs(val companionId: String, val conversationIds: List<String>, val scratch: Boolean)
 
 /** A conversation of a project this Mac runs. */
 @Serializable
@@ -223,6 +277,17 @@ object ProjectMethods {
         SharedRules.isRecordId(it.projectId) && ProjectApproval.APPROVAL_ID.matches(it.approvalId)
     }
 
+    val STORAGE = BridgeMethod("project.storage", CompanionScope.serializer(), ProjectStorage.serializer()) {
+        SharedRules.isRecordId(it.companionId)
+    }
+    val SET_STORAGE_LIMIT = BridgeMethod("project.setStorageLimit", ProjectSetStorageLimitArgs.serializer(), ProjectStorage.serializer()) {
+        SharedRules.isRecordId(it.companionId) && it.limitBytes in ProjectStorageLimits.MIN_BYTES..ProjectStorageLimits.MAX_BYTES
+    }
+    val CLEAN_STORAGE = BridgeMethod("project.cleanStorage", ProjectCleanStorageArgs.serializer(), ProjectStorage.serializer()) {
+        SharedRules.isRecordId(it.companionId) && it.conversationIds.size <= ProjectStorageLimits.CONVERSATIONS &&
+            it.conversationIds.all(SharedRules::isRecordId)
+    }
+
     fun pack(project: Capability<ProjectCapability>): CapabilityPack = binder.pack(project)
 
     internal val binder = CapabilityBinder("project", listOf<CapabilityHandler<ProjectCapability>>(
@@ -235,5 +300,8 @@ object ProjectMethods {
         SHOW_OUTPUTS.handle { project, args -> project.showOutputs(args) },
         APPROVALS.handle { project, scope -> project.approvals(scope) },
         WITHDRAW_APPROVAL.handle { project, args -> project.withdrawApproval(args) },
+        STORAGE.handle { project, scope -> project.storage(scope) },
+        SET_STORAGE_LIMIT.handle { project, args -> project.setStorageLimit(args) },
+        CLEAN_STORAGE.handle { project, args -> project.cleanStorage(args) },
     ))
 }

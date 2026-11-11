@@ -73,9 +73,11 @@ internal class VisibleFolders(
 
     @Synchronized
     override fun state(accountId: String, conversationId: String): FolderState = try {
+        val ledger = read(accountId)
         when {
-            read(accountId).conversations[conversationId] == null -> if (conversationId in behind) FolderState.BEHIND else FolderState.NONE
             conversationId in behind -> FolderState.BEHIND
+            // No folder yet, or one the person removed: there is nothing to show.
+            ledger.conversations[conversationId] == null || conversationFolder(accountId, ledger, conversationId) == null -> FolderState.NONE
             else -> FolderState.READY
         }
     } catch (_: Exception) {
@@ -152,6 +154,8 @@ internal class VisibleFolders(
         val missing = outputs.filter { output -> written.none { it.artifactId == output.artifact.id } }.sortedBy { it.at }
         // A folder appears with its first file: a conversation that has produced nothing leaves nothing on disk.
         if (known == null && missing.isEmpty()) return
+        // A folder the person removed, by hand or in a clean-up, comes back only with something new to put in it.
+        if (missing.isEmpty() && conversationFolder(names.accountId, ledger, names.conversationId) == null) return
 
         // The day the conversation's first output was made, which for one older than the folders is not today.
         val (companion, conversation, startedOn) = home(names, ledger, missing.firstOrNull()?.at)
@@ -164,7 +168,7 @@ internal class VisibleFolders(
         if (notes.isEmpty()) Files.deleteIfExists(notesFile)
         else replaceIfChanged(notesFile, TeamNotes.markdown(names.conversation, notes, zone).toByteArray())
         val next = ledger.copy(
-            companions = ledger.companions + (names.companionId to CompanionFolder(companion.name, names.companion, companion.pinned)),
+            companions = ledger.companions + (names.companionId to companionEntry(ledger, names, companion)),
             conversations = ledger.conversations + (names.conversationId to folder),
         )
         if (next != ledger) writeLedger(names.accountId, next)
@@ -209,7 +213,7 @@ internal class VisibleFolders(
         val folder = ConversationFolder(names.companionId, conversation.name, names.conversation, conversation.pinned, startedOn,
             ledger.conversations[names.conversationId]?.outputs.orEmpty())
         val next = ledger.copy(
-            companions = ledger.companions + (names.companionId to CompanionFolder(companion.name, names.companion, companion.pinned)),
+            companions = ledger.companions + (names.companionId to companionEntry(ledger, names, companion)),
             conversations = ledger.conversations + (names.conversationId to folder),
         )
         if (next != ledger) writeLedger(names.accountId, next)
@@ -217,6 +221,95 @@ internal class VisibleFolders(
     } catch (error: Exception) {
         log(LogLevel.Warn, TAG, "A conversation's scratch folder could not be made; its working turn goes on without one", error)
         null
+    }
+
+    /** The companion's ledger entry as its folder stands now, with the limit the person set for it kept. */
+    private fun companionEntry(ledger: FolderLedger, names: FolderNames, companion: Settled) =
+        CompanionFolder(companion.name, names.companion, companion.pinned, ledger.companions[names.companionId]?.limitBytes)
+
+    @Synchronized
+    override fun usage(accountId: String, companionId: String): FolderUsage? = try {
+        measure(accountId, read(accountId), companionId)
+    } catch (error: Exception) {
+        log(LogLevel.Warn, TAG, "A companion's folder could not be counted", error)
+        null
+    }
+
+    @Synchronized
+    override fun setLimit(accountId: String, companionId: String, limitBytes: Long): FolderUsage? = try {
+        require(limitBytes in StorageLimits.MIN_BYTES..StorageLimits.MAX_BYTES) { "A space limit is between the least and the most" }
+        val ledger = read(accountId)
+        val kept = ledger.companions[companionId]
+        if (kept == null) null else {
+            val next = ledger.copy(companions = ledger.companions + (companionId to kept.copy(limitBytes = limitBytes)))
+            if (next != ledger) writeLedger(accountId, next)
+            measure(accountId, next, companionId)
+        }
+    } catch (error: Exception) {
+        log(LogLevel.Warn, TAG, "A companion's space limit could not be kept", error)
+        null
+    }
+
+    @Synchronized
+    override fun clean(accountId: String, companionId: String, conversationIds: Set<String>, scratch: Boolean): FolderUsage? = try {
+        val ledger = read(accountId)
+        val theirs = ledger.conversations.filterValues { it.companionId == companionId }
+        if (scratch) theirs.keys.forEach { id -> scratchOf(accountId, ledger, id)?.let { prune(it, cutoff = null) } }
+        // Only a conversation of this companion, and only a folder its marker names. Its ledger entry stays, as when
+        // the person deletes a folder by hand, so what was in it is not written out again.
+        for (id in conversationIds) {
+            val folder = theirs[id] ?: continue
+            val dir = conversationFolder(accountId, ledger, id) ?: continue
+            if (discard(dir)) {
+                behind -= id
+                log(LogLevel.Info, TAG, "A clean-up moved the conversation folder \"${folder.name}\" to the Trash")
+            }
+        }
+        measure(accountId, ledger, companionId)
+    } catch (error: Exception) {
+        log(LogLevel.Warn, TAG, "A companion's folder could not be cleaned up", error)
+        null
+    }
+
+    /**
+     * Counts [companionId]'s folder: one walk that follows no link and stops at [StorageLimits.ENTRIES] entries or
+     * [StorageLimits.MILLIS], so a huge folder cannot hold the page. Null when the companion has no folder here.
+     */
+    private fun measure(accountId: String, ledger: FolderLedger, companionId: String): FolderUsage? {
+        val kept = ledger.companions[companionId] ?: return null
+        val dir = find(root, FolderMarker(accountId = accountId, companionId = companionId), kept.name) ?: return null
+        // Each conversation's folder by its name now, found by its marker.
+        val named = ledger.conversations.filterValues { it.companionId == companionId }.keys
+            .mapNotNull { id -> conversationFolder(accountId, ledger, id)?.let { it.fileName.toString() to id } }.toMap()
+        val sizes = HashMap<String, Long>()
+        val changed = HashMap<String, Instant>()
+        var total = 0L
+        var scratch = 0L
+        var seen = 0
+        var partial = false
+        val deadline = System.nanoTime() + StorageLimits.MILLIS * 1_000_000
+        Files.walkFileTree(dir, object : SimpleFileVisitor<Path>() {
+            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                if (++seen > StorageLimits.ENTRIES || System.nanoTime() > deadline) { partial = true; return FileVisitResult.TERMINATE }
+                val size = attrs.size()
+                total += size
+                val inside = dir.relativize(file)
+                if (inside.nameCount >= 3 && inside.getName(0).toString() == CompanionFolderRules.CONVERSATIONS) {
+                    val id = named[inside.getName(1).toString()]
+                    if (id != null) {
+                        sizes.merge(id, size, Long::plus)
+                        val at = attrs.lastModifiedTime().toInstant()
+                        if (changed[id]?.isBefore(at) != false) changed[id] = at
+                    }
+                    if (inside.getName(2).toString() == CompanionFolderRules.SCRATCH && inside.nameCount >= 4) scratch += size
+                }
+                return FileVisitResult.CONTINUE
+            }
+            override fun visitFileFailed(file: Path, failure: java.io.IOException): FileVisitResult = FileVisitResult.CONTINUE
+        })
+        val conversations = named.values.map { id -> ConversationUsage(id, sizes[id] ?: 0L, (changed[id] ?: now()).truncatedTo(ChronoUnit.MILLIS)) }
+            .sortedWith(compareBy<ConversationUsage> { it.changedAt }.thenBy { it.conversationId }).take(StorageLimits.CONVERSATIONS)
+        return FolderUsage(total, kept.limitBytes ?: StorageLimits.DEFAULT_BYTES, scratch, partial, conversations)
     }
 
     @Synchronized
