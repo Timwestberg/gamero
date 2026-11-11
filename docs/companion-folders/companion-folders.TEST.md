@@ -300,8 +300,10 @@ Found while checking, and their state:
 - The coordinator was not told that working specialists have a scratch
   folder, so it took a draft there for a possible mistake and stopped to
   ask. Fixed: the coordinator is now told.
-- The Mac's permission dialog hides its buttons when the command is long,
-  and a path in the scratch folder makes commands long. The window has to
-  be enlarged to answer. Not fixed.
+- The Mac's permission dialog hid its buttons when the command was long,
+  and a path in the scratch folder makes commands long. With a long "for
+  this conversation" label, Deny was pushed off its row at any window
+  size. Fixed: the buttons are outside the scrolling text and wrap onto
+  their own lines. Covered by a layout test; not yet seen in the real app.
 - A specialist's output file starts with what it said before its first
   heading. That is how an output is stored today.

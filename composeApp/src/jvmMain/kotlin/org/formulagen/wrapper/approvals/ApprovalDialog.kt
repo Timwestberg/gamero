@@ -11,7 +11,9 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -24,6 +26,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -74,7 +77,7 @@ internal fun NativeDialogHost(presenter: ComposeDialogPresenter) {
         val dismiss = shown.dialog.dismissIndex
         DialogWindow(
             onCloseRequest = { shown.answer(dismiss) },
-            state = rememberDialogState(size = DpSize(560.dp, 360.dp)),
+            state = rememberDialogState(size = dialogSize(shown.dialog)),
             title = "Hovel",
             resizable = true,
             alwaysOnTop = true,
@@ -85,18 +88,46 @@ internal fun NativeDialogHost(presenter: ComposeDialogPresenter) {
                 decline
             },
         ) {
-            Surface {
-                Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(shown.dialog.title, style = MaterialTheme.typography.titleMedium)
-                    shown.dialog.lines.forEach { Text(it, style = MaterialTheme.typography.bodyMedium) }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        shown.dialog.buttons.forEachIndexed { index, (label, _) ->
-                            if (index == dismiss) Button(onClick = { shown.answer(index) }, enabled = armed) { Text(label) }
-                            else OutlinedButton(onClick = { shown.answer(index) }, enabled = armed) { Text(label) }
-                        }
-                    }
+            NativeDialogContent(shown.dialog, armed, shown.answer)
+        }
+    }
+}
+
+/**
+ * A dialog's content: what is asked, then its buttons. The buttons are never scrolled away and never pushed off
+ * their row: the text above them scrolls when it is long, and a button that does not fit beside the others takes a
+ * line of its own, with its label wrapped. So the dismiss button (Deny, Not now) can always be pressed, however long
+ * a command or a "for this conversation" label is. A label is shown in full, because it says what the answer allows.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun NativeDialogContent(dialog: NativeDialog<*>, armed: Boolean, answer: (Int) -> Unit) {
+    val dismiss = dialog.dismissIndex
+    Surface(Modifier.fillMaxSize()) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).testTag(DIALOG_TEXT_TAG),
+                verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(dialog.title, style = MaterialTheme.typography.titleMedium)
+                dialog.lines.forEach { Text(it, style = MaterialTheme.typography.bodyMedium) }
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                dialog.buttons.forEachIndexed { index, (label, _) ->
+                    if (index == dismiss) Button(onClick = { answer(index) }, enabled = armed) { Text(label) }
+                    else OutlinedButton(onClick = { answer(index) }, enabled = armed) { Text(label) }
                 }
             }
         }
     }
 }
+
+/** The scrolling text of a dialog, for a test. */
+internal const val DIALOG_TEXT_TAG = "native-dialog-text"
+
+/** A dialog's window: wide enough to read a path, and taller when there is much to read before the buttons. */
+internal fun dialogSize(dialog: NativeDialog<*>): DpSize {
+    val characters = dialog.title.length + dialog.lines.sumOf { it.length } + dialog.buttons.sumOf { it.first.length }
+    return DpSize(560.dp, if (characters > DIALOG_LONG_CHARACTERS) 520.dp else 360.dp)
+}
+
+/** More text than this, over the title, the lines and the buttons, and the dialog opens taller. */
+internal const val DIALOG_LONG_CHARACTERS = 500
