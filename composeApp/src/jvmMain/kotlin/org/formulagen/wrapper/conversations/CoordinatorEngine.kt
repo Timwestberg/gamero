@@ -86,7 +86,14 @@ internal class CoordinatorEngine(
 
         /** What the coordinator is told of the project's folder, in the main conversation; a thread's turn is about its task. */
         private fun projectFolder(workers: List<String>): String? =
-            if (claim.message.threadId == null) projectFolderNote(call.folders, workers, readable = canRead()) else null
+            if (claim.message.threadId == null) projectFolderNote(call.folders, workers, readable = canRead(), scratch = givesScratch) else null
+
+        /** Whether a working specialist of this brain is given the conversation's scratch folder. */
+        private val givesScratch: Boolean by lazy {
+            companionFolders !== CompanionFolders.NONE && claim.brain.configuration.specialists.any { role ->
+                role.mode == MemberMode.WORK && role.binding?.let { turns.givesScratch(it.runtimeId) } == true
+            }
+        }
 
         /** Reads project files for the coordinator, within this message's allowance. */
         private val reader by lazy { ProjectReader(PathGuard(call.folders)) }

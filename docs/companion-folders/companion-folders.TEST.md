@@ -263,13 +263,45 @@ Each is how the feature behaves today. None is a bug to file.
 
 ## What has been checked live, and what has not
 
-Checked in the real Mac app on a test account: the Trash step (case 5),
-Show in Finder (case 4), the approvals section (case 11, empty state), and
-the space notice, limit and Clean up (case 14).
+Checked in the real Mac app on a test account, with live turns on Claude
+Code (2026-11-11):
+
+- Case 1: the output was written as `outputs/01 Shopping list spec.md`, with
+  `index.md` beside it.
+- Case 4: Show in Finder. Case 5: the Trash step.
+- Case 6: the line under the working folder on the project page.
+- Case 7: the dialog "Ember wants to read files in …", then "Read
+  src/list.ts." and a correct answer. Case 9: `.env` refused by Hovel,
+  `/etc/hosts` not asked for, and the secret in no message. Case 10: after
+  **Not now**, an answer that says it did not read the file, and no kept
+  approval.
+- Case 11: the approvals section, in its empty state. The two kept
+  approvals were then seen in the Mac's own record, not on the page.
+- Case 12, with one specialist: `notes.md` held the task, the finished work
+  and the specialist's own note.
+- Case 13: the draft was in `scratch/` during the work, and the folder was
+  empty and still there after the run completed.
+- Case 14: the space notice, the limit and Clean up.
 
 Checked by a live provider turn in throwaway folders: both providers keep to
 the scratch folder (`ScratchProbeTest`).
 
-Not yet seen in the real app: an output written to `~/Hovel` (case 1), Ember
-reading a file (cases 7 to 10), the phone answering (case 8), notes (case
-12), and a specialist using scratch (case 13).
+Not checked:
+
+- Case 8, the phone answering a read request. The request was seen on the
+  server as one any device may answer, with no path in it, and the web page
+  showed "Read project files". The simulator phone could not be registered
+  and paired by automation, so nobody answered from a phone.
+- Cases 2, 3 and 15 by hand; their rules are covered by automated tests.
+- Case 12 with two specialists.
+
+Found while checking, and their state:
+
+- The coordinator was not told that working specialists have a scratch
+  folder, so it took a draft there for a possible mistake and stopped to
+  ask. Fixed: the coordinator is now told.
+- The Mac's permission dialog hides its buttons when the command is long,
+  and a path in the scratch folder makes commands long. The window has to
+  be enlarged to answer. Not fixed.
+- A specialist's output file starts with what it said before its first
+  heading. That is how an output is stored today.

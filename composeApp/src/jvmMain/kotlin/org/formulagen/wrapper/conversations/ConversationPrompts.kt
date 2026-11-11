@@ -107,9 +107,10 @@ internal val SPOKEN_REPLY_RULES = listOf(
  * What the coordinator is told of the project's [folders] on this Mac. Its own turn reads no files and runs outside
  * the project, so without this it cannot say whether the project has a folder, and it asks the person for a path.
  * A folder goes by its name: the path is the working specialist's to see, not this turn's. [workers] are the
- * specialists that work in the folder, by name.
+ * specialists that work in the folder, by name. With [scratch], a working specialist is also given the conversation's
+ * scratch folder, and the coordinator is told what that is.
  */
-internal fun projectFolderNote(folders: ProjectFolders, workers: List<String>, readable: Boolean = false): String {
+internal fun projectFolderNote(folders: ProjectFolders, workers: List<String>, readable: Boolean = false, scratch: Boolean = false): String {
     val working = folders.working ?: return "This project has no working folder on this Mac. You cannot read or change files in this turn. " +
         "No specialist can work on files until the person chooses the project's folder in the project's settings on this Mac. " +
         "If the person asks about the project's files, tell them that."
@@ -131,6 +132,12 @@ internal fun projectFolderNote(folders: ProjectFolders, workers: List<String>, r
                 "To read, check or change the project's files, delegate that task to one of them and tell the person you did. " +
                 "Do not describe a file's contents yourself: you have not read it."
         },
+        // Without this the coordinator takes a file written there for a mistake: it is outside the project, and it goes.
+        if (scratch && workers.isNotEmpty()) {
+            "Hovel also gives a working specialist a scratch folder for this conversation, outside the project: a place for drafts and " +
+                "files the specialists leave each other. A file there is expected and is no fault. Hovel empties that folder when the work " +
+                "completes, so ask for anything the person must keep as the specialist's reply or as a file in the project, not in scratch."
+        } else null,
     ).joinToString(" ")
 }
 

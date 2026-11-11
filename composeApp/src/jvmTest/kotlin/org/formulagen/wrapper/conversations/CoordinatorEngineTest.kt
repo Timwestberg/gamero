@@ -356,6 +356,10 @@ Mobile first from here.""" }
         val conversation = Files.list(visible.resolve("Ember/conversations")).use { it.toList() }.single()
         assertEquals(conversation.resolve("scratch"), scratch, "it is in the conversation's own folder")
         assertTrue("Scratch folder: $scratch\n" in turn.text && "Hovel empties the scratch folder when this work completes" in turn.text, turn.text)
+        // The coordinator is told the scratch folder exists, or it takes a file there for a mistake. It is never told the path.
+        val told = fixture.request(fixture.coordinatorTurns().first()).getValue("projectFolder").jsonPrimitive.content
+        assertTrue("a scratch folder for this conversation, outside the project" in told && "A file there is expected" in told, told)
+        assertFalse(visible.toString() in told, told)
         assertTrue(turn.text.endsWith(TeamNotes.INSTRUCTION), "the notes rule is still the last thing it reads")
         // The specialist wrote there during its turn; the run completed, so the folder is empty and still there.
         assertFalse(Files.exists(checkNotNull(draft)))
@@ -368,6 +372,7 @@ Mobile first from here.""" }
         unproven.delegateThenAnswer()
         assertEquals(MessageState.ANSWERED, unproven.send("add sign-in", engine = other))
         val plain = unproven.worker.requests.single()
+        assertFalse("scratch" in unproven.request(unproven.coordinatorTurns().first()).getValue("projectFolder").jsonPrimitive.content)
         assertNull(plain.work?.scratch)
         assertFalse("Scratch folder" in plain.text, plain.text)
     }
