@@ -11,11 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.multiplatform.webview.web.PlatformWebViewParams
 import java.net.URI
@@ -89,14 +85,12 @@ internal fun hovelBridgePacks(approvals: ApprovalCapability? = null, devices: Ap
     org.formulagen.wrapper.bridge.HostContractMethods.pack(Capability.Unsupported),
 )
 
-/** Plays the Hovel launch and start screen, then opens [url] once the player steps inside. */
+/**
+ * Opens [url] as soon as the app starts, as the iPhone host does. The page draws its own launch screen, the mark
+ * and a loading bar, and then the sign-in page or the person's page. There is no start screen to tap.
+ */
 @Composable
 fun HovelAndroidApp(url: String, onPageLoaded: (url: String, title: String?) -> Unit = { _, _ -> }) {
-    var entered by rememberSaveable { mutableStateOf(false) }
-    if (!entered) {
-        HovelLaunchScreen(HovelStartState.Ready(url), onContinue = { entered = true })
-        return
-    }
     val context = LocalContext.current
     val appVersion = remember(context) {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "dev"

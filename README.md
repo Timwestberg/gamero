@@ -15,8 +15,8 @@ iOS (simulator): [build and run guide](docs/ios.md). Smoke test: `tools/ios-smok
 Phone approvals (Hovel on iOS and Android): the phone registers as an approval device, each Mac confirms it in Hovel → Pair a phone… by the code the phone shows natively, and the phone then answers that Mac's approvals in a native dialog with its own device token; see [docs/ios.md](docs/ios.md#phone-approvals). The Mac side is `jvmMain/.../hovel/PhonePairing.kt` and `PhonePairingWindow.kt`. Android uses the same `phone/PhoneApprovals` with a Keystore-sealed credential and `AlertDialog` (`androidMain/.../phone/AndroidPhoneApprovals.kt`); it compiles and assembles, and is not yet run on a device or emulator.
 
 Android: build with `./gradlew -Pgamero.mobileTargets=true :composeApp:assembleDebug`
-(Gradle 9.3.1, AGP 9.1.1, compileSdk 37; Compose 1.12 requires them). Launch the Hovel
-start screen with `adb shell am start -n org.formulagen.wrapper/.MainActivity -e GAMERO_PRODUCT hovel -e GAMERO_WEB_URL <https url>` (debug builds only; release builds read the `gamero_product` and `gamero_web_url` string resources, set from `-Pgamero.product` and `-Pgamero.webUrl`).
+(Gradle 9.3.1, AGP 9.1.1, compileSdk 37; Compose 1.12 requires them). Launch Hovel
+with `adb shell am start -n org.formulagen.wrapper/.MainActivity -e GAMERO_PRODUCT hovel -e GAMERO_WEB_URL <https url>` (debug builds only; release builds read the `gamero_product` and `gamero_web_url` string resources, set from `-Pgamero.product` and `-Pgamero.webUrl`).
 `gradle.properties` sets `android.builtInKotlin=false` and `android.newDsl=false` only
 because AGP 9 rejects the Android app plugin inside this multiplatform module. They are
 temporary: remove them once the Android app moves to its own module.
