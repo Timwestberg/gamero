@@ -196,6 +196,7 @@ internal fun BrainRecord.decided(decision: CoordinatorDecision, coordinator: Bra
         }
         is CoordinatorDecision.StepResult -> graded(decision, coordinator, newId)
         is CoordinatorDecision.Forward -> error("A forward answers a thread reply, never a run")
+        is CoordinatorDecision.Read -> error("The conversation answers a read before the run sees it")
     }
 }
 

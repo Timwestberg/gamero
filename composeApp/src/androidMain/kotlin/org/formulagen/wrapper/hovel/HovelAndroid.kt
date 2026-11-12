@@ -91,6 +91,10 @@ internal fun hovelBridgePacks(approvals: ApprovalCapability? = null, devices: Ap
     org.formulagen.wrapper.bridge.GameMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.ProjectMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.ProjectWorkspaceMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.VoiceInputMethods.pack(Capability.Unsupported),
+    org.formulagen.wrapper.bridge.VoicePlaybackMethods.pack(Capability.Unsupported),
+    // Reminders stay in the page on Android; only the iPhone schedules them itself.
+    org.formulagen.wrapper.bridge.NotificationMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.ConversationVoiceMethods.pack(Capability.Unsupported),
     ApprovalMethods.pack(approvals?.let { Capability.Supported(it) } ?: Capability.Unsupported),
     ApprovalDeviceMethods.pack(devices?.let { Capability.Supported(it) } ?: Capability.Unsupported),

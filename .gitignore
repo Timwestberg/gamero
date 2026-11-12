@@ -24,3 +24,6 @@ node_modules/
 
 # Ember browser voice files (web/hearing/scripts/fetch-web-voice.mjs)
 web/voice-assets/
+
+# This machine's paths to sherpa-onnx and the Kokoro model (scripts/ios-voice.sh)
+iosApp/Configuration/Voice.local.xcconfig

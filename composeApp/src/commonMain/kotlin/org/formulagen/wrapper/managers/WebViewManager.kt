@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.alpha
 import com.multiplatform.webview.jsbridge.WebViewJsBridge
 import com.multiplatform.webview.web.LoadingState
@@ -37,6 +38,9 @@ import org.formulagen.wrapper.webview.ProvideWebContent
 import org.formulagen.wrapper.webview.WebContent
 import org.formulagen.wrapper.webview.installJSBridgerHandlers
 
+
+/** The web app's boot colour (`#071013` in its index.html): what the web view shows where no page has painted. */
+private val PAGE_INK = Color(0xFF071013)
 
 @Composable
 fun WebViewManager(
@@ -76,6 +80,9 @@ fun WebViewManager(
             bounces = false
             showVerticalScrollIndicator = false
             showHorizontalScrollIndicator = false
+            // The web view is white until a page paints, and past a page's end. The page's own boot colour instead.
+            backgroundColor = PAGE_INK
+            underPageBackgroundColor = PAGE_INK
         }
     }
 

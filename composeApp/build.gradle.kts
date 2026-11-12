@@ -111,6 +111,8 @@ kotlin {
         }
         if (iosTargets) getByName("iosMain").dependencies {
             implementation("app.cash.sqldelight:native-driver:2.1.0")
+            // Kokoro, the Mac's chat voice, on the phone. Its C bridge is compiled by the Xcode target.
+            implementation(project(":voice"))
         }
         jvmTest.dependencies {
             implementation("app.cash.sqldelight:sqlite-driver:2.1.0")

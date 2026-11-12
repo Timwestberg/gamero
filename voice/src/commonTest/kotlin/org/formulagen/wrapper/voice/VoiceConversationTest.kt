@@ -7,21 +7,24 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class VoiceConversationTest {
-    @Test fun theSharedRecipeIsKokoroWithTheFourBlendsAndFillersOff() {
+    @Test fun theSharedRecipeIsKokoroWithItsBlendsAndFillersOff() {
         assertEquals(VoiceConfig.KOKORO, VoiceConversation.ENGINE)
         assertEquals(160, VoiceConversation.SENTENCE_GAP_MS)
         assertFalse(VoiceConversation.FILLERS_DEFAULT)
-        assertEquals("adam70-michael30", VoiceConversation.defaultVoiceId())
+        assertEquals("heart70-nicole30", VoiceConversation.defaultVoiceId())
         assertEquals(
             listOf(
-                "adam70-michael30" to "1.00",
-                "adam60-george40" to "0.95",
-                "adam55-bella45" to "0.95",
-                "heart60-adam40" to "0.97",
+                "heart70-nicole30" to "1.10",
+                "heart70-bella30" to "1.05",
+                "heart60-bella20-nicole20" to "1.10",
+                "fenrir90-heart10" to "1.00",
+                "fenrir85-nicole15" to "1.00",
+                "fable70-heart30" to "1.05",
+                "fable85-emma15" to "1.05",
             ),
             VoiceConversation.voices().map { it.id to it.speed },
         )
-        assertEquals(listOf("Sam", "Jamie", "Riley", "Harper"), VoiceConversation.voices().map { it.name })
+        assertEquals(listOf("Sage", "Quinn", "Harper", "Rowan", "Sam", "Emery", "Jamie"), VoiceConversation.voices().map { it.name })
     }
 
     @Test fun modelAndLexiconChecksumsMatchThePinnedRecipe() {
@@ -30,7 +33,7 @@ class VoiceConversationTest {
         assertEquals("6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425", sums.tokensSha256)
         assertEquals("7daaab53a181be9885b853a8582bf1838186317e5dadacbcef9c426d6fa0da14", sums.lexiconSha256)
         assertEquals("1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29", sums.upstreamVoicesSha256)
-        assertEquals("35cce6c473585fd74244f31c2623d6f2f835283918dad6fa2e2a79d60639b26f", sums.derivedVoicesSha256)
+        assertEquals("e00fb10d67373bfec27db8b8440c35ca544b9d6985c090353444cd5f772a01b5", sums.derivedVoicesSha256)
         assertEquals(HearingModelPins.SILERO_VAD_SHA256, sums.sileroVadSha256)
         assertEquals(HearingModelPins.ZIPFORMER_ARCHIVE_SHA256, sums.zipformerArchiveSha256)
         assertEquals(HearingModelPins.ENCODER_SHA256, sums.zipformerEncoderSha256)

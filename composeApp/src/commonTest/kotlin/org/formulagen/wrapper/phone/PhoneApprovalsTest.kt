@@ -133,6 +133,7 @@ class PhoneApprovalsTest {
     fun everyKindOffersItsOwnAnswers() = runTest {
         val phone = activePhone()
         val kinds = mapOf(
+            ApprovalKind.READ_FILES to (listOf(ApprovalOption.CONTINUE, ApprovalOption.NOT_NOW) to "Read project files"),
             ApprovalKind.START_OF_WORK to (listOf(ApprovalOption.CONTINUE, ApprovalOption.NOT_NOW) to "Start of work"),
             ApprovalKind.STAGE to (listOf(ApprovalOption.CONTINUE, ApprovalOption.REQUEST_CHANGES, ApprovalOption.NOT_NOW, ApprovalOption.STOP) to "Workflow stage"),
             ApprovalKind.RESUME_REVIEW to (listOf(ApprovalOption.CONTINUE, ApprovalOption.NOT_NOW, ApprovalOption.STOP) to "Resume or retry"),

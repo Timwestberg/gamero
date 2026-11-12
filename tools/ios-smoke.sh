@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the iOS app, run it on a throwaway simulator, and pass only when the web app loads.
-# In Hovel mode (the default) it also steps past the start screen and passes only when the
-# page's first host bridge call is answered.
+# In Hovel mode (the default) it also passes only when the page's first host bridge call is
+# answered.
 #
 # Usage: tools/ios-smoke.sh [--product hovel|gamero]
 #   --product gamero  the older check: the plain web view, page load only
@@ -99,8 +99,7 @@ xcrun simctl install "$device" "$app"
 
 step "launching $bundle_id"
 : >"$out/smoke.log"
-# GAMERO_AUTO_ENTER steps past the Hovel start screen, which otherwise waits for a tap. Debug builds only.
-SIMCTL_CHILD_GAMERO_PRODUCT="$product" SIMCTL_CHILD_GAMERO_AUTO_ENTER=1 SIMCTL_CHILD_GAMERO_WEB_URL="$url" xcrun simctl launch --console-pty --terminate-running-process \
+SIMCTL_CHILD_GAMERO_PRODUCT="$product" SIMCTL_CHILD_GAMERO_WEB_URL="$url" xcrun simctl launch --console-pty --terminate-running-process \
   "$device" "$bundle_id" >"$out/smoke.log" 2>&1 &
 console_pid=$!
 

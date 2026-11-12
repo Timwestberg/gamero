@@ -32,6 +32,8 @@ import org.formulagen.wrapper.util.loggingDaemonThreads
 /** The conversation's voice owns when to speak; an audio failure must not discard its text. */
 internal interface ChatSpeech : AutoCloseable {
     fun status(): ChatVoice
+    /** Distinguishes playback owners when this speaker is shared. */
+    fun playbackRevision(): Int = 0
     fun speak(text: String)
     fun stop()
     fun kokoroActive(): Boolean = false
@@ -55,6 +57,12 @@ internal interface ChatSpeech : AutoCloseable {
     fun enqueue(piece: String): Boolean = false
     /** The live reply has no more sentences. Playback drains what is already queued. */
     fun endStream() {}
+    /**
+     * Say [text] after whatever this speaker is saying, and go idle by itself once everything handed to it has been
+     * said. For a caller that never knows which piece is the last, so it cannot call [endStream]. Like [enqueue] it
+     * does not flush and does not bump the playback generation. False when there is nothing to say or no voice.
+     */
+    fun append(text: String): Boolean = false
 }
 
 /**
@@ -80,9 +88,15 @@ internal class DesktopSpeech(
     /** Audio waiting for the speaker. Synthesis keeps filling this while a sentence is still playing. */
     private var playQueue: LinkedBlockingQueue<PlayChunk>? = null
     private val playbackEnd = PlayChunk(ByteArray(0), 0)
+    /** Every piece handed to a self-ending stream has been synthesized: the player may end once it has played them. */
+    private val drainCheck = PlayChunk(ByteArray(0), 0)
     private var generation = 0
     private var streamTicket = -1
     private var streamIndex = 0
+    /** Pieces of the open stream that are still waiting for the synthesizer, or in it. */
+    private var streamPending = 0
+    /** The open stream ends by itself when it runs dry ([append]); otherwise it waits for [endStream]. */
+    private var streamSelfEnding = false
     private var enqueueStartedNs = 0L
     /** Milliseconds from the first [enqueue] of a reply to the speaker starting. -1 until then. */
     @Volatile var enqueueToSpeakerMs: Long = -1
@@ -95,6 +109,7 @@ internal class DesktopSpeech(
     private var state = unavailable ?: ChatVoice()
 
     override fun status(): ChatVoice = synchronized(gate) { state }
+    override fun playbackRevision(): Int = synchronized(gate) { generation }
 
     override fun onVoice(listener: () -> Unit) {
         synchronized(gate) { onVoice = listener }
@@ -337,7 +352,11 @@ internal class DesktopSpeech(
     /** Stop the device immediately, even while an earlier synthesis is finishing. */
     override fun stop() = synchronized(gate) { stopLocked() }
 
-    override fun enqueue(piece: String): Boolean {
+    override fun enqueue(piece: String): Boolean = queuePiece(piece, selfEnding = false)
+
+    override fun append(text: String): Boolean = queuePiece(speechText(text), selfEnding = true)
+
+    private fun queuePiece(piece: String, selfEnding: Boolean): Boolean {
         return synchronized(gate) {
             if (closed || piece.isBlank() || voiceConfig == null || unavailable != null) return@synchronized false
             ensureStreamLocked()
@@ -346,8 +365,21 @@ internal class DesktopSpeech(
             val settings = voiceConfig ?: return@synchronized false
             val index = streamIndex
             streamIndex += 1
+            streamPending += 1
+            if (selfEnding) streamSelfEnding = true
             if (index == 0) enqueueStartedNs = System.nanoTime()
-            worker.execute { streamPiece(piece, ticket, queue, settings, index) }
+            worker.execute {
+                try {
+                    streamPiece(piece, ticket, queue, settings, index)
+                } finally {
+                    synchronized(gate) {
+                        if (ticket == generation && playQueue === queue) {
+                            streamPending -= 1
+                            if (streamSelfEnding && streamPending == 0) queue.offer(drainCheck)
+                        }
+                    }
+                }
+            }
             true
         }
     }
@@ -373,6 +405,8 @@ internal class DesktopSpeech(
         val ticket = generation
         streamTicket = ticket
         streamIndex = 0
+        streamPending = 0
+        streamSelfEnding = false
         enqueueToSpeakerMs = -1
         val queue = LinkedBlockingQueue<PlayChunk>()
         playQueue = queue
@@ -461,6 +495,23 @@ internal class DesktopSpeech(
             while (!stopped()) {
                 val chunk = queue.take()
                 if (chunk === playbackEnd || stopped()) break
+                if (chunk === drainCheck) {
+                    // A self-ending stream ran dry. Play out what the device still holds, then end the stream,
+                    // unless another piece arrived meanwhile: that piece continues on this line with no gap.
+                    fun dry() = synchronized(gate) { ticket == generation && playQueue === queue && streamPending == 0 && queue.isEmpty() }
+                    if (!dry()) continue
+                    if (started) runCatching { player?.drain() }
+                    val ended = synchronized(gate) {
+                        if (closed || ticket != generation) return@synchronized true
+                        if (playQueue !== queue || streamPending != 0 || queue.isNotEmpty()) return@synchronized false
+                        playQueue = null
+                        streamTicket = -1
+                        // A piece that failed left the voice in ERROR; ending the stream must not report it as said.
+                        if (state.state != VoiceState.ERROR) touchState(unavailable ?: ChatVoice())
+                        true
+                    }
+                    if (ended) break else continue
+                }
                 val current = player ?: openLine(chunk.rate).also {
                     player = it
                     synchronized(gate) { line = it }

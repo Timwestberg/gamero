@@ -90,6 +90,17 @@ internal class ReplyStream(private val headed: Boolean, private val allowAnswer:
     @get:Synchronized val streamed: Boolean get() = sent.isNotEmpty()
 }
 
+/**
+ * A plain talk turn's reply as a request to be read files: its header is a `read` decision and nothing follows it.
+ * Null for any other reply, and for a `read` that is not valid, which is then the coordinator's answer as written.
+ */
+internal fun directReadRequest(text: String): CoordinatorDecision.Read? {
+    val (header, body) = splitHeader(text.trim())
+    val value = runCatching { brainJson.parseToJsonElement(header.trim()) }.getOrNull() as? JsonObject ?: return null
+    if (value["kind"] != JsonPrimitive("read") || body.isNotBlank()) return null
+    return runCatching { parseDecision(header.trim(), setOf(DecisionKind.READ)) as CoordinatorDecision.Read }.getOrNull()
+}
+
 /** Direct talk remains plain text unless it deliberately uses an answer metadata header. */
 internal fun parseDirectCoordinatorReply(text: String): CoordinatorDecision.Answer {
     val header = runCatching { brainJson.parseToJsonElement(splitHeader(text).first.trim()) }.getOrNull() as? JsonObject

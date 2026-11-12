@@ -2,13 +2,14 @@ package org.formulagen.wrapper.conversations
 
 /**
  * The Mac's own button for each option of each approval kind, as its native dialogs show it: the permission dialog
- * (`approvalDialog`), the start-of-work confirmation (`startOfWorkDialog`), a workflow stage (`stageDialog`) and the
+ * (`approvalDialog`), reading for the coordinator (`readFilesDialog`), the start-of-work confirmation (`startOfWorkDialog`), a workflow stage (`stageDialog`) and the
  * resume review (`resumeDialog`). What the Mac says about an approval uses these words, so they match what the person
  * clicked. `RemoteApprovalsTest.theMacsLabelsAreItsDialogsButtons` checks every kind against the dialogs themselves.
  */
 internal object MacApprovalLabels {
     private val LABELS: Map<ApprovalKind, Map<ApprovalOption, String>> = mapOf(
         ApprovalKind.PERMISSION to mapOf(ApprovalOption.ALLOW_ONCE to "Allow once", ApprovalOption.DENY to "Deny"),
+        ApprovalKind.READ_FILES to mapOf(ApprovalOption.CONTINUE to "Read files", ApprovalOption.NOT_NOW to "Not now"),
         ApprovalKind.START_OF_WORK to mapOf(ApprovalOption.CONTINUE to "Start working", ApprovalOption.NOT_NOW to "Not now"),
         ApprovalKind.STAGE to mapOf(
             ApprovalOption.CONTINUE to "Continue",

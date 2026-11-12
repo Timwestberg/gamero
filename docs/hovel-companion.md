@@ -431,6 +431,37 @@ sentence through `SentenceCursor`, dictation and the latency marks, and its host
 of the loop needs its host's lock; `click`, `escape` and `toggleFillers` take
 it themselves.
 
+- **The page's own voice.** A page that speaks a reply itself uses
+  `voicePlayback.*`, served by `DesktopVoiceInput` on the same speaker
+  (`DesktopSpeech`). `speak` starts over and `append` queues the next sentence
+  behind it through `ChatSpeech.append`, a stream that ends by itself once the
+  device has played everything out, so the page never says which sentence is
+  the last. A reply Talk is speaking is never interrupted or joined: the page's
+  call answers `error`. The rules are in
+  [host-bridge.md](host-bridge.md#device-speech-and-notifications).
+- **The coordinator is told what the project's folder is.** Its own turn reads no files and runs outside the
+  project, so each main-conversation turn carries `projectFolder` (`projectFolderNote` in
+  `ConversationPrompts.kt`): the working folder by name, never by path, any read-only folders, that this turn
+  cannot read files, and which specialists work inside the folder, so file work is delegated to one of them.
+  A project with no folder is told so, and where the person chooses one. Like the spoken rules it rides on the
+  turn, so choosing a folder does not start the provider's conversation over.
+- **The coordinator is shown what the folder holds, and agents share notes.** Each main-conversation turn also
+  carries `projectBrief`, a bounded description of the working folder built for that message, and `teamNotes`,
+  the recent part of the conversation's shared log. Every specialist turn is given the notes too. How both are
+  built, and what is never named in a brief, is in
+  [companion-folders.README.md](companion-folders/companion-folders.README.md).
+- **An answer that will be heard is written for the ear.** When the reply to a
+  message will be read aloud, the coordinator's turn carries Hovel's rules for
+  a spoken answer (`SPOKEN_REPLY_RULES` in `ConversationPrompts.kt`): answer
+  first, short sentences, one idea each, plain words, the way a person talks,
+  and only periods, commas and question marks, with no Markdown, dashes, lists
+  or code. That is the case when the device that sent the message speaks the
+  reply (`playback: local`: Talk, or Read aloud on a phone) or this Mac does
+  (`ReplyListener.spoken`). The rules ride on the turn, as `spokenAnswer` in
+  the coordinator's request or ahead of a plain message, never in the persona:
+  turning the voice on or off does not start the provider's conversation over.
+  A thread's replies are never heard, so they never carry them. What still
+  reaches the voice with marks in it is cleaned by `normalizeForSpeech`.
 - **One conversation at a time.** `VoiceConversation` is bound to one
   conversation id, with its own share of the microphone. A page's action moves
   the voice to the conversation it names, unless Talk or dictation is on in
@@ -728,7 +759,8 @@ person can retry it.
 | Status line "Update Hovel on this Mac to run every message in its conversations" | A claim answered `mac-update-required`: a message needs a newer contract. It stays queued until this Mac updates or it expires. |
 | System note "Assign a provider to the coordinator in Configure brain." (or to a named role) | The companion's brain has a role with no provider (`BrainConfigurationException`); the message settles `failed`. Assign one in Configure brain, then send the message again. |
 | System note "Claude doesn't run on this Mac. Choose another provider for the coordinator in Configure brain." (or "can't work in projects on this Mac" for a working role) | The role is bound to a runtime this Mac does not offer for it, so retrying cannot help. Choose another provider in Configure brain. |
-| Run paused "Reviewer uses code-review, which isn't installed in Claude Code on Studio Mac. Update the brain or provider and resume." (or "from Codex, but runs on Claude Code") | A specialist's provider skill cannot be used on this Mac (`missing-skill`): it is not installed there, its `SKILL.md` cannot be read, or it belongs to another provider. Install it there or change the specialist's skills in the brain, then resume. |
+| Run paused "TPM works in a project folder, but Codex can only talk on My Mac, and this project has no folder there. Make TPM talk-only in the brain, or run it on a provider that can work on My Mac and choose a folder on the project page. Then resume." | A working specialist cannot start (`unsupported-project-work`, `missing-project`): its runtime may not work in folders in this build, or the project has no folder on this Mac. Each readiness reason reads as a sentence with where to fix it (`readinessSentences` in `BrainPrompts.kt`); no contract name is shown. The message settles `failed`, its thread stays queued and the run is paused until the person resumes. |
+| Run paused "Reviewer uses code-review, which isn't installed in Claude Code on Studio Mac. Then resume." (or "from Codex, but runs on Claude Code") | A specialist's provider skill cannot be used on this Mac (`missing-skill`): it is not installed there, its `SKILL.md` cannot be read, or it belongs to another provider. Install it there or change the specialist's skills in the brain, then resume. |
 | System note "Hovel could not finish this message on this Mac. Try sending it again." | An unexpected error on this Mac; the log has it as "A message could not run". |
 | A message settled `reconciliation-required` | Its turn may have started before a crash or an error the runner could not classify. It never runs again unless the person retries it. |
 

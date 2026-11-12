@@ -225,7 +225,7 @@ const heartbeat = {
 };
 c.computerHeartbeat.parse(heartbeat);
 // A Mac with Codex declares memory jobs and list suggestions; conversations need no feature.
-const features = ['memory-extraction', lists.LIST_SUGGESTIONS_FEATURE];
+const features = ['memory-extraction', lists.LIST_SUGGESTIONS_FEATURE, 'list-draft-assistance'];
 for (const feature of features) hovelHostFeature.parse(feature);
 const beat = { ...heartbeat, features, providerState: hovelProviderState.parse('ready') };
 if ('directory' in service.heartbeatInput.shape) {
@@ -297,7 +297,7 @@ add('lists.reply.unavailable', 'suggestionReply', lists.suggestionReply, listFix
 add('lists.reply.busy', 'suggestionReply', lists.suggestionReply, { status: 'busy' });
 fixtures['lists.limits'] = {
   schema: 'LIST_LIMITS',
-  value: JSON.parse(canonical({ ...lists.LIST_LIMITS, durations: lists.DURATION_MINUTES }))
+  value: JSON.parse(canonical({ ...lists.LIST_LIMITS, durationSecondsMax: lists.LIST_LIMITS.durationSecondsMax }))
 };
 fixtures['routes.lists'] = { schema: 'routeTable', value: JSON.parse(canonical(lists.HOVEL_LIST_ROUTES.native)) };
 

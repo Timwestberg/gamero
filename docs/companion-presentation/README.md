@@ -96,7 +96,7 @@ Every environment variable the desktop companion path reads. The launchers take 
 | `HOVEL_PET_PROJECT` | `<game-platform>/ember-desktop-pet` | Play From Catalog, `DesktopPetLauncher` | Ember desktop pet project. Missing build files report the pet unavailable. |
 | `HOVEL_PET_GODOT` | `/Applications/Godot.app/Contents/MacOS/Godot` | Play From Catalog, `DesktopPetLauncher` | Godot 4.7.2 executable for the pet. |
 | `HOVEL_KOKORO_MODEL` | `spikes/ember-voice/mac/models/kokoro-multi-lang-v1_0` | `dev-env.sh`, `desktopVoiceConfig` | Kokoro v1.0 folder for Mac voice. Needs `model.onnx`, `voices-blends.bin`, `tokens.txt`, and `lexicon-us-en.txt`. Missing, or sherpa-onnx not linked: voice is unavailable and conversations are text only. |
-| `HOVEL_KOKORO_VOICE` | unset, so the saved id or Sam (`adam70-michael30`) | `desktopVoiceConfig` | Kokoro voice id for this launch. Overrides `~/.gamero/kokoro-voice`. |
+| `HOVEL_KOKORO_VOICE` | unset, so the saved id or Sage (`heart70-nicole30`) | `desktopVoiceConfig` | Kokoro voice id for this launch. Overrides `~/.gamero/kokoro-voice`. |
 | `HOVEL_VOICE_BACKEND` | `kokoro` | `dev-env.sh`, `desktopVoiceConfig` | `kokoro` is Mac voice. `sherpa` is PocketTTS for a later cloned voice. |
 | `HOVEL_VOICE_MODEL` | `spikes/ember-voice/mac/models/sherpa-onnx-pocket-tts-int8-2026-01-26` | `dev-env.sh`, `desktopVoiceConfig` | PocketTTS model folder. Used when `HOVEL_VOICE_BACKEND=sherpa`. |
 | `HOVEL_VOICE_REFERENCE` | `spikes/ember-voice/mac/models/voices/0a67_enhanced-24k.wav` | `dev-env.sh`, `desktopVoiceConfig` | PocketTTS reference clip. Used when `HOVEL_VOICE_BACKEND=sherpa`. |

@@ -18,6 +18,8 @@ internal enum class DecisionKind {
     @SerialName("step-result") STEP_RESULT,
     /** A conversation's thread reply only ([THREAD_REPLY_DECISIONS]). */
     @SerialName("forward") FORWARD,
+    /** A conversation's coordinator only, and only when its engine offers it: Hovel reads project files for it. */
+    @SerialName("read") READ,
 }
 
 /** How the coordinator grades an attempt: `blocked` will not go on as it is, so the coordinator re-plans. */
@@ -65,6 +67,22 @@ internal sealed interface CoordinatorDecision {
     /** Hand a thread reply to [threadId]'s specialist, with the coordinator's [note] as context when it adds one. */
     @Serializable @SerialName("forward")
     data class Forward(val threadId: String, val note: String? = null) : CoordinatorDecision
+
+    /**
+     * Ask Hovel to read from the project's folders: [files] in full, the entries of the folders in [list], and the
+     * lines that hold [search]. Each is given only when wanted. It changes nothing in a run; the conversation's engine
+     * answers it and asks again.
+     */
+    @Serializable @SerialName("read")
+    data class Read(val files: List<String>? = null, val list: List<String>? = null, val search: String? = null) :
+        CoordinatorDecision
+}
+
+/** What one `read` may ask for. The conversation's reader holds the rest of the allowance. */
+internal object ReadRequestLimits {
+    const val PATHS = 12
+    const val PATH_CHARS = 400
+    const val SEARCH_CHARS = 200
 }
 
 internal val CoordinatorDecision.kind: DecisionKind
@@ -77,6 +95,7 @@ internal val CoordinatorDecision.kind: DecisionKind
         is CoordinatorDecision.SkipStep -> DecisionKind.SKIP_STEP
         is CoordinatorDecision.StepResult -> DecisionKind.STEP_RESULT
         is CoordinatorDecision.Forward -> DecisionKind.FORWARD
+        is CoordinatorDecision.Read -> DecisionKind.READ
     }
 
 /**
@@ -112,6 +131,12 @@ internal fun parseDecision(text: String, allowed: Set<DecisionKind>): Coordinato
         is CoordinatorDecision.SkipStep -> { id(decision.stepId); text(decision.reason, BrainLimits.DESCRIPTION) }
         is CoordinatorDecision.StepResult -> { id(decision.attemptId); text(decision.explanation, BrainLimits.DESCRIPTION) }
         is CoordinatorDecision.Forward -> { id(decision.threadId); decision.note?.let { text(it, BrainLimits.STEP_INSTRUCTIONS) } }
+        is CoordinatorDecision.Read -> {
+            val paths = decision.files.orEmpty() + decision.list.orEmpty()
+            require(paths.size <= ReadRequestLimits.PATHS && (paths.isNotEmpty() || decision.search != null))
+            paths.forEach { text(it, ReadRequestLimits.PATH_CHARS) }
+            decision.search?.let { require(it.isNotBlank()); text(it, ReadRequestLimits.SEARCH_CHARS) }
+        }
     }
     return decision
 }

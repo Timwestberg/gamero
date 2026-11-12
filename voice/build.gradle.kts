@@ -14,6 +14,8 @@ if (mobileTargets) {
 
 kotlin {
     jvmToolchain(21)
+    // sherpaMain's own dependsOn turns the default hierarchy off; without it iosMain is not the iOS targets' source set.
+    applyDefaultHierarchyTemplate()
     jvm()
     if (mobileTargets) {
         androidTarget {

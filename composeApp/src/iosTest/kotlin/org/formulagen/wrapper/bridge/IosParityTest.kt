@@ -4,9 +4,6 @@ import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import kotlin.test.Test
 
 class IosParityTest {
-    /** Phase C of the host bridge plan ships the platform methods on iOS. */
-    private val pending = setOf("haptic.play", "link.open", "lifecycle.pause", "lifecycle.resume")
-
     @Test
     fun hovelOnIosMatchesTheParityTable() {
         val lists = object : ListsLocalCapability {
@@ -18,9 +15,9 @@ class IosParityTest {
             override suspend fun append(args: ListsLocalAppend) = Unit
             override suspend fun commit(transferId: String) = Unit
         }
-        val bridge = HostBridge(HOVEL_PRODUCT, "https://hovel.example/hovel.html", iosHostCapabilities("test"), iosHovelBridgePacks(FakeApprovalCapability(), FakeApprovalDeviceCapability(), lists))
+        val bridge = HostBridge(HOVEL_PRODUCT, "https://hovel.example/hovel.html", iosHostCapabilities("test"), iosHovelBridgePacks(FakeApprovalCapability(), FakeApprovalDeviceCapability(), lists, FakeVoiceInputCapability(), FakeVoicePlaybackCapability(), FakeNotificationsCapability()))
         try {
-            assertMatchesParity(HostPlatform.IOS, bridge.router, pending)
+            assertMatchesParity(HostPlatform.IOS, bridge.router)
         } finally {
             bridge.close()
         }

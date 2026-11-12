@@ -19,6 +19,8 @@ if args.product == 'hovel':
     if not address.hostname or address.scheme not in ('https', 'http'):
         parser.error('Hovel needs a valid web origin')
     info['WKAppBoundDomains'] = [address.hostname]
+    # The name under the icon and in the system's permission prompts.
+    info['CFBundleDisplayName'] = 'Hovel'
 args.output.parent.mkdir(parents=True, exist_ok=True)
 with args.output.open('wb') as stream:
     plistlib.dump(info, stream)

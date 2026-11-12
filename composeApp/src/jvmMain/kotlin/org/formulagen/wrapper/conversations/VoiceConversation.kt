@@ -279,7 +279,7 @@ internal class VoiceConversation(
             log(LogLevel.Info, "hearing", "latency endpoint_to_claimed_ms=$claimedMs")
         }
         val own = heard != null && heard.session == session
-        val run = Running(messageId, own || talk.on || claim.conversation.speak, own, stop)
+        val run = Running(messageId, (own || talk.on || claim.conversation.speak) && claim.message.playback != "local", own, stop)
         running = run
         changedLocked()
         listener(run)
@@ -287,6 +287,8 @@ internal class VoiceConversation(
 
     /** [run]'s replies, applied only while it is still the reply in progress. */
     private fun listener(run: Running) = object : ReplyListener {
+        override val spoken: Boolean get() = synchronized(gate) { run.speak }
+
         override fun delta(replyId: String, text: String) = synchronized(gate) {
             if (running !== run) return@synchronized
             run.deltaLocked(replyId, text)
