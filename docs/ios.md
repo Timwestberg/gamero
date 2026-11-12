@@ -157,11 +157,10 @@ The app reads the product once at launch, in the same order as the URL:
    empty, and `tools/build-release.sh` passes its own `GAMERO_PRODUCT` (default
    `hovel`) to the archive, as it does for desktop and Android.
 
-The first non-blank value is used, trimmed. If it is `hovel`, the app plays the
-Hovel launch and start screen, as desktop and Android do. The web app opens
-after the player taps "Open the door", without the legacy native bridge. Any
-other value loads the web app directly. `tools/ios-smoke.sh` sets
-`GAMERO_PRODUCT=gamero`, because the start screen waits for a tap.
+The first non-blank value is used, trimmed. If it is `hovel`, the app opens the
+web app at once with Hovel's host bridge and without the legacy native bridge;
+the page draws its own launch screen. Any other value loads the web app with
+the other product's bridge. `tools/ios-smoke.sh` sets `GAMERO_PRODUCT=gamero`.
 
 ## Smoke test
 
