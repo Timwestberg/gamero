@@ -27,10 +27,12 @@ import org.formulagen.wrapper.bridge.DesktopHostContract
 import org.formulagen.wrapper.bridge.HostContractCapability
 import org.formulagen.wrapper.bridge.ProjectCapability
 import org.formulagen.wrapper.bridge.ConversationVoiceCapability
+import org.formulagen.wrapper.conversations.CompanionFolderRules
 import org.formulagen.wrapper.conversations.ConversationHost
 import org.formulagen.wrapper.conversations.DesktopConversationVoice
 import org.formulagen.wrapper.conversations.ProjectFolderStore
 import org.formulagen.wrapper.conversations.NativeFolderPicker
+import org.formulagen.wrapper.conversations.VisibleFolders
 import org.formulagen.wrapper.approvals.ComposeDialogPresenter
 import org.formulagen.wrapper.approvals.NativeDialogs
 import org.formulagen.wrapper.runtimes.claude.ClaudeWorkRuntime
@@ -216,6 +218,8 @@ internal class DesktopServices private constructor(
                             })
                     },
                     voice = conversationVoice,
+                    companionFolders = VisibleFolders(
+                        CompanionFolderRules.root(environment, java.nio.file.Path.of(System.getProperty("user.home"))), providerRoot),
                 )) else null
                 // Codex, when installed, runs this Mac's memory jobs; registration needs no provider.
                 val companion = conversations?.let { host ->
@@ -266,6 +270,8 @@ internal fun desktopProductPacks(
         add(ProjectWorkspaceMethods.pack(Capability.Unsupported))
         add(VoiceInputMethods.pack(supportedIfPresent(voiceInput)))
         add(VoicePlaybackMethods.pack(supportedIfPresent(playback)))
+        // Reminders stay in the page on the Mac; only the iPhone schedules them itself.
+        add(org.formulagen.wrapper.bridge.NotificationMethods.pack(Capability.Unsupported))
         add(ConversationVoiceMethods.pack(supportedIfPresent(conversationVoice)))
         add(ApprovalMethods.pack(Capability.Unsupported))
         add(ApprovalDeviceMethods.pack(Capability.Unsupported))

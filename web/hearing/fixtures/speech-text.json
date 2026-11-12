@@ -1,6 +1,8 @@
 {
   "schema": "ember-speech-text.v1",
   "sentenceSafetyChars": 400,
+  "openingMinChars": 20,
+  "openingMaxChars": 70,
   "normalize": [
     {
       "input": "Hi, I'm Sam.",
@@ -41,9 +43,9 @@
     },
     {
       "input": "Meet me at 3:05 PM or 10:30am, not 12:30.",
-      "normalized": "Meet me at three oh five PM or ten thirty AM, not twelve: thirty.",
+      "normalized": "Meet me at three oh five PM or ten thirty AM, not twelve thirty.",
       "pieces": [
-        "Meet me at three oh five PM or ten thirty AM, not twelve: thirty."
+        "Meet me at three oh five PM or ten thirty AM, not twelve thirty."
       ]
     },
     {
@@ -92,9 +94,9 @@
     },
     {
       "input": "Emoji \ud83c\udf89 and \u201cquotes\u201d \u2014 dashes\u2026",
-      "normalized": "Emoji symbol symbol and symbolquotes symbol symbol dashes symbol",
+      "normalized": "Emoji and quotes, dashes",
       "pieces": [
-        "Emoji symbol symbol and symbolquotes symbol symbol dashes symbol"
+        "Emoji and quotes, dashes"
       ]
     },
     {
@@ -106,35 +108,31 @@
     },
     {
       "input": "Tabs\tand\nnew lines   stay.",
-      "normalized": "Tabs\tand\nnew lines   stay.",
+      "normalized": "Tabs\tand\nnew lines stay.",
       "pieces": [
-        "Tabs\tand\nnew lines   stay."
+        "Tabs\tand\nnew lines stay."
       ]
     },
     {
       "input": "a/b\\c = d_e ^ f ~ g | h < i > j @ k # l * m + n",
-      "normalized": "a slashb backslashc equals d underscoree caret f tilde g bar h less than i greater than j at k hash l star m plus n",
+      "normalized": "a slash b backslash c equals d underscore e caret f tilde g bar h less than i greater than j at k hash l star m plus n",
       "pieces": [
-        "a slashb backslashc equals d underscoree caret f tilde g bar h less than i greater than j at k hash l star m plus n"
+        "a slash b backslash c equals d underscore e caret f tilde g bar h less than i greater than j at k hash l star m plus n"
       ]
     },
     {
       "input": "Wait... what?! Really?",
-      "normalized": "Wait... what?! Really?",
+      "normalized": "Wait, what? Really?",
       "pieces": [
-        "Wait.",
-        ".",
-        ".",
-        "what?",
-        "!",
+        "Wait, what?",
         "Really?"
       ]
     },
     {
       "input": "ID-42-b and 0.5% and 5msec.",
-      "normalized": "eye dee dash forty-two dash bee and zero point five percent and five millisecondsec.",
+      "normalized": "eye dee dash forty-two dash bee and zero point five percent and five milliseconds ec.",
       "pieces": [
-        "eye dee dash forty-two dash bee and zero point five percent and five millisecondsec."
+        "eye dee dash forty-two dash bee and zero point five percent and five milliseconds ec."
       ]
     },
     {
@@ -151,7 +149,7 @@
     },
     {
       "input": "   ",
-      "normalized": "   ",
+      "normalized": "",
       "pieces": []
     },
     {
@@ -168,6 +166,197 @@
         "Long sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence",
         "sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence sentence ends here."
       ]
+    },
+    {
+      "input": "I don\u2019t think it\u2019s Tim\u2019s \u2014 it\u2019s \u2018ours\u2019, the dogs\u2019 bones.",
+      "normalized": "I don't think it's Tim's, it's ours, the dogs bones.",
+      "pieces": [
+        "I don't think it's Tim's, it's ours, the dogs bones."
+      ]
+    },
+    {
+      "input": "She said \u201cwait\u2026 what?\u201d and left (quietly).",
+      "normalized": "She said wait, what? and left, quietly.",
+      "pieces": [
+        "She said wait, what?",
+        "and left, quietly."
+      ]
+    },
+    {
+      "input": "The cache (the fast one) is ready [see notes] {draft}.",
+      "normalized": "The cache, the fast one, is ready, see notes, draft.",
+      "pieces": [
+        "The cache, the fast one, is ready, see notes, draft."
+      ]
+    },
+    {
+      "input": "Pages 3\u20135, 10-20 ms, 1.5-2.5 GB, 2026-11-09 and 555-867-5309.",
+      "normalized": "Pages three to five, ten to twenty milliseconds, one point five to two point five gigabytes, two thousand twenty-six- eleven- zero nine and five hundred fifty-five- eight hundred sixty-seven- five thousand three hundred nine.",
+      "pieces": [
+        "Pages three to five, ten to twenty milliseconds, one point five to two point five gigabytes, two thousand twenty-six- eleven- zero nine and five hundred fifty-five- eight hundred sixty-seven- five thousand three hundred nine."
+      ]
+    },
+    {
+      "input": "Ready - set -- go \u2014 now \u2015 then \u2012 done, well-known e-mail.",
+      "normalized": "Ready, set, go, now, then, done, well-known e-mail.",
+      "pieces": [
+        "Ready, set, go, now, then, done, well-known e-mail."
+      ]
+    },
+    {
+      "input": "Options:\n\u2022 first\n  \u25e6 second\n\u25aa third \u00b7 fourth \u2023 fifth",
+      "normalized": "Options:\nfirst\nsecond\nthird, fourth, fifth",
+      "pieces": [
+        "Options:\nfirst\nsecond\nthird, fourth, fifth"
+      ]
+    },
+    {
+      "input": "Settings \u2192 Voice \u21d2 Kokoro \u279c done",
+      "normalized": "Settings to Voice to Kokoro to done",
+      "pieces": [
+        "Settings to Voice to Kokoro to done"
+      ]
+    },
+    {
+      "input": "20\u00b0 at 3 \u00d7 4 \u00f7 2 \u00b1 1, \u20ac10, \u00a33, \u00a5500, 5\u00a2, \u00bd \u00bc \u00be, \u2248 10, a \u2260 b, x \u2264 5, y \u2265 2, \u00a7 4, \u22122, x\u00b2, y\u00b3, \u221e",
+      "normalized": "twenty degrees at three times four divided by two plus or minus one, euros ten, pounds three, yen five hundred, five cents, one half one quarter three quarters, about ten, a not equal to b, x at most five, y at least two, section four, minus two, x squared, y cubed, infinity",
+      "pieces": [
+        "twenty degrees at three times four divided by two plus or minus one, euros ten, pounds three, yen five hundred, five cents, one half one quarter three quarters, about ten, a not equal to b, x at most five, y at least two, section four, minus two, x squared, y cubed, infinity"
+      ]
+    },
+    {
+      "input": "10\u00a0km, 160\u202fms, zero\u200bwidth\ufeff, non\u2011breaking GPT\u20114o, soft\u00adhyphen.",
+      "normalized": "ten km, one hundred sixty milliseconds, zerowidth, non-breaking gee pee tee dash four oh, softhyphen.",
+      "pieces": [
+        "ten km, one hundred sixty milliseconds, zerowidth, non-breaking gee pee tee dash four oh, softhyphen."
+      ]
+    },
+    {
+      "input": "Great job \ud83c\udf89! Kokoro\u2122 is ready \u2705 \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 \ud83d\udc4d\ud83c\udffd 1\ufe0f\u20e3 \u00a92026 Acme\u00ae \u2502 box \u251c\u2500 drawing",
+      "normalized": "Great job! Kokoro is ready one two thousand twenty-six Acme box drawing",
+      "pieces": [
+        "Great job!",
+        "Kokoro is ready one two thousand twenty-six Acme box drawing"
+      ]
+    },
+    {
+      "input": "\u00abBonjour\u00bb is \u2039hello\u203a, \u201elow\u201f quotes; \"plain\" too, said\u201chi\u201dthere.",
+      "normalized": "Bonjour is hello, low quotes; plain too, said hi there.",
+      "pieces": [
+        "Bonjour is hello, low quotes; plain too, said hi there."
+      ]
+    },
+    {
+      "input": "Hmm... let me think\u2026.. Really...? No.. two dots.",
+      "normalized": "Hmm, let me think, Really? No. two dots.",
+      "pieces": [
+        "Hmm, let me think, Really?",
+        "No.",
+        "two dots."
+      ]
+    },
+    {
+      "input": "I was thinking\u2026",
+      "normalized": "I was thinking",
+      "pieces": [
+        "I was thinking"
+      ]
+    },
+    {
+      "input": "\u2014 Hello \u2014 (yes), [no]. (Maybe.) \u2026and then",
+      "normalized": "Hello, yes, no. Maybe. and then",
+      "pieces": [
+        "Hello, yes, no.",
+        "Maybe.",
+        "and then"
+      ]
+    },
+    {
+      "input": "caf\u00e92go, e\u0301, \u02bctis and y\u02bcall, 5\u2032 10\u2033, rock \u2019n\u2019 roll",
+      "normalized": "see ay ef \u00e9 two gee oh, e, tis and y'all, five ten, rock n roll",
+      "pieces": [
+        "see ay ef \u00e9 two gee oh, e, tis and y'all, five ten, rock n roll"
+      ]
+    },
+    {
+      "input": "See \u201chttps://example.com/docs\u201d, then (https://x.io)\u2026",
+      "normalized": "See example dot com slash docs, then, x dot io",
+      "pieces": [
+        "See example dot com slash docs, then, x dot io"
+      ]
+    },
+    {
+      "input": "great\ud83d\udc4dthanks",
+      "normalized": "great thanks",
+      "pieces": [
+        "great thanks"
+      ]
+    },
+    {
+      "input": "Say 'now', run `build` first, the boxes' lids, 'cause it's O'Neil's.",
+      "normalized": "Say now, run build first, the boxes lids, cause it's O'Neil's.",
+      "pieces": [
+        "Say now, run build first, the boxes lids, cause it's O'Neil's."
+      ]
+    },
+    {
+      "input": "a -> b => c --> d, x=>y but a = b and 3->5",
+      "normalized": "a to b to c to d, x to y but a equals b and three to five",
+      "pieces": [
+        "a to b to c to d, x to y but a equals b and three to five"
+      ]
+    },
+    {
+      "input": "What?! Really!! Yes.. ok. :) Done. :)",
+      "normalized": "What? Really! Yes. ok. Done.",
+      "pieces": [
+        "What?",
+        "Really!",
+        "Yes.",
+        "ok.",
+        "Done."
+      ]
+    },
+    {
+      "input": "Meet at 12:30, 9:05, 12:00 or 18:00, from 9:00\u201310:30 AM, not 1:12:30 or 16:9.",
+      "normalized": "Meet at twelve thirty, nine oh five, twelve o'clock or eighteen hundred, from nine o'clock to ten thirty AM, not one: twelve: thirty or sixteen: nine.",
+      "pieces": [
+        "Meet at twelve thirty, nine oh five, twelve o'clock or eighteen hundred, from nine o'clock to ten thirty AM, not one: twelve: thirty or sixteen: nine."
+      ]
+    },
+    {
+      "input": "It works -",
+      "normalized": "It works",
+      "pieces": [
+        "It works"
+      ]
+    },
+    {
+      "input": "the cache (",
+      "normalized": "the cache",
+      "pieces": [
+        "the cache"
+      ]
+    },
+    {
+      "input": "?!",
+      "normalized": "",
+      "pieces": []
+    },
+    {
+      "input": ":)",
+      "normalized": "",
+      "pieces": []
+    },
+    {
+      "input": "\ud83c\udf89",
+      "normalized": "",
+      "pieces": []
+    },
+    {
+      "input": "\u2026",
+      "normalized": "",
+      "pieces": []
     }
   ],
   "longSentence": [
@@ -210,6 +399,125 @@
         "m n o",
         "p"
       ]
+    }
+  ],
+  "opening": [
+    {
+      "input": "Sure, I can help with that.",
+      "min": 20,
+      "max": 70,
+      "cut": []
+    },
+    {
+      "input": "I refactored the session code, moved the socket into the bridge, and the build is green again.",
+      "min": 20,
+      "max": 70,
+      "cut": [
+        "I refactored the session code, moved the socket into the bridge,",
+        "and the build is green again."
+      ]
+    },
+    {
+      "input": "First we open the catalog; then we pick a companion and start a long conversation with it.",
+      "min": 20,
+      "max": 70,
+      "cut": [
+        "First we open the catalog;",
+        "then we pick a companion and start a long conversation with it."
+      ]
+    },
+    {
+      "input": "The build finished without a single warning and the tests all passed on the first run today.",
+      "min": 20,
+      "max": 70,
+      "cut": [
+        "The build finished without a single warning",
+        "and the tests all passed on the first run today."
+      ]
+    },
+    {
+      "input": "We should keep the old endpoint alive for now because three clients still call it every day.",
+      "min": 20,
+      "max": 70,
+      "cut": [
+        "We should keep the old endpoint alive for now",
+        "because three clients still call it every day."
+      ]
+    },
+    {
+      "input": "The total for the whole order came to 1,000 dollars after tax which nobody had expected at all.",
+      "min": 20,
+      "max": 70,
+      "cut": [
+        "The total for the whole order came to 1,000 dollars after tax",
+        "which nobody had expected at all."
+      ]
+    },
+    {
+      "input": "Their account balance was exactly 1,000,000 dollars yesterday morning at nine sharp.",
+      "min": 20,
+      "max": 70,
+      "cut": []
+    },
+    {
+      "input": "The server answered with error five hundred and three but the retry worked fine after it.",
+      "min": 20,
+      "max": 70,
+      "cut": [
+        "The server answered with error five hundred and three",
+        "but the retry worked fine after it."
+      ]
+    },
+    {
+      "input": "The server answered with error five hundred and three after thirty seconds of waiting.",
+      "min": 20,
+      "max": 70,
+      "cut": []
+    },
+    {
+      "input": "It took twenty-one or twenty-two tries and one hundred sixty milliseconds each, or so the log says.",
+      "min": 30,
+      "max": 60,
+      "cut": [
+        "It took twenty-one or twenty-two tries",
+        "and one hundred sixty milliseconds each, or so the log says."
+      ]
+    },
+    {
+      "input": "Supercalifragilistic words keep going without any pause whatsoever until the very end here.",
+      "min": 20,
+      "max": 70,
+      "cut": []
+    },
+    {
+      "input": "  one two three, four five six seven ",
+      "min": 5,
+      "max": 20,
+      "cut": [
+        "one two three,",
+        "four five six seven"
+      ]
+    },
+    {
+      "input": "one two three four five, six seven",
+      "min": 5,
+      "max": 30,
+      "cut": []
+    },
+    {
+      "input": "one two three four, five six seven",
+      "min": 5,
+      "max": 30,
+      "cut": [
+        "one two three four,",
+        "five six seven"
+      ]
+    },
+    {
+      "input": "",
+      "min": 20,
+      "max": 70,
+      "cut": []
     }
   ],
   "lexicon": {
@@ -329,6 +637,14 @@
       {
         "text": "hello-world ABC123 buzzes",
         "out": "h e l l o-w o r l d a b c123 buzzes"
+      },
+      {
+        "text": "The dog's box, the city's church's wish",
+        "out": "The dogs box, the cities churches wish"
+      },
+      {
+        "text": "Xyzzy's dog's A's don't",
+        "out": "x y z z y s dogs a s don't"
       }
     ]
   },

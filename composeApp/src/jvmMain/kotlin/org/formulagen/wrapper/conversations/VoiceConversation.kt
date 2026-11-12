@@ -287,6 +287,8 @@ internal class VoiceConversation(
 
     /** [run]'s replies, applied only while it is still the reply in progress. */
     private fun listener(run: Running) = object : ReplyListener {
+        override val spoken: Boolean get() = synchronized(gate) { run.speak }
+
         override fun delta(replyId: String, text: String) = synchronized(gate) {
             if (running !== run) return@synchronized
             run.deltaLocked(replyId, text)

@@ -71,7 +71,7 @@ export function createZipformerAsr(sherpa, files) {
 /**
  * Kokoro speaks through kokoro-worker.js (onnxruntime-web on WebGPU, WASM
  * fallback) and speaker.js. These are the voices a person can pick, in
- * recipe order, with Sam first and the default.
+ * recipe order, with Sage first and the default.
  */
 export const KOKORO_VOICES = KOKORO_VOICE_LIST.map(({ id, name, speed, sid }) => ({ id, name, speed, sid }));
 

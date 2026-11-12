@@ -27,6 +27,34 @@ class KokoroLexiconTest {
         assertEquals(0, report.coveredOov, report.toString())
     }
 
+    @Test
+    fun hovelsOwnWordsAreSaidAndNotSpelled() {
+        val product = kokoroProductWords()
+        // A plural is how a possessive is said, so "Quinn's" needs "quinns".
+        assertEquals("k w ˈ ɪ n z", product["quinns"])
+        assertEquals("ˈ I f ˌ O n z", product["iphones"])
+        assertTrue(lexiconText(product).startsWith("quinn k w ˈ ɪ n\nquinns k w ˈ ɪ n z\n"))
+        val real = findLexicon()
+        if (real == null) {
+            println("upstream lexicon-us-en.txt is not on disk; the product words were not checked against it")
+            return
+        }
+        val upstream = parseKokoroLexicon(real.readText())
+        val known = kokoroChatLexicon(upstream).known + product.keys
+        // Every voice says "Hi, I'm <its name>." when a person picks it.
+        for (voice in kokoroVoices()) {
+            val hello = "Hi, I'm ${voice.name}."
+            assertEquals(hello, coverUnknownWords(hello, known), "${voice.name} is spelled")
+        }
+        assertEquals("quinns iPhone and GitHub todos", coverUnknownWords("Quinn's iPhone and GitHub todos", known))
+        // Each pronunciation uses only phones the model has a token for, and none replaces an upstream word.
+        val tokens = File(real.parentFile, "tokens.txt").readLines().mapNotNull { it.substringBeforeLast(' ', "").ifEmpty { null } }.toSet()
+        for ((word, phones) in product) {
+            assertTrue(phones.split(' ').all { it in tokens }, "$word has a phone the model lacks: $phones")
+        }
+        assertEquals(emptySet(), KOKORO_PRODUCT_WORDS.keys.filter { it in upstream }.toSet(), "upstream already says these")
+    }
+
     private fun findLexicon(): File? {
         val names = listOf(
             "spikes/ember-voice/mac/models/kokoro-multi-lang-v1_0/lexicon-us-en.txt",

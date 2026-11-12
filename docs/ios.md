@@ -103,6 +103,18 @@ SIMCTL_CHILD_GAMERO_WEB_URL=http://127.0.0.1:8080/hovel \
   xcrun simctl launch --console-pty booted org.formulagen.wrapper.WestbergWrapper
 ```
 
+`CODE_SIGNING_ALLOWED=NO` makes an unsigned app. An unsigned simulator app
+cannot use the Keychain: the call answers -34018 (a missing entitlement). That
+is enough for `tools/ios-smoke.sh`, which loads a page as the `gamero` product.
+It is not enough for Hovel: `listsLocal.lock` fails with -34018, so the page's
+session restore stops with "Unable to restore your account session." **To test
+Hovel in the simulator, build without that flag**, as Xcode's own Run does:
+
+```sh
+xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator \
+  -configuration Debug -derivedDataPath build/ios build
+```
+
 To compile and test only the Kotlin side:
 
 ```sh
@@ -238,6 +250,264 @@ where the Keychain answers `errSecNotAvailable`, so
 `IosPhoneApprovalsTest` checks CommonCrypto and ids there and marks the
 Keychain test `@Ignore` with that reason.
 
+## What the iPhone app gives the page
+
+The Mac stays the engine: it runs every conversation turn on its own provider
+sign-ins, and the iPhone is a remote for it. What the phone adds is what only a
+phone has. The page asks `host.capabilities` and uses what is listed
+([host-bridge.md](host-bridge.md#device-speech-and-notifications) has each
+method's exact behaviour).
+
+| Capability | Methods and events | Code (`iosMain/.../bridge/` unless it says otherwise) |
+| --- | --- | --- |
+| Dictation | `voiceInput.availability`, `.start`, `.stop`, `.status` | `IosVoiceInput.kt` |
+| The companion's voice | `voicePlayback.speak`, `.append`, `.stop`, `.status`, `.voices`, `.choose` | `IosSpeechPlayback.kt`, `IosKokoroSpeaker.kt`, `IosAudioSession.kt` |
+| Offline Lists | `listsLocal.*` | `iosMain/.../lists/IosListsReplica.kt` |
+| Reminders and Focus phase ends | `notifications.status`, `.request`, `.sync` | `IosNotifications.kt`, rules in `commonMain/.../NotificationsCapability.kt` |
+| Links that leave the app | `link.open`, and any `target="_blank"` link | `IosHostCapabilities.kt`, `IosMediaGrant.kt` |
+| Haptics | `haptic.play` | `IosHostCapabilities.kt` |
+| Background and foreground | `lifecycle.pause`, `lifecycle.resume` | `IosHostCapabilities.kt` |
+| Phone approvals | `approvals.present`, `approvalDevice.*` | `iosMain/.../phone/IosPhoneApprovals.kt` |
+
+Speech, Lists, notifications and approvals are Hovel's own, so only the Hovel
+product registers them. Links, haptics and lifecycle are the platform's, so
+every product on iOS has them.
+
+## Dictation and the companion's voice
+
+Dictation uses Apple's speech framework. The voice is Kokoro where the build
+carries it, and Apple's otherwise. Both share one audio session (`IosVoice` in
+`IosVoiceInput.kt` owns both).
+
+**Dictation** (`voiceInput.*`, `SFSpeechRecognizer`):
+
+- `voiceInput.start` takes an optional `locale`, the page's language. The app
+  picks the recognizer with `bestSpeechLocale`: that locale, else the device's
+  region of the same language, else the language's home region, else the
+  device's own language.
+- Words are recognized **on the phone** when iOS has an on-device model for the
+  language, and `voiceInput.availability` then answers `offline: true`. For a
+  language without one, iOS sends the audio to Apple's speech service and
+  `offline` is `false`; with no network that recognizer is `unavailable` with
+  reason `offline`.
+- The first start shows two iOS prompts, speech recognition and the microphone
+  (`NSSpeechRecognitionUsageDescription`, `NSMicrophoneUsageDescription`). The
+  30-second start limit does not run while a prompt is on screen.
+- A capture ends by itself after 120 seconds, when the app goes to the
+  background, on an audio interruption (a call, Siri), and when the page goes
+  away. A route change (headphones on or off) restarts the engine on the new
+  route; if the new route cannot record, the words heard so far are kept.
+- Starting a capture stops the companion's voice, so the person can talk over
+  it.
+
+**The companion's voice** (`voicePlayback.*`):
+
+`IosSpeechPlayback` holds the queue's rules and the audio session. An
+`IosUtteranceSpeaker` makes the sound, and there are two.
+
+- **Kokoro** (`IosKokoroSpeaker`), the Mac's voice, when the build links
+  sherpa-onnx and the app bundle holds the model. Each sentence goes through
+  the Mac's own pipeline (`EmberVoice` in `:voice`: the same normalizing,
+  lexicons, voice blends and silence trimming) on a background thread, and its
+  sound plays through an `AVAudioPlayerNode` while the next sentence is
+  generated. The default voice is Sage.
+  - `voicePlayback.voices` lists the Kokoro blends and the one in use, and
+    `voicePlayback.choose` changes it. The model holds every voice, so a change
+    loads nothing: the next utterance uses it. The choice is kept in
+    `NSUserDefaults` (`hovel.voice.kokoro`). Choosing stops what was being said
+    and says "Hi, I'm …" in the new voice; a capture or a meeting that holds
+    the audio session keeps that hello silent. On Apple's voice there is
+    nothing to choose, and the list is empty.
+  - When nothing is being said, a first sentence longer than 70 characters is
+    said as two utterances: its opening clause, then the rest (`openingClause`
+    in `:voice`). The first sound then waits on half the sentence.
+  - The model (about 330 MB) loads at the first sentence, or when a capture
+    starts, so it is ready for the reply. It unloads when iOS warns that memory
+    is short and nothing is being said.
+  - It generates on 4 threads, as on the Mac. `GAMERO_KOKORO_THREADS` overrides
+    that at launch.
+  - Each sentence logs its speed: `Kokoro: 3.3 s of speech in 1.6 s, 2.1x real
+    time, on 4 threads`. That line is from an iPhone 14 Pro Max, where two
+    threads make 1.7 times real time. The first sentence of a reply therefore
+    starts about a second and a half after it arrives, and each later one is
+    ready before the one before it ends.
+  - If the model cannot load, Apple's voice speaks from then on.
+- **Apple's voice** (`AppleSpeaker`, `AVSpeechSynthesizer`) otherwise. The app
+  picks the best voice **installed** for the device language: premium, then
+  enhanced, of the device's own locale first, then of another region of the
+  language. With only default voices it uses the system's default, never a
+  novelty voice. To get a better voice, download one in Settings >
+  Accessibility > Spoken Content > Voices; the app picks it up on the next
+  sentence.
+
+To give a build Kokoro:
+
+```sh
+scripts/fetch-voice.sh                               # the model, as for the Mac
+scripts/ios-voice.sh /path/to/sherpa-onnx/build-ios  # link the engine, bundle the model
+```
+
+- sherpa-onnx 2.0.0 ships no iOS build. Build it from the `v2.0.0` tag with
+  upstream's `build-ios.sh` (needs `cmake`); the script takes that `build-ios`
+  directory.
+- The model directory also needs `voices-blends.bin` and `lexicon-chat.txt`,
+  which the Mac writes the first time Ember speaks.
+- The script writes `iosApp/Configuration/Voice.local.xcconfig`, which is not
+  committed. `scripts/ios-voice.sh --off` removes it. Without it the app links
+  no sherpa, carries no model, and speaks with Apple's voice.
+- The app grows by about 360 MB.
+
+To hear a build's voice without a conversation, launch it with
+`GAMERO_VOICE_SAY="A sentence. And another."`. The app speaks the text once,
+sentence by sentence.
+
+Both speakers follow the same rules:
+
+- `speak` starts over, `append` queues behind what is being said, so a reply is
+  spoken sentence by sentence while it streams. `status` is `speaking` from the
+  call on, not from the first sound, and `done` only when the whole queue has
+  been said. State comes from the speaker's reports of each sentence's start
+  and end.
+- While it speaks, other apps' audio is ducked (`playback` category,
+  `spokenAudio` mode). About 1.5 seconds after the last sentence the app
+  deactivates the session and tells other apps, so music comes back. The next
+  sentence of a streaming reply arrives sooner than that and keeps the session.
+- It stops, as `cancelled`, on `stop`, in the background, on an audio
+  interruption, when headphones come off, and when the page goes away. A
+  speaker that stops reporting is dropped as `error` after a budget
+  (`speechBudgetMs`), so `status` never stays `speaking` for ever.
+- **During a meeting** in the page (the web view holds the camera or the
+  microphone), the app leaves the audio session alone: dictation answers
+  `busy` and the voice answers `error`. The app also never deactivates a session
+  it did not activate itself.
+
+## Offline Lists
+
+`listsLocal.*` keeps one account's Lists snapshot on the phone, so Lists open
+and take edits with no network. `IosListsReplica` proves the account with a
+one-use server proof (`listsLocal.authorize`), keeps the owner id in a
+this-device-only Keychain item (`org.formulagen.hovel.offline-lists`), and
+stores the snapshot with SQLite in `Application Support/HovelOfflineLists`,
+with complete file protection and no backup. The page moves the snapshot in
+bounded chunks (`read`, then `begin`, `append`, `commit`), and a commit is
+atomic. `listsLocal.lock` (sign-out) forgets the owner and closes the store.
+
+## Notifications
+
+The iPhone schedules list reminders and Focus phase ends itself, with
+`UNUserNotificationCenter`. Nothing comes from a server, and there is no push,
+so the app needs no entitlement and no `Info.plist` key for it.
+
+- The page states what should be pending: `notifications.sync({scope, items})`
+  makes one scope's pending set exactly `items`. The scopes are
+  `lists.reminders` and `lists.focus`; each holds at most 32, and iOS keeps at
+  most 64 pending requests for an app.
+- A request's identifier is `<scope>/<id>` (`NotificationPlan.identifier`), and
+  its thread identifier is the scope, so iOS groups them.
+- `notifications.request` shows the iOS prompt once (banners and sound, no
+  badge). `sync` and `status` never prompt. Without permission a sync schedules
+  nothing and answers `scheduled: 0`.
+- **In the foreground iOS shows nothing.** The page shows its own notice for a
+  reminder that comes due while Hovel is on screen. `QuietInForeground` in
+  `IosNotifications.kt` says so outright; it is also what iOS does for an app
+  with no delegate.
+- **Signing out clears them.** `listsLocal.lock`, and another account
+  unlocking Lists on the phone, remove every scheduled and shown notification
+  (`forgettingOnLock`), so a signed-out phone does not show the last account's
+  reminders.
+- A tap on a notification opens the app. It carries no link.
+
+## Links, haptics and lifecycle
+
+- `link.open({url})` hands an HTTPS URL to iOS, which opens Safari, or the
+  site's own app for a universal link ("Open ChatGPT").
+- A `target="_blank"` link or `window.open` used to do nothing, because the web
+  view has one window. `MediaUIDelegate` now answers it with `newWindowTarget`:
+  Hovel's own page loads in the web view, another HTTPS site opens outside the
+  app, and anything else (`http:`, `tel:`, a link from another origin's frame)
+  still does nothing.
+- `haptic.play({effect})` plays the named effect with UIKit's feedback
+  generators. The simulator has no Taptic Engine and does nothing.
+- `lifecycle.pause` is sent when the app goes to the background and
+  `lifecycle.resume` when it comes back. A system prompt or the app switcher
+  over the app is not a pause.
+
+## Edge to edge
+
+In the Hovel product the page is the whole screen: it draws under the status
+bar and the Dynamic Island, and over the home indicator. The page keeps its own
+content clear of them with `env(safe-area-inset-top)` and
+`env(safe-area-inset-bottom)`. `MainViewController.kt` asks for this with
+`mediaWebViewFactory(edgeToEdge = hovel)`, so another product's page is laid
+out as before.
+
+Two things in `iosMain/.../bridge/IosMediaGrant.kt` make it so:
+
+- **`keepViewportFit()`** adds `KEEP_VIEWPORT_FIT_SCRIPT` to the main frame of
+  every page, at document start. The web view library adds a second
+  `<meta name="viewport">` after the page's, and the last one wins, so the
+  page's `viewport-fit=cover` was lost and `env(safe-area-inset-*)` read 0. The
+  script puts `viewport-fit=cover` back on the tag that wins, whenever the page
+  asked for it, and leaves the rest of that tag as it is. It watches `<head>`,
+  so a tag added later is handled too.
+- **`layOutToTheEdges()`** sets the scroll view's
+  `contentInsetAdjustmentBehavior` to `never`. Left to itself the scroll view
+  insets the page by the safe area and WebKit sizes the page's layout to what
+  is left, which left a blank bar above and below the page. WebKit lifts that
+  inset by itself only when it sees `viewport-fit=cover` at the first layout,
+  and here the tag arrives after it.
+
+Measured in the iPhone 17 simulator (874 pt tall):
+
+| What the page reads | Value |
+| --- | --- |
+| `innerHeight`, the document's client height, `100vh`, `100dvh`, `100svh` | 874 px, the whole screen |
+| `env(safe-area-inset-top)` | 62 px |
+| `env(safe-area-inset-bottom)` | 34 px |
+| A `position: sticky; bottom: 0` dock | Sits on the screen's bottom edge |
+
+The rule for a page: it is the whole screen, so pad the top and the bottom
+with `env(safe-area-inset-top)` and `env(safe-area-inset-bottom)`. The page
+must declare `viewport-fit=cover` itself; game-platform's `index.html` does.
+
+Where no page has painted (before the first paint, and past a page's end),
+the web view shows the web app's boot colour, `#071013`, not
+white: `backgroundColor` and `underPageBackgroundColor` are set to `PAGE_INK`
+through the library's settings in `commonMain/.../managers/WebViewManager.kt`.
+
+To check it, open Hovel signed out, then a conversation: no blank bar shows
+above or below the page, the title starts below the clock, and the composer
+sits above the home indicator. The web side's rules are in game-platform's
+`docs/launcher/companion-projects.SPEC.md` ("Edge to edge on the iPhone app").
+
+## The keyboard
+
+In the Hovel product the page ends where the keyboard begins. `HovelIosApp`
+(`iosMain/.../hovel/HovelIos.kt`) puts `Modifier.imePadding()` on the web view,
+so the web view itself gets shorter while the keyboard is up, the keyboard's own
+∧ ∨ ✓ bar included.
+
+Left under the keyboard, the page stays the height of the screen and iOS only
+pans it far enough to show the caret. A header that sticks to the top then
+slides off the screen, and a bar at the bottom is half covered by the keyboard's
+bar. Resized, the page's top and bottom are the visible top and bottom.
+
+What the page sees while the keyboard is up:
+
+- `innerHeight`, `100dvh` and `visualViewport.height` all shrink together, and
+  `window` fires `resize`. `visualViewport.offsetTop` stays 0.
+- `env(safe-area-inset-bottom)` is 0, since the web view no longer reaches the
+  home indicator.
+- A check that compares `innerHeight` with `visualViewport.height` reads
+  "keyboard closed". Only a plain mobile browser still shows the difference.
+
+## The app's name
+
+The name under the icon and in the system's permission prompts is
+`CFBundleDisplayName`, from `APP_DISPLAY_NAME` in
+`iosApp/Configuration/Config.xcconfig`: "Hovel" in Debug, the target's name in
+Release. `tools/ios-info.py` sets "Hovel" for a Hovel release archive.
+
 ## Camera and microphone
 
 Hovel meetings use the camera and the microphone in the web page. The app
@@ -270,6 +540,10 @@ gives them only to the trusted Hovel page, with the rule in
   `GAMERO_WEB_URL` at an HTTPS origin the device can reach.
 - **Sign-in needs HTTPS.** Over HTTP loopback, WKWebView drops identity's
   `Secure` cookies. See [Sign in (HTTPS)](#sign-in-https).
+- **An unsigned simulator build cannot run Hovel signed in.** Built with
+  `CODE_SIGNING_ALLOWED=NO` it has no Keychain (-34018), and the page shows
+  "Unable to restore your account session." Build without the flag; see
+  [Build and run from the command line](#build-and-run-from-the-command-line).
 - `iosApp/iosApp/GoogleService-Info.plist` must stay in place, because
   `FirebaseApp.configure()` runs at launch.
 - **Local LiveKit does not reach the simulator's HTTPS page.** WKWebView blocks
@@ -277,7 +551,18 @@ gives them only to the trusted Hovel page, with the rule in
   simulator, 2026-11-05). The same socket connects from an `http://127.0.0.1`
   page, but sign-in needs HTTPS. So meetings in the simulator use the LiveKit
   Cloud dev project.
-- **Approvals need the page open.** There are no push notifications yet, so
-  the phone shows an approval only while a Hovel page runs.
+- **Approvals need the page open.** There are no push notifications, so the
+  phone shows an approval only while a Hovel page runs. The notifications the
+  app does have are local ones, for reminders and Focus phase ends.
+- **Reminders are scheduled only while the app runs.** A reminder made on
+  another device reaches this phone's schedule the next time Hovel opens here
+  and syncs.
+- **The companion's voice is Apple's, not Kokoro.** It sounds best with a
+  premium or enhanced voice downloaded in Settings.
+- **Speech and notifications cannot be unit-tested end to end.** Their rules
+  are tested (`LocalNotificationsTest`, `LocalSpeechQueueTest`,
+  `NewWindowTargetTest`, `IosNotificationsTest`, `IosSpeechVoiceTest`). The
+  audio, the prompts and the banners need the manual cases in
+  [TEST.md](../TEST.md), some of them on a real phone.
 
 See [TEST.md](../TEST.md) for manual test cases.

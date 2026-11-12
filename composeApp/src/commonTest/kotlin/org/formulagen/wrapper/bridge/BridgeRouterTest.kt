@@ -50,6 +50,7 @@ class BridgeRouterTest {
         var pause: () -> Unit = {}
         var resume: () -> Unit = {}
         val games = FakeGameCapability()
+        val notifications = FakeNotificationsCapability()
         var prepare: suspend (String) -> CompanionRegistration = {
             CompanionRegistration("00000000-0000-4000-8000-000000000002", "Mac", "a".repeat(64))
         }
@@ -82,6 +83,7 @@ class BridgeRouterTest {
         ListsLocalMethods.pack(supported(platform, "listsLocal.account", FakeListsLocalCapability())),
         VoiceInputMethods.pack(supported(platform, "voiceInput.start", FakeVoiceInputCapability())),
         VoicePlaybackMethods.pack(supported(platform, "voicePlayback.speak", FakeVoicePlaybackCapability())),
+        NotificationMethods.pack(supported(platform, "notifications.sync", fakes.notifications)),
         ConversationVoiceMethods.pack(supported(platform, "conversationVoice.voiceStatus", FakeConversationVoiceCapability())),
         ApprovalMethods.pack(supported(platform, "approvals.present", FakeApprovalCapability())),
         ApprovalDeviceMethods.pack(supported(platform, "approvalDevice.status", FakeApprovalDeviceCapability())),
@@ -398,6 +400,50 @@ class BridgeRouterTest {
         val ember = PetCompanion(PetAppearance("#ffde9c", "#ed8f40", "#856b4e", "#b3a185"), "10000000-0000-4000-8000-000000000001", "Ember")
         assertEquals(listOf(GameId.EMBER_TOWER to ember, GameId.EMBER_OVERCLOCK to null), fakes.games.launches)
         router.close()
+    }
+
+    /** The capability gets the scope and items exactly as the page sent them; an absent body is empty, not null. */
+    @Test
+    fun aSyncCarriesItsScopeAndItemsToTheNotifications() = runTest {
+        val fakes = Fakes()
+        val router = router(HostPlatform.IOS, fakes)
+        call(router, watch)
+        val fixture = Json.parseToJsonElement(HostBridgeFixtures.ROUTER.getValue("notifications-sync.json")).jsonObject
+        val result = call(router, rawOf(fixture)).single().getValue("result").jsonObject
+        assertEquals(buildJsonObject { put("permission", "granted"); put("scheduled", 1) }, result)
+        val bare = Json.parseToJsonElement(HostBridgeFixtures.ROUTER.getValue("notifications-sync-without-body.json")).jsonObject
+        assertTrue(call(router, rawOf(bare)).single().getValue("ok").jsonPrimitive.boolean)
+        val reminder = LocalNotification("reminder:1", "Replace furnace filter", 1_800_000_000_000, "Hallway closet")
+        assertEquals(
+            listOf(NotificationSync(NotificationScope.LISTS_REMINDERS, listOf(reminder)), NotificationSync(NotificationScope.LISTS_REMINDERS, listOf(reminder.copy(body = "")))),
+            fakes.notifications.synced,
+        )
+        assertEquals(
+            buildJsonObject { put("permission", "undetermined") },
+            call(router, request("notifications.status")).single().getValue("result").jsonObject,
+        )
+        router.close()
+    }
+
+    /** The Mac and Android name the missing capability, so the page keeps its own in-page notices there. */
+    @Test
+    fun notificationsAreUnsupportedOffTheIphone() = runTest {
+        for (platform in listOf(HostPlatform.DESKTOP, HostPlatform.ANDROID)) {
+            val router = router(platform)
+            call(router, watch)
+            val error = call(router, request("notifications.status")).single().getValue("error").jsonObject
+            assertEquals("unsupported", error.getValue("code").jsonPrimitive.content)
+            assertEquals("Hovel on ${platform.wireName} has no notifications capability (notifications.status)", error.getValue("message").jsonPrimitive.content)
+            val methods = call(router, request("host.capabilities")).single()["result"]!!.jsonObject["methods"]!!.jsonArray
+            assertTrue(methods.none { it.jsonPrimitive.content.startsWith("notifications.") }, methods.toString())
+            router.close()
+        }
+    }
+
+    @Test
+    fun aPromptMayStayOnScreenLongerThanAnOrdinaryCall() {
+        assertTrue(NotificationMethods.REQUEST.timeout > BridgeMethod.DEFAULT_TIMEOUT)
+        assertEquals(BridgeMethod.DEFAULT_TIMEOUT, NotificationMethods.SYNC.timeout)
     }
 
     @Test

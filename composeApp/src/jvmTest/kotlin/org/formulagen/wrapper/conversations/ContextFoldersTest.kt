@@ -33,6 +33,20 @@ class ContextFoldersTest {
         assertEquals(emptyList(), claudeContextArguments(emptyList()), "no context folder changes nothing of the player's setup")
     }
 
+    @Test fun claudeAddsTheScratchFolderToItsWorkspaceWithNoRuleOfHovels() {
+        val scratch = Path.of("/Users/ember/Hovel/Ember/conversations/2026-11-11 Add sign-in/scratch")
+        assertEquals(listOf("--add-dir", scratch.toString()), org.formulagen.wrapper.runtimes.claude.claudeScratchArguments(scratch))
+        assertEquals(emptyList(), org.formulagen.wrapper.runtimes.claude.claudeScratchArguments(null), "no scratch folder changes nothing")
+        for (bad in listOf("relative/scratch", "/Users/ember/../etc", "/")) {
+            assertFails(bad) { org.formulagen.wrapper.runtimes.claude.claudeScratchArguments(Path.of(bad)) }
+        }
+        // A scope refuses a scratch folder that is not one exact place.
+        val member = org.formulagen.wrapper.conversation.TeamMember(RuntimeId.CLAUDE_CODE, "haiku")
+        assertEquals(scratch, WorkScope(ProjectFolders(working), "lease", "Ember", member, scratch = scratch).scratch)
+        assertFails { WorkScope(ProjectFolders(working), "lease", "Ember", member, scratch = Path.of("scratch")) }
+        assertFails { WorkScope(ProjectFolders(working), "lease", "Ember", member, scratch = Path.of("/Users/ember/x/../scratch")) }
+    }
+
     @Test fun claudeRefusesAFolderARuleCannotNameExactly() {
         for (bad in listOf("relative/docs", "/Users/ember/../etc", "/", "/Users/ember/docs (old)", "/Users/ember/*", "/Users/ember/a,b",
             "/Users/ember/[x]", "/Users/ember/new\nline", "/Users/ember/back\\slash", "/Users/ember/bang!")) {

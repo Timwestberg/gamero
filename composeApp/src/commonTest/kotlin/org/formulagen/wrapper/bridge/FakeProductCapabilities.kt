@@ -97,10 +97,22 @@ class FakeVoiceInputCapability : VoiceInputCapability {
 }
 class FakeVoicePlaybackCapability : VoicePlaybackCapability {
     override suspend fun speak(args: LocalSpeechArgs) = LocalSpeechStatus(args.sessionId, "speaking")
+    override suspend fun append(args: LocalSpeechArgs) = LocalSpeechStatus(args.sessionId, "speaking")
     override suspend fun stopSpeech(args: VoiceInputScope) = LocalSpeechStatus(args.sessionId, "cancelled")
     override suspend fun speechStatus(args: VoiceInputScope) = LocalSpeechStatus(args.sessionId, "done")
+    override suspend fun voices() = PlaybackVoices("heart60-adam40", listOf(PlaybackVoice("heart60-adam40", "Harper")))
 }
 
+/** Fixture notifications never reach a device; the scheduling rules are covered by LocalNotificationsTest. */
+class FakeNotificationsCapability : NotificationsCapability {
+    val synced = mutableListOf<NotificationSync>()
+    override suspend fun status() = NotificationStatus(NotificationPermission.UNDETERMINED)
+    override suspend fun request() = NotificationStatus(NotificationPermission.GRANTED)
+    override suspend fun sync(args: NotificationSync): NotificationSynced {
+        synced += args
+        return NotificationSynced(NotificationPermission.GRANTED, args.items.size)
+    }
+}
 
 /** Storage capability presence for parity; persistence is covered by storage tests. */
 internal class FakeListsLocalCapability : ListsLocalCapability {

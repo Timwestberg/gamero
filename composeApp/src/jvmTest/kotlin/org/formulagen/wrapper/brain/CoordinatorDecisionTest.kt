@@ -62,6 +62,29 @@ class CoordinatorDecisionTest {
         assertFalse(enters(testConfiguration()))
     }
 
+    /** A `read` is offered only by a conversation's engine, never by a run, and asks for something within its bounds. */
+    @Test fun aReadAsksForFilesFoldersOrASearchAndNeverReachesARun() {
+        val reading = setOf(DecisionKind.ANSWER, DecisionKind.READ)
+        assertEquals(CoordinatorDecision.Read(listOf("README.md"), listOf("src"), "sign in"),
+            parseDecision("""{"kind":"read","files":["README.md"],"list":["src"],"search":"sign in"}""", reading))
+        assertEquals(CoordinatorDecision.Read(search = "sign in"), parseDecision("""{"kind":"read","search":"sign in"}""", reading))
+        assertEquals(CoordinatorDecision.Read(list = listOf("src")), parseDecision("""{"kind":"read","list":["src"]}""", reading))
+        assertFails("it must ask for something") { parseDecision("""{"kind":"read"}""", reading) }
+        assertFails { parseDecision("""{"kind":"read","search":"  "}""", reading) }
+        assertFails { parseDecision("""{"kind":"read","files":[""]}""", reading) }
+        assertFails("an empty list asks for nothing") { parseDecision("""{"kind":"read","files":[]}""", reading) }
+        assertFails { parseDecision("""{"kind":"read","files":["a"],"write":["b"]}""", reading) }
+        val many = (0..ReadRequestLimits.PATHS).joinToString(",") { "\"f$it.md\"" }
+        assertFails { parseDecision("""{"kind":"read","files":[$many]}""", reading) }
+        assertFails { parseDecision("""{"kind":"read","search":"${"x".repeat(ReadRequestLimits.SEARCH_CHARS + 1)}"}""", reading) }
+        assertFails("only where it is offered") { parseDecision("""{"kind":"read","files":["README.md"]}""", setOf(DecisionKind.ANSWER)) }
+        val run = RunRecord(BrainRun(brainId(), 1, 1, null, BrainRunState.PLANNING, null), testConfiguration(), null, "Request", emptyList())
+        for (phase in BrainPhase.entries) assertFalse(DecisionKind.READ in allowedDecisions(run.copy(phase = phase)), "$phase")
+        assertFails("a run never takes a read") {
+            BrainRecord(run = run).decided(CoordinatorDecision.Read(listOf("README.md")), testConfiguration().coordinator.snapshot()!!, ::brainId)
+        }
+    }
+
     /** A conversation's thread reply offers only forward, answer and delegate; a run never takes a forward. */
     @Test fun aThreadReplyForwardsAnswersOrDelegatesAndNothingElse() {
         val run = RunRecord(BrainRun(brainId(), 1, 1, null, BrainRunState.PLANNING, null), testConfiguration(), null, "Request", emptyList(),

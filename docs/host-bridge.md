@@ -39,7 +39,7 @@ when it is closed. These calls never consume a reset or purchase credits.
 | Router | `commonMain/.../BridgeRouter.kt`, `BridgeCheck.kt` | Every protocol rule: frame and origin, size, envelope, context, method, arguments, error codes. No platform imports. |
 | Method types | `commonMain/.../BridgeMethods.kt` | `BridgeMethod`, `BridgeEvent`, and the router's own `host.*` methods. |
 | Platform set | `commonMain/.../HostCapabilities.kt` | One constructor parameter per platform capability: `Capability.Supported(impl)` or `Capability.Unsupported`. |
-| Capabilities | Platform: `commonMain/.../LinkOpener.kt`, `Haptics.kt`, `Lifecycle.kt`. Product: `CompanionCapability.kt`, `ProviderCapability.kt`, `PetCapability.kt`, `GameCapability.kt`, `ProjectCapability.kt`, `ProjectWorkspaceCapability.kt`, `ConversationVoiceCapability.kt`, `HostContractCapability.kt`, `ApprovalCapability.kt`; `SharedRules.kt` holds rules several use, and `BrainTypes.kt` the brain types conversations read | One file each: the interface, its argument and result types, its methods and its `CapabilityBinder`. |
+| Capabilities | Platform: `commonMain/.../LinkOpener.kt`, `Haptics.kt`, `Lifecycle.kt`. Product: `CompanionCapability.kt`, `ProviderCapability.kt`, `PetCapability.kt`, `GameCapability.kt`, `ProjectCapability.kt`, `ProjectWorkspaceCapability.kt`, `ConversationVoiceCapability.kt`, `VoiceInputCapability.kt`, `VoicePlaybackCapability.kt`, `NotificationsCapability.kt`, `ListsLocalCapability.kt`, `HostContractCapability.kt`, `ApprovalCapability.kt`; `SharedRules.kt` holds rules several use, and `BrainTypes.kt` the brain types conversations read | One file each: the interface, its argument and result types, its methods and its `CapabilityBinder`. |
 | Desktop product services | `jvmMain/kotlin/org/formulagen/wrapper/DesktopServices.kt` | Builds the desktop implementations (`DesktopProviders`, `DesktopPetLauncher`, `DesktopGameLauncher`, `HovelCompanion`, `ConversationHost`, `DesktopConversationVoice`), registers their packs, ends them per page context and closes them in reverse order. |
 | Platform factories | `jvmMain/.../DesktopHostCapabilities.kt`, `androidMain/.../AndroidHostCapabilities.kt`, `iosMain/.../IosHostCapabilities.kt` | Each platform's choice for every capability. |
 | Shared transport half | `commonMain/.../HostBridge.kt` | What every transport shares: the router, the trusted origin, the document counter, the event channel and the failure log. A platform transport calls its `receive`, and `documentChanged` or `endContext` to end a context. |
@@ -81,6 +81,70 @@ Code: `BridgeMethods.HOST_INFO` and `BridgeMethods.HOST_CAPABILITIES` in
 `capabilitiesListExactlyTheSupportedColumnOfTheParityTable` in
 `commonTest/.../BridgeRouterTest.kt`, plus the `host-info*.json` and
 `host-capabilities.json` fixtures.
+
+## Device speech and notifications
+
+Three Hovel capabilities belong to the device the page runs on, not to a
+conversation: dictation, the companion's voice and local notifications. This
+is what each method does, on every host that supports it.
+
+| Capability | Mac | iPhone | Android |
+| --- | --- | --- | --- |
+| `voiceInput.*` | the shared recognizer (`DesktopVoiceInput`) | Apple speech (`IosVoiceInput`) | unsupported |
+| `voicePlayback.*` | Kokoro (`DesktopVoiceInput` over `DesktopSpeech`) | Kokoro, or Apple speech without its model (`IosSpeechPlayback`) | unsupported |
+| `notifications.*` | unsupported: notices stay in the page | `UNUserNotificationCenter` (`IosNotifications`) | unsupported |
+
+**`voicePlayback`** (`commonMain/.../VoicePlaybackCapability.kt`). A
+`sessionId` names one reply. Every result is `{sessionId, state}`.
+
+- `speak({sessionId, text})` starts over: it drops what the session was saying
+  and says `text`.
+- `append({sessionId, text})` says `text` after what the session is saying.
+  With nothing playing it is `speak`; that includes a session whose queue
+  already finished, so a reply spoken sentence by sentence may read `done`
+  between two sentences and `speaking` again after the next `append`.
+- `status({sessionId})` is `speaking` from the call on until everything queued
+  has been said, then `done`. `error` means this session does not own the
+  speaker, or the voice failed.
+- `stop({sessionId})` drops the queue and answers `cancelled`. A stopped
+  session stays `cancelled`: a late `speak` or `append` does not start it
+  again. This holds when the stop arrives before the speak.
+- One session speaks at a time. While it has anything left to say, another
+  session's `speak` or `append` answers `error` and does not interrupt it. On
+  the Mac, a reply that Talk is speaking counts as another session.
+- `voices()` answers `{selected, voices: [{id, name}]}`: the voices a person
+  can choose between on this device, and the id of the one in use. A device
+  with one voice it cannot change answers `{selected: null, voices: []}`.
+- `choose({voiceId})` speaks with that voice from then on and keeps the choice
+  on the device (`~/.gamero/kokoro-voice` on the Mac, `NSUserDefaults` on
+  iPhone). It stops what the device was saying and says "Hi, I'm …" in the new
+  voice, so the person hears what they picked. It answers the list as it is
+  afterwards. An id the device does not list changes nothing.
+
+`LocalSpeechQueue` holds these rules for a host whose engine reports each
+utterance's end (iOS). The Mac keeps the same rules over its shared speaker in
+`DesktopVoiceInput`, and queues with `ChatSpeech.append`: the next sentence is
+synthesized while the current one plays, and the stream ends by itself once
+the device has played everything out.
+
+**`notifications`** (`commonMain/.../NotificationsCapability.kt`).
+
+- `status()` answers `{permission}`: `granted`, `denied` or `undetermined`. A
+  provisional or ephemeral grant is `granted`.
+- `request()` shows the system prompt only while the answer is `undetermined`,
+  then answers like `status`. It may run for 5 minutes, since the prompt waits
+  for the person.
+- `sync({scope, items})` makes the scope's pending set exactly `items` and
+  answers `{permission, scheduled}`. It never prompts. It removes the scope's
+  pending requests the page no longer names and everything the system already
+  showed for the scope, then adds or replaces one request per item whose
+  `fireAtMs` is in the future (the last item wins for a repeated id). Other
+  scopes are untouched. `scheduled` is the number the system then reports
+  pending for the scope: `0` without permission. Syncs run one at a time, and
+  a sync finishes even when its page goes away.
+
+`LocalNotifications` holds these rules over a `NotificationCenterPort`, so they
+are tested on every target with no device (`LocalNotificationsTest`).
 
 ## Recipe: add a capability
 
@@ -211,7 +275,9 @@ event: `games.launch` opens a game and `games.closed` says the player is back.
    `IosParityTest` check each factory against its column of the parity table.
    A row the table marks `supported` that a platform has not shipped yet goes
    in that test's `pending` set. Remove it from `pending` in the PR that ships
-   it; the test fails if you forget.
+   it; the test fails if you forget. iOS has nothing pending: it ships
+   `link.open`, `haptic.play` and the lifecycle events. Desktop and Android
+   still list theirs.
 
 8. **Web.** Callers use `bridge.call('area.verb', args)` from
    `@formulagen/host-bridge` and handle `unsupported`. A page hears an event

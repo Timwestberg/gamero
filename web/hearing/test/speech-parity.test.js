@@ -5,7 +5,15 @@ import test from "node:test";
 import { fadeEdge, shapeSentence, trimEdgeSilence } from "../src/kokoro-audio.js";
 import { loadLexicons, parseTokens, textToTokenIds } from "../src/kokoro-frontend.js";
 import { chatLexiconText, coverUnknownWords, kokoroChatLexicon, parseKokoroLexicon } from "../src/kokoro-lexicon.js";
-import { SENTENCE_SAFETY_CHARS, normalizeForSpeech, speechPieces, splitLongSentence } from "../src/speech-text.js";
+import {
+  OPENING_MAX_CHARS,
+  OPENING_MIN_CHARS,
+  SENTENCE_SAFETY_CHARS,
+  normalizeForSpeech,
+  openingClause,
+  speechPieces,
+  splitLongSentence,
+} from "../src/speech-text.js";
 
 const read = (name) => JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), "utf8"));
 const speech = read("speech-text.json");
@@ -23,6 +31,18 @@ test("the normalizer says what desktop SpeechText.kt says", () => {
   for (const row of speech.longSentence) {
     assert.deepEqual(splitLongSentence(row.input, row.max), row.pieces, JSON.stringify(row));
   }
+});
+
+test("no mark is called symbol, and the opening clause is cut where SpeechText.kt cuts it", () => {
+  assert.ok(speech.normalize.length >= 40);
+  for (const row of speech.normalize) assert.ok(!row.normalized.includes("symbol"), JSON.stringify(row.input));
+  assert.equal(OPENING_MIN_CHARS, speech.openingMinChars);
+  assert.equal(OPENING_MAX_CHARS, speech.openingMaxChars);
+  assert.ok(speech.opening.some((row) => row.cut.length === 2) && speech.opening.some((row) => row.cut.length === 0));
+  for (const row of speech.opening) {
+    assert.deepEqual(openingClause(row.input, row.min, row.max) ?? [], row.cut, JSON.stringify(row.input));
+  }
+  assert.deepEqual(openingClause(speech.opening[1].input), speech.opening[1].cut, "the defaults are the fixture's");
 });
 
 test("the chat lexicon adds the same inflections and covers the same words as KokoroLexicon.kt", () => {

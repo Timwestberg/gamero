@@ -47,6 +47,7 @@ internal object PhoneApprovalCopy {
 
     private val KIND_TITLES = mapOf(
         ApprovalKind.PERMISSION to "Permission request",
+        ApprovalKind.READ_FILES to "Read project files",
         ApprovalKind.START_OF_WORK to "Start of work",
         ApprovalKind.STAGE to "Workflow stage",
         ApprovalKind.RESUME_REVIEW to "Resume or retry",

@@ -47,6 +47,8 @@ export const TOKEN_CORPUS = [
   "OK, go.",
   "Hmm; let me think: maybe, perhaps, or not.",
   "I barged in, so Ember stopped speaking and listened again.",
+  "I don’t think it’s Tim’s — it’s “ours” (for now)…",
+  "Say 'now', then run `build` -> done?! It's 12:30.",
 ];
 
 function sha256(bytes) {
@@ -112,7 +114,8 @@ function main() {
     const pieces = [];
     for (const piece of speechPieces(text)) {
       const spoken = coverUnknownWords(piece, chat.known);
-      for (const match of piece.matchAll(/[A-Za-z]+(?:'[A-Za-z]+)?/g)) {
+      // The spoken text too: a possessive is covered by a plural the piece does not hold.
+      for (const match of `${piece} ${spoken}`.matchAll(/[A-Za-z]+(?:'[A-Za-z]+)?/g)) {
         const key = match[0].toLowerCase();
         if (chat.known.has(key)) knownSubset.add(key);
       }

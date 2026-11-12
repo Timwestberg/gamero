@@ -7,19 +7,19 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class VoicePickerStateTest {
-    private val voices = listOf(VoiceChoice("adam70-michael30", "Sam"))
+    private val voices = listOf(VoiceChoice("heart70-nicole30", "Sage"))
 
     @Test fun theRowHidesWithoutAConversationOrKokoro() {
-        assertFalse(voicePickerState(serving = false, kokoro = true, voices = voices, selectedId = "adam70-michael30").visible)
-        assertFalse(voicePickerState(serving = true, kokoro = false, voices = emptyList(), selectedId = "adam70-michael30").visible)
+        assertFalse(voicePickerState(serving = false, kokoro = true, voices = voices, selectedId = "heart70-nicole30").visible)
+        assertFalse(voicePickerState(serving = true, kokoro = false, voices = emptyList(), selectedId = "heart70-nicole30").visible)
     }
 
     @Test fun theRowShowsTalkUntilThePageOwnsItAndSaysTheDuplexMode() {
         val half = HearingDuplex.HALF
-        val row = voicePickerState(true, true, voices, "adam70-michael30", duplexMode = half, duplexReason = "aec-unavailable")
+        val row = voicePickerState(true, true, voices, "heart70-nicole30", duplexMode = half, duplexReason = "aec-unavailable")
         assertTrue(row.visible && row.showTalk)
         assertEquals("Half duplex · aec-unavailable", row.duplexLabel)
-        val paged = voicePickerState(true, true, voices, "adam70-michael30", pageOwnsTalk = true, duplexMode = HearingDuplex.FULL)
+        val paged = voicePickerState(true, true, voices, "heart70-nicole30", pageOwnsTalk = true, duplexMode = HearingDuplex.FULL)
         assertTrue(paged.visible)
         assertFalse(paged.showTalk, "the page owns Talk")
         assertEquals("Full duplex", paged.duplexLabel)

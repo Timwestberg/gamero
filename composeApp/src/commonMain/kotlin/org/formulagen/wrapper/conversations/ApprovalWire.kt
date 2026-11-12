@@ -15,6 +15,8 @@ import kotlinx.serialization.json.JsonClassDiscriminator
 @Serializable
 internal enum class ApprovalKind {
     @SerialName("permission") PERMISSION,
+    /** The coordinator asks to be read files of the project's folder. Hovel reads them; nothing is written. */
+    @SerialName("read-files") READ_FILES,
     @SerialName("start-of-work") START_OF_WORK,
     @SerialName("stage") STAGE,
     @SerialName("resume-review") RESUME_REVIEW,
