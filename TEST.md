@@ -14,8 +14,9 @@ runtime. Unless a case says otherwise, Hovel is served at
 `http://127.0.0.1:8080/hovel` with `pnpm serve:edge`. Signed out, `/hovel`
 moves to the app's one sign-in at `/auth?next=%2Fhovel`, which keeps the title
 **Hovel** and returns to `/hovel` after the PIN.
-Debug builds open on the Hovel start screen: tap "Open the door" first, or
-launch with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` to open the web app directly.
+Debug builds run the Hovel product, which opens the web app at once: the page
+draws its own launch screen (the mark and a loading bar) and then the sign-in
+page or the person's page. There is no start screen to tap on iOS.
 
 ## Happy paths
 
@@ -48,9 +49,9 @@ Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
 - **Preconditions:** Hovel is served.
 - **Steps:** Open `iosApp/iosApp.xcodeproj`, pick the `iosApp` scheme and an
   iPhone simulator, then Run.
-- **Expected:** The build succeeds without an Android SDK. The app plays the
-  Hovel launch and settles on the start screen. After you tap "Open the door",
-  it opens `/hovel` full screen, which moves to the **Welcome** sign-in card at
+- **Expected:** The build succeeds without an Android SDK. The app shows the
+  page's launch screen (the mark and a loading bar) with no tap needed, then
+  opens `/hovel` full screen, which moves to the **Welcome** sign-in card at
   `/auth?next=%2Fhovel`. The Xcode console shows
   `GAMERO_PAGE_LOADED origin=http://127.0.0.1:8080 title=Hovel` for both pages.
 
@@ -63,25 +64,26 @@ Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
 - **Expected:** The app loads that page, not `/hovel`. The log shows
   `origin=http://localhost:8080` with that page's title.
 
-### 3b. Product selects the Hovel start screen
+### 3b. Product selects the Hovel host
 
 - **Preconditions:** Hovel is served. A simulator is booted with a Debug build installed.
 - **Steps:**
   1. Launch with `xcrun simctl launch --console-pty booted org.formulagen.wrapper.WestbergWrapper`.
-     Rotate the simulator during the launch animation.
+     Rotate the simulator while the launch screen shows.
   2. Launch again with `SIMCTL_CHILD_GAMERO_PRODUCT=gamero` before the command.
-- **Expected:** Step 1 shows the Hovel launch and start screen, because Debug
-  sets `GAMERO_PRODUCT=hovel`. Step 2 loads the web app directly, because the
-  launch environment wins over Info.plist. After the rotation, the start screen
-  stays. A Release build from Xcode loads the web app directly; an archive from
-  `tools/build-release.sh ios` shows the start screen.
+- **Expected:** Step 1 opens Hovel's page at once behind its own launch
+  screen, with Hovel's host bridge, because Debug sets `GAMERO_PRODUCT=hovel`.
+  Step 2 loads the web app with the other product's bridge, because the launch
+  environment wins over Info.plist. After the rotation, the page stays. A
+  Release build from Xcode has no product set; an archive from
+  `tools/build-release.sh ios` sets Hovel.
 
 ### 4. HTTPS URL from the xcconfig
 
 - **Preconditions:** A reachable HTTPS deployment of Hovel.
 - **Steps:** Set `GAMERO_WEB_URL=https:/$()/<host>/hovel` in
   `iosApp/Configuration/Config.xcconfig`, build, and run without a launch
-  override. Tap "Open the door" on the start screen.
+  override.
 - **Expected:** `/hovel` loads from that origin. Signed out, it moves to
   `/auth?next=%2Fhovel` on the same origin. The log shows
   `origin=https://<host> title=Hovel`.

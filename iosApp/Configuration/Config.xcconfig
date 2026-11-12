@@ -12,8 +12,8 @@ GAMERO_WEB_URL=http:/$()/127.0.0.1:8080/hovel
 // Release keeps the production URL the app loaded before Hovel; loopback only works on a simulator.
 GAMERO_WEB_URL[config=Release]=https:/$()/web.worldwinner.com
 
-// Product the shell runs. `hovel` shows the Hovel launch and start screen before the web app,
-// as on desktop and Android. Overridden at launch by the GAMERO_PRODUCT environment variable.
+// Product the shell runs. `hovel` opens the web app at once with Hovel's host bridge; the page draws its own
+// launch screen. Overridden at launch by the GAMERO_PRODUCT environment variable.
 // Release leaves it empty; tools/build-release.sh sets it for the archive.
 GAMERO_PRODUCT=hovel
 GAMERO_PRODUCT[config=Release]=
