@@ -18,7 +18,7 @@ All paths below are under
 `HovelContract.CURRENT` is 4. The account companion's `look` is the four robot
 colors, passed unchanged to the pet. `games.launch` supports Hovel Companions,
 Ember Tower and Ember: Overclock with an optional selected companion; native
-configuration chooses files beneath `HOVEL_GAMES_ROOT`. The start screen uses
+configuration chooses files beneath `HOVEL_GAMES_ROOT`. The desktop launch screen uses
 `hovel_robot.png`, a still rendered from the shared robot, with provenance in
 the resources. See [robot validation](companion-presentation/robot-look.TEST.md).
 

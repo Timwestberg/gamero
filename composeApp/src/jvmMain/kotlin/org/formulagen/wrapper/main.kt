@@ -35,8 +35,6 @@ import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.voice.runEchoSelfTest
 import org.formulagen.wrapper.hovel.HovelLaunchScreen
 import org.formulagen.wrapper.hovel.HovelStartState
-import org.formulagen.wrapper.hovel.AUTO_ENTER_KEY
-import org.formulagen.wrapper.hovel.autoEnterRequested
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import java.awt.EventQueue
@@ -87,12 +85,6 @@ internal fun desktopSetting(environment: String?, property: String?): String? =
     environment?.takeIf { it.isNotBlank() } ?: property?.takeIf { it.isNotBlank() }
 
 private fun isHovelProduct() = desktopSetting(System.getenv("GAMERO_PRODUCT"), System.getProperty("gamero.product")) == "hovel"
-
-/**
- * Steps past the start screen without a click, for smoke runs. Read from the environment only,
- * never from a `-D` property, so a packaged release can't bake it in.
- */
-private fun desktopAutoEnter() = autoEnterRequested(System.getenv(AUTO_ENTER_KEY))
 
 /** App-independent desktop configuration; product adapters supply the trusted URL. */
 internal fun desktopWebUrl(args: Array<String>, environment: String?): String? {
@@ -203,7 +195,9 @@ fun main(args: Array<String>) {
 @OptIn(KCEFAcknowledge::class)
 @Composable
 private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: DesktopResources, runtimeFailure: DesktopFailure, window: JFrame) {
-    var start by remember { mutableStateOf(false) }
+    // Hovel prepares its browser as it opens and shows the page when it is ready: there is no start screen to tap.
+    // The other product still asks first.
+    var start by remember { mutableStateOf(isHovelProduct()) }
     var initialized by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
     val support = remember {
@@ -254,10 +248,8 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
     }
     when {
         isHovelProduct() && !initialized -> HovelLaunchScreen(
-            state = failure?.let { HovelStartState.Failed(it, canRetry = false) }
-                ?: if (start) HovelStartState.Preparing else HovelStartState.Ready(url),
-            onContinue = { start = true },
-            autoEnter = desktopAutoEnter(),
+            state = failure?.let { HovelStartState.Failed(it, canRetry = false) } ?: HovelStartState.Preparing,
+            onContinue = {},
             footnote = "Hovel runs in a verified JetBrains Runtime with JCEF. It never downloads or modifies browser binaries.",
         )
         failure != null -> Text("Browser initialization failed: $failure. Close Gamero and retry setup.", Modifier.padding(24.dp))

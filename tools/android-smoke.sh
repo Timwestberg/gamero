@@ -120,9 +120,8 @@ step "launching $package"
 "$adb" logcat -v brief >"$out/smoke.log" 2>&1 &
 logcat_pid=$!
 launched=$SECONDS
-# GAMERO_AUTO_ENTER steps past the Hovel start screen, which otherwise waits for a tap. Debug builds only.
 "$adb" shell am start -S -W -n "$package/.MainActivity" \
-  -e GAMERO_PRODUCT hovel -e GAMERO_WEB_URL "'$url'" -e GAMERO_AUTO_ENTER 1 >/dev/null
+  -e GAMERO_PRODUCT hovel -e GAMERO_WEB_URL "'$url'" >/dev/null
 
 expected="GAMERO_PAGE_LOADED origin=$origin title=$title"
 # Only the app's own log tags count. WebView console messages also reach logcat (tag chromium), so a

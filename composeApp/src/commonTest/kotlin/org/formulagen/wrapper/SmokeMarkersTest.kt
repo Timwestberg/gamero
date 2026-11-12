@@ -1,7 +1,6 @@
 package org.formulagen.wrapper
 
 import org.formulagen.wrapper.bridge.HostPlatform
-import org.formulagen.wrapper.hovel.autoEnterRequested
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -40,11 +39,5 @@ class SmokeMarkersTest {
             "GAMERO_BRIDGE_ANSWERED platform=desktop product=Hovel method=invalid outcome=invalid",
             SmokeMarkers.bridgeAnswered(HostPlatform.DESKTOP, "Hovel", null, "invalid"),
         )
-    }
-
-    @Test
-    fun autoEnterTakesOneOrTrueOnly() {
-        for (value in listOf("1", "true", " TRUE ")) assertTrue(autoEnterRequested(value), value)
-        for (value in listOf(null, "", "0", "false", "yes")) assertFalse(autoEnterRequested(value), value.toString())
     }
 }

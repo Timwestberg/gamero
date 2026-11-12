@@ -35,10 +35,8 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,7 +60,6 @@ import androidx.compose.ui.unit.sp
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
-import kotlinx.coroutines.flow.first
 import org.formulagen.wrapper.ui.brandGradient
 import org.formulagen.wrapper.ui.fgBlue300
 import org.formulagen.wrapper.ui.fgInk300
@@ -82,12 +79,12 @@ import westbergwrapper.composeapp.generated.resources.hovel_robot
 
 /**
  * Hovel start screen, drawn with the game's own art (see composeResources/files/hovel/PROVENANCE.md).
- * The desktop host shows it for GAMERO_PRODUCT=hovel and the Android app for a Hovel launch URL
- * (see HovelAndroid.kt); it covers the ready, preparing and failed
- * states and can open with a short launch animation.
+ * The desktop host shows it for GAMERO_PRODUCT=hovel while it prepares its browser, and when that fails; it can
+ * open with a short launch animation. It never waits for a tap: the page opens as soon as the browser is ready,
+ * and draws its own launch screen from there. The phone hosts have no browser to prepare, so they open the page
+ * at once and never show this screen.
  */
 sealed interface HovelStartState {
-    data class Ready(val url: String) : HovelStartState
     data object Preparing : HovelStartState
     /** [canRetry] is false when the host must restart to try again, as with JCEF. */
     data class Failed(val reason: String, val canRetry: Boolean = true) : HovelStartState
@@ -201,20 +198,7 @@ private class LaunchBeat(t: Float) {
     val title = stepped(phase(t, 0.78f, 0.94f), 4)
 }
 
-/**
- * Launch setting that steps inside on its own, for the smoke scripts. Android and iOS honor it
- * only in debug builds; desktop reads it from the environment only, never from a baked-in property.
- */
-const val AUTO_ENTER_KEY = "GAMERO_AUTO_ENTER"
-
-/** True for `1` or `true`, trimmed, any case. */
-fun autoEnterRequested(value: String?): Boolean = value?.trim()?.lowercase() in setOf("1", "true")
-
-/**
- * Plays the launch animation once, then settles on [KeeperStartScreen]. With [autoEnter], it
- * calls [onContinue] once the launch has played and the state is [HovelStartState.Ready], as a
- * tap on the door would. Only the smoke scripts turn it on (see [AUTO_ENTER_KEY]).
- */
+/** Plays the launch animation once, then settles on [KeeperStartScreen]. */
 @Composable
 fun HovelLaunchScreen(
     state: HovelStartState,
@@ -223,7 +207,6 @@ fun HovelLaunchScreen(
     durationMillis: Int = 2600,
     art: HovelArt = rememberHovelArt(),
     modifier: Modifier = Modifier,
-    autoEnter: Boolean = false,
 ) {
     // Saved as soon as the launch starts, so a recreated Android activity (even mid-intro) settles
     // straight onto the start screen instead of replaying it.
@@ -232,13 +215,6 @@ fun HovelLaunchScreen(
     LaunchedEffect(Unit) {
         played = true
         intro.animateTo(1f, tween(durationMillis, easing = LinearEasing))
-    }
-    val enter by rememberUpdatedState(onContinue)
-    if (autoEnter && state is HovelStartState.Ready) {
-        LaunchedEffect(state) {
-            snapshotFlow { intro.value }.first { it >= 1f }
-            enter()
-        }
     }
     KeeperStartScreen(state, onContinue, footnote, art, modifier, intro = { intro.value })
 }
@@ -250,6 +226,7 @@ fun HovelLaunchScreen(
 
 /**
  * @param footnote host-specific fine print, such as the desktop runtime note.
+ * @param onContinue tries again after a failure that can be retried; no other state has a button.
  * @param intro launch animation progress; 1 is the settled start screen.
  */
 @Composable
@@ -320,11 +297,6 @@ private fun KeeperPanel(
             Spacer(Modifier.height(if (compact) 24.dp else 28.dp))
             val buttonModifier = if (compact) Modifier.fillMaxWidth() else Modifier
             when (state) {
-                is HovelStartState.Ready -> {
-                    PanelButton("Open the door", onContinue, enabled, buttonModifier)
-                    Spacer(Modifier.height(10.dp))
-                    Text(state.url, color = fgInk300.copy(alpha = 0.8f), fontSize = 12.sp)
-                }
                 HovelStartState.Preparing -> {
                     Text("Lighting the lamps…", color = fgWhite, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(10.dp))
@@ -417,13 +389,11 @@ private fun PixelProgress(cells: Int = 12) {
 // Previews
 // ---------------------------------------------------------------------------------------------
 
-private val previewReady = HovelStartState.Ready("https://127.0.0.1:8123/hovel")
 private val previewFailed = HovelStartState.Failed("A verified JetBrains Runtime with JCEF is required")
 private const val previewFootnote = "Hovel runs in a verified JetBrains Runtime with JCEF. It never downloads or modifies browser binaries."
 
-@Preview @Composable fun KeeperReadyPreview() = KeeperStartScreen(previewReady, {}, previewFootnote)
 @Preview @Composable fun KeeperPreparingPreview() = KeeperStartScreen(HovelStartState.Preparing, {}, previewFootnote)
 @Preview @Composable fun KeeperFailedPreview() = KeeperStartScreen(previewFailed, {}, previewFootnote)
-@Preview @Composable fun KeeperPhoneReadyPreview() = Box(Modifier.size(390.dp, 844.dp)) { KeeperStartScreen(previewReady, {}) }
-@Preview @Composable fun KeeperLaunchMidwayPreview() = KeeperStartScreen(previewReady, {}, previewFootnote, intro = { 0.45f })
-@Preview @Composable fun HovelLaunchPreview() = HovelLaunchScreen(previewReady, {}, previewFootnote)
+@Preview @Composable fun KeeperPhonePreparingPreview() = Box(Modifier.size(390.dp, 844.dp)) { KeeperStartScreen(HovelStartState.Preparing, {}) }
+@Preview @Composable fun KeeperLaunchMidwayPreview() = KeeperStartScreen(HovelStartState.Preparing, {}, previewFootnote, intro = { 0.45f })
+@Preview @Composable fun HovelLaunchPreview() = HovelLaunchScreen(HovelStartState.Preparing, {}, previewFootnote)

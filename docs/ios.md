@@ -158,9 +158,9 @@ The app reads the product once at launch, in the same order as the URL:
    `hovel`) to the archive, as it does for desktop and Android.
 
 The first non-blank value is used, trimmed. If it is `hovel`, the app opens the
-web app at once, without the legacy native bridge. The page draws its own launch
-screen (the mark and a loading bar). Unlike desktop and Android, iOS has no start
-screen to tap. Any other value loads the web app directly.
+web app at once with Hovel's host bridge and without the legacy native bridge;
+the page draws its own launch screen. Any other value loads the web app with
+the other product's bridge.
 
 ## Smoke test
 

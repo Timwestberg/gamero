@@ -140,14 +140,13 @@ Verified on 9ad5c59 with Gradle 9.3.1/AGP 9.1.1: the desktop compile, all 63 JVM
 tests and the Android debug build pass. Mac launch is assigned to the
 coordinator's separate validation task. No native desktop success is claimed yet.
 
-On a Pixel 8 Pro (API 34) emulator, launched with the Hovel debug extras:
-
-- The launch animation plays and settles on the start screen.
-- A tap on the button area 0.5s into the launch does nothing.
-- Recreating the activity 1.2s into the launch shows the settled screen at once;
-  the intro does not replay.
-- Recreating it again after it settles does not crash.
-- "Open the door" loads the configured URL in the web view.
+On a Pixel 8 Pro (API 34) emulator, launched with the Hovel debug extras, the
+start screen was verified before it was removed: the launch animation, a
+recreated activity and "Open the door". Since then no host waits for a tap.
+The desktop host shows the launch animation and "Lighting the lamps…" while it
+prepares its browser, then opens the page. The Android and iPhone hosts have no
+browser to prepare and open the page at once. That Android flow compiles; it
+has not been run on an emulator or a device.
 
 `MainActivity` is portrait-only, so recreation was tested with a dark-mode toggle
 rather than rotation.
@@ -162,20 +161,17 @@ Every shell logs the same two lines (`SmokeMarkers.kt`):
   for the first host bridge answer each page gets from its trusted main frame.
   `outcome` is `ok` or the error code, such as `unsupported`.
 
-`GAMERO_AUTO_ENTER=1` steps past the Hovel start screen once the launch
-settles, so a script needs no click. Desktop reads it from the environment
-only, never from a `-D` property, so a packaged release can't bake it in; on
-Android and iOS only debug builds honor it. Both markers go to stderr on
-desktop:
+Hovel opens the page with no start screen to tap, so a script needs no click.
+Both markers go to stderr on desktop:
 
 ```sh
-GAMERO_PRODUCT=hovel GAMERO_AUTO_ENTER=1 GAMERO_WEB_URL=http://127.0.0.1:8080/hovel.html \
+GAMERO_PRODUCT=hovel GAMERO_WEB_URL=http://127.0.0.1:8080/hovel.html \
   ./gradlew :composeApp:run 2>&1 | grep -E 'GAMERO_(PAGE_LOADED|BRIDGE_ANSWERED)'
 ```
 
 `tools/android-smoke.sh` builds the debug app, boots `GAMERO_AVD` (default
 `Pixel_8_Pro_API_34`) unless a device is attached, launches with the Hovel
-extras and `GAMERO_AUTO_ENTER 1`, and passes on both markers, as
+extras, and passes on both markers, as
 `tools/ios-smoke.sh` does. `GAMERO_WEB_URL` defaults to the local edge,
 `http://127.0.0.1:8080/hovel.html`: Android debug builds open http on loopback
 (release builds stay HTTPS-only), and the script forwards the port to the Mac

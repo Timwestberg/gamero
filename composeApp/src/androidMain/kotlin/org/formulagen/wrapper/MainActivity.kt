@@ -10,7 +10,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.multiplatform.webview.web.PlatformWebViewParams
 import org.formulagen.wrapper.bridge.MediaChromeClient
 import org.formulagen.wrapper.hovel.HovelAndroidApp
-import org.formulagen.wrapper.hovel.hovelAutoEnter
 import org.formulagen.wrapper.hovel.hovelWebUrl
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
@@ -21,11 +20,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         val hovelUrl = hovelWebUrl(intent, this)
-        val autoEnter = hovelAutoEnter(intent, this)
         setContent {
             // Only Hovel's trusted page may get the camera and microphone, so the other page is denied both.
             if (hovelUrl != null) {
-                HovelAndroidApp(hovelUrl, onPageLoaded = ::logPageLoaded, autoEnter = autoEnter)
+                HovelAndroidApp(hovelUrl, onPageLoaded = ::logPageLoaded)
             } else {
                 App(platformWebViewParams = remember { PlatformWebViewParams(chromeClient = MediaChromeClient(null) { null }) })
             }
