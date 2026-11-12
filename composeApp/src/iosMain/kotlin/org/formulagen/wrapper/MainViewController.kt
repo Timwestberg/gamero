@@ -24,6 +24,7 @@ import org.formulagen.wrapper.bridge.iosHovelBridgePacks
 import org.formulagen.wrapper.bridge.mediaWebViewFactory
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.hovel.HovelIosApp
+import org.formulagen.wrapper.hovel.hovelEdgeToEdge
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.lists.IosListsReplica
@@ -60,6 +61,8 @@ fun MainViewController() = ComposeUIViewController {
             }
         }
         val attach = { webView: NativeWebView ->
+            // Hovel's pages draw edge to edge and pad themselves by the safe area.
+            if (hovel) hovelEdgeToEdge(webView)
             attached[0]?.close()
             // a registration an earlier page prepared is never finished by this one
             approvals?.invalidatePending()

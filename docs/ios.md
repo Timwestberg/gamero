@@ -163,6 +163,24 @@ after the player taps "Open the door", without the legacy native bridge. Any
 other value loads the web app directly. `tools/ios-smoke.sh` sets
 `GAMERO_PRODUCT=gamero`, because the start screen waits for a tap.
 
+### Hovel draws edge to edge
+
+In the Hovel product the web view fills the whole screen, under the status bar
+and the Dynamic Island and over the home indicator, and Hovel's pages pad
+themselves by `env(safe-area-inset-*)` (`hovelEdgeToEdge`, in
+`HovelEdgeToEdge.kt`):
+
+- The web view's scroll view no longer insets its content by the safe area
+  (`contentInsetAdjustmentBehavior = never`). With the inset, the page sat
+  between blank bands, 62pt at the top and 34pt at the bottom on an iPhone 17
+  Pro, and read every safe-area inset as 0.
+- A document-start script keeps every viewport tag at `viewport-fit=cover`. The
+  WebView library adds its own viewport tag on each navigation, after the
+  page's and without it, and the last tag wins, so without the script the page
+  would still read every inset as 0.
+
+Other products keep the inset: their pages are not written for it.
+
 ## Smoke test
 
 ```sh
