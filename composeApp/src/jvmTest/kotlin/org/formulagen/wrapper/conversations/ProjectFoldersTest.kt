@@ -219,6 +219,88 @@ class ProjectFoldersTest {
         assertFails { projects.folderStatus(ProjectScope(project)) }
     }
 
+    @Test fun theBridgeListsTheApprovalsThisMacKeepsAndTakesOneBack() = runBlocking<Unit> {
+        val conversation = id()
+        val kept = org.formulagen.wrapper.approvals.StartOfWork()
+        var verdict: Boolean? = true
+        val projects = DesktopProjects(store, { account }, { emptyList() }, changed = { _, _ -> }, owns = { _, _ -> verdict },
+            kept = { accountId -> kept.takeIf { accountId == account } })
+        assertEquals(ProjectApprovals(emptyList()), projects.approvals(ProjectScope(project)))
+        val member = org.formulagen.wrapper.conversation.TeamMember(RuntimeId.CODEX, "gpt-6-luna")
+        kept.remember(conversation, project, disk.resolve("hovel-notes"), member)
+        kept.remember(conversation, project, disk.resolve("hovel-notes"), member, org.formulagen.wrapper.approvals.ApprovedFor.READ)
+        kept.remember(conversation, id(), disk.resolve("other"), member)
+        val listed = projects.approvals(ProjectScope(project))
+        assertEquals(listOf("work", "read"), listed.approvals.map { it.purpose })
+        assertTrue(listed.approvals.all { it.conversationId == conversation && it.member == member })
+        assertFalse(bridgeJson.encodeToString(ProjectApprovals.serializer(), listed).contains(disk.toString()), "never a path")
+        val after = projects.withdrawApproval(ProjectWithdrawApprovalArgs(project, listed.approvals.last().id))
+        assertEquals(listOf("work"), after.approvals.map { it.purpose })
+        assertFalse(kept.isConfirmed(conversation, project, disk.resolve("hovel-notes"), member, org.formulagen.wrapper.approvals.ApprovedFor.READ))
+        // Only for a project the account gives this Mac.
+        verdict = false
+        assertFails { projects.approvals(ProjectScope(project)) }
+        assertFails { projects.withdrawApproval(ProjectWithdrawApprovalArgs(project, listed.approvals.first().id)) }
+        assertTrue(kept.isConfirmed(conversation, project, disk.resolve("hovel-notes"), member))
+    }
+
+    @Test fun theBridgeSaysWhetherAConversationHasAFolderAndShowsIt() = runBlocking<Unit> {
+        val conversation = id()
+        val shown = mutableListOf<String>()
+        var state = FolderState.NONE
+        val visible = object : CompanionFolders {
+            override fun sync(names: FolderNames, outputs: List<RecordedOutput>, notes: List<TeamNote>, bytes: (ArtifactRef) -> ByteArray) {}
+            override fun state(accountId: String, conversationId: String) = state
+            override fun show(accountId: String, conversationId: String): Boolean { shown += conversationId; return state != FolderState.NONE }
+        }
+        var verdict: Boolean? = true
+        val projects = DesktopProjects(store, { account }, { emptyList() }, changed = { _, _ -> }, owns = { _, _ -> verdict }, visible = visible)
+        val args = ProjectConversationArgs(project, conversation)
+        assertEquals(ProjectOutputsFolder("none"), projects.outputsFolder(args))
+        assertEquals(ProjectShowOutputsResult("unavailable"), projects.showOutputs(args))
+        state = FolderState.BEHIND
+        assertEquals(ProjectOutputsFolder("behind"), projects.outputsFolder(args))
+        state = FolderState.READY
+        assertEquals(ProjectOutputsFolder("ready"), projects.outputsFolder(args))
+        assertEquals(ProjectShowOutputsResult("shown"), projects.showOutputs(args))
+        assertEquals(listOf(conversation, conversation), shown)
+        verdict = null
+        assertFails("only once the account says the project is this Mac's") { projects.showOutputs(args) }
+        assertFails { projects.outputsFolder(args) }
+    }
+
+    @Test fun theBridgeAnswersACompanionsStorageAsSizesAndNeverAPath() = runBlocking<Unit> {
+        val companion = id()
+        val conversation = id()
+        val changed = java.time.Instant.parse("2026-11-09T08:00:00Z")
+        var usage: FolderUsage? = null
+        val asked = mutableListOf<String>()
+        val visible = object : CompanionFolders {
+            override fun sync(names: FolderNames, outputs: List<RecordedOutput>, notes: List<TeamNote>, bytes: (ArtifactRef) -> ByteArray) {}
+            override fun usage(accountId: String, companionId: String) = usage.also { asked += "usage $accountId $companionId" }
+            override fun setLimit(accountId: String, companionId: String, limitBytes: Long) = usage?.copy(limitBytes = limitBytes).also { asked += "limit $limitBytes" }
+            override fun clean(accountId: String, companionId: String, conversationIds: Set<String>, scratch: Boolean) =
+                usage?.copy(conversations = emptyList(), scratchBytes = 0).also { asked += "clean ${conversationIds.single()} $scratch" }
+        }
+        var registered: String? = null
+        val projects = DesktopProjects(store, { registered }, { emptyList() }, changed = { _, _ -> }, visible = visible)
+        assertFails("not connected yet") { projects.storage(CompanionScope(companion)) }
+        registered = account
+        assertEquals(ProjectStorage.NONE, projects.storage(CompanionScope(companion)))
+        assertEquals("none", ProjectStorage.NONE.state)
+        usage = FolderUsage(1_400_000_000, StorageLimits.DEFAULT_BYTES, 900_000_000, partial = true, listOf(ConversationUsage(conversation, 4096, changed)))
+        val storage = projects.storage(CompanionScope(companion))
+        assertEquals(ProjectStorage(listOf(ProjectStorageConversation("2026-11-09T08:00:00Z", conversation, 4096)), 1_000_000_000, true, 900_000_000, "ready",
+            1_400_000_000), storage)
+        assertFalse(bridgeJson.encodeToString(ProjectStorage.serializer(), storage).contains("/"), "never a path")
+        assertEquals(5_000_000_000, projects.setStorageLimit(ProjectSetStorageLimitArgs(companion, 5_000_000_000)).limitBytes)
+        assertEquals(0, projects.cleanStorage(ProjectCleanStorageArgs(companion, listOf(conversation), scratch = true)).scratchBytes)
+        assertEquals(listOf("usage $account $companion", "usage $account $companion", "limit 5000000000", "clean $conversation true"), asked)
+        // The Mac's own bounds are the contract's.
+        assertEquals(listOf(StorageLimits.DEFAULT_BYTES, StorageLimits.MIN_BYTES, StorageLimits.MAX_BYTES, StorageLimits.CONVERSATIONS.toLong()),
+            listOf(ProjectStorageLimits.DEFAULT_BYTES, ProjectStorageLimits.MIN_BYTES, ProjectStorageLimits.MAX_BYTES, ProjectStorageLimits.CONVERSATIONS.toLong()))
+    }
+
     @Test fun folderStatusAnswersOnlyForAProjectTheAccountGivesThisMac() = runBlocking<Unit> {
         var verdict: Boolean? = null
         val projects = DesktopProjects(store, { account }, { emptyList() }, changed = { _, _ -> }, owns = { _, _ -> verdict })

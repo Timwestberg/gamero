@@ -55,15 +55,15 @@ test("Ember speaks in Chrome: chosen blend, cached reload, barge-in within one c
 
     await t.test("the first reply downloads the voice, then speaks with the chosen blend", async () => {
       assert.match(await page.locator("#voice-status").textContent(), /loads when you first talk/);
-      assert.deepEqual(await page.locator("#voice option").allTextContents(), ["Sam", "Jamie", "Riley", "Harper"]);
-      assert.equal(await page.locator("#voice").inputValue(), "adam70-michael30");
-      await page.locator("#voice").selectOption("adam60-george40");
+      assert.deepEqual(await page.locator("#voice option").allTextContents(), ["Sage", "Quinn", "Harper", "Rowan", "Sam", "Emery", "Jamie"]);
+      assert.equal(await page.locator("#voice").inputValue(), "heart70-nicole30");
+      await page.locator("#voice").selectOption("fable85-emma15");
       const started = Date.now();
       const statusSeen = page.waitForFunction(() => /Getting Ember's voice ready/.test(document.querySelector("#voice-status").textContent), null, { timeout: 60_000 });
       const last = await sayAndFinish(page, REPLY);
       await statusSeen;
       const report = await page.evaluate(() => window.__app.voice.report());
-      assert.equal(last.voiceId, "adam60-george40");
+      assert.equal(last.voiceId, "fable85-emma15");
       assert.deepEqual(last.pieces.map((piece) => piece.chars), [14, 66, 26]);
       assert.ok(last.pieces.every((piece) => piece.audioMs > 300));
       assert.ok(Object.values(report.files).every((file) => file.source === "network"));
@@ -76,7 +76,7 @@ test("Ember speaks in Chrome: chosen blend, cached reload, barge-in within one c
     });
 
     await t.test("a warm reply starts fast and keeps up with playback", async () => {
-      const last = await sayAndFinish(page, "Riley here. This one should start quickly, because the model is already warm.");
+      const last = await sayAndFinish(page, "Jamie here. This one should start quickly, because the model is already warm.");
       metrics.warm = { ttfaMs: last.ttfaMs, rtf: last.rtf, pieces: last.pieces };
       if (metrics.backend === "webgpu") assert.ok(last.ttfaMs < 1500, `warm time to first audio ${last.ttfaMs} ms`);
     });
@@ -85,7 +85,7 @@ test("Ember speaks in Chrome: chosen blend, cached reload, barge-in within one c
       const before = server.requests.length;
       await page.reload();
       await page.waitForFunction(() => window.__app);
-      assert.equal(await page.locator("#voice").inputValue(), "adam60-george40");
+      assert.equal(await page.locator("#voice").inputValue(), "fable85-emma15");
       await waitFor(page, () => window.__app.voice.report() != null);
       const report = await page.evaluate(() => window.__app.voice.report());
       assert.ok(Object.values(report.files).every((file) => file.source === "cache"), JSON.stringify(report.files));

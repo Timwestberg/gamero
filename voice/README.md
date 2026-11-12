@@ -1,21 +1,35 @@
 # :voice
 
-Mac chat speaks with Kokoro 82M v1.0. PocketTTS stays behind the same `PieceEngine` seam for a later "speak in my voice" clip (`HOVEL_VOICE_BACKEND=sherpa`). iOS and Android still use Pocket. Kokoro on those targets is not linked.
+Mac chat speaks with Kokoro 82M v1.0. PocketTTS stays behind the same `PieceEngine` seam for a later "speak in my voice" clip (`HOVEL_VOICE_BACKEND=sherpa`). The iPhone app speaks with the same Kokoro when its build links sherpa-onnx (`scripts/ios-voice.sh`, see `docs/ios.md`). Android still uses Pocket.
 
-`scripts/fetch-voice.sh` downloads both. Kokoro's pinned files are `model.onnx`, upstream `voices.bin`, `tokens.txt`, and `lexicon-us-en.txt`. `voice/kokoro/pack-blends.py` writes the four chat blends into a derived `voices-blends.bin` (speaker slots 50–53). That file is not committed. The voice a person picks is one of:
+`scripts/fetch-voice.sh` downloads both. Kokoro's pinned files are `model.onnx`, upstream `voices.bin`, `tokens.txt`, and `lexicon-us-en.txt`. `voice/kokoro/pack-blends.py` writes the seven chat blends into a derived `voices-blends.bin` (speaker slots 45–51, which hold Mandarin voices upstream). That file is not committed. The voice a person picks is one of:
 
 | Id | Name | Speed | Blend |
 | --- | --- | --- | --- |
-| `adam70-michael30` | Sam | 1.00 | Adam 70 / Michael 30, the default |
-| `adam60-george40` | Jamie | 0.95 | Adam 60 / George 40 |
-| `adam55-bella45` | Riley | 0.95 | Adam 55 / Bella 45 |
-| `heart60-adam40` | Harper | 0.97 | Heart 60 / Adam 40 |
+| `heart70-nicole30` | Sage | 1.10 | Heart 70 / Nicole 30, the default |
+| `heart70-bella30` | Quinn | 1.05 | Heart 70 / Bella 30 |
+| `heart60-bella20-nicole20` | Harper | 1.10 | Heart 60 / Bella 20 / Nicole 20 |
+| `fenrir90-heart10` | Rowan | 1.00 | Fenrir 90 / Heart 10 |
+| `fenrir85-nicole15` | Sam | 1.00 | Fenrir 85 / Nicole 15 |
+| `fable70-heart30` | Emery | 1.05 | Fable 70 / Heart 30, British |
+| `fable85-emma15` | Jamie | 1.05 | Fable 85 / Emma 15, British |
 
-Sam is the default because it is the blend closest to the Adam sample that was the clearest of the set, at the same speed. While Ember's chat is open, the Mac window shows a Voice row with these names. The selected name is the one in use. Choosing another speaks "Hi, I'm …" and the next sentence uses it, and the id is saved to `~/.gamero/kokoro-voice`. `HOVEL_KOKORO_VOICE` still overrides that file at launch. The row is hidden when the engine is Pocket.
+These are the voices Tim marked natural in two listening rounds on 2026-11-10. What the rounds showed, for the next person who adds a voice:
+
+- One voice leads each mix at 60% or more. Two male voices mixed 70/30 sounded computerized, and so did a male and a female voice at 60/40.
+- No mix uses `am_adam`. Upstream grades it F+, and the three voices led by it (the first Sam, Jamie and Riley) were the first to be called computerized.
+- Faster reads as more natural: the Heart-led voices went from okay at 1.00 to natural at 1.05 and 1.10. `bm_fable` is a slow talker, so its mixes run at 1.05.
+- The raw voices differ in loudness by about 5 dB (the Fenrir-led ones are louder). Nothing evens that out yet.
+
+A new blend is one object in `voice/kokoro/blends.json`, the same object in `KOKORO_BLENDS_JSON` and `web/hearing/src/kokoro-voices.js`, and a free slot. Run `pack-blends.py` with `derivedVoicesSha256` emptied to print the new hash, then pin it in those three files, `web/hearing/src/models.js` and `VoiceConversationTest`. Give it a name the voice can say (`KokoroLexiconTest` checks). tool-webkit keeps its own copy of the pins for the browser voice.
+
+While Ember's chat is open, the Mac window shows a Voice row with these names, and the composer's options hold the same choice on the Mac and the iPhone. Choosing a voice speaks "Hi, I'm …" and the next sentence uses it. The Mac saves the id to `~/.gamero/kokoro-voice`; `HOVEL_KOKORO_VOICE` overrides that file for one launch. A saved id that is no longer a voice falls back to the default.
 
 A word missing from `lexicon-us-en.txt` used to be skipped. Regular inflections of a listed stem are written to `lexicon-chat.txt` beside it, and any word that is still unknown is spelled letter by letter so it is not dropped.
 
-Speech is normalized before it is split into sentences: versions (`Sonnet 5.5`, `2.0.1`), units, URLs, and filenames become words. A token the normalizer does not know is spelled. It is not dropped. Each sentence is one Kokoro generate. Playback is the existing stream: the first sentence can start while the next one is still generating. Kokoro's padding at a period is trimmed, then `sentenceGapMs` (160) is the only pause inserted between sentences. The next sentence is synthesized while the current one is still playing, on `KOKORO_THREADS` (4) threads. `startAfterMs` waits once, before the first sentence of a reply.
+Hovel's own words are a third lexicon, `lexicon-hovel.txt`, loaded last: the voice names upstream lacks (Quinn, Avery, Jamie) and a few products (iPhone, iPad, GitHub, todo, wifi, Gamero), each with its plural. Without it a voice spelled its own name in "Hi, I'm Quinn." The words and their phones are `KOKORO_PRODUCT_WORDS` in `KokoroLexicon.kt`; put a pronunciation together from words the lexicon already holds, so every phone has a token. The Mac writes the file beside the model and the iPhone writes it to its caches. `KokoroLexiconTest` checks that every voice can say its own name. The browser's voice does not load this file yet, so it still spells these words.
+
+Speech is normalized before it is split into sentences: versions (`Sonnet 5.5`, `2.0.1`), units, URLs, and filenames become words. A token the normalizer does not know is spelled. It is not dropped. A mark with no sound is never named: a quotation mark or an emoji is dropped, a dash, a bracket or an ellipsis becomes the pause it stands for (a comma), and a curly apostrophe becomes the plain one so a contraction stays one word (`SpeechPunctuationTest`). `openingClause` cuts the first clause off a long sentence, for a caller that wants the first sound sooner. Each sentence is one Kokoro generate. Playback is the existing stream: the first sentence can start while the next one is still generating. Kokoro's padding at a period is trimmed, then `sentenceGapMs` (160) is the only pause inserted between sentences. The next sentence is synthesized while the current one is still playing, on `KOKORO_THREADS` (4) threads. `startAfterMs` waits once, before the first sentence of a reply.
 
 On-device PocketTTS remains in this module for the cloned-voice path. The Mac companion uses the JVM backend through `DesktopSpeech`.
 
@@ -41,7 +55,7 @@ Android uses the same Kotlin sherpa API once `voice/libs/sherpa-onnx.aar` is pre
 
 ## iOS
 
-`iosMain` calls `voice/ios/ember_voice_bridge.h`. The Swift and Objective-C++ next to that header include the sherpa-onnx 2.0.0 xcframework, so the Kotlin side does not guess sherpa's struct layout. `voice/ios-bench/embed-sherpa.sh` copies that framework into the app bundle. The Xcode target turns user-script sandboxing off so the script can read `SHERPA_ONNX_FRAMEWORKS`. `backend = "fluid-audio"` selects FluidAudio. One `PocketTtsManager` and one cloned voice last for the conversation. Later pieces only open a session on that clone. It does not speak a bundled named voice. Without that package linked, the bridge returns NULL and the engine says so. A second speak on the C bridge returns 0 instead of running two generations on one engine.
+`iosMain` calls `voice/ios/ember_voice_bridge.h`. Kokoro is `KokoroIosPieceEngine`: the same model files, voice blends and lexicons as the Mac, with the lexicons' words kept as hashes (`LexiconWords`) to spare the phone's memory. The app compiles the bridge through `iosApp/iosApp/EmberVoiceBridge.mm`; without the sherpa headers on its search path every engine is NULL. The Swift and Objective-C++ next to that header include the sherpa-onnx 2.0.0 xcframework, so the Kotlin side does not guess sherpa's struct layout. `voice/ios-bench/embed-sherpa.sh` copies that framework into the app bundle. The Xcode target turns user-script sandboxing off so the script can read `SHERPA_ONNX_FRAMEWORKS`. `backend = "fluid-audio"` selects FluidAudio. One `PocketTtsManager` and one cloned voice last for the conversation. Later pieces only open a session on that clone. It does not speak a bundled named voice. Without that package linked, the bridge returns NULL and the engine says so. A second speak on the C bridge returns 0 instead of running two generations on one engine.
 
 One command, on the Mac that has the phones plugged in:
 

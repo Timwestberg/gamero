@@ -1,5 +1,7 @@
 package org.formulagen.wrapper.hovel
 
+import kotlinx.serialization.json.jsonObject
+
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ArrayBlockingQueue
@@ -84,9 +86,12 @@ internal class ListSuggestionLane(
         val worker = Thread.currentThread()
         val alarm = alarms.schedule({ expired.set(true); worker.interrupt() }, deadline.inWholeMilliseconds, TimeUnit.MILLISECONDS)
         return try {
-            val result = provider.execute(ExecutionRequest(requestId, hostId, suggestionPrompt(work), CHOICE))
+            val prompt = if (work.draftAssistance != null) draftAssistancePrompt(work) else suggestionPrompt(work)
+            if (prompt.length > ExecutionRequest.MAX_PROMPT_CHARS) return SuggestionReply.Unavailable
+            val result = provider.execute(ExecutionRequest(requestId, hostId, prompt, CHOICE))
             if (expired.get()) null
             else if (!result.succeeded) SuggestionReply.Unavailable
+            else if (work.draftAssistance != null) parseDraftAnswer(result.text, work.draftAssistance.expectedRevision) ?: SuggestionReply.Unavailable
             else parseSuggestions(result.text)?.let { SuggestionReply.Ready(it) } ?: SuggestionReply.Unavailable
         } catch (_: Exception) {
             if (expired.get()) null else SuggestionReply.Unavailable
@@ -101,7 +106,7 @@ internal class ListSuggestionLane(
     /** Sends [reply]; a request the server has finished answers 404, and nothing is retried. */
     private fun post(requestId: String, reply: SuggestionReply) {
         runCatching {
-            exchange.exchange("POST", NativeRoute.LIST_SUGGESTIONS_REPLY.path(requestId), wire(SuggestionReply.serializer(), reply))
+            exchange.exchange("POST", NativeRoute.LIST_SUGGESTIONS_REPLY.path(requestId), org.formulagen.wrapper.bridge.brainJson.encodeToJsonElement(SuggestionReply.serializer(), reply).jsonObject)
         }
     }
 
@@ -116,7 +121,7 @@ internal class ListSuggestionLane(
 
     companion object {
         /** What a heartbeat declares for a Mac with this lane: the server sends suggestion requests only to it. */
-        val FEATURES = listOf("list-suggestions")
+        val FEATURES = listOf("list-suggestions", "list-draft-assistance")
 
         /**
          * hovel-service's `LIST_SUGGESTION_LIMITS.timeoutMs`: how long the page's call waits. Provisional: real runs

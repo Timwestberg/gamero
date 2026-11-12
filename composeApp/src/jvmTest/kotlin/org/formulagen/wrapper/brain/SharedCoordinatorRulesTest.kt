@@ -64,17 +64,36 @@ class SharedCoordinatorRulesTest {
         val reviewer = BrainRoleSnapshot("role", "Reviewer", BrainBinding(RuntimeId.CLAUDE_CODE, "sonnet"), "", MemberMode.WORK)
         fun missing(name: String, runtime: RuntimeId = RuntimeId.CLAUDE_CODE) =
             BrainIssue(BrainIssueReason.MISSING_SKILL, "role", skill = SkillRef.Provider(runtime, name))
-        val resume = "Update the brain or provider and resume."
+        val resume = "Then resume."
         assertEquals("Reviewer uses code-review, which isn't installed in Claude Code on Studio Mac. $resume",
             notReadyPause(reviewer, listOf(missing("code-review")), "Studio Mac"))
-        assertEquals("Reviewer is not ready: unavailable-model. Reviewer uses code-review and lint, which aren't installed in Claude Code " +
+        assertEquals("Reviewer's model, Sonnet, is not available in Claude Code on Studio Mac. Choose another in the brain. " +
+            "Reviewer uses code-review and lint, which aren't installed in Claude Code " +
             "on Studio Mac. Reviewer uses fix from Codex, but runs on Claude Code on Studio Mac. $resume",
             notReadyPause(reviewer, listOf(BrainIssue(BrainIssueReason.UNAVAILABLE_MODEL, "role"), missing("code-review"), missing("lint"),
                 missing("fix", RuntimeId.CODEX)), "Studio Mac"))
         assertEquals("Reviewer uses code-review, which isn't installed in Claude Code on Studio Mac. $resume",
             notReadyPause(reviewer.copy(mode = MemberMode.TALK), listOf(missing("code-review")), "Studio Mac"), "talk-only reads the same")
-        assertEquals("Reviewer is not ready: missing-project. $resume",
-            notReadyPause(reviewer, listOf(BrainIssue(BrainIssueReason.MISSING_PROJECT, "role")), "Studio Mac"), "other reasons read as before")
+    }
+
+    @Test fun aRoleThatCannotStartSaysWhyAndWhereToFixIt() {
+        val tpm = BrainRoleSnapshot("role", "TPM", BrainBinding(RuntimeId.CODEX, "gpt-6-luna"), "", MemberMode.WORK)
+        fun pause(vararg reasons: BrainIssueReason) = notReadyPause(tpm, reasons.map { BrainIssue(it, "role") }, "My Mac")
+        assertEquals("TPM works in a project folder, and this project has none on My Mac. Choose a folder on the project page, " +
+            "or make TPM talk-only in the brain. Then resume.", pause(BrainIssueReason.MISSING_PROJECT))
+        assertEquals("TPM works in a project folder, but Codex can only talk on My Mac. Make TPM talk-only in the brain, " +
+            "or run it on a provider that can work on My Mac. Then resume.", pause(BrainIssueReason.UNSUPPORTED_PROJECT_WORK))
+        // Both at once read as one: either fix alone would leave the other.
+        assertEquals("TPM works in a project folder, but Codex can only talk on My Mac, and this project has no folder there. " +
+            "Make TPM talk-only in the brain, or run it on a provider that can work on My Mac and choose a folder on the project page. " +
+            "Then resume.", pause(BrainIssueReason.UNSUPPORTED_PROJECT_WORK, BrainIssueReason.MISSING_PROJECT))
+        assertEquals("TPM runs on Codex, which is not signed in on My Mac. Sign in to Codex there. Then resume.",
+            pause(BrainIssueReason.UNAVAILABLE_PROVIDER))
+        // No contract name reaches a person.
+        BrainIssueReason.entries.filter { it != BrainIssueReason.MISSING_SKILL }.forEach { reason ->
+            val text = pause(reason)
+            assertTrue(listOf("missing-", "unsupported-", "unavailable-", "empty-").none { it in text }, "$reason reads in words: $text")
+        }
     }
 
     @Test fun aSpecialistsTaskCarriesItsSkillsInOrderWithEachProviderSkillsText() {

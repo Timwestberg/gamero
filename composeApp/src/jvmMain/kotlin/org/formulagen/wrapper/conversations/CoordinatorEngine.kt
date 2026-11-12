@@ -2,7 +2,9 @@ package org.formulagen.wrapper.conversations
 
 import java.util.UUID
 import org.formulagen.wrapper.approvals.CancelSignal
+import org.formulagen.wrapper.approvals.ApprovedFor
 import org.formulagen.wrapper.approvals.StartOfWork
+import org.formulagen.wrapper.approvals.readFilesDialog
 import org.formulagen.wrapper.approvals.startOfWorkDialog
 import org.formulagen.wrapper.bridge.*
 import org.formulagen.wrapper.brain.*
@@ -25,6 +27,9 @@ import org.formulagen.wrapper.workspace.ThreadEditStore
  * claims it next.
  *
  * - **No specialists:** the coordinator is a plain talk turn that streams, with no decision step.
+ * - **Reading:** in the main conversation the coordinator may first ask to be read project files (`read`). The
+ *   engine asks the person once per conversation, reads within the message's allowance, says what it read, and asks
+ *   the coordinator again. A run never sees a `read`.
  * - **A main message:** the coordinator decides; an answer's body streams once its header line validates.
  *   Each delegated task is a thread, announced in the conversation, whose specialist reply streams into it.
  * - **A thread reply** (`THREAD_REPLY`): the coordinator forwards it to the thread's specialist, answers in
@@ -47,6 +52,8 @@ internal class CoordinatorEngine(
     /** Each working thread's record of edited files; null keeps none. */
     private val editStore: ThreadEditStore? = null,
     private val beforeTurn: () -> Unit = {},
+    /** The companions' folders the person opens in Finder, kept in step with each conversation's outputs. */
+    private val companionFolders: CompanionFolders = CompanionFolders.NONE,
 ) : MessageEngine {
     /** The runtimes this Mac lets read context folders: a project lists them as `readableBy`. */
     fun readableBy(): List<RuntimeId> = turns.readableBy()
@@ -71,8 +78,106 @@ internal class CoordinatorEngine(
         private val publishedReports = mutableSetOf<ConversationCommunication>()
 
 
+        /**
+         * The answer will be read aloud: the device that sent the message speaks it (Talk, or Read aloud on a
+         * phone), or this Mac does. A thread's replies are never heard.
+         */
+        private val spoken = claim.message.threadId == null && (claim.message.playback == "local" || out.spoken)
+
+        /** What the coordinator is told of the project's folder, in the main conversation; a thread's turn is about its task. */
+        private fun projectFolder(workers: List<String>): String? =
+            if (claim.message.threadId == null) projectFolderNote(call.folders, workers, readable = canRead(), scratch = givesScratch) else null
+
+        /** Whether a working specialist of this brain is given the conversation's scratch folder. */
+        private val givesScratch: Boolean by lazy {
+            companionFolders !== CompanionFolders.NONE && claim.brain.configuration.specialists.any { role ->
+                role.mode == MemberMode.WORK && role.binding?.let { turns.givesScratch(it.runtimeId) } == true
+            }
+        }
+
+        /** Reads project files for the coordinator, within this message's allowance. */
+        private val reader by lazy { ProjectReader(PathGuard(call.folders)) }
+
+        /** The person said no to reading in this message: the coordinator is not offered it again. */
+        private var readDeclined = false
+
+        /** Whether the coordinator may ask to be read files now: the main conversation of a project with a folder, with allowance left. */
+        private fun canRead(): Boolean =
+            claim.message.threadId == null && !readDeclined && call.folders.working != null && reader.possible && !reader.spent
+
+        /**
+         * Answers the coordinator's `read`: asks the person the first time in this conversation, reads what the path
+         * check allows, and says in the conversation what was read. The answer is what the coordinator's next request
+         * carries as `projectFiles`.
+         */
+        private fun read(asked: CoordinatorDecision.Read, coordinator: BrainRoleSnapshot): String {
+            val folder = call.folders.working ?: return READING_UNAVAILABLE
+            if (!canRead()) return READING_UNAVAILABLE
+            val member = coordinator.binding.member()
+            if (!startOfWork.isConfirmed(conversationId, projectId, folder, member, ApprovedFor.READ)) {
+                val approved = approvals.ask(scope(null), ApprovalKind.READ_FILES, readFilesDialog(companion, folder, member),
+                    listOf(ApprovalOption.CONTINUE to true, ApprovalOption.NOT_NOW to false), cancel) == true
+                call.live()
+                if (!approved) { readDeclined = true; return READING_DECLINED }
+                startOfWork.remember(conversationId, projectId, folder, member, ApprovedFor.READ)
+            }
+            val result = reader.answer(asked)
+            log(LogLevel.Info, "conversations", "coordinator read files=${result.read.size} refused=${result.refused.size} chars=${result.text.length}")
+            result.line()?.let { publishReport(ConversationCommunication.Progress(it)) }
+            return result.text.ifEmpty { "Nothing was read." }
+        }
+
+        /** What the project's folder holds, built once for this message; null in a thread and for a project with no folder. */
+        private val projectBrief: String? by lazy { if (claim.message.threadId == null) projectBrief(call.folders) else null }
+
+        /** Adds a line to the conversation's shared notes. A note that cannot be kept is dropped: it never stops a run. */
+        private fun leaveNote(by: String, kind: TeamNoteKind, text: String) {
+            val note = TeamNotes.note(by, kind, text, java.time.Instant.now()) ?: return
+            runCatching { store.addNote(conversationId, note) }
+                .onFailure { log(LogLevel.Warn, "conversations", "A shared note could not be kept", it) }
+        }
+
+        /**
+         * The conversation's recent notes as a turn reads them, or null when there are none or they cannot be read.
+         * A specialist ([startingAs]) is not shown the task it was just given as a note: its turn already says it.
+         */
+        private fun teamNotes(startingAs: String? = null): String? = runCatching {
+            val notes = store.notes(conversationId)
+            TeamNotes.forTurn(if (startingAs == null) notes else notes.dropLastWhile { it.kind == TeamNoteKind.TASK && it.by == startingAs })
+        }.getOrNull()
+
+        private val startedNs = System.nanoTime()
+        private val firstWordLogged = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        /** Logs once, at the coordinator's first streamed text, how long the person waited for it. */
+        private fun firstWord() {
+            if (!firstWordLogged.compareAndSet(false, true)) return
+            log(LogLevel.Info, "conversations", "coordinator first_word_ms=${(System.nanoTime() - startedNs) / 1_000_000} spoken=$spoken brief_chars=${projectBrief?.length ?: 0}")
+        }
+
+        /** What the claim says the companion's folder and the conversation's are called now. */
+        private fun folderNames() = FolderNames(store.accountId, claim.companion.id, companion, conversationId, claim.conversation.title)
+
+        /**
+         * Brings the conversation's visible folder up to date with every output its threads hold. A claim is where
+         * the Mac learns what the companion and the conversation are called, so a rename and a conversation older
+         * than the folders are caught here too. It never stops the run.
+         */
+        private fun mirrorOutputs() {
+            runCatching {
+                val outputs = record.threads.values.flatMap { thread ->
+                    thread.outputs.map { ref ->
+                        RecordedOutput(ref, thread.role.name, record.outputOrigins[ref.id]?.runtimeId ?: thread.role.binding.runtimeId,
+                            thread.role.binding.modelId, store.outputTime(conversationId, ref.id))
+                    }
+                }
+                companionFolders.sync(folderNames(), outputs, store.notes(conversationId)) { store.outputBytes(conversationId, it.id) }
+            }.onFailure { log(LogLevel.Warn, "conversations", "The conversation's outputs could not be listed for its visible folder", it) }
+        }
+
         fun run(): MessageState {
             flush(strict = false)
+            mirrorOutputs()
             return try {
                 recover()
                 when {
@@ -130,6 +235,7 @@ internal class CoordinatorEngine(
                 value.copy(directionMessageId = message.id)
             } else value
             publishedReports.add(value)
+            if (report is ConversationCommunication.Handoff) leaveNote("The coordinator", TeamNoteKind.REPORT, report.text())
             emit(MessageCheckpoint.MessageAppended(MessageAppend(MessageAuthor.COORDINATOR, uuid(),
                 text = report.text(), threadId = null, understanding = understanding, communication = report)))
         }
@@ -162,15 +268,22 @@ internal class CoordinatorEngine(
             val recent = if (conversation != null) emptyList() else claim.history.filter { it.id != message.id && it.threadId == null }
                 .takeLast(10).map { it.author.name.lowercase() to it.text }
             var raw = ""
-            for (attempt in 0..1) {
-                val stream = ReplyStream(headed = true, optionalHeader = message.direction == null, acceptHeader = ::acceptsDirectionHeader, onUnderstanding = ::publishUnderstanding, onProgress = { publishReport(it) }) { out.delta(replyId, threadId, it) }
-                val context = record.brain.coordinatorContexts[key]?.takeIf { it.personaHash == persona.hash }
-                val input = directionInput() + if (attempt == 1) DIRECTION_REPORT_REQUIRED else ""
-                raw = turns.talk(call, role, persona, directInput(input, claim.recalledMemory, recent), context, key,
-                    coordinator = true, stream = stream, opened = rememberCoordinator(key)).first.trim().take(CompanionLimits.MESSAGE)
-                if (acceptsDirectionHeader(splitHeader(raw).first)) break
+            var files: String? = null
+            // The coordinator may ask to be read files before it answers; each round is one more turn.
+            for (round in 0..ReadLimits.ROUNDS) {
+                for (attempt in 0..1) {
+                    val stream = ReplyStream(headed = true, optionalHeader = message.direction == null, acceptHeader = ::acceptsDirectionHeader, onUnderstanding = ::publishUnderstanding, onProgress = { publishReport(it) }) { firstWord(); out.delta(replyId, threadId, it) }
+                    val context = record.brain.coordinatorContexts[key]?.takeIf { it.personaHash == persona.hash }
+                    val input = directionInput() + if (attempt == 1) DIRECTION_REPORT_REQUIRED else ""
+                    raw = turns.talk(call, role, persona, directInput(input, claim.recalledMemory, recent.takeIf { context == null }.orEmpty(), spoken,
+                        projectFolder(emptyList()), projectBrief, files, reading = canRead()), context, key,
+                        coordinator = true, stream = stream, opened = rememberCoordinator(key)).first.trim().take(CompanionLimits.MESSAGE)
+                    if (acceptsDirectionHeader(splitHeader(raw).first)) break
+                }
+                check(acceptsDirectionHeader(splitHeader(raw).first)) { "Direction acknowledgement was not provided" }
+                files = read(directReadRequest(raw) ?: break, role)
             }
-            check(acceptsDirectionHeader(splitHeader(raw).first)) { "Direction acknowledgement was not provided" }
+            check(directReadRequest(raw) == null) { "The coordinator asked to read again instead of answering" }
             val answer = parseDirectCoordinatorReply(raw)
             publishReportHeader(raw, answer = true)
             understandingHeader(splitHeader(raw).first).second?.let(::publishUnderstanding)
@@ -235,6 +348,7 @@ internal class CoordinatorEngine(
                     val note = decision.note?.trimEcma()?.takeIf { it.isNotEmpty() }
                     val said = "Forwarded to ${thread.role.name}" + (note?.let { ": $it" } ?: ".")
                     append(MessageAuthor.COORDINATOR, uuid(), said, threadId, CoordinatorNote(NoteKind.FORWARDED, threadId))
+                    leaveNote(thread.role.name, TeamNoteKind.TASK, "The person replied in its thread: ${message.text}" + (note?.let { " (the coordinator adds: $it)" } ?: ""))
                     threadTurn(threadId, thread) { forwardedTurn(message.text, note) }
                 }
                 is CoordinatorDecision.Delegate -> {
@@ -247,6 +361,7 @@ internal class CoordinatorEngine(
                     putThread(newThread, opened)
                     val started = CoordinatorNote(NoteKind.STARTED, newThread)
                     append(MessageAuthor.COORDINATOR, uuid(), "Started a new task: $title", threadId, started)
+                    leaveNote(role.name, TeamNoteKind.TASK, decision.task)
                     threadTurn(newThread, opened) { skills -> delegatedTurn(role, decision.task, message.text, skills) }
                 }
                 else -> error("Not a thread reply decision")
@@ -274,6 +389,8 @@ internal class CoordinatorEngine(
                     failed(failure)
                 }
             }
+            // The run is done with what its specialists left each other.
+            if (record.brain.run?.summary?.state == BrainRunState.COMPLETED) companionFolders.emptyScratch(store.accountId, conversationId)
             return when (record.brain.run?.summary?.state) {
                 BrainRunState.COMPLETED, BrainRunState.AWAITING_INPUT -> MessageState.ANSWERED
                 BrainRunState.CANCELLED -> MessageState.STOPPED
@@ -295,13 +412,23 @@ internal class CoordinatorEngine(
                 append(MessageAuthor.SYSTEM, hint.requestId, "Jev recommends ${role.name}. This is advisory; the coordinator decides.", null)
             }
 
-            val (decision, replyId) = decide(coordinator, allowed, null) { kinds ->
-                val input = handoff(current.artifacts.filter { it.id in current.inputs }.map { it.id }, files = false)
-                val latest = current.attempts.lastOrNull()?.outputIds?.let { handoff(it, files = false) } ?: ""
-                val request = coordinatorRequest(uuid(), current, kinds, input, latest, record.brain.messages.takeLast(10),
-                    described(current.configuration))
-                conversationRequest(request, claim.recalledMemory, hint)
-            } ?: run {
+            var files: String? = null
+            var decided: Pair<CoordinatorDecision, String>?
+            // A `read` is answered here and the coordinator is asked again, until it decides something for the run.
+            while (true) {
+                val offered = if (DecisionKind.ANSWER in allowed && canRead()) allowed + DecisionKind.READ else allowed
+                decided = decide(coordinator, offered, null) { kinds ->
+                    val input = handoff(current.artifacts.filter { it.id in current.inputs }.map { it.id }, files = false)
+                    val latest = current.attempts.lastOrNull()?.outputIds?.let { handoff(it, files = false) } ?: ""
+                    val request = coordinatorRequest(uuid(), current, kinds, input, latest, record.brain.messages.takeLast(10),
+                        described(current.configuration))
+                    conversationRequest(request, claim.recalledMemory, hint, spoken,
+                        projectFolder(current.configuration.specialists.filter { it.mode == MemberMode.WORK && it.binding != null }.map { it.name }),
+                        projectBrief, teamNotes(), files)
+                }
+                files = read(decided?.first as? CoordinatorDecision.Read ?: break, coordinator)
+            }
+            val (decision, replyId) = decided ?: run {
                 change { it.paused(INVALID_DECISION, BrainWaitingKind.INPUT) }
                 return
             }
@@ -344,6 +471,7 @@ internal class CoordinatorEngine(
             }
             if (role.mode == MemberMode.WORK && !startWork(role, threadId) { change { it.declined(attempt, notApproved(role)) } }) return
             change { it.dispatched(attempt) }
+            leaveNote(role.name, TeamNoteKind.TASK, step?.instructions ?: current.task)
             val entryId = uuid()
             val input = specialistTurn(role, current, step, handoff(attempt.inputIds, files = role.mode == MemberMode.WORK),
                 skills.block(role.mode == MemberMode.WORK))
@@ -360,6 +488,7 @@ internal class CoordinatorEngine(
                 val thread = record.threads.getValue(threadId).withOutput(artifact, shareableActivity(activity, local))
                 record.copy(threads = record.threads + (threadId to thread))
             }) { it.completed(attempt, artifact, output, activity, entryId) }
+            mirrorOutputs()
         }
 
         /** The stage dialog for [attempt]. True to go on; otherwise the run waits for changes, stays paused, or stops. */
@@ -491,6 +620,7 @@ internal class CoordinatorEngine(
             emit(MessageCheckpoint.ArtifactStored(ref(artifact), sharedArtifactText(output)))
             putThread(threadId, running.withOutput(artifact, shareableActivity(activity, local))
                 .copy(state = BrainAttemptState.COMPLETED, revision = running.revision + 1))
+            mirrorOutputs()
             append(MessageAuthor.SPECIALIST, entryId, output.ifEmpty { "(no reply)" }, threadId)
             return MessageState.ANSWERED
         }
@@ -510,7 +640,7 @@ internal class CoordinatorEngine(
             val input = request(allowed)
             repeat(2) { attempt ->
                 val replyId = uuid()
-                val stream = ReplyStream(headed = true, allowAnswer = DecisionKind.ANSWER in allowed, acceptHeader = ::acceptsDirectionHeader, onUnderstanding = ::publishUnderstanding, onProgress = { publishReport(it) }) { out.delta(replyId, threadId, it) }
+                val stream = ReplyStream(headed = true, allowAnswer = DecisionKind.ANSWER in allowed, acceptHeader = ::acceptsDirectionHeader, onUnderstanding = ::publishUnderstanding, onProgress = { publishReport(it) }) { firstWord(); out.delta(replyId, threadId, it) }
                 val conversation = record.brain.coordinatorContexts[key]?.takeIf { it.personaHash == persona.hash }
                 val text = turns.talk(call, coordinator, persona, input + if (attempt == 1) REPLY_REPAIR + if (message.direction != null) DIRECTION_REPORT_REQUIRED else "" else "", conversation, key,
                     coordinator = true, stream = stream, opened = rememberCoordinator(key)).first
@@ -543,10 +673,17 @@ internal class CoordinatorEngine(
             val conversation = record.threadContexts[threadId]?.takeIf { it.personaHash == persona.hash }
             val stream = ReplyStream(headed = false) { out.delta(entryId, threadId, it) }
             val remember = { native: NativeConversation -> update { it.copy(threadContexts = it.threadContexts + (threadId to native)) } }
-            return if (role.mode == MemberMode.WORK) {
-                turns.work(call, threadId, role, persona, input, conversation, scope(threadId), stream, remember, openEditRecord(threadId, role),
-                    skillFolders)
-            } else turns.talk(call, role, persona, input, conversation, threadId, coordinator = false, stream = stream, opened = remember)
+            // A working turn whose runtime keeps to it gets the conversation's scratch folder, made at its first use.
+            val scratch = if (role.mode == MemberMode.WORK && turns.givesScratch(role.binding.runtimeId)) companionFolders.scratch(folderNames()) else null
+            // What the other agents left is read before the task is done; what this one leaves is kept after it.
+            val briefed = withTeamNotes(input, teamNotes(startingAs = role.name), scratch)
+            val result = if (role.mode == MemberMode.WORK) {
+                turns.work(call, threadId, role, persona, briefed, conversation, scope(threadId), stream, remember, openEditRecord(threadId, role),
+                    skillFolders, scratch)
+            } else turns.talk(call, role, persona, briefed, conversation, threadId, coordinator = false, stream = stream, opened = remember)
+            leaveNote(role.name, TeamNoteKind.OUTPUT, TeamNotes.outputStart(result.first))
+            TeamNotes.section(result.first)?.let { leaveNote(role.name, TeamNoteKind.NOTE, it) }
+            return result
         }
 
         /**

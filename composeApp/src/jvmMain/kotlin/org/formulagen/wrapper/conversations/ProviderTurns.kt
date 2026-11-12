@@ -64,6 +64,9 @@ internal class ProviderTurns(
     /** The runtimes this Mac lets read context folders: a project lists them as `readableBy`. */
     fun readableBy(): List<RuntimeId> = RuntimeId.entries.filter { work[it]?.contextFolders?.readable == true }
 
+    /** Whether a working turn on [runtimeId] is given the conversation's scratch folder: only a runtime proven to keep to it. */
+    fun givesScratch(runtimeId: RuntimeId): Boolean = work[runtimeId]?.scratch?.writable == true
+
     /**
      * A talk turn of [role] on [persona]: the coordinator's (in its conversation context [context]) or a talk
      * specialist's (in its thread). [conversation] is the provider conversation to continue, [opened] keeps a new
@@ -84,9 +87,10 @@ internal class ProviderTurns(
      */
     fun work(call: TurnCall, threadId: String, role: BrainRoleSnapshot, persona: Persona, input: String, conversation: NativeConversation?,
         scope: ApprovalScope, stream: ReplyStream, opened: (NativeConversation) -> Unit, edits: EditListener,
-        skills: List<Path> = emptyList()): Pair<String, Activity?> {
+        skills: List<Path> = emptyList(), scratch: Path? = null): Pair<String, Activity?> {
         val worker = ready(call, work[role.binding.runtimeId], role, threadId, coordinator = false)
-        val folders = WorkScope(call.folders.forRuntime(worker.contextFolders), threadId, call.companion, role.binding.member(), edits, skills)
+        val folders = WorkScope(call.folders.forRuntime(worker.contextFolders), threadId, call.companion, role.binding.member(), edits, skills,
+            scratch.takeIf { worker.scratch.writable })
         val request = TurnRequest(call.accountId, call.companionId, persona, role.binding.modelId, conversation, input, folders,
             role.binding.effort)
         val relay = approvals.register(threadId, scope)

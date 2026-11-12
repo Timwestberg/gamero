@@ -249,7 +249,7 @@ The partial transcript is the recognizer's current text, shown in the composer a
 
 Permission copy, shown before the first capture, in the catalog and in the native row: "Ember hears you on this Mac to turn what you say into a chat message. The recording is not saved." If macOS has already denied the app, the notice says to turn the microphone on for Gamero Adventures in System Settings. The app does not re-prompt in a loop.
 
-The Kokoro row (Sam, Jamie, Riley, Harper) stays the place the voice is chosen. The mic control joins that row for the first Mac loop, then moves to the catalog composer. Both call the same host method.
+The Kokoro row (seven voices today, Sage first; see `voice/README.md`) stays the place the voice is chosen. The mic control joins that row for the first Mac loop, then moves to the catalog composer. Both call the same host method.
 
 ### 5.4 Fillers
 
@@ -603,6 +603,16 @@ Each milestone is one PR series, based on #56 for gamero. Ship them in order. A 
 **Done when:** a desktop browser shows a partial transcript and plays a Kokoro line with no host, and sends a real turn when the host is present.
 
 ### Milestone 6 — iPhone 14 Pro Max and iPad Pro
+
+> **What shipped on iPhone instead (2026-11).** The iPhone does not run sherpa or Kokoro. It uses Apple's speech:
+> `SFSpeechRecognizer` for dictation (`voiceInput.*`, on the phone where iOS has an on-device model for the language) and
+> `AVSpeechSynthesizer` with the best installed voice for the companion's voice (`voicePlayback.*`, sentence by sentence
+> with `append`). So `NSSpeechRecognitionUsageDescription` is in `Info.plist`, against the first box below. The Mac stays
+> the engine for every turn. See [ios.md](ios.md#dictation-and-the-companions-voice). The plan below is kept as the
+> record of the sherpa path for hearing, which is not built.
+>
+> **Kokoro on iPhone (2026-11-09).** The companion's voice is now Kokoro through the sherpa-onnx 2.0.0 xcframework
+> where a build links it (`scripts/ios-voice.sh`), with Apple's voice as the fallback. Dictation is still Apple's.
 
 **Size:** large, and blocked on a Mac that can see the devices. The state machine and the Zipformer files are reused. The audio graph is Swift around the same voice-processing idea, through the existing cinterop style rather than JNI.
 

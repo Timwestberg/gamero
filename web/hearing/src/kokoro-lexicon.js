@@ -54,13 +54,27 @@ const SPOKEN_WORD = /[A-Za-z]+(?:'[A-Za-z]+)?/g;
 
 /**
  * Replaces a word the lexicon cannot say with its letters. A known word,
- * including an added inflection, is left as written.
+ * including an added inflection, is left as written, and a possessive is said
+ * as the plural it sounds like.
  */
 export function coverUnknownWords(text, known) {
   return text.replace(SPOKEN_WORD, (token) => {
-    if (known.has(token.toLowerCase())) return token;
-    return [...token].filter((ch) => /[A-Za-z]/.test(ch)).map((ch) => ch.toLowerCase()).join(" ");
+    const key = token.toLowerCase();
+    if (known.has(key)) return token;
+    return possessiveAsPlural(key, known) ?? [...token].filter((ch) => /[A-Za-z]/.test(ch)).map((ch) => ch.toLowerCase()).join(" ");
   });
+}
+
+/**
+ * The lexicon lists contractions such as "it's", but no possessive of a name
+ * or noun: "Tim's" and "that's" are not in it. A possessive sounds the same as
+ * the plural, which inflectKokoroLexicon adds, so "tims" is said instead.
+ */
+function possessiveAsPlural(key, known) {
+  // A one-letter stem is a letter name: "A's" is not the word "as".
+  if (!key.endsWith("'s") || key.length < 4) return null;
+  const plural = pluralSpelling(key.slice(0, -2));
+  return known.has(plural) ? plural : null;
 }
 
 function addInflection(extra, known, form) {
@@ -70,15 +84,14 @@ function addInflection(extra, known, form) {
   known.add(word);
 }
 
+function pluralSpelling(word) {
+  if (word.endsWith("s") || word.endsWith("x") || word.endsWith("z") || word.endsWith("ch") || word.endsWith("sh")) return `${word}es`;
+  if (word.endsWith("y") && word.length >= 2 && !isVowel(word[word.length - 2])) return `${word.slice(0, -1)}ies`;
+  return `${word}s`;
+}
+
 function pluralOf(word, phones) {
-  let spelling;
-  if (word.endsWith("s") || word.endsWith("x") || word.endsWith("z") || word.endsWith("ch") || word.endsWith("sh")) {
-    spelling = `${word}es`;
-  } else if (word.endsWith("y") && word.length >= 2 && !isVowel(word[word.length - 2])) {
-    spelling = `${word.slice(0, -1)}ies`;
-  } else {
-    spelling = `${word}s`;
-  }
+  const spelling = pluralSpelling(word);
   const last = lastPhone(phones);
   let suffix;
   if (SIBILANTS.has(last) || word.endsWith("ch") || word.endsWith("sh") || word.endsWith("x") || word.endsWith("s") || word.endsWith("z")) {

@@ -100,6 +100,7 @@ internal data class ConversationMessage(
     val understanding: SharedUnderstanding? = null,
     val communication: ConversationCommunication? = null,
     val direction: MessageDirection? = null,
+    val playback: String? = null,
 )
 
 /** `artifactInput`: a text a sent message attaches. A heard voice turn attaches none. */
@@ -427,3 +428,15 @@ internal data class WorkflowEvidence(
 
 @Serializable
 internal data class WorkflowEvidenceInput(val artifactId: String, val digest: String, val current: Boolean)
+
+/**
+ * `foldersKept`, and `foldersGone`, which has its shape: conversations and companions by id. Asked with those this
+ * Mac keeps a folder for, at most [LIMIT] of each; answered with those of them the account no longer has.
+ */
+@Serializable
+internal data class FoldersKept(val companionIds: List<String> = emptyList(), val conversationIds: List<String> = emptyList()) {
+    companion object {
+        /** `FOLDER_RECONCILE_LIMIT`. */
+        const val LIMIT = 500
+    }
+}

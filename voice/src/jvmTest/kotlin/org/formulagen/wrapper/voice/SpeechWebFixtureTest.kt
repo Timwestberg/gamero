@@ -41,6 +41,8 @@ class SpeechWebFixtureTest {
         out.obj {
             field("schema") { string("ember-speech-text.v1") }
             field("sentenceSafetyChars") { number(SENTENCE_SAFETY_CHARS.toString()) }
+            field("openingMinChars") { number(OPENING_MIN_CHARS.toString()) }
+            field("openingMaxChars") { number(OPENING_MAX_CHARS.toString()) }
             field("normalize") {
                 array(NORMALIZE_CASES) { input ->
                     obj {
@@ -56,6 +58,17 @@ class SpeechWebFixtureTest {
                         field("input") { string(input) }
                         field("max") { number(max.toString()) }
                         field("pieces") { strings(splitLongSentence(input, max)) }
+                    }
+                }
+            }
+            field("opening") {
+                array(OPENING_CASES) { (input, min, max) ->
+                    obj {
+                        field("input") { string(input) }
+                        field("min") { number(min.toString()) }
+                        field("max") { number(max.toString()) }
+                        // Empty when there is no cut.
+                        field("cut") { strings(openingClause(input, min, max)?.toList() ?: emptyList()) }
                     }
                 }
             }
@@ -252,6 +265,52 @@ class SpeechWebFixtureTest {
             "   ",
             "No punctuation at the end",
             "Long " + "sentence ".repeat(60) + "ends here.",
+            // Typographic marks. The invisible ones are written as escapes.
+            "I don’t think it’s Tim’s — it’s ‘ours’, the dogs’ bones.",
+            "She said “wait… what?” and left (quietly).",
+            "The cache (the fast one) is ready [see notes] {draft}.",
+            "Pages 3–5, 10-20 ms, 1.5-2.5 GB, 2026-11-09 and 555-867-5309.",
+            "Ready - set -- go — now ― then ‒ done, well-known e-mail.",
+            "Options:\n• first\n  ◦ second\n▪ third · fourth ‣ fifth",
+            "Settings → Voice ⇒ Kokoro ➜ done",
+            "20° at 3 × 4 ÷ 2 ± 1, €10, £3, ¥500, 5¢, ½ ¼ ¾, ≈ 10, a ≠ b, x ≤ 5, y ≥ 2, § 4, −2, x², y³, ∞",
+            "10\u00A0km, 160\u202Fms, zero\u200Bwidth\uFEFF, non\u2011breaking GPT\u20114o, soft\u00ADhyphen.",
+            "Great job 🎉! Kokoro™ is ready ✅ \uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67 👍🏽 1\uFE0F\u20E3 ©2026 Acme® │ box ├─ drawing",
+            "«Bonjour» is ‹hello›, „low‟ quotes; \"plain\" too, said“hi”there.",
+            "Hmm... let me think….. Really...? No.. two dots.",
+            "I was thinking…",
+            "— Hello — (yes), [no]. (Maybe.) …and then",
+            "caf\u00E92go, e\u0301, ʼtis and yʼall, 5′ 10″, rock ’n’ roll",
+            "See “https://example.com/docs”, then (https://x.io)…",
+            "great👍thanks",
+            "Say 'now', run `build` first, the boxes' lids, 'cause it's O'Neil's.",
+            "a -> b => c --> d, x=>y but a = b and 3->5",
+            "What?! Really!! Yes.. ok. :) Done. :)",
+            "Meet at 12:30, 9:05, 12:00 or 18:00, from 9:00–10:30 AM, not 1:12:30 or 16:9.",
+            "It works -",
+            "the cache (",
+            "?!",
+            ":)",
+            "🎉",
+            "…",
+        )
+
+        val OPENING_CASES = listOf(
+            Triple("Sure, I can help with that.", OPENING_MIN_CHARS, OPENING_MAX_CHARS),
+            Triple("I refactored the session code, moved the socket into the bridge, and the build is green again.", OPENING_MIN_CHARS, OPENING_MAX_CHARS),
+            Triple("First we open the catalog; then we pick a companion and start a long conversation with it.", OPENING_MIN_CHARS, OPENING_MAX_CHARS),
+            Triple("The build finished without a single warning and the tests all passed on the first run today.", OPENING_MIN_CHARS, OPENING_MAX_CHARS),
+            Triple("We should keep the old endpoint alive for now because three clients still call it every day.", OPENING_MIN_CHARS, OPENING_MAX_CHARS),
+            Triple("The total for the whole order came to 1,000 dollars after tax which nobody had expected at all.", OPENING_MIN_CHARS, OPENING_MAX_CHARS),
+            Triple("Their account balance was exactly 1,000,000 dollars yesterday morning at nine sharp.", OPENING_MIN_CHARS, OPENING_MAX_CHARS),
+            Triple("The server answered with error five hundred and three but the retry worked fine after it.", OPENING_MIN_CHARS, OPENING_MAX_CHARS),
+            Triple("The server answered with error five hundred and three after thirty seconds of waiting.", OPENING_MIN_CHARS, OPENING_MAX_CHARS),
+            Triple("It took twenty-one or twenty-two tries and one hundred sixty milliseconds each, or so the log says.", 30, 60),
+            Triple("Supercalifragilistic words keep going without any pause whatsoever until the very end here.", OPENING_MIN_CHARS, OPENING_MAX_CHARS),
+            Triple("  one two three, four five six seven ", 5, 20),
+            Triple("one two three four five, six seven", 5, 30),
+            Triple("one two three four, five six seven", 5, 30),
+            Triple("", OPENING_MIN_CHARS, OPENING_MAX_CHARS),
         )
 
         val LONG_CASES = listOf(
@@ -298,6 +357,8 @@ bare
             "don't stop hoping",
             "O'Neil tried, tying, tries",
             "hello-world ABC123 buzzes",
+            "The dog's box, the city's church's wish",
+            "Xyzzy's dog's A's don't",
         )
 
         val SHAPE_CASES = listOf(

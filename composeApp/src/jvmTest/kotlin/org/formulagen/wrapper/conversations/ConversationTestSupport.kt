@@ -379,6 +379,8 @@ internal open class ScriptedRuntime(override val id: RuntimeId, val chunk: Int =
     @Volatile var activity: Activity? = null
     @Volatile var support = ContextFolderSupport.NONE
     override val contextFolders: ContextFolderSupport get() = support
+    @Volatile var scratchSupport = ScratchSupport.NONE
+    override val scratch: ScratchSupport get() = scratchSupport
     val started = CountDownLatch(1)
 
     override fun readiness(accountId: String) = Readiness.Ready

@@ -3,7 +3,7 @@
  * Writes Ember's browser voice into web/voice-assets/ (not committed):
  *
  *   kokoro-v1_0-fp16w.onnx                 sherpa Kokoro v1.0 with float16-stored weights
- *   voices-ember.bin                       Sam, Jamie, Riley, Harper style tables
+ *   voices-ember.bin                       the style tables of the nine chat blends, Sam first
  *   tokens.txt, lexicon-us-en.txt          upstream, unchanged
  *   ort-wasm-simd-threaded.asyncify.wasm   onnxruntime-web 1.30.0 runtime
  *   hearing/                               Silero VAD v5 and the streaming Zipformer, one file at a time

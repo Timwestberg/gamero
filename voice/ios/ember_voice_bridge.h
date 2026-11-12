@@ -34,6 +34,36 @@ int32_t ember_voice_sherpa_speak(
     EmberVoiceSamplesFn callback,
     void *arg);
 
+/* 1 when this build links the sherpa-onnx 2.0.0 xcframework, 0 when the sherpa calls here are stubs. */
+int32_t ember_voice_sherpa_linked(void);
+
+/*
+ * Sherpa-onnx Kokoro 82M v1.0, the Mac chat voice. model, voices and tokens
+ * are files. lexicon names one file, or several joined with commas; an earlier
+ * file's pronunciation wins. Returns NULL when the xcframework is not linked
+ * or a file does not load.
+ */
+void *ember_voice_kokoro_create(
+    const char *model,
+    const char *voices,
+    const char *tokens,
+    const char *lexicon,
+    int32_t threads);
+void ember_voice_kokoro_destroy(void *engine);
+int32_t ember_voice_kokoro_sample_rate(void *engine);
+/*
+ * One sentence in the voice at speaker slot sid. The callback may return 0 to
+ * stop early. Returns 1 when audio was produced. A second speak while one is
+ * running returns 0.
+ */
+int32_t ember_voice_kokoro_speak(
+    void *engine,
+    const char *text,
+    int32_t sid,
+    float speed,
+    EmberVoiceSamplesFn callback,
+    void *arg);
+
 /* Optional FluidAudio PocketTTS backend. Returns NULL when FluidAudio is not linked. */
 void *ember_voice_fluid_create(const char *voice_wav, float temperature, int32_t seed);
 void ember_voice_fluid_destroy(void *engine);

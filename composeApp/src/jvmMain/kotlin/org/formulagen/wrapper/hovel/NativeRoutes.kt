@@ -53,6 +53,9 @@ internal enum class NativeRoute(val method: String, val template: String) {
     /** → `approvalDevice`: this Mac lets one phone go. */
     DEVICE_UNPAIR("POST", "devices/:deviceId/unpair"),
 
+    /** `foldersKept` → `foldersGone`: which of the folders this Mac keeps belong to a deleted conversation or companion. */
+    FOLDERS_GONE("POST", "folders/gone"),
+
     /** `?cursor=` → `artifactTextPage`: a message input's whole text, page by page. */
     ARTIFACT_TEXT("GET", "artifacts/:artifactId/text"),
 

@@ -21,6 +21,9 @@ internal interface WorkRuntime : AutoCloseable {
      */
     val contextFolders: ContextFolderSupport get() = ContextFolderSupport.NONE
 
+    /** Whether this runtime can be given a conversation's scratch folder; [WorkScope.scratch] is set only when it is [ScratchSupport.writable]. */
+    val scratch: ScratchSupport get() = ScratchSupport.NONE
+
     /**
      * End the working sessions of one [lease] (a conversation's thread) now: what waits on the player is denied, and
      * only that lease's processes end. Never blocks for long.

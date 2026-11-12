@@ -73,17 +73,22 @@ internal data class TurnRequest(
  * folders the runtime was cleared to read), the [lease] a working process lives for (a conversation
  * thread's id), the [companion]'s name and the [member] the role is bound to. The runtime reports each
  * edit it finished to [edits], the thread's edit record. [skills] are the folders of the provider skills the
- * specialist uses, which its task names and the runtime lets it read, never change.
+ * specialist uses, which its task names and the runtime lets it read, never change. [scratch] is the conversation's
+ * folder for files the agents leave each other: a second place the member may write, given only to a runtime that
+ * was proven to treat it as it treats the working folder ([ScratchSupport]).
  */
 internal data class WorkScope(val folders: ProjectFolders, val lease: String, val companion: String, val member: TeamMember,
-    val edits: EditListener = EditListener.NONE, val skills: List<Path> = emptyList()) {
+    val edits: EditListener = EditListener.NONE, val skills: List<Path> = emptyList(), val scratch: Path? = null) {
     /** A scope for one working folder and no context folders. */
     constructor(folder: Path, lease: String, companion: String, member: TeamMember, edits: EditListener = EditListener.NONE) :
         this(ProjectFolders(folder), lease, companion, member, edits)
 
-    init { require(folders.working != null) { "A working turn needs a working folder" } }
+    init {
+        require(folders.working != null) { "A working turn needs a working folder" }
+        require(scratch == null || (scratch.isAbsolute && scratch.normalize() == scratch)) { "A scratch folder is absolute and normalized" }
+    }
 
-    /** The working folder: where the member works and the only folder it may change. */
+    /** The working folder: where the member works and, with [scratch], the only folders it may change. */
     val folder: Path get() = checkNotNull(folders.working)
 }
 
@@ -127,6 +132,23 @@ internal enum class ContextFolderSupport {
 
     /** Whether the runtime may be given context folders now. */
     val readable: Boolean get() = this == VERIFIED
+}
+
+/**
+ * Whether a work runtime can be given a conversation's scratch folder: a second folder it treats as it treats the
+ * working folder, under the person's own provider settings, with nothing else becoming writable. As
+ * [ContextFolderSupport]: the mechanism counts only once a live probe has confirmed it (`ScratchProbeTest`).
+ */
+internal enum class ScratchSupport {
+    /** The mechanism is in place and a live probe confirmed it: the runtime is given the scratch folder. */
+    VERIFIED,
+    /** The mechanism is in place, but no live probe has confirmed it yet, so it counts as [NONE]. */
+    UNVERIFIED,
+    /** No mechanism: the runtime is never given a scratch folder. */
+    NONE;
+
+    /** Whether the runtime may be given the scratch folder now. */
+    val writable: Boolean get() = this == VERIFIED
 }
 
 /**
