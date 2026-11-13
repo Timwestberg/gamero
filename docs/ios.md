@@ -558,8 +558,9 @@ Release. `tools/ios-info.py` sets "Hovel" for a Hovel release archive.
 
 ## Camera and microphone
 
-Hovel meetings use the camera and the microphone in the web page. The app
-gives them only to the trusted Hovel page, with the rule in
+Hovel meetings use the camera and the microphone in the web page. The scanner
+for sign-in codes (`/link/scan`) uses the camera there too. The app gives them
+only to the trusted Hovel page, with the rule in
 [host-bridge.md](host-bridge.md#camera-and-microphone).
 
 - `MediaUIDelegate` (`iosMain/.../bridge/IosMediaGrant.kt`) is the WKWebView's
@@ -568,7 +569,9 @@ gives them only to the trusted Hovel page, with the rule in
   requests.
 - After a grant, iOS shows its own prompt once, with the usage strings in
   `iosApp/iosApp/Info.plist` (`NSCameraUsageDescription` and
-  `NSMicrophoneUsageDescription`).
+  `NSMicrophoneUsageDescription`). The camera's string names both uses:
+  video in a meeting, and a scan of a code. The Mac app has no scanner, so
+  its string (see [desktop.md](desktop.md#usage-strings)) names meetings only.
 - `mediaWebViewFactory` makes the WKWebView, through the `webViewFactory` that
   `App` takes. It sets `allowsInlineMediaPlayback`. Without it, the camera
   video shows black ([WebKit bug 220184](https://bugs.webkit.org/show_bug.cgi?id=220184)).
