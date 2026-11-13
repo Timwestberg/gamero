@@ -146,6 +146,51 @@ the next source. Instead the app shows a "Set GAMERO_WEB_URL" message and logs
 `Info.plist` sets `NSAppTransportSecurity` > `NSAllowsLocalNetworking`, which
 permits cleartext HTTP to loopback only.
 
+## A sign-in code's link
+
+A QR code for sign-in is an https link on the web app's own address, under
+`/link/`. The phone's camera hands such a link to the app, and the web view
+opens its page. The pieces:
+
+- `iosApp/iosApp.entitlements` claims `applinks:$(GAMERO_LINK_HOST)`.
+  `GAMERO_LINK_HOST` is in `Config.xcconfig`; a build sets it to the host name
+  of its web address. `tools/build-release.sh` does this from
+  `GAMERO_WEB_URL`.
+- `ContentView.swift` passes an opened link to `openIncomingLink`
+  (`MainViewController.kt`).
+- `commonMain/.../links/IncomingLink.kt` decides. `incomingLinkTarget` accepts
+  an https link on the web address's own origin under `/link/` and nothing
+  else, and drops the query and the fragment. `rememberLinkedPage` makes the
+  accepted link the web view's page. A link that arrives before the web view
+  exists is loaded as soon as it exists.
+- The web address must name the app in
+  `/.well-known/apple-app-site-association` (game-platform `infra/README.md`,
+  "App links").
+
+iOS hands a link over only for a host name on the default HTTPS port. With a
+port, with `localhost` or with a number address it reads the address's link
+file and still opens the link in Safari. So a local build that takes links
+uses `https://<this Mac's name>.local/hovel`:
+
+```sh
+xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator \
+  -configuration Debug DEVELOPMENT_TEAM=<team> GAMERO_PRODUCT=hovel \
+  'GAMERO_WEB_URL=https://<name>.local/hovel' GAMERO_LINK_HOST=<name>.local build
+```
+
+A Debug build adds `?mode=developer` to the entitlement (`GAMERO_LINK_MODE`),
+so iOS reads the link file from the address itself. A real phone also needs
+Settings > Developer > Associated Domains Development. `DEVELOPMENT_TEAM` is
+needed even on a simulator: the address names the app as `<team>.<bundle id>`.
+
+`xcrun simctl openurl` does not test this. It sends every https link to
+Safari. The whole record, with what was tried, is game-platform
+`docs/qr-sign-in/qr-sign-in.LOCAL.md`.
+
+Android does the same with a `VIEW` filter in the manifest, whose host is the
+`gamero.linkHost` Gradle property (by default the host of `gamero.webUrl`),
+and `MainActivity` reads the link at start and in `onNewIntent`.
+
 ## Choose the product
 
 The app reads the product once at launch, in the same order as the URL:

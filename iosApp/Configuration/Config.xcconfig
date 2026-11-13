@@ -23,6 +23,20 @@ GAMERO_PRODUCT[config=Release]=
 APP_DISPLAY_NAME=Hovel
 APP_DISPLAY_NAME[config=Release]=$(PRODUCT_NAME)
 
+// The host whose links open the app. A sign-in code is an https link on the web app's own address, and the phone's
+// camera hands such a link to the app (iosApp/iosApp.entitlements, links/IncomingLink.kt). This is the host name of
+// GAMERO_WEB_URL and nothing more: iOS hands over a link only for a host name on the default HTTPS port. With a
+// port, with `localhost` or with a number address it downloads the address's link file and still opens the link in
+// Safari (game-platform docs/qr-sign-in/qr-sign-in.LOCAL.md). A build with another web address sets this with it.
+// The default names a host that cannot exist, so a build with no HTTPS host name claims no links.
+GAMERO_LINK_HOST=link.invalid
+// A development build reads the address's link file from the address itself, not from Apple's copy of it, and
+// accepts a certificate the phone does not trust. A phone needs Settings > Developer > Associated Domains
+// Development turned on; a simulator has it on. Release leaves this empty.
+GAMERO_LINK_MODE=?mode=developer
+GAMERO_LINK_MODE[config=Release]=
+CODE_SIGN_ENTITLEMENTS=iosApp/iosApp.entitlements
+
 // composeApp has no iosX64 target (see composeApp/build.gradle.kts), so simulators are arm64 only.
 EXCLUDED_ARCHS[sdk=iphonesimulator*]=x86_64
 

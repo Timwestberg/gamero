@@ -21,6 +21,11 @@ val iosTargets = mobileTargets || providers.gradleProperty("gamero.iosTargets").
 fun releaseSetting(name: String): String? = providers.gradleProperty(name).orNull?.takeIf { it.isNotBlank() }
 val releaseProduct = releaseSetting("gamero.product")
 val releaseWebUrl = releaseSetting("gamero.webUrl")
+// The host whose links open the Android app (a sign-in code's link). By default the host of the web address; a
+// build with no web address claims a host that cannot exist.
+val linkHost = releaseSetting("gamero.linkHost")
+    ?: releaseWebUrl?.let { runCatching { uri(it).host }.getOrNull() }
+    ?: "link.invalid"
 // Release builds keep gated features off whatever the environment says (Claude: claudeProviderEnabled).
 val releaseBuild = releaseSetting("gamero.release") == "true"
 val releaseVersion = releaseSetting("gamero.version") ?: "1.0.0"
@@ -144,6 +149,7 @@ if (mobileTargets) extensions.configure<com.android.build.gradle.AppExtension> {
         // Read by HovelAndroid.kt. Debuggable builds also accept launch extras.
         resValue("string", "gamero_product", releaseProduct.orEmpty())
         resValue("string", "gamero_web_url", releaseWebUrl.orEmpty())
+        manifestPlaceholders["gameroLinkHost"] = linkHost
     }
     buildFeatures.resValues = true
     packagingOptions {
