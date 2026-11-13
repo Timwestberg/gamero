@@ -271,6 +271,10 @@ without redirects, and `UIAlertController`.
    Mac stays registered for 10 more minutes to be paired again.
    The alert closes once a Mac confirms it (`paired`), when the code runs out
    (`expired`), or when the person closes it.
+   A phone that a Mac app added with a QR code (Settings → Add a phone) skips
+   the typing: the page reads the code with `approvalDevice.pairingCode`, which
+   shows no alert, and hands it to that Mac app. The Mac still asks its own
+   person before it pairs; the code pairs nothing by itself.
 3. **Answer.** While a Hovel page runs, each open approval on the owner stream
    calls `approvals.present(id)`. The app reads it from
    `/api/hovel/v1/hovel/devices/<owner>/<device>/approvals/<id>` under the

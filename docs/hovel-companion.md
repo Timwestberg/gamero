@@ -421,6 +421,17 @@ each (`POST devices/:id/unpair`). All of them go on this Mac's own host token
 wrong codes across all the account's Macs, and tells the owner of every
 pairing.
 
+**A code a page hands over.** Settings → Add a phone, in the Mac app, adds a
+phone with a QR code. The phone then gives its pairing code to the page, and
+the page calls `phonePairing.confirm` with it (`DesktopPhonePairing`). The Mac
+does the same two steps as the window, with the code handed over and not
+typed: it looks the code up, asks "Pair this phone with this Mac?" in a native
+dialog with the same "Pair <name> (…)?" line, and pairs only on Pair. Not now
+is the default button. The dialog goes when the code runs out or the page
+gives its call up. The page learns only how it ended (`paired`, `declined`,
+`expired`, `failed`); it starts the question and never answers it. A code that
+names no phone counts as a wrong code, as a typed one does.
+
 ### Voice
 
 Mac voice runs in project conversations through `conversationVoice.*`

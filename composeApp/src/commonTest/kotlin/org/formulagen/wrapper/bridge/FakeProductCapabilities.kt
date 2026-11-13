@@ -76,8 +76,17 @@ class FakeApprovalDeviceCapability : ApprovalDeviceCapability {
         ApprovalDeviceRegistration("79a0000b-0000-4000-8000-000000000001", "iPhone", "ios", "0f".repeat(32))
     override suspend fun activate(ownerId: String, deviceId: String) = ApprovalDeviceActivated(deviceId)
     override suspend fun pair() = ApprovalDevicePaired(ApprovalDevicePairOutcome.DISMISSED)
+    override suspend fun pairingCode() = ApprovalDevicePairingCode("012345", "2026-11-12T12:10:00.000Z")
     override suspend fun forget() = ApprovalDeviceForgotten(true)
     override suspend fun status(): ApprovalDeviceRef? = null
+}
+
+class FakePhonePairingCapability : PhonePairingCapability {
+    val codes = mutableListOf<String>()
+    override suspend fun confirm(code: String): PhonePairingConfirmed {
+        codes += code
+        return PhonePairingConfirmed(PhonePairingOutcome.PAIRED)
+    }
 }
 
 class FakeHostContractCapability : HostContractCapability {
