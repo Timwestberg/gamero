@@ -24,14 +24,27 @@ import org.formulagen.wrapper.bridge.iosHovelBridgePacks
 import org.formulagen.wrapper.bridge.mediaWebViewFactory
 import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.hovel.HovelIosApp
+import org.formulagen.wrapper.links.IncomingLinks
+import org.formulagen.wrapper.links.rememberLinkedPage
 import org.formulagen.wrapper.logger.LogLevel
 import org.formulagen.wrapper.logger.log
 import org.formulagen.wrapper.lists.IosListsReplica
 import org.formulagen.wrapper.phone.iosPhoneApprovals
 import platform.Foundation.NSBundle
 import platform.Foundation.NSURL
+import platform.Foundation.NSURLRequest
+import platform.WebKit.WKWebView
 
 private const val TAG = "MainViewController"
+
+/**
+ * Takes a link the system handed to the app: a sign-in code's link, scanned by the phone's camera. Swift calls this
+ * from `onOpenURL`. The web view opens it when it is a link on the web app's own address under `/link/`
+ * ([org.formulagen.wrapper.links.incomingLinkTarget]) and ignores it otherwise.
+ */
+fun openIncomingLink(url: String) {
+    IncomingLinks.offer(url)
+}
 
 fun MainViewController() = ComposeUIViewController {
     val url = remember { resolveIosWebUrl() }
@@ -59,7 +72,13 @@ fun MainViewController() = ComposeUIViewController {
                 voice?.close()
             }
         }
+        val webViews = remember { arrayOfNulls<WKWebView>(1) }
+        // A scanned code's link becomes the page. Only Hovel has codes; another product's page never changes.
+        val page = if (hovel) rememberLinkedPage(url, reopen = { link ->
+            NSURL.URLWithString(link)?.let { webViews[0]?.loadRequest(NSURLRequest.requestWithURL(it)) }
+        }).value else url
         val attach = { webView: NativeWebView ->
+            webViews[0] = webView
             attached[0]?.close()
             // a registration an earlier page prepared is never finished by this one
             approvals?.invalidatePending()
@@ -77,7 +96,7 @@ fun MainViewController() = ComposeUIViewController {
         val appBound = hovel && boundDomains?.contains(NSURL.URLWithString(url)?.host) == true
         // Hovel's pages declare viewport-fit=cover and pad themselves for the notch and the home indicator.
         val webViewFactory = remember(media, appBound) { mediaWebViewFactory(media, appBound, edgeToEdge = hovel) }
-        if (hovel) HovelIosApp(url, onPageLoaded = ::logPageLoaded, onWebViewCreated = attach, webViewFactory = webViewFactory)
+        if (hovel) HovelIosApp(page, onPageLoaded = ::logPageLoaded, onWebViewCreated = attach, webViewFactory = webViewFactory)
         else App(url, onWebViewCreated = attach, webViewFactory = webViewFactory, onPageLoaded = ::logPageLoaded)
     }
 }

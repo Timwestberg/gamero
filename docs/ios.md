@@ -146,6 +146,60 @@ the next source. Instead the app shows a "Set GAMERO_WEB_URL" message and logs
 `Info.plist` sets `NSAppTransportSecurity` > `NSAllowsLocalNetworking`, which
 permits cleartext HTTP to loopback only.
 
+## A sign-in code's link
+
+A QR code for sign-in is an https link on the web app's own address, under
+`/link/`. The phone's camera hands such a link to the app, and the web view
+opens its page. The pieces:
+
+- `iosApp/iosApp.entitlements` claims `applinks:$(GAMERO_LINK_HOST)`.
+  `GAMERO_LINK_HOST` is in `Config.xcconfig`; a build sets it to the host name
+  of its web address. `tools/build-release.sh` does this from
+  `GAMERO_WEB_URL`.
+- `ContentView.swift` passes an opened link to `openIncomingLink`
+  (`MainViewController.kt`).
+- `commonMain/.../links/IncomingLink.kt` decides. `incomingLinkTarget` accepts
+  an https link on the web address's own origin under `/link/` and nothing
+  else, and drops the query and the fragment. `rememberLinkedPage` makes the
+  accepted link the web view's page. A link that arrives before the web view
+  exists is loaded as soon as it exists.
+- The web address must name the app in
+  `/.well-known/apple-app-site-association` (game-platform `infra/README.md`,
+  "App links").
+
+iOS hands a link over only for a host name on the default HTTPS port. With a
+port, with `localhost` or with a number address it reads the address's link
+file and still opens the link in Safari. So a local build that takes links
+uses `https://<this Mac's name>.local/hovel`:
+
+```sh
+xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator \
+  -configuration Debug DEVELOPMENT_TEAM=<team> GAMERO_PRODUCT=hovel \
+  'GAMERO_WEB_URL=https://<name>.local/hovel' GAMERO_LINK_HOST=<name>.local \
+  GAMERO_ENTITLEMENTS=iosApp/iosApp.entitlements build
+```
+
+A Debug build claims links only when `GAMERO_ENTITLEMENTS` names the
+entitlements file, as above. The entitlement needs the Associated Domains
+capability, and a personal Apple team cannot sign it: a phone build that
+carries it stops at signing. So a Debug build for a phone leaves it out by
+default, and on that phone a scan with the Camera opens the browser; the
+scanner in the app still works. A Release build always carries it, so it
+needs a paid Apple Developer team.
+
+A Debug build adds `?mode=developer` to the entitlement (`GAMERO_LINK_MODE`),
+so iOS reads the link file from the address itself. A real phone also needs
+Settings > Developer > Associated Domains Development. `DEVELOPMENT_TEAM` is
+needed even on a simulator: the address names the app as `<team>.<bundle id>`.
+
+`xcrun simctl openurl` does not test this. It sends every https link to
+Safari. The whole record, with what was tried, is game-platform
+`docs/qr-sign-in/qr-sign-in.LOCAL.md`.
+
+Android does the same with a `VIEW` filter in the manifest, whose host is the
+`gamero.linkHost` Gradle property (by default the host of `gamero.webUrl`),
+and `MainActivity` reads the link at start and in `onNewIntent`.
+
 ## Choose the product
 
 The app reads the product once at launch, in the same order as the URL:
@@ -232,6 +286,10 @@ without redirects, and `UIAlertController`.
    Mac stays registered for 10 more minutes to be paired again.
    The alert closes once a Mac confirms it (`paired`), when the code runs out
    (`expired`), or when the person closes it.
+   A phone that a Mac app added with a QR code (Settings → Add a phone) skips
+   the typing: the page reads the code with `approvalDevice.pairingCode`, which
+   shows no alert, and hands it to that Mac app. The Mac still asks its own
+   person before it pairs; the code pairs nothing by itself.
 3. **Answer.** While a Hovel page runs, each open approval on the owner stream
    calls `approvals.present(id)`. The app reads it from
    `/api/hovel/v1/hovel/devices/<owner>/<device>/approvals/<id>` under the
@@ -515,8 +573,9 @@ Release. `tools/ios-info.py` sets "Hovel" for a Hovel release archive.
 
 ## Camera and microphone
 
-Hovel meetings use the camera and the microphone in the web page. The app
-gives them only to the trusted Hovel page, with the rule in
+Hovel meetings use the camera and the microphone in the web page. The scanner
+for sign-in codes (`/link/scan`) uses the camera there too. The app gives them
+only to the trusted Hovel page, with the rule in
 [host-bridge.md](host-bridge.md#camera-and-microphone).
 
 - `MediaUIDelegate` (`iosMain/.../bridge/IosMediaGrant.kt`) is the WKWebView's
@@ -525,7 +584,9 @@ gives them only to the trusted Hovel page, with the rule in
   requests.
 - After a grant, iOS shows its own prompt once, with the usage strings in
   `iosApp/iosApp/Info.plist` (`NSCameraUsageDescription` and
-  `NSMicrophoneUsageDescription`).
+  `NSMicrophoneUsageDescription`). The camera's string names both uses:
+  video in a meeting, and a scan of a code. The Mac app has no scanner, so
+  its string (see [desktop.md](desktop.md#usage-strings)) names meetings only.
 - `mediaWebViewFactory` makes the WKWebView, through the `webViewFactory` that
   `App` takes. It sets `allowsInlineMediaPlayback`. Without it, the camera
   video shows black ([WebKit bug 220184](https://bugs.webkit.org/show_bug.cgi?id=220184)).

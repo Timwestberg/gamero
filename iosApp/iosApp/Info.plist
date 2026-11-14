@@ -11,7 +11,7 @@
 	<key>GameroWebURL</key>
 	<string>$(GAMERO_WEB_URL)</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Hovel uses the camera when you turn on your video in a meeting.</string>
+	<string>Hovel uses the camera when you turn on your video in a meeting or scan a code to sign in.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Hovel uses the microphone when you dictate, talk to a companion, or join a meeting.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

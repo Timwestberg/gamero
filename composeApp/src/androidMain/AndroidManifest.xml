@@ -18,14 +18,32 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <!-- singleTask: a link opened from the camera goes to the running app (onNewIntent), not to a second copy of
+             it inside the camera's task. -->
         <activity
             android:exported="true"
+            android:launchMode="singleTask"
             android:name=".MainActivity"
             android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- A sign-in code is an https link on the web app's own address, under /link/. Android hands it to the
+                 app once the address names the app in /.well-known/assetlinks.json (autoVerify). The host comes from
+                 the gamero.linkHost Gradle property, by default the host of gamero.webUrl; any port matches.
+                 links/IncomingLink.kt decides whether the web view may open a link. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
+                    android:host="${gameroLinkHost}"
+                    android:pathPrefix="/link/"
+                    android:scheme="https" />
             </intent-filter>
         </activity>
     </application>

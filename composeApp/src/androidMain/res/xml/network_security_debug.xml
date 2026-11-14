@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Debug builds: as release, plus http to loopback for local play and tools/android-smoke.sh,
-  which forwards the port to the developer's machine with adb reverse.
+  which forwards the port to the developer's machine with adb reverse. A debug build also trusts the
+  certificates a developer installed on the phone, so it can load a local HTTPS address (a development
+  machine's own certificate).
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
@@ -10,4 +12,9 @@
         <domain includeSubdomains="false">127.0.0.1</domain>
         <domain includeSubdomains="false">::1</domain>
     </domain-config>
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
 </network-security-config>

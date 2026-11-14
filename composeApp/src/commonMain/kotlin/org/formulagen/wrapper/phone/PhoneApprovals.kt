@@ -23,6 +23,7 @@ import org.formulagen.wrapper.bridge.ApprovalDeviceCapability
 import org.formulagen.wrapper.bridge.ApprovalDeviceForgotten
 import org.formulagen.wrapper.bridge.ApprovalDevicePairOutcome
 import org.formulagen.wrapper.bridge.ApprovalDevicePaired
+import org.formulagen.wrapper.bridge.ApprovalDevicePairingCode
 import org.formulagen.wrapper.bridge.ApprovalDeviceRef
 import org.formulagen.wrapper.bridge.ApprovalDeviceRegistration
 import org.formulagen.wrapper.bridge.ApprovalPresentOutcome
@@ -134,6 +135,21 @@ internal class PhoneApprovals(
             ApprovalDevicePairOutcome.UNREGISTERED
         }
         paired(outcome)
+    }
+
+    /**
+     * A new pairing code for the page, fetched with the device's own token, and no screen: the page hands it to the
+     * Mac app that showed the sign-in code this phone scanned, and that Mac asks its own person. A phone that is not
+     * an approval device, or whose registration the server refuses (it is then forgotten), has no code: the call fails.
+     */
+    override suspend fun pairingCode(): ApprovalDevicePairingCode = singleFlight {
+        val device = checkNotNull(active()) { NOT_A_DEVICE }
+        try {
+            api.pairingCode(device).let { ApprovalDevicePairingCode(it.code, it.expiresAt) }
+        } catch (_: DeviceUnauthorizedException) {
+            forgetHere(device)
+            throw IllegalStateException(NOT_A_DEVICE)
+        }
     }
 
     /**
@@ -355,5 +371,7 @@ internal class PhoneApprovals(
     companion object {
         /** How often an open dialog checks whether its approval ended elsewhere, and the pairing screen its pairing. */
         val POLL_INTERVAL: Duration = 3.seconds
+
+        private const val NOT_A_DEVICE = "This phone is not an approval device"
     }
 }

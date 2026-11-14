@@ -29,6 +29,12 @@ interface ApprovalDeviceCapability {
     suspend fun activate(ownerId: String, deviceId: String): ApprovalDeviceActivated
     /** Shows this phone's pairing code natively until a Mac confirms it, the person closes it, or it runs out. */
     suspend fun pair(): ApprovalDevicePaired
+    /**
+     * Answers a new pairing code to the page and shows nothing. A page that added this phone with a sign-in code
+     * hands it to the Mac app that showed that code. The code pairs nothing by itself: only that Mac's own native
+     * dialog does, with its host token. Throws when this phone is not an approval device.
+     */
+    suspend fun pairingCode(): ApprovalDevicePairingCode
     /** Revokes this phone's device with its own token, then clears it, as signing out does. */
     suspend fun forget(): ApprovalDeviceForgotten
     /** This phone's approval device, or null, from its own store; it learns of a revocation on its next call. */
@@ -95,6 +101,10 @@ enum class ApprovalDevicePairOutcome {
 @Serializable
 data class ApprovalDevicePaired(val outcome: ApprovalDevicePairOutcome)
 
+/** `devicePairingCode`, as `approvalDevice.pairingCode` answers it: the phone's six-digit code and when it runs out. */
+@Serializable
+data class ApprovalDevicePairingCode(val code: String, val expiresAt: String)
+
 /** `approvalDeviceForgotten`: whether there was a device on this phone to revoke and forget. */
 @Serializable
 data class ApprovalDeviceForgotten(val forgotten: Boolean)
@@ -152,6 +162,9 @@ object ApprovalDeviceMethods {
         "approvalDevice.pair", NoArgs.serializer(), ApprovalDevicePaired.serializer(), timeout = PAIRING_LIMIT + 1.minutes,
     )
 
+    /** One read with the device's own token. No screen shows. */
+    val PAIRING_CODE = BridgeMethod("approvalDevice.pairingCode", NoArgs.serializer(), ApprovalDevicePairingCode.serializer())
+
     /** One revoke call, then the Keychain or Keystore. */
     val FORGET = BridgeMethod("approvalDevice.forget", NoArgs.serializer(), ApprovalDeviceForgotten.serializer(), timeout = 1.minutes)
 
@@ -163,6 +176,7 @@ object ApprovalDeviceMethods {
         PREPARE.handle { devices, args -> devices.prepare(args.ownerId) },
         ACTIVATE.handle { devices, args -> devices.activate(args.ownerId, args.deviceId) },
         PAIR.handle { devices, _ -> devices.pair() },
+        PAIRING_CODE.handle { devices, _ -> devices.pairingCode() },
         FORGET.handle { devices, _ -> devices.forget() },
         STATUS.handle { devices, _ -> ApprovalDeviceStatus(devices.status()) },
     ))

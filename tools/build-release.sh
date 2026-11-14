@@ -13,6 +13,8 @@
 #                           iOS simulator testing (default: game-platform's local edge,
 #                           http://127.0.0.1:8080/hovel). Android needs HTTPS.
 #   GAMERO_PRODUCT          product the apps present (default hovel)
+#   GAMERO_LINK_HOST        host whose links open the phone apps: a sign-in code's link, handed over
+#                           by the phone's camera (default: the host of an HTTPS GAMERO_WEB_URL)
 #   GAMERO_VERSION          version name, MAJOR.MINOR.PATCH (default 1.0.0)
 #   GAMERO_BUILD_NUMBER     integer build number (default 1)
 #   GAMERO_ANDROID_KEYSTORE, GAMERO_ANDROID_KEYSTORE_PASSWORD,
@@ -46,6 +48,12 @@ build_number="${GAMERO_BUILD_NUMBER:-1}"
 # game-platform serves Hovel at /hovel on its edge, port 8080 (infra/edge/defaults.json).
 local_url="http://127.0.0.1:8080/hovel"
 url="${GAMERO_WEB_URL:-$local_url}"
+# The phone apps open links on this host only (iosApp.entitlements, the Android manifest's VIEW filter). A phone
+# hands a link over for a host name on the default HTTPS port, so the port is never part of it.
+link_host="${GAMERO_LINK_HOST:-}"
+if [[ -z "$link_host" && "$url" =~ ^[Hh][Tt][Tt][Pp][Ss]://([A-Za-z0-9.-]+)([:/?]|$) ]]; then
+  link_host="${BASH_REMATCH[1]}"
+fi
 
 fail() { echo "build-release: FAIL: $*" >&2; exit 1; }
 step() { echo "build-release: $*"; }
@@ -108,7 +116,7 @@ require_url() {
 
 gradle() {
   "$root/gradlew" -p "$root" --console=plain \
-    -Pgamero.product="$product" -Pgamero.webUrl="$url" -Pgamero.release=true \
+    -Pgamero.product="$product" -Pgamero.webUrl="$url" -Pgamero.linkHost="$link_host" -Pgamero.release=true \
     -Pgamero.version="$version" -Pgamero.buildNumber="$build_number" "$@"
 }
 
@@ -282,6 +290,7 @@ build_ios() {
   xcodebuild -project "$root/iosApp/iosApp.xcodeproj" -scheme iosApp -configuration Release \
     -destination 'generic/platform=iOS' -archivePath "$archive" \
     INFOPLIST_FILE="$out/ios/Info.plist" GAMERO_PRODUCT="$product" GAMERO_WEB_URL="$url" MARKETING_VERSION="$version" CURRENT_PROJECT_VERSION="$build_number" \
+    ${link_host:+GAMERO_LINK_HOST="$link_host"} \
     COMPILER_INDEX_STORE_ENABLE=NO "${signing[@]}" ${team:+-allowProvisioningUpdates} \
     -resultBundlePath "$out/ios/Gamero.xcresult" archive \
     >"$out/ios/xcodebuild.log" 2>&1 || { grep -E "error:" "$out/ios/xcodebuild.log" | head -20 >&2; fail "ios: archive failed"; }

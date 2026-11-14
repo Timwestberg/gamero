@@ -87,6 +87,7 @@ class BridgeRouterTest {
         ConversationVoiceMethods.pack(supported(platform, "conversationVoice.voiceStatus", FakeConversationVoiceCapability())),
         ApprovalMethods.pack(supported(platform, "approvals.present", FakeApprovalCapability())),
         ApprovalDeviceMethods.pack(supported(platform, "approvalDevice.status", FakeApprovalDeviceCapability())),
+        PhonePairingMethods.pack(supported(platform, "phonePairing.confirm", FakePhonePairingCapability())),
         HostContractMethods.pack(supported(platform, "host.contract", FakeHostContractCapability())),
         CompanionMethods.pack(supported(platform, "companion.capabilities", object : CompanionCapability {
             override suspend fun prepareConnection(ownerId: String) = fakes.prepare(ownerId)
