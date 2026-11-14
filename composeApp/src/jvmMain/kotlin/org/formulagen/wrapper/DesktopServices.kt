@@ -16,6 +16,10 @@ import org.formulagen.wrapper.bridge.ProviderMethods
 import org.formulagen.wrapper.bridge.guardedBy
 import org.formulagen.wrapper.bridge.ApprovalDeviceMethods
 import org.formulagen.wrapper.bridge.ApprovalMethods
+import org.formulagen.wrapper.bridge.PhonePairingCapability
+import org.formulagen.wrapper.bridge.PhonePairingMethods
+import org.formulagen.wrapper.hovel.DesktopPhonePairing
+import org.formulagen.wrapper.hovel.PhonePairing
 import org.formulagen.wrapper.bridge.VoicePlaybackMethods
 import org.formulagen.wrapper.bridge.VoiceInputMethods
 import org.formulagen.wrapper.conversation.voice.DesktopVoiceInput
@@ -110,6 +114,8 @@ internal class DesktopServices private constructor(
     /** `conversationVoice.*`: voice in project conversations; null without conversations on this Mac. */
     val conversationVoice: DesktopConversationVoice?,
     val voiceInput: DesktopVoiceInput?,
+    /** `phonePairing.confirm`: the Mac's own question about a phone a page just added; null without the companion. */
+    val phonePairing: PhonePairingCapability?,
     /** The voice row of the conversation the voice serves. */
     val conversationPicker: VoicePickerModel,
     private val owned: List<AutoCloseable>,
@@ -117,7 +123,8 @@ internal class DesktopServices private constructor(
     /** The product capability packs [product] registers with the bridge. */
     fun packs(product: String): List<CapabilityPack> =
         desktopProductPacks(product, companion?.let(::HovelCompanionCapability), providers, pet, games, conversations?.projects,
-            hostContract, conversationVoice, pageCheck = hostContract::requireCurrentPage, voiceInput = voiceInput, playback = voiceInput)
+            hostContract, conversationVoice, pageCheck = hostContract::requireCurrentPage, voiceInput = voiceInput, playback = voiceInput,
+            phonePairing = phonePairing)
 
     /**
      * The page's document context ended: forget its contract, close its game, void a pending approval and let go of
@@ -231,8 +238,10 @@ internal class DesktopServices private constructor(
                 val games = if (window != null && environment[GAMES_ROOT_VARIABLE] != null) {
                     DesktopGameLauncher(window, environment, support).also { game -> owned += AutoCloseable { onAwtThread(game::close) } }
                 } else null
+                // The same look-up and pairing as "Pair a phone…" in the Hovel menu, on this Mac's own host route.
+                val phonePairing = companion?.let { connected -> DesktopPhonePairing(PhonePairing({ connected.nativeExchange() }), nativeDialogs) }
                 return DesktopServices(providers, pet, dialogs, companion, conversations, hostContract, games, conversationVoice,
-                    voiceInput, conversationPicker, owned.toList())
+                    voiceInput, phonePairing, conversationPicker, owned.toList())
             } catch (error: Throwable) {
                 runCatching { closeInReverse(owned) }.exceptionOrNull()?.let(error::addSuppressed)
                 throw error
@@ -245,7 +254,8 @@ internal class DesktopServices private constructor(
  * The product packs a desktop host registers. Every desktop product has providers, pet and games; Hovel adds its
  * companion and the companion projects capabilities: `project` (a project's folders on this Mac), `projectWorkspace`
  * (a project's workspace window, unsupported until it is built), the `host.contract` handshake, `conversationVoice`
- * (voice in conversations, on a Mac with them) and phone `approvals`, which desktop never supports. A missing
+ * (voice in conversations, on a Mac with them), `phonePairing` (the Mac's own question about a phone a page just
+ * added) and phone `approvals`, which desktop never supports. A missing
  * implementation registers as `Unsupported`, so its methods answer `unsupported` instead of `unknown-method`.
  * [pageCheck] runs before every `companion.*`, `project.*` and `providers.*` call, the methods whose answers changed
  * in contract 3 ([DesktopHostContract.requireCurrentPage]).
@@ -262,6 +272,7 @@ internal fun desktopProductPacks(
     pageCheck: () -> Unit = {},
     voiceInput: org.formulagen.wrapper.bridge.VoiceInputCapability? = null,
     playback: org.formulagen.wrapper.bridge.VoicePlaybackCapability? = null,
+    phonePairing: PhonePairingCapability? = null,
 ): List<CapabilityPack> = buildList {
     if (product == HOVEL_PRODUCT) {
         add(CompanionMethods.pack(supportedIfPresent(companion)).guardedBy(pageCheck))
@@ -275,6 +286,7 @@ internal fun desktopProductPacks(
         add(ConversationVoiceMethods.pack(supportedIfPresent(conversationVoice)))
         add(ApprovalMethods.pack(Capability.Unsupported))
         add(ApprovalDeviceMethods.pack(Capability.Unsupported))
+        add(PhonePairingMethods.pack(supportedIfPresent(phonePairing)))
         add(org.formulagen.wrapper.bridge.ListsLocalMethods.pack(Capability.Unsupported))
         add(HostContractMethods.pack(supportedIfPresent(hostContract)))
     }

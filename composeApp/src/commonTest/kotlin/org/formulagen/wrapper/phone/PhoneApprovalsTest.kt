@@ -509,6 +509,33 @@ class PhoneApprovalsTest {
     }
 
     @Test
+    fun thePageGetsThePairingCodeAndThePhoneShowsNothing() = runTest {
+        val phone = activePhone(paired = false)
+        val code = phone.approvals.pairingCode()
+        assertEquals("042917", code.code)
+        assertEquals(phone.server.codeExpiresAt, code.expiresAt)
+        assertEquals(1, phone.server.codesIssued)
+        // with the device's own token, and no screen, alert or question
+        assertEquals(credential.token, phone.server.requests.single { it.url.endsWith("/pairing-code") }.headers[DeviceRoute.TOKEN_HEADER])
+        assertTrue(phone.dialogs.told.isEmpty())
+        assertTrue(phone.dialogs.asked.isEmpty())
+        // the code pairs nothing: the phone is as pending as before
+        assertTrue(phone.server.grants[credential.id].isNullOrEmpty())
+    }
+
+    @Test
+    fun aPhoneThatIsNoApprovalDeviceHasNoPairingCode() = runTest {
+        val unregistered = phone()
+        assertFailsWith<IllegalStateException> { unregistered.approvals.pairingCode() }
+        assertTrue(unregistered.server.requests.isEmpty())
+        // a registration the server no longer knows is forgotten
+        val revoked = activePhone(paired = false)
+        revoked.server.devices.clear()
+        assertFailsWith<IllegalStateException> { revoked.approvals.pairingCode() }
+        assertNull(revoked.vault.item)
+    }
+
+    @Test
     fun forgettingRevokesWithTheDevicesOwnTokenThenClearsIt() = runTest {
         val phone = activePhone()
         phone.server.approvals[approvalId] = openApproval(approvalId)

@@ -19,5 +19,10 @@ struct ContentView: View {
             .onAppear {
                 // one-time setup if needed
             }
+            // A sign-in code's link, handed over by the phone's camera (a universal link on the web app's own
+            // address). Kotlin decides whether the web view may open it.
+            .onOpenURL { url in
+                MainViewControllerKt.openIncomingLink(url: url.absoluteString)
+            }
     }
 }

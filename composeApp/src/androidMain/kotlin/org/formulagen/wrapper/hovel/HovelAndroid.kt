@@ -30,6 +30,7 @@ import org.formulagen.wrapper.bridge.HostBridge
 import org.formulagen.wrapper.bridge.MediaChromeClient
 import org.formulagen.wrapper.bridge.TrustedOrigin
 import org.formulagen.wrapper.bridge.androidHostCapabilities
+import org.formulagen.wrapper.links.rememberLinkedPage
 import org.formulagen.wrapper.phone.androidPhoneApprovals
 
 /** Launch extra or string resource that selects the Hovel product, as GAMERO_PRODUCT does on desktop. */
@@ -81,6 +82,8 @@ internal fun hovelBridgePacks(approvals: ApprovalCapability? = null, devices: Ap
     org.formulagen.wrapper.bridge.ConversationVoiceMethods.pack(Capability.Unsupported),
     ApprovalMethods.pack(approvals?.let { Capability.Supported(it) } ?: Capability.Unsupported),
     ApprovalDeviceMethods.pack(devices?.let { Capability.Supported(it) } ?: Capability.Unsupported),
+    // Only a Mac confirms a phone.
+    org.formulagen.wrapper.bridge.PhonePairingMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.ListsLocalMethods.pack(Capability.Unsupported),
     org.formulagen.wrapper.bridge.HostContractMethods.pack(Capability.Unsupported),
 )
@@ -88,9 +91,12 @@ internal fun hovelBridgePacks(approvals: ApprovalCapability? = null, devices: Ap
 /**
  * Opens [url] as soon as the app starts, as the iPhone host does. The page draws its own launch screen, the mark
  * and a loading bar, and then the sign-in page or the person's page. There is no start screen to tap.
+ *
+ * [firstLink] is the link that started the app, when one did: a sign-in code's link from the camera. It becomes the
+ * first page when it is one of the web app's own (`incomingLinkTarget`), and so does each link that arrives later.
  */
 @Composable
-fun HovelAndroidApp(url: String, onPageLoaded: (url: String, title: String?) -> Unit = { _, _ -> }) {
+fun HovelAndroidApp(url: String, onPageLoaded: (url: String, title: String?) -> Unit = { _, _ -> }, firstLink: String? = null) {
     val context = LocalContext.current
     val appVersion = remember(context) {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "dev"
@@ -115,8 +121,9 @@ fun HovelAndroidApp(url: String, onPageLoaded: (url: String, title: String?) -> 
             approvals?.close()
         }
     }
+    val page = rememberLinkedPage(url, firstLink, reopen = { link -> webViews[0]?.loadUrl(link) })
     // Like the desktop host, Hovel talks to the host bridge, not the legacy native bridge.
-    App(url, enableLegacyBridge = false, onPageLoaded = onPageLoaded, platformWebViewParams = webViewParams, onWebViewCreated = { webView ->
+    App(page.value, enableLegacyBridge = false, onPageLoaded = onPageLoaded, platformWebViewParams = webViewParams, onWebViewCreated = { webView ->
         webViews[0] = webView
         attached[0]?.close()
         // a registration an earlier page prepared is never finished by this one

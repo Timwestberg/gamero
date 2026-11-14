@@ -41,7 +41,8 @@ class DesktopParityTest {
             product = HOVEL_PRODUCT,
             capabilities = desktopHostCapabilities(),
             products = desktopProductPacks(HOVEL_PRODUCT, HovelCompanionCapability(companion), FakeProviderCapability(),
-                FakePetCapability(), FakeGameCapability(), FakeProjects(), DesktopHostContract(), FakeConversationVoiceCapability(), voiceInput = FakeVoiceInputCapability(), playback = FakeVoicePlaybackCapability()),
+                FakePetCapability(), FakeGameCapability(), FakeProjects(), DesktopHostContract(), FakeConversationVoiceCapability(), voiceInput = FakeVoiceInputCapability(), playback = FakeVoicePlaybackCapability(),
+                phonePairing = FakePhonePairingCapability()),
             scope = scope,
             transport = {},
         )

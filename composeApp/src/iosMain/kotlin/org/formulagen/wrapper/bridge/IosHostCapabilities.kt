@@ -92,6 +92,8 @@ internal fun iosHovelBridgePacks(
     ConversationVoiceMethods.pack(Capability.Unsupported),
     ApprovalMethods.pack(Capability.Supported(approvals)),
     ApprovalDeviceMethods.pack(Capability.Supported(devices)),
+    // Only a Mac confirms a phone.
+    PhonePairingMethods.pack(Capability.Unsupported),
     HostContractMethods.pack(Capability.Unsupported),
 )
 

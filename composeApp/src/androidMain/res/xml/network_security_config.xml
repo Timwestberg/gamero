@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- A debuggable build also trusts the certificates a developer installed on the phone, so it can load a local
+         HTTPS address (a development machine's own certificate). A release build ignores this block. -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

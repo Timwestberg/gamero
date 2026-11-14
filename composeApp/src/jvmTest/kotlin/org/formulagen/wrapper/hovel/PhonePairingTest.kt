@@ -10,7 +10,17 @@ import org.formulagen.wrapper.conversations.ApprovalDevicePairing
 import org.formulagen.wrapper.conversations.ApprovalDeviceState
 import org.formulagen.wrapper.conversations.DevicePairLookup
 import org.formulagen.wrapper.conversations.PairingRefusalCodes
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.runBlocking
+import org.formulagen.wrapper.approvals.NativeDialogs
+import org.formulagen.wrapper.bridge.BridgeBusyException
+import org.formulagen.wrapper.bridge.PhonePairingOutcome
+import org.formulagen.wrapper.conversations.Screen
+import org.formulagen.wrapper.conversations.eventually
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -159,6 +169,79 @@ class PhonePairingTest {
         assertEquals("devices/$phone/unpair", native.calls.single { it.second.endsWith("/unpair") }.second)
         // one already gone is let go alike
         assertEquals(PhonePairing.Outcome.Done(emptyList()), pairing.unpair(phone))
+    }
+
+    /** The Mac's side of "Add a phone": the page hands over [code], and [screen] is the Mac's own dialog. */
+    private fun confirming(native: NativeExchange?, screen: Screen, clock: java.time.Instant = now) =
+        DesktopPhonePairing(PhonePairing({ native }) { clock }, NativeDialogs(screen))
+
+    @Test fun aCodeFromThePagePairsOnlyOnTheMacsOwnYes() = runBlocking {
+        val native = FakeNative()
+        val screen = Screen { 0 }
+        assertEquals(PhonePairingOutcome.PAIRED, confirming(native, screen).confirm("042917").outcome)
+        val dialog = screen.shown.single()
+        assertEquals("Pair this phone with this Mac?", dialog.title)
+        assertEquals("Pair iPhoneAllow (iPhone, registered 4 min ago)?", dialog.lines.first())
+        // Not now is the default: closing the dialog, Escape or Enter never pairs
+        assertEquals(listOf("Pair", "Not now"), dialog.buttons.map { it.first })
+        assertEquals(false, dialog.dismiss)
+        assertEquals(listOf("devices/lookup", "devices/pair", "devices"), native.calls.map { it.second })
+        // the confirmation names the phone the dialog asked about
+        assertEquals(phone, native.calls[1].third?.getValue("deviceId")?.jsonPrimitive?.content)
+        assertEquals(listOf(phone), native.paired)
+        assertEquals(listOf(dialog), screen.dismissed.toList())
+    }
+
+    @Test fun aNoOnTheMacPairsNothing() = runBlocking {
+        val native = FakeNative()
+        assertEquals(PhonePairingOutcome.DECLINED, confirming(native, Screen { 1 }).confirm("042917").outcome)
+        assertEquals(listOf("devices/lookup"), native.calls.map { it.second })
+        assertTrue(native.paired.isEmpty())
+    }
+
+    @Test fun theMacsQuestionGoesWhenTheCodeRunsOut() = runBlocking {
+        val native = FakeNative()
+        // nobody answers, and the code has a fifth of a second left
+        val screen = Screen { null }
+        val outcome = confirming(native, screen, java.time.Instant.parse("2026-10-29T12:09:59.800Z")).confirm("042917").outcome
+        assertEquals(PhonePairingOutcome.EXPIRED, outcome)
+        assertEquals(screen.shown.toList(), screen.dismissed.toList())
+        assertTrue(native.paired.isEmpty())
+        // a code that had run out when the Mac looked asks nothing
+        val late = Screen { 0 }
+        assertEquals(PhonePairingOutcome.EXPIRED, confirming(native, late, java.time.Instant.parse("2026-10-29T12:10:00Z")).confirm("042917").outcome)
+        assertTrue(late.shown.isEmpty())
+        // and one that ran out between the question and the yes says so
+        native.ranOut = true
+        assertEquals(PhonePairingOutcome.EXPIRED, confirming(native, Screen { 0 }).confirm("042917").outcome)
+        assertTrue(native.paired.isEmpty())
+    }
+
+    @Test fun aCodeThatNamesNoPhoneOrAMacThatCannotAskShowsNoDialog() = runBlocking {
+        val screen = Screen { 0 }
+        val native = FakeNative()
+        assertEquals(PhonePairingOutcome.EXPIRED, confirming(native, screen).confirm("111111").outcome)
+        assertEquals(1, native.wrong)
+        assertEquals(PhonePairingOutcome.FAILED, confirming(null, screen).confirm("042917").outcome)
+        assertEquals(PhonePairingOutcome.FAILED, confirming(FakeNative().apply { offline = true }, screen).confirm("042917").outcome)
+        assertEquals(PhonePairingOutcome.FAILED, confirming(FakeNative().apply { wrong = 5 }, screen).confirm("042917").outcome)
+        assertTrue(screen.shown.isEmpty())
+    }
+
+    @Test fun oneQuestionAtATimeAndItGoesWithThePagesCall() = runBlocking {
+        val native = FakeNative()
+        val screen = Screen { null }
+        val pairing = confirming(native, screen)
+        val asked = async(Dispatchers.Default) { pairing.confirm("042917") }
+        eventually { screen.shown.size == 1 }
+        assertFailsWith<BridgeBusyException> { pairing.confirm("042917") }
+        // the page gave its call up: the dialog is taken down, and nothing pairs
+        asked.cancelAndJoin()
+        eventually { screen.dismissed.size == 1 }
+        assertTrue(native.paired.isEmpty())
+        // the next question can ask
+        screen.answer = { 0 }
+        assertEquals(PhonePairingOutcome.PAIRED, pairing.confirm("042917").outcome)
     }
 
     @Test fun aMacNotConnectedOrOfflineSaysSo() {
