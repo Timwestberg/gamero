@@ -29,10 +29,12 @@ Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
 - **Preconditions:** Hovel is served. No simulator is required in advance.
 - **Steps:** Run `tools/ios-smoke.sh`.
 - **Expected:** The script prints
-  `PASS: GAMERO_PAGE_LOADED origin=http://127.0.0.1:8080 title=Hovel` and exits
-  0. `build/ios/smoke.png` shows the **Welcome** sign-in card at
+  `PASS: GAMERO_PAGE_LOADED origin=http://127.0.0.1:8080 title=Hovel; GAMERO_BRIDGE_ANSWERED platform=ios product=Hovel method=watchContext outcome=ok`
+  and exits 0. `build/ios/smoke.png` shows the **Welcome** sign-in card at
   `/auth?next=%2Fhovel`, because the throwaway simulator is signed out. No
   `gamero-smoke-*` simulator is left in `xcrun simctl list devices`.
+  `tools/ios-smoke.sh --product gamero` prints only the `GAMERO_PAGE_LOADED`
+  part.
 
 ### 1b. Smoke test over HTTPS
 
@@ -40,7 +42,7 @@ Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
   [docs/ios.md](docs/ios.md#sign-in-https).
 - **Steps:** Run
   `GAMERO_WEB_URL=https://localhost:8123/hovel GAMERO_SMOKE_ROOT_CERT=/tmp/vite-dev-cert.pem tools/ios-smoke.sh`.
-- **Expected:** `PASS: GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Hovel`,
+- **Expected:** `PASS: GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Hovel; GAMERO_BRIDGE_ANSWERED platform=ios …`,
   from `/hovel` or the sign-in page it moves to. Without
   `GAMERO_SMOKE_ROOT_CERT`, it fails at the reachability check.
 

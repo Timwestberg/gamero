@@ -101,9 +101,9 @@ fun MainViewController() = ComposeUIViewController {
     }
 }
 
-/** Smoke-test marker; mirrors desktop's GAMERO_JCEF_INITIALIZED. */
+/** Smoke-test marker, the same on every platform. */
 private fun logPageLoaded(loadedUrl: String, title: String?) {
-    log(LogLevel.Info, TAG, "GAMERO_PAGE_LOADED origin=${originOf(loadedUrl)} title=$title")
+    log(LogLevel.Info, TAG, SmokeMarkers.pageLoaded(loadedUrl, title))
 }
 
 private fun appVersion(): String =
