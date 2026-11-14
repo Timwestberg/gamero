@@ -175,8 +175,17 @@ uses `https://<this Mac's name>.local/hovel`:
 ```sh
 xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator \
   -configuration Debug DEVELOPMENT_TEAM=<team> GAMERO_PRODUCT=hovel \
-  'GAMERO_WEB_URL=https://<name>.local/hovel' GAMERO_LINK_HOST=<name>.local build
+  'GAMERO_WEB_URL=https://<name>.local/hovel' GAMERO_LINK_HOST=<name>.local \
+  GAMERO_ENTITLEMENTS=iosApp/iosApp.entitlements build
 ```
+
+A Debug build claims links only when `GAMERO_ENTITLEMENTS` names the
+entitlements file, as above. The entitlement needs the Associated Domains
+capability, and a personal Apple team cannot sign it: a phone build that
+carries it stops at signing. So a Debug build for a phone leaves it out by
+default, and on that phone a scan with the Camera opens the browser; the
+scanner in the app still works. A Release build always carries it, so it
+needs a paid Apple Developer team.
 
 A Debug build adds `?mode=developer` to the entitlement (`GAMERO_LINK_MODE`),
 so iOS reads the link file from the address itself. A real phone also needs
