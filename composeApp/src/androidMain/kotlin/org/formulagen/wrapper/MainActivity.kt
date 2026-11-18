@@ -13,6 +13,8 @@ import org.formulagen.wrapper.bridge.MediaChromeClient
 import org.formulagen.wrapper.hovel.HovelAndroidApp
 import org.formulagen.wrapper.hovel.hovelWebUrl
 import org.formulagen.wrapper.links.IncomingLinks
+import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.logger.log
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -25,7 +27,11 @@ class MainActivity : ComponentActivity() {
         val firstLink = intent?.dataString.takeIf { savedInstanceState == null }
         setContent {
             // Only Hovel's trusted page may get the camera and microphone, so the other page is denied both.
-            if (hovelUrl != null) HovelAndroidApp(hovelUrl, firstLink = firstLink) else App(platformWebViewParams = remember { PlatformWebViewParams(chromeClient = MediaChromeClient(null) { null }) })
+            if (hovelUrl != null) {
+                HovelAndroidApp(hovelUrl, onPageLoaded = ::logPageLoaded, firstLink = firstLink)
+            } else {
+                App(platformWebViewParams = remember { PlatformWebViewParams(chromeClient = MediaChromeClient(null) { null }) })
+            }
         }
     }
 
@@ -34,6 +40,11 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         intent.dataString?.let(IncomingLinks::offer)
     }
+}
+
+/** Smoke-test marker, the same on every platform. */
+private fun logPageLoaded(url: String, title: String?) {
+    log(LogLevel.Info, "MainActivity", SmokeMarkers.pageLoaded(url, title))
 }
 
 @Preview

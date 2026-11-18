@@ -35,6 +35,8 @@ import org.formulagen.wrapper.hovel.HOVEL_PRODUCT
 import org.formulagen.wrapper.voice.runEchoSelfTest
 import org.formulagen.wrapper.hovel.HovelLaunchScreen
 import org.formulagen.wrapper.hovel.HovelStartState
+import org.formulagen.wrapper.logger.LogLevel
+import org.formulagen.wrapper.logger.log
 import java.awt.EventQueue
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicBoolean
@@ -274,7 +276,9 @@ private fun DesktopBrowser(url: String, lifecycle: BrowserLifecycle, resources: 
                     onEscape = conversationVoice::escape,
                 )
             }
-            App(url, enableLegacyBridge = false, webViewFactory = webViewFactory, onWebViewCreated = { browser ->
+            App(url, enableLegacyBridge = false, webViewFactory = webViewFactory, onPageLoaded = { loaded, title ->
+                log(LogLevel.Info, "Desktop", SmokeMarkers.pageLoaded(loaded, title))
+            }, onWebViewCreated = { browser ->
                 resources.attachBrowser(browser)
                 resources.bridge?.close()
                 resources.bridge = NativeBridge(
