@@ -4,9 +4,10 @@
 # Usage: tools/ios-smoke.sh
 #
 # Environment:
-#   GAMERO_WEB_URL         page to load (default http://127.0.0.1:8080/hovel)
-#   GAMERO_EXPECTED_TITLE  document title that proves the page loaded (default Hovel). Signed
-#                          out, /hovel moves to /auth?next=%2Fhovel, which keeps that title
+#   GAMERO_WEB_URL         page to load (default http://127.0.0.1:8080/)
+#   GAMERO_EXPECTED_TITLE  document title that proves the page loaded (default Companions, the
+#                          app's first page). Signed out, it moves to
+#                          /auth?next=%2Fconversations, which keeps that title
 #   GAMERO_SMOKE_TIMEOUT   seconds to wait for the page (default 90)
 #   GAMERO_SIM_DEVICE      existing simulator name or UDID to reuse; it is left booted
 #   GAMERO_SMOKE_ROOT_CERT PEM certificate to trust in curl and the simulator, for an HTTPS
@@ -18,8 +19,8 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 out="$root/build/ios"
-url="${GAMERO_WEB_URL:-http://127.0.0.1:8080/hovel}"
-title="${GAMERO_EXPECTED_TITLE:-Hovel}"
+url="${GAMERO_WEB_URL:-http://127.0.0.1:8080/}"
+title="${GAMERO_EXPECTED_TITLE:-Companions}"
 timeout="${GAMERO_SMOKE_TIMEOUT:-90}"
 cert="${GAMERO_SMOKE_ROOT_CERT:-}"
 # Scheme and host are case-insensitive, so the origin is compared in lowercase.
@@ -91,7 +92,7 @@ SIMCTL_CHILD_GAMERO_PRODUCT=gamero SIMCTL_CHILD_GAMERO_WEB_URL="$url" xcrun simc
 console_pid=$!
 
 expected="GAMERO_PAGE_LOADED origin=$origin title=$title"
-# Pass only on a line that ends with the marker: an exact title, not a prefix such as "Hovel Error".
+# Pass only on a line that ends with the marker: an exact title, not a prefix such as "Companions Error".
 page_loaded() {
   tr -d '\r' <"$out/smoke.log" | awk -v o="$origin" -v t="$title" '
     { n = index($0, "GAMERO_PAGE_LOADED origin="); if (n == 0) next
