@@ -29,7 +29,7 @@ computer stays disabled. The full Hovel launch:
 
 # gamero, from the repository root (Gradle on JDK 21):
 GAMERO_PRODUCT=hovel \
-GAMERO_WEB_URL=http://127.0.0.1:8133/hovel \
+GAMERO_WEB_URL=http://127.0.0.1:8133/ \
 GAMERO_BROWSER_JAVA_HOME="<JBR with JCEF>/Contents/Home" \
 HOVEL_GAMES_ROOT=<game-platform>/games \
 HOVEL_EMBED_LIBRARY="$PWD/build/embedded-godot/libhovel_embed.dylib" \

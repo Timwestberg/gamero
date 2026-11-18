@@ -11,7 +11,7 @@
 # Environment (see docs/release.md):
 #   GAMERO_WEB_URL          page the apps open: HTTPS, or http on loopback for local desktop and
 #                           iOS simulator testing (default: game-platform's local edge,
-#                           http://127.0.0.1:8080/hovel). Android needs HTTPS.
+#                           http://127.0.0.1:8080/). Android needs HTTPS.
 #   GAMERO_PRODUCT          product the apps present (default hovel)
 #   GAMERO_LINK_HOST        host whose links open the phone apps: a sign-in code's link, handed over
 #                           by the phone's camera (default: the host of an HTTPS GAMERO_WEB_URL)
@@ -45,8 +45,9 @@ out="$root/build/release"
 product="${GAMERO_PRODUCT:-hovel}"
 version="${GAMERO_VERSION:-1.0.0}"
 build_number="${GAMERO_BUILD_NUMBER:-1}"
-# game-platform serves Hovel at /hovel on its edge, port 8080 (infra/edge/defaults.json).
-local_url="http://127.0.0.1:8080/hovel"
+# game-platform serves Hovel on its edge, port 8080 (infra/edge/defaults.json). The app opens the site's root,
+# which is the web app's first page.
+local_url="http://127.0.0.1:8080/"
 url="${GAMERO_WEB_URL:-$local_url}"
 # The phone apps open links on this host only (iosApp.entitlements, the Android manifest's VIEW filter). A phone
 # hands a link over for a host name on the default HTTPS port, so the port is never part of it.

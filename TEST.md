@@ -11,9 +11,10 @@ banners are only checked here.
 
 Common preconditions: an Apple Silicon Mac with Xcode 26 and an iOS simulator
 runtime. Unless a case says otherwise, Hovel is served at
-`http://127.0.0.1:8080/hovel` with `pnpm serve:edge`. Signed out, `/hovel`
-moves to the app's one sign-in at `/auth?next=%2Fhovel`, which keeps the title
-**Hovel** and returns to `/hovel` after the PIN.
+`http://127.0.0.1:8080/` with `pnpm serve:edge`. The address is the site's root,
+which opens the app's first page, Companions, at `/conversations`. Signed out,
+that page moves to the app's one sign-in at `/auth?next=%2Fconversations`, which
+keeps the title **Companions** and returns to `/conversations` after the PIN.
 Debug builds run the Hovel product, which opens the web app at once: the page
 draws its own launch screen (the mark and a loading bar) and then the sign-in
 page or the person's page. There is no start screen to tap on iOS.
@@ -29,9 +30,9 @@ Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
 - **Preconditions:** Hovel is served. No simulator is required in advance.
 - **Steps:** Run `tools/ios-smoke.sh`.
 - **Expected:** The script prints
-  `PASS: GAMERO_PAGE_LOADED origin=http://127.0.0.1:8080 title=Hovel` and exits
+  `PASS: GAMERO_PAGE_LOADED origin=http://127.0.0.1:8080 title=Companions` and exits
   0. `build/ios/smoke.png` shows the **Welcome** sign-in card at
-  `/auth?next=%2Fhovel`, because the throwaway simulator is signed out. No
+  `/auth?next=%2Fconversations`, because the throwaway simulator is signed out. No
   `gamero-smoke-*` simulator is left in `xcrun simctl list devices`.
 
 ### 1b. Smoke test over HTTPS
@@ -39,9 +40,9 @@ Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
 - **Preconditions:** The HTTPS dev server and extracted certificate from
   [docs/ios.md](docs/ios.md#sign-in-https).
 - **Steps:** Run
-  `GAMERO_WEB_URL=https://localhost:8123/hovel GAMERO_SMOKE_ROOT_CERT=/tmp/vite-dev-cert.pem tools/ios-smoke.sh`.
-- **Expected:** `PASS: GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Hovel`,
-  from `/hovel` or the sign-in page it moves to. Without
+  `GAMERO_WEB_URL=https://localhost:8123/ GAMERO_SMOKE_ROOT_CERT=/tmp/vite-dev-cert.pem tools/ios-smoke.sh`.
+- **Expected:** `PASS: GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Companions`,
+  from `/conversations` or the sign-in page it moves to. Without
   `GAMERO_SMOKE_ROOT_CERT`, it fails at the reachability check.
 
 ### 2. Run from Xcode with the default URL
@@ -51,9 +52,9 @@ Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
   iPhone simulator, then Run.
 - **Expected:** The build succeeds without an Android SDK. The app shows the
   page's launch screen (the mark and a loading bar) with no tap needed, then
-  opens `/hovel` full screen, which moves to the **Welcome** sign-in card at
-  `/auth?next=%2Fhovel`. The Xcode console shows
-  `GAMERO_PAGE_LOADED origin=http://127.0.0.1:8080 title=Hovel` for both pages.
+  opens `/conversations` full screen, which moves to the **Welcome** sign-in card at
+  `/auth?next=%2Fconversations`. The Xcode console shows
+  `GAMERO_PAGE_LOADED origin=http://127.0.0.1:8080 title=Companions` for both pages.
 
 ### 3. Launch environment overrides Info.plist
 
@@ -61,7 +62,7 @@ Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
   `http://localhost:8080/index.html`.
 - **Steps:** Launch with
   `SIMCTL_CHILD_GAMERO_PRODUCT=gamero SIMCTL_CHILD_GAMERO_WEB_URL=http://localhost:8080/index.html xcrun simctl launch --console-pty booted org.formulagen.wrapper.WestbergWrapper`.
-- **Expected:** The app loads that page, not `/hovel`. The log shows
+- **Expected:** The app loads that page, not Companions. The log shows
   `origin=http://localhost:8080` with that page's title.
 
 ### 3b. Product selects the Hovel host
@@ -81,12 +82,12 @@ Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
 ### 4. HTTPS URL from the xcconfig
 
 - **Preconditions:** A reachable HTTPS deployment of Hovel.
-- **Steps:** Set `GAMERO_WEB_URL=https:/$()/<host>/hovel` in
+- **Steps:** Set `GAMERO_WEB_URL=https:/$()/<host>/` in
   `iosApp/Configuration/Config.xcconfig`, build, and run without a launch
   override.
-- **Expected:** `/hovel` loads from that origin. Signed out, it moves to
-  `/auth?next=%2Fhovel` on the same origin. The log shows
-  `origin=https://<host> title=Hovel`.
+- **Expected:** `/conversations` loads from that origin. Signed out, it moves to
+  `/auth?next=%2Fconversations` on the same origin. The log shows
+  `origin=https://<host> title=Companions`.
 
 ### 5. Reminder notification while the app is closed
 
@@ -236,7 +237,7 @@ Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
 
 ### Missing or invalid URL
 
-- **Steps:** Launch with `SIMCTL_CHILD_GAMERO_WEB_URL=http://example.com/hovel`
+- **Steps:** Launch with `SIMCTL_CHILD_GAMERO_WEB_URL=http://example.com/`
   (cleartext to a non-loopback host). Repeat with a URL that has a `#fragment`,
   `user:pass@`, or a `file:` scheme, and with an empty xcconfig value and no
   launch override.
@@ -264,12 +265,12 @@ Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
 ### Sign-in over HTTP loopback fails
 
 - **Steps:** With server-platform's identity service running, sign in through
-  `http://127.0.0.1:8080/hovel`.
+  `http://127.0.0.1:8080/`.
 - **Expected:** Sign-in fails, as observed with identity on `main`. Verify
-  returns 200 and the page returns to `/hovel`, but its `/auth/refresh` fails
+  returns 200 and the page returns to `/conversations`, but its `/auth/refresh` fails
   with "Missing refresh token", because WKWebView drops identity's `Secure`
   cookies over HTTP. Hovel then sends the app back to the sign-in card at
-  `/auth?next=%2Fhovel`, and retrying the same PIN shows "No active PIN
+  `/auth?next=%2Fconversations`, and retrying the same PIN shows "No active PIN
   challenge for this phone" because the PIN was already used. Use the HTTPS path in
   [docs/ios.md](docs/ios.md#sign-in-https) for anything that needs sign-in.
 
@@ -279,11 +280,11 @@ Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
   identity running, `pnpm dev` on `https://localhost:8123`, and the dev
   certificate trusted in this simulator.
 - **Steps:** Launch with
-  `SIMCTL_CHILD_GAMERO_PRODUCT=gamero SIMCTL_CHILD_GAMERO_WEB_URL=https://localhost:8123/hovel`, enter a phone
+  `SIMCTL_CHILD_GAMERO_PRODUCT=gamero SIMCTL_CHILD_GAMERO_WEB_URL=https://localhost:8123/`, enter a phone
   number, then enter the PIN from the identity log once.
-- **Expected:** The log shows `GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Hovel`
-  for `/hovel` and for the sign-in page at `/auth?next=%2Fhovel`. After the PIN,
-  the app returns to `/hovel` and stays signed in. Identity
+- **Expected:** The log shows `GAMERO_PAGE_LOADED origin=https://localhost:8123 title=Companions`
+  for `/conversations` and for the sign-in page at `/auth?next=%2Fconversations`. After the PIN,
+  the app returns to `/conversations` and stays signed in. Identity
   logs `/auth/verify` and `/auth/refresh` with no errors. Without the trusted
   certificate, the page does not load and no `GAMERO_PAGE_LOADED` line appears.
 - **Status:** Verified on an iOS 26.2 simulator. Identity logged
@@ -294,7 +295,7 @@ Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
 - **Steps:** After an HTTPS launch through `simctl`, quit the app and open it
   from the home screen.
 - **Expected:** It loads the Info.plist default
-  (`http://127.0.0.1:8080/hovel`), not the HTTPS URL, because
+  (`http://127.0.0.1:8080/`), not the HTTPS URL, because
   `SIMCTL_CHILD_*` applies to one launch. Relaunch through `simctl`, or set the
   URL in the scheme or `Config.xcconfig`.
 
@@ -323,9 +324,9 @@ Launch it as [docs/desktop.md](docs/desktop.md#run-hovel) shows, with
 
 - **Steps:** Watch the console during any successful load.
 - **Expected:** `GAMERO_PAGE_LOADED` may appear first with `title=null` and then
-  with `title=Hovel`, because WKWebView reports the title after load completes.
-  Signed out, the lines repeat for `/auth?next=%2Fhovel`, which also has the
-  title Hovel. Only a line with the title counts as a pass.
+  with `title=Companions`, because WKWebView reports the title after load completes.
+  Signed out, the lines repeat for `/auth?next=%2Fconversations`, which also has the
+  title Companions. Only a line with the title counts as a pass.
 
 ### Intel Mac or x86_64 simulator
 
