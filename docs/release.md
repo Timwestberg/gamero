@@ -4,7 +4,7 @@
 Pass one or more of `web`, `android`, `desktop`, `ios`, or `all`:
 
 ```sh
-export GAMERO_WEB_URL=https://hovel.example.com/hovel   # the live page, once one exists
+export GAMERO_WEB_URL=https://hovel.example.com/   # the live page, once one exists
 tools/build-release.sh android desktop ios
 tools/build-release.sh all
 ```
@@ -46,7 +46,7 @@ run, plus the best time seen, to show whether a change made a step faster.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `GAMERO_WEB_URL` | `http://127.0.0.1:8080/hovel` | Page the app opens. Checked against the same rule as `WebUrlPolicy.kt`: HTTPS, or http on loopback; a host, no userinfo, no fragment. Android requires HTTPS. |
+| `GAMERO_WEB_URL` | `http://127.0.0.1:8080/` | Page the app opens. Checked against the same rule as `WebUrlPolicy.kt`: HTTPS, or http on loopback; a host, no userinfo, no fragment. Android requires HTTPS. |
 | `GAMERO_PRODUCT` | `hovel` | Product the app presents. `hovel` opens Hovel's page with Hovel's host bridge capabilities (see [ios.md](ios.md#choose-the-product)). The desktop shows the Hovel launch screen while it prepares its browser; no host waits for a tap. |
 | `GAMERO_LINK_HOST` | the host of an HTTPS `GAMERO_WEB_URL` | Host whose links open the iPhone and Android apps: a sign-in code's link, handed over by the phone's camera. A host name, with no port. The web address must name the apps for it (game-platform `infra/README.md`, "App links"). See [ios.md](ios.md#a-sign-in-codes-link). |
 | `GAMERO_VERSION` | `1.0.0` | Version name. `MAJOR.MINOR.PATCH` with `MAJOR > 0`, because macOS packaging rejects `0.x`. |
@@ -79,7 +79,8 @@ players waits for Anthropic's confirmation that a companion persona on a
 player's own subscription is allowed.
 
 There is no live Hovel URL yet, so the default is game-platform's local edge,
-which serves the web build's Hovel page at `/hovel` on port 8080:
+which serves the web build on port 8080. The app opens the site's root, and
+the web app decides its first page (Companions):
 
 ```sh
 cd ../game-platform && pnpm build:web
@@ -93,7 +94,7 @@ covers iOS); a physical iPhone cannot reach the Mac's loopback.
 Android release builds open HTTPS pages only (`HovelAndroid.kt`): with any other
 URL the app skips Hovel and starts the legacy WorldWinner page, so the script
 refuses to build `android` without an HTTPS `GAMERO_WEB_URL`. Until a live URL
-exists, an HTTPS placeholder such as `https://127.0.0.1/hovel` builds and
+exists, an HTTPS placeholder such as `https://127.0.0.1/` builds and
 builds, but the page itself will not load. Local play
 uses debug builds, not release builds: the desktop and iOS simulator debug builds
 open the local edge, and an Android debug build takes the `GAMERO_WEB_URL` launch
