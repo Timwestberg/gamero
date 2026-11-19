@@ -19,7 +19,7 @@ class DesktopParityTest {
      * until `DesktopProjectWorkspace` lands.
      */
     private val pending = setOf(
-        "link.open", "lifecycle.pause", "lifecycle.resume", "projectWorkspace.open", "projectWorkspace.viewChanges",
+        "lifecycle.pause", "lifecycle.resume", "projectWorkspace.open", "projectWorkspace.viewChanges",
     )
 
     private class FakeProjects : ProjectCapability {
